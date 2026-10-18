@@ -15,7 +15,7 @@ const ICONS = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.2 4.2l2.8 2.8M17 17l2.8 2.8M1 12h4M19 12h4M4.2 19.8L7 17M17 7l2.8-2.8"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   refresh: '<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/>',
-  menu: '<path d="M3 6h18M3 12h18M3 18h18"/>',
+  panel: '<rect x="3" y="4" width="18" height="16"/><path d="M9 4v16M5.5 8h1.5M5.5 11h1.5M5.5 14h1.5"/>',
   send: '<path d="M3 11l18-8-8 18-2-8z"/>',
   mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/>',
 };
@@ -31,7 +31,10 @@ const STYLE = `
   --font: "JetBrains Mono", "Fira Code", "Cascadia Code", "Source Code Pro", ui-monospace, Menlo, Consolas, monospace;
   --nav-w: max(260px, 19em);
   color-scheme: dark;
-  display: block; height: 100vh; height: 100dvh; background: var(--bg); color: var(--text); font-family: var(--font);
+  display: block; height: 100vh; height: 100dvh;
+  /* We handle the safe areas (notch, gesture bar) ourselves */
+  padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0);
+  box-sizing: border-box; background: var(--bg); color: var(--text); font-family: var(--font);
 }
 * { box-sizing: border-box; }
 /* Fluid base size: 13px on phones, ~15.5px at 1080p, ~18.5px at 1440p, ~24px on an unscaled 4K TV */
@@ -205,7 +208,9 @@ button.menu-btn { display: none; }
 }
 @media (max-width: 600px) {
   .content, .log { padding: 1em; }
-  header { padding: 0 1em; }
+  header { padding: 0 .6em; gap: .4em; }
+  header h1 { font-size: 1em; letter-spacing: .15em; }
+  header .meta { display: none; }
   .composer { padding: .8em 1em 1em; }
   .bubble { max-width: 92%; }
 }
@@ -423,8 +428,8 @@ class AacPanel extends HTMLElement {
 
   _header(title, meta = "") {
     return `<header>
-      <button class="icon-btn menu-btn" id="nav-toggle" title="AAC menu" aria-label="AAC menu">${icon("menu")}</button>
       ${this._narrow ? "<ha-menu-button></ha-menu-button>" : ""}
+      <button class="icon-btn menu-btn" id="nav-toggle" title="AAC segments" aria-label="AAC segments">${icon("panel")}</button>
       <h1>${esc(title)}</h1><span class="meta">${meta}</span></header>`;
   }
 
@@ -468,7 +473,7 @@ class AacPanel extends HTMLElement {
       <div class="chat">
         <div class="log thin-scroll" aria-live="polite"><div class="log-inner">${log}${busy}</div></div>
         <div class="composer"><div class="composer-inner">
-          <textarea id="chat-input" class="thin-scroll" aria-label="Message" placeholder="Message AAC…  (Enter to send, Shift+Enter for a new line)" ${this._chat.busy ? "disabled" : ""}></textarea>
+          <textarea id="chat-input" class="thin-scroll" aria-label="Message" placeholder="Message AAC…" title="Enter to send, Shift+Enter for a new line" ${this._chat.busy ? "disabled" : ""}></textarea>
           <button class="btn primary" id="chat-send" aria-label="Send" ${this._chat.busy ? "disabled" : ""}>${icon("send")}</button>
         </div></div>
       </div>`;
@@ -492,7 +497,9 @@ class AacPanel extends HTMLElement {
     const w = this._workers;
     if (!w) return this._page("WORKERS", "", '<div class="card"><h2>SCANNING</h2><p>Looking for model servers…<span class="cursor"></span></p></div>');
     const master = this._state?.master?.worker;
-    const auto = w.auto.map((srv) => `
+    // A manual worker's own server only matters here if it offers more models
+    const servers = w.auto.filter((srv) => srv.workers.length || !srv.source.startsWith("w:"));
+    const auto = servers.map((srv) => `
       <div class="card"><h2><span class="dot ${srv.online ? "ok" : "bad"}"></span>${esc(srv.label)}</h2>
         <p>${esc(srv.base_url)}${srv.error ? ` · <span class="msg err">${esc(srv.error)}</span>` : ""}</p>
         ${srv.workers.length ? srv.workers.map((a) => `
@@ -514,7 +521,7 @@ class AacPanel extends HTMLElement {
       </div>`;
     return this._page("WORKERS", "models AAC can use", `
       <div class="card"><h2>AUTO</h2><p>Found automatically: model servers already set up in Home Assistant (llama.cpp, Ollama; only read, never changed) and the servers of your manual workers. Every model they offer can be used.</p>
-        ${w.auto.length ? "" : '<p class="hint">Nothing found. Add a manual worker.</p>'}</div>
+        ${servers.length ? "" : '<p class="hint">Nothing else found.</p>'}</div>
       <div class="cards">${auto}${manual}</div>`);
   }
 

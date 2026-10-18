@@ -12,7 +12,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - Keep docs tidy: design decisions go into `docs/assistant-framework.md`, status goes here, no duplicate notes
 - Version lives in `custom_components/aac/manifest.json` (`version`). Bump it for every release and tag it (`v0.1.0` …) so HACS shows the version
 
-## Current state (2026-10-18) – v0.3.0
+## Current state (2026-10-18) – v0.3.1
 - HACS-installable custom integration `aac` (`custom_components/aac`, `hacs.json`, min HA 2026.10.0), single instance
 - **Everything is configured in the AAC panel** (spec: `docs/design.md`). The config flow is one click with no fields; settings live in `.storage/aac.config` (`store.py`), not in the config entry
   - Entry v1 (0.1.0, server/model in the entry) is migrated to v2 automatically (`async_migrate_entry`)
@@ -29,6 +29,10 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 ## Testing in the real HA
 - No GitHub/HACS round trip needed: `scripts/deploy_ha.sh` copies the working tree over SSH and restarts HA Core (`AAC_HA_SSH`, `AAC_SSH_KEY`; real values in `docs/dev-environment.md`)
 - Release path for others: bump `version` in the manifest, commit, the user pushes and creates a GitHub release/tag `vX.Y.Z` → HACS offers the update
+
+## Checking the panel in the real HA (any screen size)
+- `scripts/ha_screenshot.py out.png <w> <h> [/aac] [js]` with `AAC_HA_URL`, `AAC_HA_TOKEN_FILE` (values: `docs/dev-environment.md`). Headless Firefox via WebDriver BiDi, only aiohttp needed. `FIND_PANEL` in the JS argument reaches the panel element, e.g. `"(()=>{const p=FIND_PANEL;p._go('settings/master');})()"`. Prints viewport vs. scroll size (overflow check)
+- Can't simulate a phone's safe areas (notch, gesture bar), so phone issues there need the user's eyes
 
 ## Checking the panel without HA
 - No node/browser automation here. Harness with a mocked `hass.callWS`: `index.html` + copy of `aac-panel.js` served by `python -m http.server`, screenshots with `firefox --headless --profile <dir> --no-remote --window-size=1400,850 --screenshot out.png <url>` (needs an existing profile dir). JS errors are printed into the page. Kept in the session scratchpad only, rebuild if needed
@@ -48,7 +52,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - License not chosen yet (open decision in the framework doc), so no LICENSE file
 
 ## Next steps
-- User: look at the panel in HA (2K monitor, phone), give feedback; GitHub release `v0.3.0`, then try installing via HACS once
+- User: check the phone again (safe-area fix, v0.3.1); GitHub release, then try installing via HACS once
 - Audio hub: first real source (probably the browser mic or a Wyoming/ESPHome satellite streaming continuously), ring buffer + VAD
 - Contracts first (framework "Rough order" step 0) before memory/context engine
 - Then core + memory + context engine

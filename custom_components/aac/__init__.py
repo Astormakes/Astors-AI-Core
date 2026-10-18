@@ -78,6 +78,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         module_url=f"{STATIC_URL}/aac-panel.js?v={version}",
         require_admin=True,
         config_panel_domain=DOMAIN,
+        # The panel pads for notches / gesture bars itself (env(safe-area-inset-*));
+        # otherwise HA's padding plus our full-height layout pushes the bottom off-screen
+        handle_safe_area=True,
     )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
