@@ -23,6 +23,7 @@ from .const import (
 from .provider import ProviderAuthError, ProviderError
 from .audio import audio_overview
 from .master import async_run_master
+from .memory import KINDS, SOURCES
 from .runs import SIGNAL_UPDATE
 from .status import aac_agent_entity_id, setup_steps
 from .store import CONF_MASTER_MODEL, AACStore
@@ -53,6 +54,11 @@ def async_register(hass: HomeAssistant) -> None:
         ws_trigger_save,
         ws_trigger_delete,
         ws_subscribe,
+        ws_memory_list,
+        ws_memory_save,
+        ws_memory_delete,
+        ws_memory_settings,
+        ws_memory_reembed,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -81,6 +87,7 @@ def _state(hass: HomeAssistant, store: AACStore, entry_id: str) -> dict[str, Any
         "master": store.master,
         "setup": setup_steps(hass, store),
         "heartbeat": store.heartbeat,
+        "memory": store.memory,
         "triggers": store.triggers,
         "llm_apis": [{"id": api.id, "name": api.name} for api in llm.async_get_apis(hass)],
     }
@@ -420,3 +427,100 @@ def ws_subscribe(hass: HomeAssistant, connection, msg) -> None:
 
     connection.subscriptions[msg["id"]] = async_dispatcher_connect(hass, SIGNAL_UPDATE, forward)
     connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "aac/memory/list",
+        vol.Optional("query"): str,
+        vol.Optional("unconfirmed", default=False): bool,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_memory_list(hass: HomeAssistant, connection, msg) -> None:
+    """Memories: newest first, or the best matches for a query."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    memory = entry.runtime_data.memory
+    if msg.get("query"):
+        items = await memory.async_recall(msg["query"], limit=50)
+    else:
+        items = await memory.async_list(unconfirmed=msg["unconfirmed"])
+    connection.send_result(
+        msg["id"], {"memories": [m.as_dict() for m in items], "stats": await memory.async_count()}
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "aac/memory/save",
+        vol.Optional("memory_id"): str,
+        vol.Optional("text"): vol.All(str, vol.Length(min=1)),
+        vol.Optional("kind"): vol.In(list(KINDS)),
+        vol.Optional("source"): vol.In(list(SOURCES)),
+        vol.Optional("confirmed"): bool,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_memory_save(hass: HomeAssistant, connection, msg) -> None:
+    """Add a memory (no id) or change one."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    memory = entry.runtime_data.memory
+    if "memory_id" not in msg:
+        if not msg.get("text"):
+            connection.send_error(msg["id"], "invalid", "Text is needed")
+            return
+        mem = await memory.async_remember(msg["text"], msg.get("kind", "note"), msg.get("source", "user said"))
+    else:
+        fields = {k: msg[k] for k in ("text", "kind", "source", "confirmed") if k in msg}
+        mem = await memory.async_update(msg["memory_id"], **fields)
+        if mem is None:
+            connection.send_error(msg["id"], "not_found", "Memory not found")
+            return
+    connection.send_result(msg["id"], mem.as_dict())
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/memory/delete", vol.Required("memory_id"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_memory_delete(hass: HomeAssistant, connection, msg) -> None:
+    """Forget a memory."""
+    if entry := _entry(hass, connection, msg):
+        await entry.runtime_data.memory.async_delete(msg["memory_id"])
+        connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "aac/memory/settings",
+        vol.Optional("enabled"): bool,
+        vol.Optional("embed_model"): vol.Any(str, None),
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_memory_settings(hass: HomeAssistant, connection, msg) -> None:
+    """Memory on/off and the embedding model (a new model re-embeds in the background)."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    store = entry.runtime_data.store
+    changed_model = "embed_model" in msg and msg["embed_model"] != store.memory["embed_model"]
+    await store.async_update_memory({k: v for k, v in msg.items() if k not in ("id", "type")})
+    if changed_model and msg["embed_model"]:
+        entry.async_create_background_task(
+            hass, entry.runtime_data.memory.async_reembed(), "aac memory re-embed"
+        )
+    connection.send_result(msg["id"], _state(hass, store, entry.entry_id))
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/memory/reembed"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_memory_reembed(hass: HomeAssistant, connection, msg) -> None:
+    """Give all memories vectors from the current embedding model (waits until done)."""
+    if entry := _entry(hass, connection, msg):
+        done = await entry.runtime_data.memory.async_reembed()
+        connection.send_result(msg["id"], {"embedded": done})

@@ -65,6 +65,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     # Event triggers: {id, name, entity_id, to, instruction, cooldown, enabled}
     "triggers": [],
+    # Long-term memory; embed_model = a model id from Models (None: keywords only)
+    "memory": {"enabled": True, "embed_model": None},
 }
 
 MASTER_KEYS = set(DEFAULT_CONFIG["master"])
@@ -91,6 +93,7 @@ class AACStore:
         data["setup"].update(stored.get("setup", {}))
         data["heartbeat"].update(stored.get("heartbeat", {}))
         data["triggers"] = stored.get("triggers", [])
+        data["memory"].update(stored.get("memory", {}))
         self.data = data
 
     async def async_save(self) -> None:
@@ -169,6 +172,16 @@ class AACStore:
     async def async_delete_trigger(self, trigger_id: str) -> None:
         """Remove an event trigger."""
         self.data["triggers"] = [t for t in self.triggers if t["id"] != trigger_id]
+        await self.async_save()
+
+    @property
+    def memory(self) -> dict[str, Any]:
+        """Memory settings."""
+        return self.data["memory"]
+
+    async def async_update_memory(self, changes: dict[str, Any]) -> None:
+        """Change memory settings."""
+        self.memory.update({k: v for k, v in changes.items() if k in self.memory})
         await self.async_save()
 
     async def async_set_skipped(self, step: str, skipped: bool) -> None:

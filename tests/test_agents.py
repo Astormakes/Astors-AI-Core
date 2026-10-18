@@ -71,12 +71,13 @@ async def test_chat_records_tool_steps(
 ):
     """Tool calls end up in the run and in the chat message."""
     await setup_aac(hass, mock_entry)
-    _replies(aioclient_mock, _reply(None, "llm__GetDateTime"), _reply("It is noon."))
+    _replies(aioclient_mock, _reply(None, "assist__llm__GetDateTime"), _reply("It is noon."))
     ws = await hass_ws_client(hass)
     await ws.send_json_auto_id({"type": "aac/chat", "text": "time?"})
     message = (await ws.receive_json())["result"]["message"]
     assert [s["type"] for s in message["steps"]] == ["tool_call", "tool_result"]
-    assert message["steps"][0]["tool"] == "llm__GetDateTime"
+    assert message["steps"][0]["tool"] == "assist__llm__GetDateTime"
+    assert message["steps"][1]["error"] is False
 
     await ws.send_json_auto_id({"type": "aac/run/get", "run_id": message["run_id"]})
     run = (await ws.receive_json())["result"]
@@ -177,10 +178,10 @@ async def test_state_trigger_with_cooldown(
     assert (await ws.receive_json())["success"]
 
     hass.states.async_set("binary_sensor.door", "on", {"friendly_name": "Door"})
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     hass.states.async_set("binary_sensor.door", "off", {"friendly_name": "Door"})
     hass.states.async_set("binary_sensor.door", "on", {"friendly_name": "Door"})
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
 
     assert len(payloads) == 1
     assert "Door (binary_sensor.door) changed from off to on" in payloads[0]["messages"][-1]["content"]
@@ -220,7 +221,7 @@ async def test_auto_run_forced_to_answer(
         body = (
             _reply('Nothing. <tool_call>{"name": "x"}</tool_call>')
             if "tools" not in data
-            else _reply(None, "llm__GetDateTime")
+            else _reply(None, "assist__llm__GetDateTime")
         )
         return AiohttpClientMockResponse(method, url, json=body)
 

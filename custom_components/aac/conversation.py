@@ -31,6 +31,7 @@ from .const import (
     MAX_TOOL_ITERATIONS_AUTO,
 )
 from .provider import OpenAICompatProvider, ProviderError
+from .memory_api import API_ID as MEMORY_API_ID
 from .runs import current_run
 from .store import CONF_MASTER_MODEL
 from .models import resolve_model
@@ -204,7 +205,7 @@ class AACConversationEntity(
     @property
     def supported_features(self) -> conversation.ConversationEntityFeature:
         """CONTROL while the master may use an HA API (settings change live)."""
-        if self.entry.runtime_data.store.master.get(CONF_LLM_HASS_API):
+        if self.entry.runtime_data.store.master.get(CONF_LLM_HASS_API) or self.entry.runtime_data.store.memory["enabled"]:
             return conversation.ConversationEntityFeature.CONTROL
         return conversation.ConversationEntityFeature(0)
 
@@ -245,15 +246,34 @@ class AACConversationEntity(
             async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key
         )
         run = current_run.get()
+        api_ids: list[str] | None = None
+        if not run or run.allow_tools:
+            api_ids = list(options.get(CONF_LLM_HASS_API) or [])
+            if store.memory["enabled"]:
+                api_ids.append(MEMORY_API_ID)  # the master always has its own memory
         try:
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),
-                options.get(CONF_LLM_HASS_API) if not run or run.allow_tools else None,
+                api_ids or None,
                 options.get(CONF_PROMPT),
                 user_input.extra_system_prompt,
             )
         except conversation.ConverseError as err:
             return err.as_conversation_result()
+
+        # Context engine (first piece): hand over matching memories ourselves, because
+        # small models rarely call recall on their own. Attached to the user message,
+        # not the system prompt, so the server's prompt cache keeps working.
+        memory_hint = None
+        if store.memory["enabled"] and self.entry.runtime_data.memory and user_input.text:
+            found = await self.entry.runtime_data.memory.async_context(user_input.text)
+            if found:
+                memory_hint = "Memories that may help (from your long-term memory):\n" + "\n".join(
+                    f"- {m.text} ({m.source}{'' if m.confirmed else ', unconfirmed'}, {m.created[:10]})"
+                    for m in found
+                )
+                if run:
+                    run.context = f"{run.context}\n\n{memory_hint}".strip()
 
         first_new = len(chat_log.content)
         tools = None
@@ -283,6 +303,12 @@ class AACConversationEntity(
             messages = [
                 m for c in chat_log.content if (m := _content_to_message(c)) is not None
             ]
+            if memory_hint:
+                last_user = max(i for i, m in enumerate(messages) if m["role"] == "user")
+                messages[last_user] = {
+                    **messages[last_user],
+                    "content": f"{messages[last_user]['content']}\n\n[{memory_hint}]",
+                }
             if final:
                 messages.append({"role": "user", "content": FINAL_NUDGE})
             if decide and messages and messages[0]["role"] == "system":

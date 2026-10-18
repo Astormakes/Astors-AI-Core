@@ -36,6 +36,14 @@ def setup_steps(hass: HomeAssistant, store: AACStore) -> list[dict]:
             "done": resolve_model(hass, store, store.master[CONF_MASTER_MODEL]) is not None,
         },
         {
+            "id": "memory",
+            "title": "Give AAC a memory",
+            "hint": "Pick an embedding model so it finds memories by meaning, not only by words.",
+            "target": "settings/memory",
+            "optional": True,
+            "done": resolve_model(hass, store, store.memory["embed_model"]) is not None,
+        },
+        {
             "id": "heartbeat",
             "title": "Let AAC think on its own",
             "hint": "A heartbeat wakes the master now and then; it only speaks up when it matters.",

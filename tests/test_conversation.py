@@ -52,7 +52,8 @@ async def test_simple_answer(
     assert payload["messages"][0]["role"] == "system"
     assert "You are a test." in payload["messages"][0]["content"]
     assert payload["messages"][-1] == {"role": "user", "content": "hi"}
-    assert "tools" not in payload
+    # No HA tools, only AAC's own memory
+    assert sorted(t["function"]["name"] for t in payload["tools"]) == ["forget", "recall", "remember"]
 
 
 async def test_tool_call_round_trip(
@@ -70,7 +71,7 @@ async def test_tool_call_round_trip(
                         {
                             "id": "call_1",
                             "type": "function",
-                            "function": {"name": "homeassistant__GetLiveContext", "arguments": "{}"},
+                            "function": {"name": "assist__homeassistant__GetLiveContext", "arguments": "{}"},
                         }
                     ],
                 }
@@ -93,7 +94,10 @@ async def test_tool_call_round_trip(
     assert result.response.speech["plain"]["speech"] == "All quiet."
 
     second = aioclient_mock.mock_calls[-1][2]
-    assert any(t["function"]["name"] == "homeassistant__GetLiveContext" for t in second["tools"])
+    names = [t["function"]["name"] for t in second["tools"]]
+    # Several APIs (Assist + AAC memory): HA prefixes tools with the API id
+    assert "assist__homeassistant__GetLiveContext" in names
+    assert "aac-memory__recall" in names
     assert second["messages"][-2]["tool_calls"][0]["id"] == "call_1"
     assert second["messages"][-1]["role"] == "tool"
     assert second["messages"][-1]["tool_call_id"] == "call_1"

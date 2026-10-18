@@ -69,6 +69,15 @@ class OpenAICompatProvider:
         )
         return [m["id"] for m in data.get("data", []) if "id" in m]
 
+    async def embed(self, model: str, texts: list[str]) -> list[list[float]]:
+        """Embedding vectors for texts (OpenAI /embeddings)."""
+        data = await self._request("POST", "/embeddings", json={"model": model, "input": texts})
+        try:
+            items = sorted(data["data"], key=lambda d: d.get("index", 0))
+            return [item["embedding"] for item in items]
+        except (KeyError, TypeError) as err:
+            raise ProviderError(f"Unexpected response: {str(data)[:200]}") from err
+
     async def chat(
         self,
         model: str,

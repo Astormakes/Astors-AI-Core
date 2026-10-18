@@ -18,9 +18,13 @@ from .conftest import setup_aac, store_data
 
 LIVE_URL = os.environ.get("AAC_LIVE_URL", "http://127.0.0.1:8080/v1")
 
+# Optional embedding server for the memory test (e.g. llama-server --embeddings with bge-m3)
+EMBED_URL = os.environ.get("AAC_LIVE_EMBED_URL")
+EMBED_HOST = EMBED_URL.split("/")[2].split(":")[0] if EMBED_URL else "127.0.0.1"
+
 pytestmark = [
     pytest.mark.live,
-    pytest.mark.allow_hosts(["127.0.0.1", "::1", "localhost"]),
+    pytest.mark.allow_hosts(["127.0.0.1", "::1", "localhost", EMBED_HOST]),
 ]
 
 
@@ -94,3 +98,38 @@ async def test_live_heartbeat_speaks_up(hass: HomeAssistant, hass_storage, mock_
     print(f"\nHeartbeat with smoke: {run.status}: {run.result}")
     assert "smoke" in run.context.lower(), "smoke detector not in the snapshot"
     assert run.status == "done" and "smoke" in run.result.lower()
+
+
+async def test_live_memory_round_trip(hass: HomeAssistant, hass_storage, mock_entry, socket_enabled):
+    """Tell it something in one chat, ask in a new one (needs remember + context/recall)."""
+    import pytest_socket
+
+    # The HA test plugin pins sockets to 127.0.0.1; the embedding server may live elsewhere
+    pytest_socket.socket_allow_hosts(["127.0.0.1", "::1", EMBED_HOST], allow_unix_socket=True)
+    data = store_data(prompt="You are a helpful home assistant. Answer briefly.")
+    data["data"]["models"][0].update(base_url=LIVE_URL, api_key=os.environ.get("AAC_LIVE_KEY"), model="any")
+    if EMBED_URL:
+        data["data"]["models"].append(
+            {"id": "m_embed", "name": "embed", "base_url": EMBED_URL,
+             "api_key": os.environ.get("AAC_LIVE_EMBED_KEY"), "model": "bge-m3"}
+        )
+        data["data"]["memory"] = {"enabled": True, "embed_model": "m_embed"}
+    hass_storage[STORAGE_KEY] = data
+    await setup_aac(hass, mock_entry)
+
+    await conversation.async_converse(
+        hass, "Please remember: the oat milk from Alpro was great, the soy milk from Lidl was awful.",
+        None, Context(), agent_id=mock_entry.entry_id,
+    )
+    stats = await mock_entry.runtime_data.memory.async_count()
+    print(f"\nStored memories: {stats}")
+    assert stats["total"] >= 1, "the model did not call remember"
+    if EMBED_URL:
+        assert stats["embedded"] == stats["total"]
+
+    result = await conversation.async_converse(
+        hass, "Which plant-based milk should I buy again?", None, Context(), agent_id=mock_entry.entry_id
+    )
+    speech = result.response.speech["plain"]["speech"]
+    print(f"Recall answer: {speech}")
+    assert "alpro" in speech.lower() or "oat" in speech.lower()

@@ -363,6 +363,12 @@ class AacPanel extends HTMLElement {
     try { this._runs = await this._ws("aac/runs", { kind: "auto" }); } catch (e) { this._runs = []; }
     this._render();
   }
+  async _loadMemory() {
+    try {
+      this._memory = await this._ws("aac/memory/list", this._memQuery ? { query: this._memQuery } : { unconfirmed: !!this._memOpenOnly });
+    } catch (e) { this._memory = { memories: [], stats: {}, error: e.message }; }
+    this._render();
+  }
   async _openChat(id, navigate = true) {
     try {
       this._chat = await this._ws("aac/chat/get", { chat_id: id });
@@ -415,6 +421,7 @@ class AacPanel extends HTMLElement {
       this._form = t ? { ...t, msg: null } : null;
     }
     if (view.startsWith("settings/audio")) this._loadAudio();
+    if (view === "settings/memory") this._loadMemory();
     if (view.startsWith("chat/") && view !== "chat/new") { this._openChat(view.slice(5)); return; }
     if (view === "chat/new") this._chat = null;
     if (view.startsWith("run/")) this._openRun(view.slice(4));
@@ -531,7 +538,7 @@ class AacPanel extends HTMLElement {
           ${this._tab("settings/audio", "Audio pipeline")}
           ${this._tab("settings/audio/sources", "Sources", "", "deep")}
           ${this._tab("settings/mcp", "MCP", "", "soon")}
-          ${this._tab("settings/memory", "Memory", "", "soon")}
+          ${this._tab("settings/memory", "Memory", this._stepOpen("memory") ? '<span class="dot open"></span>' : "")}
         </div>
       </div>
     </nav>`;
@@ -562,8 +569,7 @@ class AacPanel extends HTMLElement {
     if (v === "settings/audio/sources") return this._renderSources();
     if (v === "settings/mcp") return this._renderSoon("MCP",
       "AAC as an MCP server (memory, modules and tools for other clients) and as an MCP client (plug in outside tools). Home Assistant's own AI features (Assist API, HA's MCP server) can be plugged in here as tools; AAC never changes HA's own voice or AI setup.");
-    if (v === "settings/memory") return this._renderSoon("MEMORY",
-      "Facts, timeline, vectors and people in one local SQLite store, with a browser to see, edit and delete everything.");
+    if (v === "settings/memory") return this._renderMemory();
     return this._page("AAC", "", '<div class="card"><p>Loading…<span class="cursor"></span></p></div>');
   }
 
@@ -825,6 +831,59 @@ class AacPanel extends HTMLElement {
       </div>`);
   }
 
+  // ---------------------------------------------------------------- settings: memory
+  _renderMemory() {
+    const st = this._state;
+    if (!st) return this._page("MEMORY", "", "");
+    const mem = st.memory;
+    const m = this._memory;
+    const stats = m?.stats || {};
+    const models = this._allModels();
+    const opts = [`<option value="" ${mem.embed_model ? "" : "selected"}>— none (keywords only) —</option>`]
+      .concat(models.map((w) => `<option value="${esc(w.id)}" ${w.id === mem.embed_model ? "selected" : ""}>${esc(w.label)} · ${esc(w.detail)}${w.online ? "" : " (offline)"}</option>`));
+    const rows = !m ? '<p class="hint">Loading…</p>' : !m.memories.length ? `<p class="hint">${this._memQuery ? "Nothing found." : "Nothing remembered yet."}</p>` :
+      m.memories.map((x) => `
+        <div class="src">
+          <span class="dot ${x.confirmed ? "ok" : "open"}"></span>
+          <div style="flex:1;min-width:0">
+            <div class="n">${esc(x.text)}</div>
+            <div class="m">${esc(x.kind)} · ${esc(x.source)} · ${esc(fmtTime(x.updated))}${x.embedded ? "" : " · no vector"}${x.confirmed ? "" : " · <b style='color:var(--amber)'>unconfirmed</b>"}</div>
+          </div>
+          <span class="actions" style="margin:0">
+            ${x.confirmed ? "" : `<button class="btn primary" data-mem-confirm="${esc(x.id)}">Confirm</button>`}
+            <button class="btn" data-mem-edit="${esc(x.id)}">Edit</button>
+            <button class="icon-btn" data-mem-delete="${esc(x.id)}" title="Forget">${icon("trash")}</button>
+          </span>
+        </div>`).join("");
+    return this._page("MEMORY", `${stats.total ?? "…"} memories${stats.unconfirmed ? ` · ${stats.unconfirmed} unconfirmed` : ""}`, `
+      <div class="cards">
+        <div class="card"><h2>SETTINGS</h2>
+          <p>One local file in Home Assistant's config folder (included in HA backups). Search uses keywords and, with an embedding model, meaning ("cellar" finds "basement"). The master always has remember / recall / forget.</p>
+          <label class="check"><input type="checkbox" id="mem-enabled" ${mem.enabled ? "checked" : ""}>Memory on</label>
+          <label for="mem-model">Embedding model</label><select id="mem-model">${opts.join("")}</select>
+          <p class="hint" style="margin-top:.5em">A multilingual one is best (e.g. bge-m3 via llama-server <code>--embeddings</code>). Add it under Models first.</p>
+          <div class="kv"><span class="k">Stored</span><span class="v">${esc(stats.total ?? "…")}</span><span class="k">With vectors</span><span class="v">${esc(stats.embedded ?? "…")}</span><span class="k">Unconfirmed</span><span class="v">${esc(stats.unconfirmed ?? "…")}</span></div>
+          <div class="actions"><button class="btn primary" id="mem-save">Save</button><button class="btn" id="mem-reembed">Re-embed all</button></div>
+          ${this._flashHtml()}
+        </div>
+        <div class="card"><h2>REMEMBER</h2>
+          <p>Tell AAC something directly. "agent believes" entries are AAC's own conclusions; they count as facts only once you confirm them.</p>
+          <label for="mem-text">Text</label><textarea id="mem-text" class="thin-scroll" style="min-height:5em" placeholder="e.g. Oat milk from brand X was good."></textarea>
+          <label for="mem-kind">Kind</label>
+          <select id="mem-kind">${["note", "fact", "preference", "event"].map((k) => `<option>${k}</option>`).join("")}</select>
+          <div class="actions"><button class="btn primary" id="mem-add">Remember</button></div>
+        </div>
+      </div>
+      <div class="card"><h2>BROWSE</h2>
+        <div class="row">
+          <div><input id="mem-q" value="${esc(this._memQuery || "")}" placeholder="Search by words or meaning…" aria-label="Search memories"></div>
+          <div style="flex:none" class="actions"><button class="btn" id="mem-search">Search</button></div>
+        </div>
+        <label class="check"><input type="checkbox" id="mem-open" ${this._memOpenOnly ? "checked" : ""}>Only unconfirmed</label>
+        ${rows}
+      </div>`);
+  }
+
   // ---------------------------------------------------------------- settings: audio
   _sourceList(sources) {
     if (!sources.length) return '<p class="hint">No audio sources found.</p>';
@@ -944,6 +1003,49 @@ class AacPanel extends HTMLElement {
     sr.querySelector("#hb-run")?.addEventListener("click", () => this._runHeartbeat());
     sr.querySelector("#t-save")?.addEventListener("click", () => this._saveTrigger());
     sr.querySelector("#t-delete")?.addEventListener("click", () => this._deleteTrigger());
+
+    // memory
+    const memSearch = () => { this._memQuery = sr.querySelector("#mem-q").value.trim(); this._memOpenOnly = false; this._loadMemory(); };
+    sr.querySelector("#mem-search")?.addEventListener("click", memSearch);
+    sr.querySelector("#mem-q")?.addEventListener("keydown", (e) => { if (e.key === "Enter") memSearch(); });
+    sr.querySelector("#mem-open")?.addEventListener("change", (e) => { this._memOpenOnly = e.target.checked; this._memQuery = ""; this._loadMemory(); });
+    sr.querySelector("#mem-save")?.addEventListener("click", async () => {
+      try {
+        this._state = await this._ws("aac/memory/settings", { enabled: sr.querySelector("#mem-enabled").checked, embed_model: sr.querySelector("#mem-model").value || null });
+        this._flash = { ok: true, text: "Saved. A new embedding model fills in vectors in the background." };
+      } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
+      this._render();
+    });
+    sr.querySelector("#mem-reembed")?.addEventListener("click", async () => {
+      this._flash = { ok: true, text: "Embedding…" }; this._render();
+      try { const r = await this._ws("aac/memory/reembed"); this._flash = { ok: true, text: `Done: ${r.embedded} memories got vectors.` }; }
+      catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
+      await this._loadMemory();
+    });
+    sr.querySelector("#mem-add")?.addEventListener("click", async () => {
+      const text = sr.querySelector("#mem-text").value.trim();
+      if (!text) return;
+      await this._ws("aac/memory/save", { text, kind: sr.querySelector("#mem-kind").value });
+      sr.querySelector("#mem-text").value = "";
+      this._memQuery = "";
+      await this._loadMemory();
+    });
+    sr.querySelectorAll("[data-mem-confirm]").forEach((el) => el.addEventListener("click", async () => {
+      await this._ws("aac/memory/save", { memory_id: el.dataset.memConfirm, confirmed: true });
+      await this._loadMemory();
+    }));
+    sr.querySelectorAll("[data-mem-edit]").forEach((el) => el.addEventListener("click", async () => {
+      const item = this._memory.memories.find((x) => x.id === el.dataset.memEdit);
+      const text = prompt("Edit memory", item?.text || "");
+      if (text === null || !text.trim()) return;
+      await this._ws("aac/memory/save", { memory_id: el.dataset.memEdit, text: text.trim(), confirmed: true });
+      await this._loadMemory();
+    }));
+    sr.querySelectorAll("[data-mem-delete]").forEach((el) => el.addEventListener("click", async () => {
+      if (!confirm("Forget this memory?")) return;
+      await this._ws("aac/memory/delete", { memory_id: el.dataset.memDelete });
+      await this._loadMemory();
+    }));
   }
 
   async _send() {

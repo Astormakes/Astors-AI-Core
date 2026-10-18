@@ -35,7 +35,14 @@ from .const import (
     DOMAIN,
     LOGGER,
 )
+from homeassistant.helpers import llm
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
 from .chats import ChatStore
+from .memory import MemoryStore, memory_path
+from .memory_api import AACMemoryAPI
+from .models import resolve_model
+from .provider import OpenAICompatProvider
 from .runs import RunRegistry
 from .store import CONF_MASTER_MODEL, AACStore
 from .triggers import TriggerEngine
@@ -55,6 +62,7 @@ class AACData:
     version: str
     runs: RunRegistry
     chats: ChatStore
+    memory: MemoryStore | None = None
     triggers: TriggerEngine | None = None
 
 
@@ -84,6 +92,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     chats = ChatStore(hass)
     await chats.async_load()
     entry.runtime_data = AACData(store, version, runs, chats)
+
+    async def embed(texts: list[str]):
+        endpoint = resolve_model(hass, store, store.memory["embed_model"])
+        if endpoint is None:
+            return None
+        provider = OpenAICompatProvider(
+            async_get_clientsession(hass), endpoint.base_url, endpoint.api_key
+        )
+        return await provider.embed(endpoint.model, texts), endpoint.model
+
+    memory = MemoryStore(hass, memory_path(hass), embed)
+    await memory.async_open()
+    entry.runtime_data.memory = memory
+    entry.async_on_unload(llm.async_register_api(hass, AACMemoryAPI(hass=hass, id="aac_memory", name="AAC memory", memory=memory)))
 
     await panel_custom.async_register_panel(
         hass,
@@ -122,7 +144,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     """Unload a config entry."""
     frontend.async_remove_panel(hass, PANEL_URL, warn_if_unknown=False)
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded and entry.runtime_data.memory:
+        await entry.runtime_data.memory.async_close()
+    return unloaded
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
