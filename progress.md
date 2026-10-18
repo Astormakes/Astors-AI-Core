@@ -12,17 +12,19 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - Keep docs tidy: design decisions go into `docs/assistant-framework.md`, status goes here, no duplicate notes
 - Version lives in `custom_components/aac/manifest.json` (`version`). Bump it for every release and tag it (`v0.1.0` …) so HACS shows the version
 
-## Current state (2026-10-18) – v0.2.0
+## Current state (2026-10-18) – v0.3.0
 - HACS-installable custom integration `aac` (`custom_components/aac`, `hacs.json`, min HA 2026.10.0), single instance
 - **Everything is configured in the AAC panel** (spec: `docs/design.md`). The config flow is one click with no fields; settings live in `.storage/aac.config` (`store.py`), not in the config entry
   - Entry v1 (0.1.0, server/model in the entry) is migrated to v2 automatically (`async_migrate_entry`)
-- Panel: `www/aac-panel.js`, plain web component, no build step, no external resources. Served at `/aac_static/`, registered as sidebar panel `aac` (admin only)
-  - Segments: SETUP (hides when done, eye shows it again) · CHAT (master) · WORKERS (auto/manual, + button) · SETTINGS (master agent, pipelines flow, MCP + memory as "planned")
-- Backend for the panel: `websocket.py` (`aac/state`, `aac/master/update`, `aac/workers`, `aac/worker/save|delete`, `aac/server/models`, `aac/setup/skip`, `aac/pipelines`, `aac/pipeline/route`, `aac/chat`)
+- **HA's own AI is never changed** (user decision): no editing of Assist pipelines; HA AI only as optional tools. Other integrations are only read
+- Panel: `www/aac-panel.js`, plain web component, no build step, no external resources. Served at `/aac_static/`, registered as sidebar panel `aac` (admin only). Responsive phone → 4K TV (fluid em scaling, drawer ≤ 900 px, touch targets, keyboard/remote focus), details in `docs/design.md`
+  - Segments: SETUP (hides when done, eye shows it again) · CHAT (master) · WORKERS (auto/manual, + button) · SETTINGS (master agent, audio pipeline + Sources, MCP + memory as "planned")
+- Backend for the panel: `websocket.py` (`aac/state`, `aac/master/update`, `aac/workers`, `aac/worker/save|delete`, `aac/server/models`, `aac/setup/skip`, `aac/audio`, `aac/chat`)
+- Audio pipeline (`audio.py`): AAC's own, separate from HA's Assist. Not built yet; the panel shows the planned stages and the candidate sources found in HA (assist satellites, cameras, browser), all "not connected"
 - Workers (`workers.py`): manual ones from the store; auto = every model of servers found in HA (llama.cpp, Ollama entries) + servers of manual workers. Ids: `m_xxxxxxxx`, `auto|<source>|<model>`
-- Setup steps + pipeline overview/routing: `status.py`. Routing remembers the previous agent and restores it
+- Setup steps: `status.py` (connect a model, choose the master)
 - Conversation agent = the master: reads model/prompt/tools from the store at every message (no reload needed), OpenAI-compatible chat via `provider.py`, HA tool calling loop through HA's `ChatLog`
-- Tests: 16 mocked, 2 live. In the real HA: migration ok, panel registered, chat via panel API answers with real tool calls
+- Tests: 15 mocked, 2 live. In the real HA: migration ok, panel registered, chat via panel API answers with real tool calls, audio sources found (LVA satellite)
 
 ## Testing in the real HA
 - No GitHub/HACS round trip needed: `scripts/deploy_ha.sh` copies the working tree over SSH and restarts HA Core (`AAC_HA_SSH`, `AAC_SSH_KEY`; real values in `docs/dev-environment.md`)
@@ -46,7 +48,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - License not chosen yet (open decision in the framework doc), so no LICENSE file
 
 ## Next steps
-- User: look at the panel in HA, give feedback on look and flow; GitHub release `v0.2.0`, then try installing via HACS once
-- Optional: route the GLaDOS pipeline through AAC from the panel (not done, the user's call)
-- Contracts first (framework doc, "Rough order" step 0): event format, module manifest, memory interface, agent template, broker request, domain format
+- User: look at the panel in HA (2K monitor, phone), give feedback; GitHub release `v0.3.0`, then try installing via HACS once
+- Audio hub: first real source (probably the browser mic or a Wyoming/ESPHome satellite streaming continuously), ring buffer + VAD
+- Contracts first (framework "Rough order" step 0) before memory/context engine
 - Then core + memory + context engine

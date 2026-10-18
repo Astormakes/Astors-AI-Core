@@ -20,12 +20,8 @@ from .const import (
     DOMAIN,
 )
 from .provider import ProviderAuthError, ProviderError
-from .status import (
-    aac_agent_entity_id,
-    async_route_pipeline,
-    pipelines_overview,
-    setup_steps,
-)
+from .audio import audio_overview
+from .status import aac_agent_entity_id, setup_steps
 from .store import CONF_WORKER, AACStore
 from .workers import async_list_models, async_overview
 
@@ -41,8 +37,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_worker_delete,
         ws_server_models,
         ws_setup_skip,
-        ws_pipelines,
-        ws_pipeline_route,
+        ws_audio,
         ws_chat,
     ):
         websocket_api.async_register_command(hass, command)
@@ -62,7 +57,7 @@ def _state(hass: HomeAssistant, store: AACStore, entry_id: str) -> dict[str, Any
         "version": entry.runtime_data.version if entry else None,
         "agent_entity_id": aac_agent_entity_id(hass, entry_id),
         "master": store.master,
-        "setup": setup_steps(hass, store, entry_id),
+        "setup": setup_steps(hass, store),
         "llm_apis": [{"id": api.id, "name": api.name} for api in llm.async_get_apis(hass)],
     }
 
@@ -190,35 +185,13 @@ async def ws_setup_skip(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], _state(hass, store, entry_id))
 
 
-@websocket_api.websocket_command({vol.Required("type"): "aac/pipelines"})
+@websocket_api.websocket_command({vol.Required("type"): "aac/audio"})
 @websocket_api.require_admin
 @callback
-def ws_pipelines(hass: HomeAssistant, connection, msg) -> None:
-    """Voice pipelines as stage chains."""
-    if loaded := _loaded(hass, connection, msg):
-        connection.send_result(msg["id"], pipelines_overview(hass, loaded[1]))
-
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): "aac/pipeline/route",
-        vol.Required("pipeline_id"): str,
-        vol.Required("enable"): bool,
-    }
-)
-@websocket_api.require_admin
-@websocket_api.async_response
-async def ws_pipeline_route(hass: HomeAssistant, connection, msg) -> None:
-    """Route a pipeline through AAC (or restore its old agent)."""
-    if not (loaded := _loaded(hass, connection, msg)):
-        return
-    store, entry_id = loaded
-    try:
-        await async_route_pipeline(hass, store, entry_id, msg["pipeline_id"], msg["enable"])
-    except Exception as err:  # noqa: BLE001 - report anything to the panel
-        connection.send_error(msg["id"], "route_failed", str(err))
-        return
-    connection.send_result(msg["id"], pipelines_overview(hass, entry_id))
+def ws_audio(hass: HomeAssistant, connection, msg) -> None:
+    """AAC's own audio pipeline: stages and candidate sources."""
+    if _loaded(hass, connection, msg):
+        connection.send_result(msg["id"], audio_overview(hass))
 
 
 @websocket_api.websocket_command(

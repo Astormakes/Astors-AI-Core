@@ -4,7 +4,6 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from homeassistant.core import HomeAssistant
-from homeassistant.setup import async_setup_component
 
 from .conftest import BASE_URL, MODEL, WORKER, setup_aac
 
@@ -23,12 +22,12 @@ async def test_state_fresh(hass: HomeAssistant, hass_ws_client, mock_entry):
     msg = await ws.receive_json()
     assert msg["success"]
     state = msg["result"]
-    assert state["version"] == "0.2.0"
+    assert state["version"] == "0.3.0"
     assert state["agent_entity_id"] == "conversation.aac"
     steps = {s["id"]: s for s in state["setup"]}
     assert not steps["worker"]["done"]
     assert not steps["master"]["done"]
-    assert steps["pipeline"]["optional"]
+    assert "pipeline" not in steps  # HA's voice setup is not AAC's business
 
 
 async def test_worker_master_chat_flow(
@@ -118,48 +117,22 @@ async def test_delete_master_worker(hass: HomeAssistant, hass_ws_client, mock_en
     assert mock_entry.runtime_data.store.master["worker"] is None
 
 
-async def test_skip_step(hass: HomeAssistant, hass_ws_client, mock_entry):
-    """Optional steps can be skipped."""
+async def test_audio_overview(hass: HomeAssistant, hass_ws_client, mock_entry):
+    """AAC's own audio pipeline: planned stages and sources found in HA (read only)."""
+    hass.states.async_set("assist_satellite.kitchen", "idle", {"friendly_name": "Kitchen satellite"})
+    hass.states.async_set("camera.door", "idle", {"friendly_name": "Door"})
     await setup_aac(hass, mock_entry)
     ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/setup/skip", "step": "pipeline", "skipped": True})
-    steps = {s["id"]: s for s in (await ws.receive_json())["result"]["setup"]}
-    assert steps["pipeline"]["skipped"]
-
-
-async def test_pipelines_route_and_restore(
-    hass: HomeAssistant, hass_ws_client, mock_entry, configured
-):
-    """A pipeline can be routed through AAC and restored."""
-    assert await async_setup_component(hass, "assist_pipeline", {})
-    await setup_aac(hass, mock_entry)
-    ws = await hass_ws_client(hass)
-
-    await ws.send_json_auto_id({"type": "aac/pipelines"})
-    pipelines = (await ws.receive_json())["result"]
-    assert pipelines
-    pipe = pipelines[0]
-    assert [s["kind"] for s in pipe["stages"]] == [
-        "wake word", "speech to text", "agent", "text to speech"
-    ]
-    before = pipe["stages"][2]["engine"]
-    assert not pipe["routed"]
-
-    await ws.send_json_auto_id(
-        {"type": "aac/pipeline/route", "pipeline_id": pipe["id"], "enable": True}
-    )
-    routed = (await ws.receive_json())["result"][0]
-    assert routed["routed"] and routed["stages"][2]["engine"] == "conversation.aac"
-
-    await ws.send_json_auto_id({"type": "aac/state"})
-    steps = {s["id"]: s for s in (await ws.receive_json())["result"]["setup"]}
-    assert steps["pipeline"]["done"]
-
-    await ws.send_json_auto_id(
-        {"type": "aac/pipeline/route", "pipeline_id": pipe["id"], "enable": False}
-    )
-    restored = (await ws.receive_json())["result"][0]
-    assert not restored["routed"] and restored["stages"][2]["engine"] == before
+    await ws.send_json_auto_id({"type": "aac/audio"})
+    audio = (await ws.receive_json())["result"]
+    assert audio["built"] is False
+    assert [s["id"] for s in audio["stages"]][0] == "source"
+    assert audio["stages"][-1]["id"] == "master"
+    sources = {s["id"]: s for s in audio["sources"]}
+    assert sources["assist_satellite.kitchen"]["kind"] == "voice satellite"
+    assert sources["camera.door"]["name"] == "Door"
+    assert "browser" in sources
+    assert not any(s["connected"] for s in audio["sources"])
 
 
 async def test_admin_only(hass: HomeAssistant, hass_ws_client, hass_read_only_access_token, mock_entry):
