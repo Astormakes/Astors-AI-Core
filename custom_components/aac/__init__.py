@@ -37,7 +37,7 @@ from .const import (
 )
 from .chats import ChatStore
 from .runs import RunRegistry
-from .store import CONF_WORKER, AACStore
+from .store import CONF_MASTER_MODEL, AACStore
 from .triggers import TriggerEngine
 
 PLATFORMS = (Platform.CONVERSATION,)
@@ -133,7 +133,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         store = AACStore(hass)
         await store.async_load()
         if entry.data.get(CONF_BASE_URL) and entry.data.get(CONF_MODEL):
-            worker = await store.async_save_worker(
+            cfg = await store.async_save_model(
                 {
                     "name": entry.data[CONF_MODEL],
                     CONF_BASE_URL: entry.data[CONF_BASE_URL],
@@ -152,7 +152,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
                 if k in entry.options
             }
-            await store.async_update_master({**master, CONF_WORKER: worker["id"]})
+            await store.async_update_master({**master, CONF_MASTER_MODEL: cfg["id"]})
         hass.config_entries.async_update_entry(
             entry, data={}, options={}, title=DEFAULT_NAME, version=2
         )

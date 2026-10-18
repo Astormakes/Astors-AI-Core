@@ -25,8 +25,8 @@ from .audio import audio_overview
 from .master import async_run_master
 from .runs import SIGNAL_UPDATE
 from .status import aac_agent_entity_id, setup_steps
-from .store import CONF_WORKER, AACStore
-from .workers import async_list_models, async_overview
+from .store import CONF_MASTER_MODEL, AACStore
+from .models import async_list_models, async_overview
 
 
 @callback
@@ -35,9 +35,9 @@ def async_register(hass: HomeAssistant) -> None:
     for command in (
         ws_state,
         ws_master_update,
-        ws_workers,
-        ws_worker_save,
-        ws_worker_delete,
+        ws_models,
+        ws_model_save,
+        ws_model_delete,
         ws_server_models,
         ws_setup_skip,
         ws_audio,
@@ -98,7 +98,7 @@ def ws_state(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "aac/master/update",
-        vol.Optional(CONF_WORKER): vol.Any(str, None),
+        vol.Optional(CONF_MASTER_MODEL): vol.Any(str, None),
         vol.Optional(CONF_PROMPT): str,
         vol.Optional(CONF_LLM_HASS_API): [str],
         vol.Optional(CONF_TEMPERATURE): vol.All(vol.Coerce(float), vol.Range(0, 2)),
@@ -118,19 +118,19 @@ async def ws_master_update(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], _state(hass, store, entry_id))
 
 
-@websocket_api.websocket_command({vol.Required("type"): "aac/workers"})
+@websocket_api.websocket_command({vol.Required("type"): "aac/models"})
 @websocket_api.require_admin
 @websocket_api.async_response
-async def ws_workers(hass: HomeAssistant, connection, msg) -> None:
-    """Manual + auto workers with live state."""
+async def ws_models(hass: HomeAssistant, connection, msg) -> None:
+    """Manual + auto models with live state."""
     if loaded := _loaded(hass, connection, msg):
         connection.send_result(msg["id"], await async_overview(hass, loaded[0]))
 
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): "aac/worker/save",
-        vol.Optional("worker_id"): str,
+        vol.Required("type"): "aac/model/save",
+        vol.Optional("model_id"): str,
         vol.Required("name"): vol.All(str, vol.Length(min=1)),
         vol.Required(CONF_BASE_URL): vol.All(str, vol.Length(min=1)),
         vol.Optional(CONF_API_KEY): vol.Any(str, None),
@@ -139,28 +139,28 @@ async def ws_workers(hass: HomeAssistant, connection, msg) -> None:
 )
 @websocket_api.require_admin
 @websocket_api.async_response
-async def ws_worker_save(hass: HomeAssistant, connection, msg) -> None:
-    """Add or change a manual worker."""
+async def ws_model_save(hass: HomeAssistant, connection, msg) -> None:
+    """Add or change a manual model."""
     if not (loaded := _loaded(hass, connection, msg)):
         return
-    worker = {k: msg[k] for k in ("name", CONF_BASE_URL, CONF_MODEL)}
-    if "worker_id" in msg:
-        worker["id"] = msg["worker_id"]
+    cfg = {k: msg[k] for k in ("name", CONF_BASE_URL, CONF_MODEL)}
+    if "model_id" in msg:
+        cfg["id"] = msg["model_id"]
     if CONF_API_KEY in msg:
-        worker[CONF_API_KEY] = msg[CONF_API_KEY]
-    saved = await loaded[0].async_save_worker(worker)
+        cfg[CONF_API_KEY] = msg[CONF_API_KEY]
+    saved = await loaded[0].async_save_model(cfg)
     connection.send_result(msg["id"], {"id": saved["id"]})
 
 
 @websocket_api.websocket_command(
-    {vol.Required("type"): "aac/worker/delete", vol.Required("worker_id"): str}
+    {vol.Required("type"): "aac/model/delete", vol.Required("model_id"): str}
 )
 @websocket_api.require_admin
 @websocket_api.async_response
-async def ws_worker_delete(hass: HomeAssistant, connection, msg) -> None:
-    """Remove a manual worker."""
+async def ws_model_delete(hass: HomeAssistant, connection, msg) -> None:
+    """Remove a manual model."""
     if loaded := _loaded(hass, connection, msg):
-        await loaded[0].async_delete_worker(msg["worker_id"])
+        await loaded[0].async_delete_model(msg["model_id"])
         connection.send_result(msg["id"])
 
 
@@ -169,18 +169,18 @@ async def ws_worker_delete(hass: HomeAssistant, connection, msg) -> None:
         vol.Required("type"): "aac/server/models",
         vol.Required(CONF_BASE_URL): str,
         vol.Optional(CONF_API_KEY): vol.Any(str, None),
-        vol.Optional("worker_id"): str,
+        vol.Optional("model_id"): str,
     }
 )
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_server_models(hass: HomeAssistant, connection, msg) -> None:
-    """Test a server and list its models (for the worker form)."""
+    """Test a server and list its models (for the model form)."""
     if not (loaded := _loaded(hass, connection, msg)):
         return
     api_key = msg.get(CONF_API_KEY)
-    if not api_key and (worker := loaded[0].get_worker(msg.get("worker_id", ""))):
-        api_key = worker.get(CONF_API_KEY)
+    if not api_key and (cfg := loaded[0].get_model(msg.get("model_id", ""))):
+        api_key = cfg.get(CONF_API_KEY)
     try:
         models = await async_list_models(hass, msg[CONF_BASE_URL], api_key, timeout=10)
     except ProviderAuthError:

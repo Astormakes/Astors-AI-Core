@@ -1,13 +1,13 @@
 """Workers: the models AAC can use.
 
-- Manual workers are made by the user in the panel (stored in AACStore).
-- Auto workers are found: model servers already configured in HA
-  (llama.cpp, Ollama integrations) and the servers of manual workers.
-  Every model such a server offers becomes an auto worker.
+- Manual models are made by the user in the panel (stored in AACStore).
+- Auto models are found: model servers already configured in HA
+  (llama.cpp, Ollama integrations) and the servers of manual models.
+  Every model such a server offers becomes an auto model.
 
-A worker id resolves to (base_url, api_key, model):
+A model id resolves to (base_url, api_key, model):
 - manual: "m_xxxxxxxx"
-- auto:   "auto|<source>|<model>", source = HA entry id or "w:<manual worker id>"
+- auto:   "auto|<source>|<model>", source = HA entry id or "w:<manual model id>"
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ class Server:
 
 @dataclass
 class Endpoint:
-    """What a worker resolves to."""
+    """What a model id resolves to."""
 
     base_url: str
     api_key: str | None
@@ -55,11 +55,11 @@ class Endpoint:
 
 def known_servers(hass: HomeAssistant, store: AACStore) -> list[Server]:
     servers: dict[str, Server] = {}
-    for worker in store.workers:
-        url = worker[CONF_BASE_URL].rstrip("/")
+    for cfg in store.models:
+        url = cfg[CONF_BASE_URL].rstrip("/")
         servers.setdefault(
             url,
-            Server(f"w:{worker['id']}", worker["name"], url, worker.get(CONF_API_KEY)),
+            Server(f"w:{cfg['id']}", cfg["name"], url, cfg.get(CONF_API_KEY)),
         )
     for domain, (label, get_url) in _KNOWN_INTEGRATIONS.items():
         for entry in hass.config_entries.async_entries(domain):
@@ -78,19 +78,19 @@ def _server_for_source(hass: HomeAssistant, store: AACStore, source: str):
     return next((s for s in known_servers(hass, store) if s.source == source), None)
 
 
-def resolve_worker(
-    hass: HomeAssistant, store: AACStore, worker_id: str | None
+def resolve_model(
+    hass: HomeAssistant, store: AACStore, model_id: str | None
 ) -> Endpoint | None:
-    """Turn a worker id into something the provider can call."""
-    if not worker_id:
+    """Turn a model id into something the provider can call."""
+    if not model_id:
         return None
-    if worker_id.startswith("auto|"):
-        _, source, model = worker_id.split("|", 2)
+    if model_id.startswith("auto|"):
+        _, source, model = model_id.split("|", 2)
         if server := _server_for_source(hass, store, source):
             return Endpoint(server.base_url, server.api_key, model)
         return None
-    if worker := store.get_worker(worker_id):
-        return Endpoint(worker[CONF_BASE_URL], worker.get(CONF_API_KEY), worker[CONF_MODEL])
+    if cfg := store.get_model(model_id):
+        return Endpoint(cfg[CONF_BASE_URL], cfg.get(CONF_API_KEY), cfg[CONF_MODEL])
     return None
 
 
@@ -112,25 +112,25 @@ async def _probe(hass: HomeAssistant, server: Server) -> dict[str, Any]:
 
 
 async def async_overview(hass: HomeAssistant, store: AACStore) -> dict[str, Any]:
-    """Everything the WORKERS segment shows, with live state."""
+    """Everything the Models page shows, with live state."""
     servers = known_servers(hass, store)
     probes = await asyncio.gather(*(_probe(hass, s) for s in servers))
     by_url = {s.base_url: p for s, p in zip(servers, probes, strict=True)}
 
     manual = []
     taken: set[tuple[str, str]] = set()
-    for worker in store.workers:
-        url = worker[CONF_BASE_URL].rstrip("/")
+    for cfg in store.models:
+        url = cfg[CONF_BASE_URL].rstrip("/")
         probe = by_url.get(url, {"online": False, "models": [], "error": None})
-        taken.add((url, worker[CONF_MODEL]))
+        taken.add((url, cfg[CONF_MODEL]))
         manual.append(
             {
-                "id": worker["id"],
-                "name": worker["name"],
-                "base_url": worker[CONF_BASE_URL],
-                "model": worker[CONF_MODEL],
-                "has_key": bool(worker.get(CONF_API_KEY)),
-                "online": probe["online"] and worker[CONF_MODEL] in probe["models"],
+                "id": cfg["id"],
+                "name": cfg["name"],
+                "base_url": cfg[CONF_BASE_URL],
+                "model": cfg[CONF_MODEL],
+                "has_key": bool(cfg.get(CONF_API_KEY)),
+                "online": probe["online"] and cfg[CONF_MODEL] in probe["models"],
                 "error": probe["error"],
             }
         )
@@ -144,7 +144,7 @@ async def async_overview(hass: HomeAssistant, store: AACStore) -> dict[str, Any]
                 "base_url": server.base_url,
                 "online": probe["online"],
                 "error": probe["error"],
-                "workers": [
+                "models": [
                     {"id": f"auto|{server.source}|{model}", "model": model}
                     for model in probe["models"]
                     if (server.base_url, model) not in taken

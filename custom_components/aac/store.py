@@ -37,13 +37,13 @@ DEFAULT_HEARTBEAT = (
 )
 STORAGE_KEY = f"{DOMAIN}.config"
 
-CONF_WORKER = "worker"
+CONF_MASTER_MODEL = "model"
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    # Manual workers: {id, name, base_url, api_key, model}
-    "workers": [],
+    # Manual models: {id, name, base_url, api_key, model}
+    "models": [],
     "master": {
-        CONF_WORKER: None,
+        CONF_MASTER_MODEL: None,
         CONF_PROMPT: DEFAULT_PROMPT,
         CONF_LLM_HASS_API: [llm.LLM_API_ASSIST],
         CONF_TEMPERATURE: DEFAULT_TEMPERATURE,
@@ -82,8 +82,12 @@ class AACStore:
         """Load from disk, filling in defaults for missing keys."""
         stored = await self._store.async_load() or {}
         data = deepcopy(DEFAULT_CONFIG)
-        data["workers"] = stored.get("workers", [])
-        data["master"].update(stored.get("master", {}))
+        # 0.4 and older called models "workers" and the master's model "worker"
+        data["models"] = stored.get("models", stored.get("workers", []))
+        master = dict(stored.get("master", {}))
+        if "worker" in master:
+            master.setdefault(CONF_MASTER_MODEL, master.pop("worker"))
+        data["master"].update(master)
         data["setup"].update(stored.get("setup", {}))
         data["heartbeat"].update(stored.get("heartbeat", {}))
         data["triggers"] = stored.get("triggers", [])
@@ -99,37 +103,37 @@ class AACStore:
         return self.data["master"]
 
     @property
-    def workers(self) -> list[dict[str, Any]]:
-        """Manual workers."""
-        return self.data["workers"]
+    def models(self) -> list[dict[str, Any]]:
+        """Manual models."""
+        return self.data["models"]
 
-    def get_worker(self, worker_id: str) -> dict[str, Any] | None:
-        """Return a manual worker by id."""
-        return next((w for w in self.workers if w["id"] == worker_id), None)
+    def get_model(self, model_id: str) -> dict[str, Any] | None:
+        """Return a manual model by id."""
+        return next((w for w in self.models if w["id"] == model_id), None)
 
     async def async_update_master(self, changes: dict[str, Any]) -> None:
         """Change master settings (unknown keys are ignored)."""
         self.master.update({k: v for k, v in changes.items() if k in MASTER_KEYS})
         await self.async_save()
 
-    async def async_save_worker(self, worker: dict[str, Any]) -> dict[str, Any]:
-        """Add or update a manual worker. A missing api_key keeps the old one."""
-        existing = self.get_worker(worker["id"]) if worker.get("id") else None
+    async def async_save_model(self, cfg: dict[str, Any]) -> dict[str, Any]:
+        """Add or update a manual model. A missing api_key keeps the old one."""
+        existing = self.get_model(cfg["id"]) if cfg.get("id") else None
         if existing is None:
             existing = {"id": f"m_{uuid.uuid4().hex[:8]}", CONF_API_KEY: None}
-            self.workers.append(existing)
+            self.models.append(existing)
         for key in ("name", CONF_BASE_URL, CONF_MODEL):
-            existing[key] = worker[key]
-        if CONF_API_KEY in worker:
-            existing[CONF_API_KEY] = worker[CONF_API_KEY] or None
+            existing[key] = cfg[key]
+        if CONF_API_KEY in cfg:
+            existing[CONF_API_KEY] = cfg[CONF_API_KEY] or None
         await self.async_save()
         return existing
 
-    async def async_delete_worker(self, worker_id: str) -> None:
-        """Remove a manual worker (and unset it as master)."""
-        self.data["workers"] = [w for w in self.workers if w["id"] != worker_id]
-        if self.master[CONF_WORKER] == worker_id:
-            self.master[CONF_WORKER] = None
+    async def async_delete_model(self, model_id: str) -> None:
+        """Remove a manual model (and unset it as master)."""
+        self.data["models"] = [w for w in self.models if w["id"] != model_id]
+        if self.master[CONF_MASTER_MODEL] == model_id:
+            self.master[CONF_MASTER_MODEL] = None
         await self.async_save()
 
     @property

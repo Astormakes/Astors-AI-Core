@@ -14,7 +14,7 @@ from homeassistant.setup import async_setup_component
 
 BASE_URL = "http://llm.test/v1"
 MODEL = "test-model"
-WORKER = {
+MODEL_CFG = {
     "id": "m_test0001",
     "name": "Test server",
     "base_url": BASE_URL,
@@ -47,13 +47,13 @@ def mock_panel(hass: HomeAssistant) -> Generator[dict[str, MagicMock]]:
 
 
 def store_data(**master: Any) -> dict[str, Any]:
-    """Stored AAC config with one manual worker as master."""
+    """Stored AAC config with one manual model as master."""
     return {
         "version": 1,
         "key": STORAGE_KEY,
         "data": {
-            "workers": [dict(WORKER)],
-            "master": {"worker": WORKER["id"], "prompt": "You are a test.",
+            "models": [dict(MODEL_CFG)],
+            "master": {"model": MODEL_CFG["id"], "prompt": "You are a test.",
                        "llm_hass_api": [], **master},
             "setup": {"skipped": []},
         },
@@ -68,13 +68,13 @@ def mock_entry() -> MockConfigEntry:
 
 @pytest.fixture
 def configured(hass_storage) -> None:
-    """AAC with a master worker, no HA control."""
+    """AAC with a master model, no HA control."""
     hass_storage[STORAGE_KEY] = store_data()
 
 
 @pytest.fixture
 def configured_control(hass_storage) -> None:
-    """AAC with a master worker and the Assist API."""
+    """AAC with a master model and the Assist API."""
     hass_storage[STORAGE_KEY] = store_data(llm_hass_api=["assist"])
 
 

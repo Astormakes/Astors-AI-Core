@@ -51,9 +51,24 @@ async def test_migrate_v1(hass: HomeAssistant, hass_storage):
     assert entry.data == {}
     assert entry.title == "AAC"
     store = entry.runtime_data.store
-    assert store.workers[0]["base_url"] == BASE_URL
-    assert store.workers[0]["api_key"] == "secret"
-    assert store.master["worker"] == store.workers[0]["id"]
+    assert store.models[0]["base_url"] == BASE_URL
+    assert store.models[0]["api_key"] == "secret"
+    assert store.master["model"] == store.models[0]["id"]
     assert store.master["prompt"] == "Old prompt"
     assert store.master["temperature"] == 0.3
-    assert hass_storage[STORAGE_KEY]["data"]["workers"][0]["model"] == MODEL
+    assert hass_storage[STORAGE_KEY]["data"]["models"][0]["model"] == MODEL
+
+
+async def test_old_store_keys_migrate(hass: HomeAssistant, hass_storage, mock_entry):
+    """0.4 stored models as "workers" and the master's model as "worker"."""
+    from .conftest import MODEL_CFG, setup_aac
+
+    hass_storage[STORAGE_KEY] = {
+        "version": 1,
+        "key": STORAGE_KEY,
+        "data": {"workers": [dict(MODEL_CFG)], "master": {"worker": MODEL_CFG["id"]}},
+    }
+    await setup_aac(hass, mock_entry)
+    store = mock_entry.runtime_data.store
+    assert store.models[0]["id"] == MODEL_CFG["id"]
+    assert store.master["model"] == MODEL_CFG["id"]

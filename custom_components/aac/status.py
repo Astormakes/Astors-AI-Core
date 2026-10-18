@@ -6,8 +6,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
-from .store import CONF_WORKER, AACStore
-from .workers import known_servers, resolve_worker
+from .store import CONF_MASTER_MODEL, AACStore
+from .models import known_servers, resolve_model
 
 
 def aac_agent_entity_id(hass: HomeAssistant, entry_id: str) -> str | None:
@@ -20,10 +20,10 @@ def setup_steps(hass: HomeAssistant, store: AACStore) -> list[dict]:
     skipped = set(store.data["setup"]["skipped"])
     steps = [
         {
-            "id": "worker",
+            "id": "models",
             "title": "Connect a model",
             "hint": "Add a model server, or let AAC find the ones HA already knows.",
-            "target": "workers",
+            "target": "models",
             "optional": False,
             "done": bool(known_servers(hass, store)),
         },
@@ -33,7 +33,7 @@ def setup_steps(hass: HomeAssistant, store: AACStore) -> list[dict]:
             "hint": "The model that thinks and answers for AAC.",
             "target": "settings/master",
             "optional": False,
-            "done": resolve_worker(hass, store, store.master[CONF_WORKER]) is not None,
+            "done": resolve_model(hass, store, store.master[CONF_MASTER_MODEL]) is not None,
         },
         {
             "id": "heartbeat",

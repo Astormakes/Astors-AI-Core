@@ -18,8 +18,8 @@ from .chats import AAC_CHAT_ID
 from .context import home_snapshot
 from .const import LOGGER
 from .master import SILENT, async_run_master
-from .store import CONF_WORKER
-from .workers import resolve_worker
+from .store import CONF_MASTER_MODEL
+from .models import resolve_model
 
 if TYPE_CHECKING:
     from . import AACConfigEntry
@@ -89,7 +89,7 @@ class TriggerEngine:
             self._unsubs.pop()()
 
     def _master_ready(self) -> bool:
-        return resolve_worker(self.hass, self._store, self._store.master[CONF_WORKER]) is not None
+        return resolve_model(self.hass, self._store, self._store.master[CONF_MASTER_MODEL]) is not None
 
     def _busy(self, trigger: str) -> bool:
         return any(r.trigger == trigger for r in self.entry.runtime_data.runs.running("auto"))

@@ -32,8 +32,8 @@ from .const import (
 )
 from .provider import OpenAICompatProvider, ProviderError
 from .runs import current_run
-from .store import CONF_WORKER
-from .workers import resolve_worker
+from .store import CONF_MASTER_MODEL
+from .models import resolve_model
 
 
 async def async_setup_entry(
@@ -231,7 +231,7 @@ class AACConversationEntity(
         """Answer one user message, running tool calls as needed."""
         store = self.entry.runtime_data.store
         options = store.master
-        endpoint = resolve_worker(self.hass, store, options[CONF_WORKER])
+        endpoint = resolve_model(self.hass, store, options[CONF_MASTER_MODEL])
         if endpoint is None:
             response = intent.IntentResponse(language=user_input.language)
             response.async_set_error(

@@ -5,7 +5,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 
 from homeassistant.core import HomeAssistant
 
-from .conftest import BASE_URL, MODEL, WORKER, setup_aac
+from .conftest import BASE_URL, MODEL, MODEL_CFG, setup_aac
 
 LLAMA_URL = "http://llama.test/v1"
 
@@ -22,18 +22,18 @@ async def test_state_fresh(hass: HomeAssistant, hass_ws_client, mock_entry):
     msg = await ws.receive_json()
     assert msg["success"]
     state = msg["result"]
-    assert state["version"] == "0.4.0"
+    assert state["version"] == "0.4.1"
     assert state["agent_entity_id"] == "conversation.aac"
     steps = {s["id"]: s for s in state["setup"]}
-    assert not steps["worker"]["done"]
+    assert not steps["models"]["done"]
     assert not steps["master"]["done"]
     assert "pipeline" not in steps  # HA's voice setup is not AAC's business
 
 
-async def test_worker_master_chat_flow(
+async def test_model_master_chat_flow(
     hass: HomeAssistant, hass_ws_client, aioclient_mock: AiohttpClientMocker, mock_entry
 ):
-    """Test a server, save a worker, make it master, chat with it."""
+    """Test a server, save a model, make it master, chat with it."""
     await setup_aac(hass, mock_entry)
     ws = await hass_ws_client(hass)
     aioclient_mock.get(f"{BASE_URL}/models", json={"data": [{"id": MODEL}]})
@@ -44,23 +44,23 @@ async def test_worker_master_chat_flow(
     assert (await ws.receive_json())["result"] == {"models": [MODEL]}
 
     await ws.send_json_auto_id(
-        {"type": "aac/worker/save", "name": "Box", "base_url": BASE_URL,
+        {"type": "aac/model/save", "name": "Box", "base_url": BASE_URL,
          "api_key": "k", "model": MODEL}
     )
-    worker_id = (await ws.receive_json())["result"]["id"]
+    model_id = (await ws.receive_json())["result"]["id"]
 
-    await ws.send_json_auto_id({"type": "aac/master/update", "worker": worker_id})
+    await ws.send_json_auto_id({"type": "aac/master/update", "model": model_id})
     state = (await ws.receive_json())["result"]
     steps = {s["id"]: s for s in state["setup"]}
-    assert steps["worker"]["done"] and steps["master"]["done"]
+    assert steps["models"]["done"] and steps["master"]["done"]
 
-    await ws.send_json_auto_id({"type": "aac/workers"})
-    workers = (await ws.receive_json())["result"]
-    assert workers["manual"][0]["online"] is True
-    assert workers["manual"][0]["has_key"] is True
-    assert "api_key" not in workers["manual"][0]
+    await ws.send_json_auto_id({"type": "aac/models"})
+    models = (await ws.receive_json())["result"]
+    assert models["manual"][0]["online"] is True
+    assert models["manual"][0]["has_key"] is True
+    assert "api_key" not in models["manual"][0]
     # The same model is not listed twice (manual wins over auto)
-    assert workers["auto"][0]["workers"] == []
+    assert models["auto"][0]["models"] == []
 
     aioclient_mock.post(f"{BASE_URL}/chat/completions", json=_reply("Hi from AAC"))
     await ws.send_json_auto_id({"type": "aac/chat", "text": "hello"})
@@ -70,10 +70,10 @@ async def test_worker_master_chat_flow(
     assert chat["chat_id"]
 
 
-async def test_auto_workers_from_ha(
+async def test_auto_models_from_ha(
     hass: HomeAssistant, hass_ws_client, aioclient_mock: AiohttpClientMocker, mock_entry
 ):
-    """A llama.cpp integration in HA shows up as auto workers and can be master."""
+    """A llama.cpp integration in HA shows up as auto models and can be master."""
     MockConfigEntry(
         domain="llama_cpp", title="Server", data={"base_url": LLAMA_URL, "api_key": "lk"}
     ).add_to_hass(hass)
@@ -81,12 +81,12 @@ async def test_auto_workers_from_ha(
     aioclient_mock.get(f"{LLAMA_URL}/models", json={"data": [{"id": "qwen3-8b"}]})
     ws = await hass_ws_client(hass)
 
-    await ws.send_json_auto_id({"type": "aac/workers"})
+    await ws.send_json_auto_id({"type": "aac/models"})
     auto = (await ws.receive_json())["result"]["auto"]
     assert auto[0]["online"] and auto[0]["label"] == "llama.cpp: Server"
-    worker_id = auto[0]["workers"][0]["id"]
+    model_id = auto[0]["models"][0]["id"]
 
-    await ws.send_json_auto_id({"type": "aac/master/update", "worker": worker_id})
+    await ws.send_json_auto_id({"type": "aac/master/update", "model": model_id})
     await ws.receive_json()
     aioclient_mock.post(f"{LLAMA_URL}/chat/completions", json=_reply("auto ok"))
     await ws.send_json_auto_id({"type": "aac/chat", "text": "hello"})
@@ -102,19 +102,19 @@ async def test_offline_server(
     await setup_aac(hass, mock_entry)
     aioclient_mock.get(f"{BASE_URL}/models", exc=TimeoutError)
     ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/workers"})
+    await ws.send_json_auto_id({"type": "aac/models"})
     result = (await ws.receive_json())["result"]
     assert result["manual"][0]["online"] is False
     assert result["auto"][0]["online"] is False
 
 
-async def test_delete_master_worker(hass: HomeAssistant, hass_ws_client, mock_entry, configured):
-    """Deleting the master's worker unsets the master."""
+async def test_delete_master_model(hass: HomeAssistant, hass_ws_client, mock_entry, configured):
+    """Deleting the master's model unsets the master."""
     await setup_aac(hass, mock_entry)
     ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/worker/delete", "worker_id": WORKER["id"]})
+    await ws.send_json_auto_id({"type": "aac/model/delete", "model_id": MODEL_CFG["id"]})
     assert (await ws.receive_json())["success"]
-    assert mock_entry.runtime_data.store.master["worker"] is None
+    assert mock_entry.runtime_data.store.master["model"] is None
 
 
 async def test_audio_overview(hass: HomeAssistant, hass_ws_client, mock_entry):

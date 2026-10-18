@@ -26,7 +26,7 @@ pytestmark = [
 
 async def _ask(hass, hass_storage, entry, question: str, **master) -> str:
     data = store_data(prompt="Answer with one short sentence.", **master)
-    data["data"]["workers"][0].update(
+    data["data"]["models"][0].update(
         base_url=LIVE_URL, api_key=os.environ.get("AAC_LIVE_KEY"), model="any"
     )
     hass_storage[STORAGE_KEY] = data
@@ -62,7 +62,7 @@ async def test_live_tool_call(hass: HomeAssistant, hass_storage, mock_entry, soc
 async def test_live_heartbeat(hass: HomeAssistant, hass_storage, mock_entry, socket_enabled, tools):
     """A heartbeat on a quiet home should end silent, with or without tools."""
     data = store_data(llm_hass_api=["assist"])
-    data["data"]["workers"][0].update(
+    data["data"]["models"][0].update(
         base_url=LIVE_URL, api_key=os.environ.get("AAC_LIVE_KEY"), model="any"
     )
     data["data"]["heartbeat"] = {"tools": tools}
@@ -78,7 +78,7 @@ async def test_live_heartbeat(hass: HomeAssistant, hass_storage, mock_entry, soc
 async def test_live_heartbeat_speaks_up(hass: HomeAssistant, hass_storage, mock_entry, socket_enabled):
     """Something really wrong (smoke) must not be swallowed."""
     data = store_data(llm_hass_api=["assist"])
-    data["data"]["workers"][0].update(
+    data["data"]["models"][0].update(
         base_url=LIVE_URL, api_key=os.environ.get("AAC_LIVE_KEY"), model="any"
     )
     hass_storage[STORAGE_KEY] = data

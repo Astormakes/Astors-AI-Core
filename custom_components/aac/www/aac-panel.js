@@ -348,7 +348,7 @@ class AacPanel extends HTMLElement {
   async _loadModels() {
     this._models = null;
     this._render();
-    try { this._models = await this._ws("aac/workers"); } catch (e) { this._models = { manual: [], auto: [], error: e.message }; }
+    try { this._models = await this._ws("aac/models"); } catch (e) { this._models = { manual: [], auto: [], error: e.message }; }
     this._render();
   }
   async _loadAudio() {
@@ -389,7 +389,7 @@ class AacPanel extends HTMLElement {
     const w = this._models || { manual: [], auto: [] };
     const list = w.manual.map((m) => ({ id: m.id, label: m.name, detail: m.model, online: m.online }));
     for (const srv of w.auto) {
-      for (const a of srv.workers) list.push({ id: a.id, label: a.model, detail: srv.label, online: srv.online });
+      for (const a of srv.models) list.push({ id: a.id, label: a.model, detail: srv.label, online: srv.online });
     }
     return list;
   }
@@ -527,7 +527,7 @@ class AacPanel extends HTMLElement {
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
           ${this._tab("settings/master", "Master agent", this._stepOpen("master") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/triggers", "Triggers")}
-          ${this._tab("models", "Models", this._stepOpen("worker") ? '<span class="dot open"></span>' : "")}
+          ${this._tab("models", "Models", this._stepOpen("models") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/audio", "Audio pipeline")}
           ${this._tab("settings/audio/sources", "Sources", "", "deep")}
           ${this._tab("settings/mcp", "MCP", "", "soon")}
@@ -589,7 +589,7 @@ class AacPanel extends HTMLElement {
   }
 
   _renderChat() {
-    const master = this._state?.master?.worker;
+    const master = this._state?.master?.model;
     const chat = this._view === "chat/new" ? null : this._chat;
     const msgs = chat?.messages || [];
     const isAac = chat?.id === "aac";
@@ -715,13 +715,13 @@ class AacPanel extends HTMLElement {
   _renderModels() {
     const w = this._models;
     if (!w) return this._page("MODELS", "", '<div class="card"><h2>SCANNING</h2><p>Looking for model servers…<span class="cursor"></span></p></div>');
-    const master = this._state?.master?.worker;
+    const master = this._state?.master?.model;
     // A manual model's own server only matters here if it offers more models
-    const servers = w.auto.filter((srv) => srv.workers.length || !srv.source.startsWith("w:"));
+    const servers = w.auto.filter((srv) => srv.models.length || !srv.source.startsWith("w:"));
     const auto = servers.map((srv) => `
       <div class="card"><h2><span class="dot ${srv.online ? "ok" : "bad"}"></span>${esc(srv.label)}</h2>
         <p>${esc(srv.base_url)}${srv.error ? ` · <span class="msg err">${esc(srv.error)}</span>` : ""}</p>
-        ${srv.workers.length ? srv.workers.map((a) => `
+        ${srv.models.length ? srv.models.map((a) => `
           <div class="wrow">
             <span>${esc(a.model)} ${a.id === master ? '<span class="tag aac">MASTER</span>' : ""}</span>
             <span class="actions">
@@ -746,10 +746,10 @@ class AacPanel extends HTMLElement {
 
   _renderModel(id) {
     const w = this._models;
-    const master = this._state?.master?.worker;
+    const master = this._state?.master?.model;
     const manual = w?.manual.find((m) => m.id === id);
     let srv = null, auto = null;
-    for (const s of w?.auto || []) { const a = s.workers.find((x) => x.id === id); if (a) { srv = s; auto = a; } }
+    for (const s of w?.auto || []) { const a = s.models.find((x) => x.id === id); if (a) { srv = s; auto = a; } }
     if (!manual && !auto) return this._page("MODEL", "", `<div class="card"><h2>NOT FOUND</h2><p>${w ? "This model is gone (server offline or removed)." : "Scanning…"}</p></div>`);
     const online = manual ? manual.online : srv.online;
     const rows = manual
@@ -798,15 +798,15 @@ class AacPanel extends HTMLElement {
     if (!st) return this._page("MASTER AGENT", "", "");
     const m = st.master;
     const models = this._allModels();
-    const known = models.some((w) => w.id === m.worker);
-    const opts = [`<option value="" ${m.worker ? "" : "selected"}>— choose a model —</option>`]
-      .concat(!known && m.worker ? [`<option value="${esc(m.worker)}" selected>${esc(this._modelLabel(m.worker))} (offline)</option>`] : [])
-      .concat(models.map((w) => `<option value="${esc(w.id)}" ${w.id === m.worker ? "selected" : ""}>${esc(w.label)} · ${esc(w.detail)}${w.online ? "" : " (offline)"}</option>`));
+    const known = models.some((w) => w.id === m.model);
+    const opts = [`<option value="" ${m.model ? "" : "selected"}>— choose a model —</option>`]
+      .concat(!known && m.model ? [`<option value="${esc(m.model)}" selected>${esc(this._modelLabel(m.model))} (offline)</option>`] : [])
+      .concat(models.map((w) => `<option value="${esc(w.id)}" ${w.id === m.model ? "selected" : ""}>${esc(w.label)} · ${esc(w.detail)}${w.online ? "" : " (offline)"}</option>`));
     return this._page("MASTER AGENT", st.agent_entity_id ? esc(st.agent_entity_id) : "", `<div class="card"><h2>MASTER AGENT</h2>
         <p>The persistent agent that answers, decides and acts. Models are managed under SETTINGS → Models.</p>
         <div class="form-grid">
           <div>
-            <label for="m-worker">Model</label><select id="m-worker">${opts.join("")}</select>
+            <label for="m-model">Model</label><select id="m-model">${opts.join("")}</select>
             ${this._models ? "" : '<div class="hint">scanning models…</div>'}
             <label>Tools from Home Assistant</label>
             ${st.llm_apis.map((a) => `<label class="check"><input type="checkbox" class="m-api" value="${esc(a.id)}" ${(m.llm_hass_api || []).includes(a.id) ? "checked" : ""}>${esc(a.name)}</label>`).join("")}
@@ -912,13 +912,13 @@ class AacPanel extends HTMLElement {
     }));
     sr.querySelectorAll("[data-master]").forEach((el) => el.addEventListener("click", async (e) => {
       e.stopPropagation();
-      this._state = await this._ws("aac/master/update", { worker: el.dataset.master });
+      this._state = await this._ws("aac/master/update", { model: el.dataset.master });
       this._flash = { ok: true, text: "Master model set." };
       this._render();
     }));
     sr.querySelectorAll("[data-delete]").forEach((el) => el.addEventListener("click", async () => {
       if (!confirm("Delete this model?")) return;
-      await this._ws("aac/worker/delete", { worker_id: el.dataset.delete });
+      await this._ws("aac/model/delete", { model_id: el.dataset.delete });
       this._view = "models";
       await Promise.all([this._loadState(), this._loadModels()]);
     }));
@@ -986,7 +986,7 @@ class AacPanel extends HTMLElement {
     try {
       const data = { base_url: f.base_url };
       if (f.api_key) data.api_key = f.api_key;
-      if (f.id) data.worker_id = f.id;
+      if (f.id) data.model_id = f.id;
       const r = await this._ws("aac/server/models", data);
       f.models = r.models;
       if (!f.models.includes(f.model)) f.model = f.models[0] || "";
@@ -1004,10 +1004,10 @@ class AacPanel extends HTMLElement {
     const f = this._form;
     if (!f.name || !f.base_url || !f.model) { f.msg = { ok: false, text: "Name, base URL and model are needed." }; return this._render(); }
     const data = { name: f.name, base_url: f.base_url, model: f.model };
-    if (f.id) data.worker_id = f.id;
+    if (f.id) data.model_id = f.id;
     if (f.api_key || !f.id) data.api_key = f.api_key || null;
     try {
-      const r = await this._ws("aac/worker/save", data);
+      const r = await this._ws("aac/model/save", data);
       this._view = `model/${r.id}`;
       await Promise.all([this._loadState(), this._loadModels()]);
     } catch (e) {
@@ -1020,7 +1020,7 @@ class AacPanel extends HTMLElement {
     const sr = this.shadowRoot;
     try {
       this._state = await this._ws("aac/master/update", {
-        worker: sr.querySelector("#m-worker").value || null,
+        model: sr.querySelector("#m-model").value || null,
         prompt: sr.querySelector("#m-prompt").value,
         llm_hass_api: [...sr.querySelectorAll(".m-api:checked")].map((el) => el.value),
         temperature: parseFloat(sr.querySelector("#m-temp").value),
