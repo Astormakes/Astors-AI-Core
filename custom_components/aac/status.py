@@ -35,6 +35,14 @@ def setup_steps(hass: HomeAssistant, store: AACStore) -> list[dict]:
             "optional": False,
             "done": resolve_worker(hass, store, store.master[CONF_WORKER]) is not None,
         },
+        {
+            "id": "heartbeat",
+            "title": "Let AAC think on its own",
+            "hint": "A heartbeat wakes the master now and then; it only speaks up when it matters.",
+            "target": "settings/triggers",
+            "optional": True,
+            "done": bool(store.heartbeat["enabled"]),
+        },
     ]
     for step in steps:
         step["skipped"] = step["optional"] and step["id"] in skipped and not step["done"]

@@ -45,7 +45,7 @@ async def main(out, w, h, path="/aac", js=None):
             async def cmd(method, params):
                 nonlocal n; n += 1; await ws.send_json({"id": n, "method": method, "params": params})
                 while True:
-                    r = await ws.receive_json(timeout=60)
+                    r = await ws.receive_json(timeout=float(os.environ.get("AAC_SHOT_TIMEOUT", "300")))
                     if r.get("id") == n:
                         if r.get("type") == "error": raise RuntimeError(r)
                         return r["result"]

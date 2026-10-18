@@ -56,3 +56,41 @@ async def test_live_tool_call(hass: HomeAssistant, hass_storage, mock_entry, soc
             llm_hass_api=["assist"],
         )
     assert spy.called, f"model did not call the tool, said: {speech}"
+
+
+@pytest.mark.parametrize("tools", [False, True])
+async def test_live_heartbeat(hass: HomeAssistant, hass_storage, mock_entry, socket_enabled, tools):
+    """A heartbeat on a quiet home should end silent, with or without tools."""
+    data = store_data(llm_hass_api=["assist"])
+    data["data"]["workers"][0].update(
+        base_url=LIVE_URL, api_key=os.environ.get("AAC_LIVE_KEY"), model="any"
+    )
+    data["data"]["heartbeat"] = {"tools": tools}
+    hass_storage[STORAGE_KEY] = data
+    hass.states.async_set("light.desk", "off", {"friendly_name": "Desk lamp"})
+    await setup_aac(hass, mock_entry)
+    run_id = await mock_entry.runtime_data.triggers.async_heartbeat(force=True)
+    run = mock_entry.runtime_data.runs.get(run_id)
+    print(f"\nHeartbeat (tools={tools}): {run.status} after {len(run.steps)} steps: {run.result}")
+    assert run.status == "silent", run.result
+
+
+async def test_live_heartbeat_speaks_up(hass: HomeAssistant, hass_storage, mock_entry, socket_enabled):
+    """Something really wrong (smoke) must not be swallowed."""
+    data = store_data(llm_hass_api=["assist"])
+    data["data"]["workers"][0].update(
+        base_url=LIVE_URL, api_key=os.environ.get("AAC_LIVE_KEY"), model="any"
+    )
+    hass_storage[STORAGE_KEY] = data
+    hass.states.async_set(
+        "binary_sensor.kitchen_smoke", "on", {"friendly_name": "Kitchen smoke detector", "device_class": "smoke"}
+    )
+    from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
+
+    async_expose_entity(hass, "conversation", "binary_sensor.kitchen_smoke", True)
+    await setup_aac(hass, mock_entry)
+    run_id = await mock_entry.runtime_data.triggers.async_heartbeat(force=True)
+    run = mock_entry.runtime_data.runs.get(run_id)
+    print(f"\nHeartbeat with smoke: {run.status}: {run.result}")
+    assert "smoke" in run.context.lower(), "smoke detector not in the snapshot"
+    assert run.status == "done" and "smoke" in run.result.lower()

@@ -12,8 +12,14 @@ from pathlib import Path
 from homeassistant.components import frontend, panel_custom
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_PROMPT, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.const import (
+    CONF_API_KEY,
+    CONF_LLM_HASS_API,
+    CONF_PROMPT,
+    EVENT_HOMEASSISTANT_STARTED,
+    Platform,
+)
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
@@ -29,7 +35,10 @@ from .const import (
     DOMAIN,
     LOGGER,
 )
+from .chats import ChatStore
+from .runs import RunRegistry
 from .store import CONF_WORKER, AACStore
+from .triggers import TriggerEngine
 
 PLATFORMS = (Platform.CONVERSATION,)
 PANEL_URL = "aac"
@@ -44,6 +53,9 @@ class AACData:
 
     store: AACStore
     version: str
+    runs: RunRegistry
+    chats: ChatStore
+    triggers: TriggerEngine | None = None
 
 
 type AACConfigEntry = ConfigEntry[AACData]
@@ -67,7 +79,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     store = AACStore(hass)
     await store.async_load()
     version = str((await async_get_integration(hass, DOMAIN)).version)
-    entry.runtime_data = AACData(store, version)
+    runs = RunRegistry(hass)
+    await runs.async_load()
+    chats = ChatStore(hass)
+    await chats.async_load()
+    entry.runtime_data = AACData(store, version, runs, chats)
 
     await panel_custom.async_register_panel(
         hass,
@@ -84,6 +100,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Heartbeat and event triggers start once HA is up (entities exist)
+    engine = TriggerEngine(hass, entry)
+    entry.runtime_data.triggers = engine
+    entry.async_on_unload(engine.async_stop)
+    if hass.is_running:
+        engine.async_start()
+    else:
+
+        @callback
+        def _started(_event: Event) -> None:
+            engine.async_start()
+
+        entry.async_on_unload(
+            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _started)
+        )
     return True
 
 

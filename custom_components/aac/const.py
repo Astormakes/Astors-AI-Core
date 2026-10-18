@@ -23,3 +23,5 @@ DEFAULT_PROMPT = (
 
 # Max model round trips per user message (tool call -> result -> answer ...)
 MAX_TOOL_ITERATIONS = 10
+# Automatic runs (heartbeat, events) get fewer: they should mostly just look
+MAX_TOOL_ITERATIONS_AUTO = 4

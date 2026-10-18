@@ -6,10 +6,11 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.components import conversation, websocket_api
+from homeassistant.components import websocket_api
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_PROMPT
-from homeassistant.core import Context, HomeAssistant, callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import llm
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .const import (
     CONF_BASE_URL,
@@ -21,6 +22,8 @@ from .const import (
 )
 from .provider import ProviderAuthError, ProviderError
 from .audio import audio_overview
+from .master import async_run_master
+from .runs import SIGNAL_UPDATE
 from .status import aac_agent_entity_id, setup_steps
 from .store import CONF_WORKER, AACStore
 from .workers import async_list_models, async_overview
@@ -39,8 +42,27 @@ def async_register(hass: HomeAssistant) -> None:
         ws_setup_skip,
         ws_audio,
         ws_chat,
+        ws_chats,
+        ws_chat_get,
+        ws_chat_new,
+        ws_chat_delete,
+        ws_runs,
+        ws_run_get,
+        ws_heartbeat_update,
+        ws_heartbeat_run,
+        ws_trigger_save,
+        ws_trigger_delete,
+        ws_subscribe,
     ):
         websocket_api.async_register_command(hass, command)
+
+
+def _entry(hass: HomeAssistant, connection, msg):
+    entries = hass.config_entries.async_loaded_entries(DOMAIN)
+    if not entries:
+        connection.send_error(msg["id"], "not_loaded", "AAC is not loaded")
+        return None
+    return entries[0]
 
 
 def _loaded(hass: HomeAssistant, connection, msg) -> tuple[AACStore, str] | None:
@@ -58,6 +80,8 @@ def _state(hass: HomeAssistant, store: AACStore, entry_id: str) -> dict[str, Any
         "agent_entity_id": aac_agent_entity_id(hass, entry_id),
         "master": store.master,
         "setup": setup_steps(hass, store),
+        "heartbeat": store.heartbeat,
+        "triggers": store.triggers,
         "llm_apis": [{"id": api.id, "name": api.name} for api in llm.async_get_apis(hass)],
     }
 
@@ -194,32 +218,205 @@ def ws_audio(hass: HomeAssistant, connection, msg) -> None:
         connection.send_result(msg["id"], audio_overview(hass))
 
 
+def _run_summary(run) -> dict[str, Any]:
+    data = run.as_dict()
+    data["steps"] = len(run.steps)
+    return data
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "aac/chat",
-        vol.Required("text"): str,
-        vol.Optional("conversation_id"): vol.Any(str, None),
+        vol.Required("text"): vol.All(str, vol.Length(min=1)),
+        vol.Optional("chat_id"): vol.Any(str, None),
     }
 )
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_chat(hass: HomeAssistant, connection, msg) -> None:
-    """Send one message to the master agent."""
-    if not (loaded := _loaded(hass, connection, msg)):
+    """Send a message in a chat (a new chat if none given) and get the answer."""
+    if not (entry := _entry(hass, connection, msg)):
         return
-    result = await conversation.async_converse(
+    chats = entry.runtime_data.chats
+    chat = chats.get(msg.get("chat_id") or "") or chats.create()
+    chats.add_message(chat["id"], "user", msg["text"])
+    run, result = await async_run_master(
         hass,
+        entry,
         msg["text"],
-        msg.get("conversation_id"),
-        Context(user_id=connection.user.id),
-        agent_id=loaded[1],
+        kind="chat",
+        trigger="chat",
+        title=chat["title"],
+        chat_id=chat["id"],
+        conversation_id=chat["conversation_id"],
+        user_id=connection.user.id,
     )
-    response = result.response
-    connection.send_result(
-        msg["id"],
-        {
-            "conversation_id": result.conversation_id,
-            "speech": response.speech.get("plain", {}).get("speech", ""),
-            "error": response.response_type.value == "error",
-        },
+    if result is not None:
+        chats.set_conversation(chat["id"], result.conversation_id)
+    message = chats.add_message(
+        chat["id"],
+        "aac",
+        run.result or "(no answer)",
+        error=run.status == "failed",
+        run_id=run.id,
+        steps=run.steps,
     )
+    connection.send_result(msg["id"], {"chat_id": chat["id"], "message": message})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/chats"})
+@websocket_api.require_admin
+@callback
+def ws_chats(hass: HomeAssistant, connection, msg) -> None:
+    """All chats (without messages) + automatic runs for the WORKERS segment."""
+    if entry := _entry(hass, connection, msg):
+        connection.send_result(msg["id"], {"chats": entry.runtime_data.chats.list()})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/chat/get", vol.Required("chat_id"): str})
+@websocket_api.require_admin
+@callback
+def ws_chat_get(hass: HomeAssistant, connection, msg) -> None:
+    """One chat with its messages (marks it read)."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    chats = entry.runtime_data.chats
+    if (chat := chats.get(msg["chat_id"])) is None:
+        connection.send_error(msg["id"], "not_found", "Chat not found")
+        return
+    chats.mark_read(msg["chat_id"])
+    connection.send_result(msg["id"], chat)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/chat/new"})
+@websocket_api.require_admin
+@callback
+def ws_chat_new(hass: HomeAssistant, connection, msg) -> None:
+    """Start an empty chat."""
+    if entry := _entry(hass, connection, msg):
+        connection.send_result(msg["id"], entry.runtime_data.chats.create())
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/chat/delete", vol.Required("chat_id"): str})
+@websocket_api.require_admin
+@callback
+def ws_chat_delete(hass: HomeAssistant, connection, msg) -> None:
+    """Delete a chat."""
+    if entry := _entry(hass, connection, msg):
+        entry.runtime_data.chats.delete(msg["chat_id"])
+        connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "aac/runs", vol.Optional("kind"): vol.In(["chat", "auto"])}
+)
+@websocket_api.require_admin
+@callback
+def ws_runs(hass: HomeAssistant, connection, msg) -> None:
+    """Runs, newest first (steps counted, not included)."""
+    if entry := _entry(hass, connection, msg):
+        runs = [r for r in entry.runtime_data.runs.runs if msg.get("kind") in (None, r.kind)]
+        connection.send_result(msg["id"], [_run_summary(r) for r in reversed(runs)])
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/run/get", vol.Required("run_id"): str})
+@websocket_api.require_admin
+@callback
+def ws_run_get(hass: HomeAssistant, connection, msg) -> None:
+    """One run with all steps."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    if (run := entry.runtime_data.runs.get(msg["run_id"])) is None:
+        connection.send_error(msg["id"], "not_found", "Run not found")
+        return
+    connection.send_result(msg["id"], run.as_dict())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "aac/heartbeat/update",
+        vol.Optional("enabled"): bool,
+        vol.Optional("interval"): vol.All(vol.Coerce(int), vol.Range(1, 1440)),
+        vol.Optional("quiet_start"): vol.Match(r"^\d{1,2}:\d{2}$"),
+        vol.Optional("quiet_end"): vol.Match(r"^\d{1,2}:\d{2}$"),
+        vol.Optional("instructions"): vol.All(str, vol.Length(min=1)),
+        vol.Optional("tools"): bool,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_heartbeat_update(hass: HomeAssistant, connection, msg) -> None:
+    """Change heartbeat settings (applies immediately)."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    await entry.runtime_data.store.async_update_heartbeat(
+        {k: v for k, v in msg.items() if k not in ("id", "type")}
+    )
+    entry.runtime_data.triggers.async_start()
+    connection.send_result(msg["id"], _state(hass, entry.runtime_data.store, entry.entry_id))
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/heartbeat/run"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_heartbeat_run(hass: HomeAssistant, connection, msg) -> None:
+    """Run one heartbeat now (ignores quiet hours and the on/off switch)."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    run_id = await entry.runtime_data.triggers.async_heartbeat(force=True)
+    if run_id is None:
+        connection.send_error(msg["id"], "skipped", "No master model, or a heartbeat is already running")
+        return
+    connection.send_result(msg["id"], {"run_id": run_id})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "aac/trigger/save",
+        vol.Optional("trigger_id"): str,
+        vol.Required("name"): str,
+        vol.Required("entity_id"): vol.All(str, vol.Length(min=3)),
+        vol.Optional("to", default=""): str,
+        vol.Optional("instruction", default=""): str,
+        vol.Optional("cooldown", default=300): vol.All(vol.Coerce(int), vol.Range(0, 86400)),
+        vol.Optional("enabled", default=True): bool,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_trigger_save(hass: HomeAssistant, connection, msg) -> None:
+    """Add or change an event trigger."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    trig = {k: msg[k] for k in ("name", "entity_id", "to", "instruction", "cooldown", "enabled")}
+    if "trigger_id" in msg:
+        trig["id"] = msg["trigger_id"]
+    saved = await entry.runtime_data.store.async_save_trigger(trig)
+    entry.runtime_data.triggers.async_start()
+    connection.send_result(msg["id"], saved)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/trigger/delete", vol.Required("trigger_id"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_trigger_delete(hass: HomeAssistant, connection, msg) -> None:
+    """Remove an event trigger."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    await entry.runtime_data.store.async_delete_trigger(msg["trigger_id"])
+    entry.runtime_data.triggers.async_start()
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/subscribe"})
+@websocket_api.require_admin
+@callback
+def ws_subscribe(hass: HomeAssistant, connection, msg) -> None:
+    """Push changes (runs, chats) to the panel."""
+
+    @callback
+    def forward(update: dict[str, Any]) -> None:
+        connection.send_message(websocket_api.event_message(msg["id"], update))
+
+    connection.subscriptions[msg["id"]] = async_dispatcher_connect(hass, SIGNAL_UPDATE, forward)
+    connection.send_result(msg["id"])

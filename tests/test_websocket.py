@@ -22,7 +22,7 @@ async def test_state_fresh(hass: HomeAssistant, hass_ws_client, mock_entry):
     msg = await ws.receive_json()
     assert msg["success"]
     state = msg["result"]
-    assert state["version"] == "0.3.1"
+    assert state["version"] == "0.4.0"
     assert state["agent_entity_id"] == "conversation.aac"
     steps = {s["id"]: s for s in state["setup"]}
     assert not steps["worker"]["done"]
@@ -65,9 +65,9 @@ async def test_worker_master_chat_flow(
     aioclient_mock.post(f"{BASE_URL}/chat/completions", json=_reply("Hi from AAC"))
     await ws.send_json_auto_id({"type": "aac/chat", "text": "hello"})
     chat = (await ws.receive_json())["result"]
-    assert chat["speech"] == "Hi from AAC"
-    assert chat["error"] is False
-    assert chat["conversation_id"]
+    assert chat["message"]["text"] == "Hi from AAC"
+    assert chat["message"]["error"] is False
+    assert chat["chat_id"]
 
 
 async def test_auto_workers_from_ha(
@@ -90,7 +90,7 @@ async def test_auto_workers_from_ha(
     await ws.receive_json()
     aioclient_mock.post(f"{LLAMA_URL}/chat/completions", json=_reply("auto ok"))
     await ws.send_json_auto_id({"type": "aac/chat", "text": "hello"})
-    assert (await ws.receive_json())["result"]["speech"] == "auto ok"
+    assert (await ws.receive_json())["result"]["message"]["text"] == "auto ok"
     assert aioclient_mock.mock_calls[-1][2]["model"] == "qwen3-8b"
     assert aioclient_mock.mock_calls[-1][3] == {"Authorization": "Bearer lk"}
 

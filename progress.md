@@ -12,19 +12,19 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - Keep docs tidy: design decisions go into `docs/assistant-framework.md`, status goes here, no duplicate notes
 - Version lives in `custom_components/aac/manifest.json` (`version`). Bump it for every release and tag it (`v0.1.0` …) so HACS shows the version
 
-## Current state (2026-10-18) – v0.3.1
+## Current state (2026-10-18) – v0.4.0
 - HACS-installable custom integration `aac` (`custom_components/aac`, `hacs.json`, min HA 2026.10.0), single instance
-- **Everything is configured in the AAC panel** (spec: `docs/design.md`). The config flow is one click with no fields; settings live in `.storage/aac.config` (`store.py`), not in the config entry
-  - Entry v1 (0.1.0, server/model in the entry) is migrated to v2 automatically (`async_migrate_entry`)
+- **Everything is configured in the AAC panel** (spec: `docs/design.md`). Config flow is one click; settings in `.storage/aac.config` (`store.py`), chats in `.storage/aac.chats` (`chats.py`), runs in `.storage/aac.runs` (`runs.py`, last 100). Entry v1 (0.1.0) migrates automatically
 - **HA's own AI is never changed** (user decision): no editing of Assist pipelines; HA AI only as optional tools. Other integrations are only read
-- Panel: `www/aac-panel.js`, plain web component, no build step, no external resources. Served at `/aac_static/`, registered as sidebar panel `aac` (admin only). Responsive phone → 4K TV (fluid em scaling, drawer ≤ 900 px, touch targets, keyboard/remote focus), details in `docs/design.md`
-  - Segments: SETUP (hides when done, eye shows it again) · CHAT (master) · WORKERS (auto/manual, + button) · SETTINGS (master agent, audio pipeline + Sources, MCP + memory as "planned")
-- Backend for the panel: `websocket.py` (`aac/state`, `aac/master/update`, `aac/workers`, `aac/worker/save|delete`, `aac/server/models`, `aac/setup/skip`, `aac/audio`, `aac/chat`)
-- Audio pipeline (`audio.py`): AAC's own, separate from HA's Assist. Not built yet; the panel shows the planned stages and the candidate sources found in HA (assist satellites, cameras, browser), all "not connected"
-- Workers (`workers.py`): manual ones from the store; auto = every model of servers found in HA (llama.cpp, Ollama entries) + servers of manual workers. Ids: `m_xxxxxxxx`, `auto|<source>|<model>`
-- Setup steps: `status.py` (connect a model, choose the master)
-- Conversation agent = the master: reads model/prompt/tools from the store at every message (no reload needed), OpenAI-compatible chat via `provider.py`, HA tool calling loop through HA's `ChatLog`
-- Tests: 15 mocked, 2 live. In the real HA: migration ok, panel registered, chat via panel API answers with real tool calls, audio sources found (LVA satellite)
+- Panel `www/aac-panel.js` (plain web component, no build, offline, responsive phone → 4K TV, keyboard/remote focus, safe areas). Segments: SETUP · WORKERS (chats, From AAC, folded Auto (n) runs) · SETTINGS (master agent, triggers, models, audio pipeline + sources, MCP/memory planned). Live updates via `aac/subscribe`
+- **Master runs** (`master.py`): every master call (chat, heartbeat, event) is a recorded run with context, steps (model text, tool calls, results) and result. `current_run` contextvar lets the conversation entity record steps
+- **Triggers** (`triggers.py`): heartbeat (interval, quiet hours, off by default, optional setup step) and event triggers (entity state change, optional target state, cooldown). Speaking up lands in the "From AAC" chat; silence is the normal case
+- **Context recipe** (`context.py`): compact snapshot of exposed entities, binary sensors translated (DETECTED/OPEN/WET…)
+- **Silence**: automatic runs without tools answer a grammar-enforced JSON decision `{"speak", "message"}` (temperature ≤ 0.3); with tools, text + `is_silent()` heuristic. Forced last round without tools. Limits: 10 tool rounds (chat), 4 (auto). Lessons written into the framework doc
+- Models (`workers.py`, the old "workers" name lives on in code/WS: `aac/workers`, `m_xxxx` ids): manual ones in the store, auto = models of servers in HA's llama.cpp/Ollama entries + manual servers
+- Audio pipeline (`audio.py`): AAC's own, planned; panel shows stages + candidate sources
+- WebSocket API (`websocket.py`): state, master, workers (models), chat(s), runs, heartbeat, triggers, audio, subscribe
+- Tests: 28 mocked, 5 live (`-m live`: answer, tool call, heartbeat ×2, smoke alarm must speak). Real HA: chat with tool calls works, heartbeat on the 8B silent in ~11 s
 
 ## Testing in the real HA
 - No GitHub/HACS round trip needed: `scripts/deploy_ha.sh` copies the working tree over SSH and restarts HA Core (`AAC_HA_SSH`, `AAC_SSH_KEY`; real values in `docs/dev-environment.md`)
@@ -40,7 +40,8 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 ## Dev environment (this machine)
 - venv lives **outside** the repo at `../.venv` (parent folder `~/cluade/AAC/`), Python 3.14, HA 2026.10.2 test harness
   - `../.venv/bin/python -m pytest` / `../.venv/bin/python -m pytest -m live -s`
-- Local test model: `llama-server -m ~/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf --host 127.0.0.1 --port 8080 -c 32768 -fa on --fit on --jinja` (not a service, start it when needed)
+- Local test model: `llama-server -m ~/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf --host 127.0.0.1 --port 8080 -c 32768 -fa on --fit on --jinja` (not a service, start it when needed). For HA to reach it: `--host 0.0.0.0 --api-key <key>` and the ufw rule above; live tests then need `AAC_LIVE_KEY`
+- Prompt experiments: talk to both models directly (OpenAI API, ~1 s per call on the 35B) with a fixed quiet/alarm/leak snapshot before changing prompts; that is how the heartbeat prompt was found
 - Test harness: `frontend` would pull in half of HA, so tests mark `frontend`/`panel_custom` as loaded and stub the panel registration (`tests/conftest.py`). The asset folder is `www/`, not `frontend/` (that name clashed with the `frontend` import when patching)
 - HA tool names are namespaced since 2026.10 (`homeassistant__GetLiveContext`, `llm__GetDateTime`, `intent__HassTurnOn`)
 
@@ -52,7 +53,9 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - License not chosen yet (open decision in the framework doc), so no LICENSE file
 
 ## Next steps
-- User: check the phone again (safe-area fix, v0.3.1); GitHub release, then try installing via HACS once
+- User: allow HA → PC for the big-model test in HA: `sudo ufw allow from 192.168.1.107 to any port 8080 proto tcp` (pending). Then add the PC as a manual model in the panel and compare 8B vs. 35B in the real HA
+- User: check the phone again (safe-area fix); try the heartbeat for a day; GitHub release
+- Code naming cleanup: "workers" in code/WS still means models (`aac/workers`, `workers.py`); rename to models when convenient (store migration needed)
 - Audio hub: first real source (probably the browser mic or a Wyoming/ESPHome satellite streaming continuously), ring buffer + VAD
 - Contracts first (framework "Rough order" step 0) before memory/context engine
 - Then core + memory + context engine

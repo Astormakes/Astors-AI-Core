@@ -28,8 +28,10 @@ from .const import (
     DOMAIN,
     LOGGER,
     MAX_TOOL_ITERATIONS,
+    MAX_TOOL_ITERATIONS_AUTO,
 )
 from .provider import OpenAICompatProvider, ProviderError
+from .runs import current_run
 from .store import CONF_WORKER
 from .workers import resolve_worker
 
@@ -104,6 +106,79 @@ def _parse_tool_calls(message: dict[str, Any]) -> list[llm.ToolInput] | None:
     return result
 
 
+# Automatic runs without tools decide explicitly whether to speak (enforced by the
+# server's grammar). Much more reliable than asking for the word NOTHING: tested
+# 12/12 on Qwen3-8B and 23/24 on Qwen3.6-35B (alarms vs. a quiet home).
+DECISION_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "decision",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {"speak": {"type": "boolean"}, "message": {"type": "string"}},
+            "required": ["speak", "message"],
+            "additionalProperties": False,
+        },
+    },
+}
+DECISION_RULE = (
+    '\nAnswer as JSON: {"speak": true or false, "message": "one short sentence, or empty"}. '
+    'Not worth mentioning (NOTHING) means "speak": false.'
+)
+DECISION_TEMPERATURE = 0.3
+
+
+def _decision_text(content: str | None) -> str | None:
+    """Turn the JSON decision back into plain text ('NOTHING' when not speaking)."""
+    try:
+        decision = json.loads(content or "")
+    except json.JSONDecodeError:
+        return content  # server ignored the format: fall back to the text rules
+    if not isinstance(decision, dict):
+        return content
+    if not decision.get("speak"):
+        return "NOTHING"
+    return str(decision.get("message") or "").strip() or "NOTHING"
+
+
+FINAL_NUDGE = (
+    "Stop using tools now. Give your final answer in plain words "
+    "(or exactly NOTHING if there is nothing to say)."
+)
+
+
+def _strip_tool_text(text: str | None) -> str | None:
+    """Some models write a tool call as plain text when no tools are offered."""
+    if text and "<tool_call>" in text:
+        text = text.split("<tool_call>", 1)[0].strip()
+    return text or None
+
+
+def _steps(contents: list[conversation.Content]) -> list[dict[str, Any]]:
+    """What the model said and which tools it used in one turn, for the run log."""
+    steps: list[dict[str, Any]] = []
+    for content in contents:
+        # Text next to tool calls = the model's reasoning; the final answer is the result
+        if isinstance(content, conversation.AssistantContent) and content.content and content.tool_calls:
+            steps.append({"type": "text", "text": content.content})
+        if isinstance(content, conversation.AssistantContent) and content.tool_calls:
+            steps.extend(
+                {"type": "tool_call", "tool": call.tool_name, "args": call.tool_args}
+                for call in content.tool_calls
+            )
+        elif isinstance(content, conversation.ToolResultContent):
+            steps.append(
+                {
+                    "type": "tool_result",
+                    "tool": content.tool_name,
+                    "error": bool(content.result.error),
+                    "data": json_dumps(content.result.data)[:500],
+                }
+            )
+    return steps
+
+
 class AACConversationEntity(
     conversation.ConversationEntity, conversation.AbstractConversationAgent
 ):
@@ -169,16 +244,18 @@ class AACConversationEntity(
         provider = OpenAICompatProvider(
             async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key
         )
+        run = current_run.get()
         try:
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),
-                options.get(CONF_LLM_HASS_API),
+                options.get(CONF_LLM_HASS_API) if not run or run.allow_tools else None,
                 options.get(CONF_PROMPT),
                 user_input.extra_system_prompt,
             )
         except conversation.ConverseError as err:
             return err.as_conversation_result()
 
+        first_new = len(chat_log.content)
         tools = None
         if chat_log.llm_api:
             tools = [
@@ -195,12 +272,26 @@ class AACConversationEntity(
             },
         }
 
-        for _ in range(MAX_TOOL_ITERATIONS):
+        decide = bool(run and run.kind == "auto" and not run.allow_tools)
+        if decide:
+            params["response_format"] = DECISION_FORMAT
+            params["temperature"] = min(params["temperature"], DECISION_TEMPERATURE)
+        limit = MAX_TOOL_ITERATIONS_AUTO if run and run.kind == "auto" else MAX_TOOL_ITERATIONS
+        for iteration in range(limit + 1):
+            # Last round: no tools, so the model has to answer instead of exploring on
+            final = iteration == limit
             messages = [
                 m for c in chat_log.content if (m := _content_to_message(c)) is not None
             ]
+            if final:
+                messages.append({"role": "user", "content": FINAL_NUDGE})
+            if decide and messages and messages[0]["role"] == "system":
+                # Into the first system message: some chat templates allow no other
+                messages[0] = {**messages[0], "content": messages[0]["content"] + DECISION_RULE}
             try:
-                reply = await provider.chat(endpoint.model, messages, tools, **params)
+                reply = await provider.chat(
+                    endpoint.model, messages, None if final else tools, **params
+                )
             except ProviderError as err:
                 LOGGER.error("Model request failed: %s", err)
                 raise HomeAssistantError(f"Model request failed: {err}") from err
@@ -208,9 +299,13 @@ class AACConversationEntity(
             async for _tool_result in chat_log.async_add_assistant_content(
                 conversation.AssistantContent(
                     agent_id=self.entity_id,
-                    content=reply.get("content"),
+                    content=_decision_text(reply.get("content"))
+                    if decide
+                    else _strip_tool_text(reply.get("content"))
+                    if final
+                    else reply.get("content"),
                     thinking_content=reply.get("reasoning_content"),
-                    tool_calls=_parse_tool_calls(reply),
+                    tool_calls=None if final else _parse_tool_calls(reply),
                 )
             ):
                 pass
@@ -218,4 +313,6 @@ class AACConversationEntity(
             if not chat_log.unresponded_tool_results:
                 break
 
+        if run:
+            run.steps.extend(_steps(chat_log.content[first_new:]))
         return conversation.async_get_result_from_chat_log(user_input, chat_log)

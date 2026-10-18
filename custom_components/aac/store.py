@@ -25,6 +25,16 @@ from .const import (
 )
 
 STORAGE_VERSION = 1
+
+# Tested with Qwen3-8B and Qwen3.6-35B: alarms reported 12/12, quiet home silent.
+# Stating the NOTHING rule several times made both models swallow real alarms.
+DEFAULT_HEARTBEAT = (
+    "Look through the states. If anything needs the user's attention now - an alarm "
+    "(smoke, gas, water leak, CO), a door or window OPEN that should not be, a device "
+    "that failed, a task due now - tell them in one short sentence. Normal states "
+    "(lights, closed doors, weather, time, values in normal ranges) are not worth "
+    "mentioning: then answer exactly NOTHING."
+)
 STORAGE_KEY = f"{DOMAIN}.config"
 
 CONF_WORKER = "worker"
@@ -42,6 +52,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     # Setup steps the user chose to skip
     "setup": {"skipped": []},
+    # The master wakes up on its own every few minutes (off until the user turns it on)
+    "heartbeat": {
+        "enabled": False,
+        "interval": 30,
+        "quiet_start": "22:00",
+        "quiet_end": "08:00",
+        # "" = the built-in default (so improvements to it reach everyone)
+        "instructions": "",
+        # Small models explore every room with tools; the snapshot is usually enough
+        "tools": False,
+    },
+    # Event triggers: {id, name, entity_id, to, instruction, cooldown, enabled}
+    "triggers": [],
 }
 
 MASTER_KEYS = set(DEFAULT_CONFIG["master"])
@@ -62,6 +85,8 @@ class AACStore:
         data["workers"] = stored.get("workers", [])
         data["master"].update(stored.get("master", {}))
         data["setup"].update(stored.get("setup", {}))
+        data["heartbeat"].update(stored.get("heartbeat", {}))
+        data["triggers"] = stored.get("triggers", [])
         self.data = data
 
     async def async_save(self) -> None:
@@ -105,6 +130,41 @@ class AACStore:
         self.data["workers"] = [w for w in self.workers if w["id"] != worker_id]
         if self.master[CONF_WORKER] == worker_id:
             self.master[CONF_WORKER] = None
+        await self.async_save()
+
+    @property
+    def heartbeat(self) -> dict[str, Any]:
+        """Heartbeat settings, with the effective instructions filled in."""
+        hb = self.data["heartbeat"]
+        return {**hb, "instructions": hb["instructions"] or DEFAULT_HEARTBEAT}
+
+    @property
+    def triggers(self) -> list[dict[str, Any]]:
+        """Event triggers."""
+        return self.data["triggers"]
+
+    async def async_update_heartbeat(self, changes: dict[str, Any]) -> None:
+        """Change heartbeat settings."""
+        hb = self.data["heartbeat"]
+        hb.update({k: v for k, v in changes.items() if k in hb})
+        if hb["instructions"].strip() == DEFAULT_HEARTBEAT.strip():
+            hb["instructions"] = ""
+        await self.async_save()
+
+    async def async_save_trigger(self, trigger: dict[str, Any]) -> dict[str, Any]:
+        """Add or update an event trigger."""
+        existing = next((t for t in self.triggers if t["id"] == trigger.get("id")), None)
+        if existing is None:
+            existing = {"id": f"t_{uuid.uuid4().hex[:8]}"}
+            self.triggers.append(existing)
+        for key in ("name", "entity_id", "to", "instruction", "cooldown", "enabled"):
+            existing[key] = trigger[key]
+        await self.async_save()
+        return existing
+
+    async def async_delete_trigger(self, trigger_id: str) -> None:
+        """Remove an event trigger."""
+        self.data["triggers"] = [t for t in self.triggers if t["id"] != trigger_id]
         await self.async_save()
 
     async def async_set_skipped(self, step: str, skipped: bool) -> None:
