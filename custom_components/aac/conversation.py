@@ -11,15 +11,14 @@ from homeassistant.components import conversation
 from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT, MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import device_registry as dr, llm
+from homeassistant.helpers import device_registry as dr, intent, llm
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.json import json_dumps
-from homeassistant.loader import async_get_integration
 
 from . import AACConfigEntry
 from .const import (
     CONF_MAX_TOKENS,
-    CONF_MODEL,
     CONF_TEMPERATURE,
     CONF_THINKING,
     DEFAULT_MAX_TOKENS,
@@ -30,7 +29,9 @@ from .const import (
     LOGGER,
     MAX_TOOL_ITERATIONS,
 )
-from .provider import ProviderError
+from .provider import OpenAICompatProvider, ProviderError
+from .store import CONF_WORKER
+from .workers import resolve_worker
 
 
 async def async_setup_entry(
@@ -39,8 +40,7 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the conversation entity."""
-    integration = await async_get_integration(hass, DOMAIN)
-    async_add_entities([AACConversationEntity(entry, str(integration.version))])
+    async_add_entities([AACConversationEntity(entry)])
 
 
 def _format_tool(tool: llm.Tool, custom_serializer: Any) -> dict[str, Any]:
@@ -107,28 +107,31 @@ def _parse_tool_calls(message: dict[str, Any]) -> list[llm.ToolInput] | None:
 class AACConversationEntity(
     conversation.ConversationEntity, conversation.AbstractConversationAgent
 ):
-    """The AAC agent. For now: model + optional HA tools, nothing more."""
+    """The AAC master agent. For now: model + optional HA tools, nothing more."""
 
     _attr_has_entity_name = True
     _attr_name = None
     _attr_supports_streaming = False
 
-    def __init__(self, entry: AACConfigEntry, version: str) -> None:
+    def __init__(self, entry: AACConfigEntry) -> None:
         """Initialize the agent."""
         self.entry = entry
         self._attr_unique_id = entry.entry_id
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.title,
+            name=DEFAULT_NAME,
             manufacturer=DEFAULT_NAME,
-            model=entry.data[CONF_MODEL],
-            sw_version=version,
+            model="Master agent",
+            sw_version=entry.runtime_data.version,
             entry_type=dr.DeviceEntryType.SERVICE,
         )
-        if entry.options.get(CONF_LLM_HASS_API):
-            self._attr_supported_features = (
-                conversation.ConversationEntityFeature.CONTROL
-            )
+
+    @property
+    def supported_features(self) -> conversation.ConversationEntityFeature:
+        """CONTROL while the master may use an HA API (settings change live)."""
+        if self.entry.runtime_data.store.master.get(CONF_LLM_HASS_API):
+            return conversation.ConversationEntityFeature.CONTROL
+        return conversation.ConversationEntityFeature(0)
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
@@ -151,7 +154,21 @@ class AACConversationEntity(
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
         """Answer one user message, running tool calls as needed."""
-        options = self.entry.options
+        store = self.entry.runtime_data.store
+        options = store.master
+        endpoint = resolve_worker(self.hass, store, options[CONF_WORKER])
+        if endpoint is None:
+            response = intent.IntentResponse(language=user_input.language)
+            response.async_set_error(
+                intent.IntentResponseErrorCode.UNKNOWN,
+                "AAC has no master model yet. Open the AAC panel to set it up.",
+            )
+            return conversation.ConversationResult(
+                response=response, conversation_id=chat_log.conversation_id
+            )
+        provider = OpenAICompatProvider(
+            async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key
+        )
         try:
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),
@@ -183,9 +200,7 @@ class AACConversationEntity(
                 m for c in chat_log.content if (m := _content_to_message(c)) is not None
             ]
             try:
-                reply = await self.entry.runtime_data.chat(
-                    self.entry.data[CONF_MODEL], messages, tools, **params
-                )
+                reply = await provider.chat(endpoint.model, messages, tools, **params)
             except ProviderError as err:
                 LOGGER.error("Model request failed: %s", err)
                 raise HomeAssistantError(f"Model request failed: {err}") from err

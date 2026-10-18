@@ -8,13 +8,13 @@ import os
 from unittest.mock import patch
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.aac.const import CONF_BASE_URL, CONF_MODEL, DOMAIN
+from custom_components.aac.store import STORAGE_KEY
 from homeassistant.components import conversation
 from homeassistant.components.llm.llm import GetDateTimeTool
-from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_PROMPT
 from homeassistant.core import Context, HomeAssistant
+
+from .conftest import setup_aac, store_data
 
 LIVE_URL = os.environ.get("AAC_LIVE_URL", "http://127.0.0.1:8080/v1")
 
@@ -24,19 +24,13 @@ pytestmark = [
 ]
 
 
-async def _ask(hass: HomeAssistant, question: str, **options) -> str:
-    data = {CONF_BASE_URL: LIVE_URL, CONF_MODEL: "any"}
-    if key := os.environ.get("AAC_LIVE_KEY"):
-        data[CONF_API_KEY] = key
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data=data,
-        options={CONF_PROMPT: "Answer with one short sentence.", **options},
+async def _ask(hass, hass_storage, entry, question: str, **master) -> str:
+    data = store_data(prompt="Answer with one short sentence.", **master)
+    data["data"]["workers"][0].update(
+        base_url=LIVE_URL, api_key=os.environ.get("AAC_LIVE_KEY"), model="any"
     )
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
+    hass_storage[STORAGE_KEY] = data
+    await setup_aac(hass, entry)
     result = await conversation.async_converse(
         hass, question, None, Context(), agent_id=entry.entry_id
     )
@@ -45,19 +39,20 @@ async def _ask(hass: HomeAssistant, question: str, **options) -> str:
     return speech
 
 
-async def test_live_answer(hass: HomeAssistant, socket_enabled):
+async def test_live_answer(hass: HomeAssistant, hass_storage, mock_entry, socket_enabled):
     """Ask the real model one question."""
-    speech = await _ask(hass, "What is the capital of France?")
+    speech = await _ask(hass, hass_storage, mock_entry, "What is the capital of France?")
     assert "paris" in speech.lower()
 
 
-async def test_live_tool_call(hass: HomeAssistant, socket_enabled):
+async def test_live_tool_call(hass: HomeAssistant, hass_storage, mock_entry, socket_enabled):
     """The real model uses an HA tool (GetDateTime) to answer."""
     original = GetDateTimeTool.async_call
     with patch.object(
         GetDateTimeTool, "async_call", autospec=True, side_effect=original
     ) as spy:
         speech = await _ask(
-            hass, "What time is it right now? Use a tool.", **{CONF_LLM_HASS_API: ["assist"]}
+            hass, hass_storage, mock_entry, "What time is it right now? Use a tool.",
+            llm_hass_api=["assist"],
         )
     assert spy.called, f"model did not call the tool, said: {speech}"

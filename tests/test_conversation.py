@@ -6,34 +6,37 @@ from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import intent
 
-from .conftest import BASE_URL
-
-MODELS = {"data": [{"id": "test-model"}]}
+from .conftest import BASE_URL, setup_aac
 
 
 def _reply(message: dict) -> dict:
     return {"choices": [{"index": 0, "message": message, "finish_reason": "stop"}]}
 
 
-async def _setup(hass, aioclient_mock, entry):
-    aioclient_mock.get(f"{BASE_URL}/models", json=MODELS)
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-
-async def test_setup_and_unload(hass: HomeAssistant, aioclient_mock, mock_entry):
-    """Entry loads, creates the agent entity and unloads."""
-    await _setup(hass, aioclient_mock, mock_entry)
-    assert hass.states.get("conversation.aac_test_model") is not None
+async def test_setup_and_unload(hass: HomeAssistant, mock_entry, mock_panel):
+    """Entry loads, creates the agent entity and the panel, and unloads."""
+    await setup_aac(hass, mock_entry)
+    assert hass.states.get("conversation.aac") is not None
+    assert mock_panel["register"].called
     assert await hass.config_entries.async_unload(mock_entry.entry_id)
+    assert mock_panel["remove"].called
+
+
+async def test_no_master_yet(hass: HomeAssistant, mock_entry):
+    """Without a master model the agent says where to set it up."""
+    await setup_aac(hass, mock_entry)
+    result = await conversation.async_converse(
+        hass, "hi", None, Context(), agent_id=mock_entry.entry_id
+    )
+    assert result.response.response_type is intent.IntentResponseType.ERROR
+    assert "AAC panel" in result.response.speech["plain"]["speech"]
 
 
 async def test_simple_answer(
-    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, mock_entry
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, mock_entry, configured
 ):
     """Plain text answer, prompt is sent as system message."""
-    await _setup(hass, aioclient_mock, mock_entry)
+    await setup_aac(hass, mock_entry)
     aioclient_mock.post(
         f"{BASE_URL}/chat/completions",
         json=_reply({"role": "assistant", "content": "Hello there"}),
@@ -43,6 +46,7 @@ async def test_simple_answer(
     )
     assert result.response.speech["plain"]["speech"] == "Hello there"
 
+    assert aioclient_mock.mock_calls[-1][3] == {"Authorization": "Bearer secret"}
     payload = aioclient_mock.mock_calls[-1][2]
     assert payload["model"] == "test-model"
     assert payload["messages"][0]["role"] == "system"
@@ -52,10 +56,10 @@ async def test_simple_answer(
 
 
 async def test_tool_call_round_trip(
-    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, mock_entry_control
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, mock_entry, configured_control
 ):
     """Model calls an HA tool, gets the result, then answers."""
-    await _setup(hass, aioclient_mock, mock_entry_control)
+    await setup_aac(hass, mock_entry)
     replies = iter(
         [
             _reply(
@@ -84,7 +88,7 @@ async def test_tool_call_round_trip(
 
     aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=side_effect)
     result = await conversation.async_converse(
-        hass, "what's up?", None, Context(), agent_id=mock_entry_control.entry_id
+        hass, "what's up?", None, Context(), agent_id=mock_entry.entry_id
     )
     assert result.response.speech["plain"]["speech"] == "All quiet."
 
@@ -97,9 +101,9 @@ async def test_tool_call_round_trip(
     assert "expose entities" in second["messages"][-1]["content"]
 
 
-async def test_server_error(hass: HomeAssistant, aioclient_mock, mock_entry):
+async def test_server_error(hass: HomeAssistant, aioclient_mock, mock_entry, configured):
     """A failing server gives an error response, not a crash."""
-    await _setup(hass, aioclient_mock, mock_entry)
+    await setup_aac(hass, mock_entry)
     aioclient_mock.post(f"{BASE_URL}/chat/completions", status=500, text="boom")
     result = await conversation.async_converse(
         hass, "hi", None, Context(), agent_id=mock_entry.entry_id

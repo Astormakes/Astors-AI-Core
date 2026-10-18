@@ -4,17 +4,19 @@ An open, modular AI core for Home Assistant. Home Assistant stays the connection
 to the world (devices, sensors, calendars …); AAC is meant to grow into the brain
 on top: memory, initiative, agents and modules.
 
-> **Status: early (v0.1.0).** Right now AAC is a conversation agent that talks to
-> any OpenAI-compatible model server and can control Home Assistant through the
-> Assist API. Everything else is still being designed.
+> **Status: early (v0.2.0).** AAC has its own panel (setup workflow, chat,
+> workers, settings) and a master agent that talks to any OpenAI-compatible model
+> server and can control Home Assistant through the Assist API. Memory, MCP and
+> the rest are still being designed.
 
 ## Install (HACS)
 
 1. HACS → ⋮ → **Custom repositories** → add `https://github.com/Astormakes/Astors-AI-Core`, type **Integration**
 2. Install **AAC – Astor's AI Core**, restart Home Assistant
-3. Settings → Devices & services → **Add integration** → *AAC*
-4. Enter the base URL of your model server (including `/v1`) and the API key if it has one, then pick a model
-5. Settings → Voice assistants → choose the AAC agent as the conversation agent
+3. Settings → Devices & services → **Add integration** → *AAC* (one click, no questions)
+4. Open **AAC** in the sidebar and follow the **SETUP** segment: connect a model, choose the master model, optionally route a voice pipeline through AAC
+
+Everything is configured in the AAC panel, nowhere else.
 
 Manual install: copy `custom_components/aac` into your HA `config/custom_components/` and restart.
 
@@ -28,15 +30,19 @@ Anything that speaks the OpenAI chat completions API, for example:
 | Ollama | `http://192.168.1.20:11434/v1` |
 | vLLM / LM Studio | `http://host:8000/v1` |
 
+Servers already set up in Home Assistant (llama.cpp and Ollama integrations) are
+found automatically and show up under **WORKERS → AUTO**. Others can be added
+under **WORKERS → MANUAL**.
+
 Tool use (controlling HA) needs a model and server with function calling
 (for llama.cpp start it with `--jinja`).
 
-## Options
+## The panel
 
-- **Instructions**: the system prompt (templates allowed)
-- **Control Home Assistant**: which LLM APIs the agent may use (e.g. Assist)
-- **Temperature**, **Max tokens**
-- **Let the model think**: sends `chat_template_kwargs.enable_thinking` (llama.cpp / vLLM with Qwen3-style templates)
+- **SETUP**: the workflow; hides itself when nothing is open (the eye at the top shows all segments)
+- **CHAT**: talk to the master agent
+- **WORKERS**: all models AAC can use, found (auto) or made by you (manual)
+- **SETTINGS**: master agent (model, instructions, HA control, temperature, max tokens, thinking), voice pipelines (shown as a flow, route them through AAC), MCP and memory (planned)
 
 ## Development
 
