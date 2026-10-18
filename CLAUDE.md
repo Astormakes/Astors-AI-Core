@@ -5,3 +5,4 @@
 - Commit when something is runnable; never push (the user pushes with GitHub Desktop)
 - Update `progress.md` at the end of a work step
 - Tests: `../.venv/bin/python -m pytest` (mocked), `-m live -s` against a real model server
+- Deploy to the real HA for testing: `scripts/deploy_ha.sh` (values in `docs/dev-environment.md`)

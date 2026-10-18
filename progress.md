@@ -17,6 +17,11 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - Options: prompt, LLM APIs (Assist control), temperature, max tokens, thinking on/off
 - Conversation agent: OpenAI-compatible chat via `provider.py` (aiohttp, no `openai` dependency), HA tool calling loop through HA's `ChatLog`
 - Tests: 8 mocked (`pytest`), 2 live (`pytest -m live -s`, simple answer + real tool call). All pass against Qwen3.6-35B-A3B on the main PC
+- **Runs in the real HA** (deployed by SSH copy, config entry pointing at the server's llama-server). Answers + Assist tool calls work. Details: `docs/dev-environment.md`
+
+## Testing in the real HA
+- No GitHub/HACS round trip needed: `scripts/deploy_ha.sh` copies the working tree over SSH and restarts HA Core (`AAC_HA_SSH`, `AAC_SSH_KEY`; real values in `docs/dev-environment.md`)
+- Release path for others: bump `version` in the manifest, commit, the user pushes and creates a GitHub release/tag `vX.Y.Z` → HACS offers the update
 
 ## Dev environment (this machine)
 - venv lives **outside** the repo at `../.venv` (parent folder `~/cluade/AAC/`), Python 3.14, HA 2026.10.2 test harness
@@ -30,6 +35,6 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - License not chosen yet (open decision in the framework doc), so no LICENSE file
 
 ## Next steps
-- Run it in the real HA (see `docs/dev-environment.md`)
+- First GitHub release `v0.1.0` (user), then try installing via HACS custom repository once
 - Contracts first (framework doc, "Rough order" step 0): event format, module manifest, memory interface, agent template, broker request, domain format
 - Then core + memory + context engine
