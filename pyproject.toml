@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+markers = ["live: talks to a real model server (AAC_LIVE_URL, default http://127.0.0.1:8080/v1)"]
+addopts = "-m 'not live'"

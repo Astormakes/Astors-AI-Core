@@ -1,0 +1,14 @@
+{
+  "domain": "aac",
+  "name": "AAC – Astor's AI Core",
+  "after_dependencies": ["assist_pipeline", "intent"],
+  "codeowners": ["@Astormakes"],
+  "config_flow": true,
+  "dependencies": ["conversation"],
+  "documentation": "https://github.com/Astormakes/Astors-AI-Core",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/Astormakes/Astors-AI-Core/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

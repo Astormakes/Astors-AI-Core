@@ -1,0 +1,43 @@
+# Private planning notes (homelab details, IPs, personal plans) - never publish
+docs/
+
+# Local secrets / tokens
+.secrets/
+*.key
+*.pem
+.env
+.env.*
+secrets.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Test / tooling caches
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local HA dev instance
+config/
+
+# Models and other big local files
+*.gguf
+models/
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
