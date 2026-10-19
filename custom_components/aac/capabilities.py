@@ -39,6 +39,7 @@ class CalendarProvider:
     title: str
     query: CalendarQuery
     create: CalendarWrite | None = None
+    module: str | None = None  # set by the loader; a module switched off in a domain is skipped there
 
 
 class Capabilities:
@@ -51,6 +52,8 @@ class Capabilities:
         self.options: dict[str, Callable[[str], list[tuple[str, str]]]] = {}
         # Where new calendar entries go: fn(domain_id) → provider id (None = the first writer)
         self.writer_choice: Callable[[str], str | None] | None = None
+        # Is a module on in a domain? fn(domain_id, module_id) → bool (set by the module loader)
+        self.module_enabled: Callable[[str, str], bool] = lambda domain_id, module_id: True
 
     def add_calendar(self, provider: CalendarProvider) -> Callable[[], None]:
         """Register a provider; returns the function that removes it again."""
@@ -65,6 +68,8 @@ class Capabilities:
         """All entries of a period from every provider, sorted by start (entries without a time last)."""
         entries: list[dict[str, Any]] = []
         for provider in list(self.calendar.values()):
+            if provider.module and not self.module_enabled(domain_id, provider.module):
+                continue
             try:
                 found = await provider.query(domain_id, start, end)
             except Exception as err:  # noqa: BLE001 - one broken provider must not hide the others
@@ -77,7 +82,8 @@ class Capabilities:
 
     def writers(self, domain_id: str | None = None) -> list[CalendarProvider]:
         """Providers that accept new entries, the owner's choice first."""
-        found = [p for p in self.calendar.values() if p.create]
+        found = [p for p in self.calendar.values()
+                 if p.create and not (p.module and domain_id and not self.module_enabled(domain_id, p.module))]
         chosen = self.writer_choice(domain_id) if self.writer_choice and domain_id else None
         return sorted(found, key=lambda p: p.id != chosen)
 

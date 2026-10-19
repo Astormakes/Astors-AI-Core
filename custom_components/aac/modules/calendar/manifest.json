@@ -5,13 +5,59 @@
   "contract": 1,
   "kind": "code",
   "description": "One calendar over everything: entries from all modules (lists with dates, AAC's plans) and your Home Assistant calendars (Google, CalDAV, Local Calendar, …).",
-  "provides": {"capabilities": {"calendar": {"read": true, "write": true}}, "panel_pages": ["agenda"]},
-  "uses": {"ha": ["calendar.*"], "capabilities": ["calendar"]},
-  "settings": {
-    "show_page": {"type": "bool", "title": "Show the calendar page", "default": true},
-    "read": {"type": "entities", "domain": "calendar", "title": "Home Assistant calendars AAC reads", "default": "all",
-             "help": "Every calendar integration in HA (Google, CalDAV, Local Calendar, …) appears here."},
-    "new_entries": {"type": "select", "options_from": "calendar_targets", "title": "New calendar entries go to", "default": "lists"}
+  "instructions": "",
+  "provides": {
+    "capabilities": {
+      "calendar": {
+        "read": true,
+        "write": true
+      }
+    },
+    "panel_pages": [
+      "agenda"
+    ]
   },
-  "setup": []
+  "uses": {
+    "ha": [
+      "calendar.*"
+    ],
+    "capabilities": [
+      "calendar"
+    ]
+  },
+  "settings": {
+    "show_page": {
+      "type": "bool",
+      "title": "Show the calendar page",
+      "default": true
+    },
+    "read": {
+      "type": "entities",
+      "domain": "calendar",
+      "title": "Home Assistant calendars AAC reads",
+      "default": "all",
+      "help": "Every calendar integration in HA (Google, CalDAV, Local Calendar, …) appears here."
+    },
+    "new_entries": {
+      "type": "select",
+      "options_from": "calendar_targets",
+      "title": "New calendar entries go to",
+      "default": "lists"
+    }
+  },
+  "setup": [
+    {
+      "id": "connect",
+      "title": "Connect a calendar",
+      "optional": true,
+      "hint": "Add a calendar in Home Assistant (Google Calendar, CalDAV/Nextcloud, or HA's own Local Calendar); AAC then shows it in its agenda and can put appointments there.",
+      "done_when": {
+        "entities_of": "calendar"
+      },
+      "how": [
+        "chat",
+        "panel"
+      ]
+    }
+  ]
 }

@@ -71,10 +71,18 @@ are stored per domain (`store.module_settings`) and edited in SETTINGS → Modul
 schema: bool, text, number, select, entity, entities; `options_from` = choices a module computes at runtime).
 A module that fails to load is skipped. Deleting a domain removes its module data too.
 
+**Permissions and properties (v0.19.0)**, per domain, for every module (`store.module_access`, `aac/module/access`;
+panel: "⋯" next to the module in the sidebar → its page): `enabled` (off = no tools, no page, no calendar entries
+there), `name` (own display name), `instructions` (own instructions for the AI; empty = the manifest's
+`instructions`, "Reset" button), `access` (full · read = only read-only tools · none), `auto` (automatic runs may
+use the tools), `destructive_needs_owner` (deleting tools only while the owner is in a chat; a tool counts as
+deleting unless it is read-only or says destructive=false, HA's default is destructive). Enforced by
+`GuardedAPI`, which wraps every module's tools each time an agent asks for them. Setup steps from the
+manifest are built (see above; ids `<domain>/mod/<module>/<step>`), e.g. the calendar module's "Connect a calendar".
+
 Modules so far: `lists` (lists of anything: tree entries with free fields; tools; calendar provider;
 page; setting "show dated entries in the calendar") and `calendar` (HA calendars adapter; where new
-entries go; agenda page; setting "show the calendar page"). Still planned: setup steps from the manifest,
-external modules, AAC-made modules, sandbox for code modules.
+entries go; agenda page; setting "show the calendar page"). Still planned: external modules, AAC-made modules, sandbox for code modules.
 
 ## Two kinds
 

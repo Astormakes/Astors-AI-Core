@@ -13,7 +13,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - Keep docs tidy: design decisions go into `docs/assistant-framework.md`, status goes here, no duplicate notes
 - Version lives in `custom_components/aac/manifest.json` (`version`). Bump it for every release and tag it (`v0.1.0` …) so HACS shows the version
 
-## Current state (2026-10-19) – v0.18.0
+## Current state (2026-10-19) – v0.19.0
 - HACS-installable custom integration `aac` (`custom_components/aac`, `hacs.json`, min HA 2026.10.0), single instance
 - **Everything is configured in the AAC panel** (spec: `docs/design.md`). Config flow is one click; settings in `.storage/aac.config` (`store.py`), chats in `.storage/aac.chats` (`chats.py`), runs in `.storage/aac.runs` (`runs.py`, last 100). Entry v1 (0.1.0) migrates automatically
 - **HA's own AI is never changed** (user decision): no editing of Assist pipelines; HA AI only as optional tools. Other integrations are only read
@@ -44,7 +44,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - Concept vs. build, the gate tiers and the browser mic: `docs/assistant-framework.md` → "Audio hub v1 and the concept"
 
 - WebSocket API (`websocket.py`): state, master, workers (models), chat(s), runs, heartbeat, triggers, audio, subscribe
-- Tests: 83 mocked, 7 live (incl. the weight-goal story without goal code); both models pass the live suite (`-m live`: answer, tool call, heartbeat ×2, smoke alarm must speak, memory round trip; `AAC_LIVE_EMBED_URL/KEY` for embeddings). Both models (8B server, 35B PC) pass the live suite. Real HA: chat with tool calls works, heartbeat on the 8B silent in ~11 s
+- Tests: 86 mocked, 7 live (incl. the weight-goal story without goal code); both models pass the live suite (`-m live`: answer, tool call, heartbeat ×2, smoke alarm must speak, memory round trip; `AAC_LIVE_EMBED_URL/KEY` for embeddings). Both models (8B server, 35B PC) pass the live suite. Real HA: chat with tool calls works, heartbeat on the 8B silent in ~11 s
 
 ## Testing in the real HA
 - No GitHub/HACS round trip needed: `scripts/deploy_ha.sh` copies the working tree over SSH and restarts HA Core (`AAC_HA_SSH`, `AAC_SSH_KEY`; real values in `docs/dev-environment.md`)
@@ -81,6 +81,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - **Charter**: the draft stays for now (user decision 2026-10-19); the user changes it when something feels off
 - User: check the phone again (safe-area fix); try the heartbeat for a day; GitHub release
 - **Own voices** (plan in `docs/plans.md`): GLaDOS EN/DE + Portal announcer via game lines → imitation model → owner hand-picks → retrain → dataset → Piper. Waiting for Portal 2 to be installed in Steam on the PC. Never in the public repo
+- **Module permissions, properties, setup steps** (v0.19.0, user wish): "⋯" per module in the sidebar → page with properties (own name), permissions per domain (on/off, full/read/none, automatic runs, deleting only with the owner present; enforced by `GuardedAPI`), instructions for the AI (manifest `instructions`, own text, reset), settings, manifest. Module setup steps from manifests (calendar: "Connect a calendar"). Lists page compact with drag-and-drop (before/after/into) and indent/outdent. Panel shows an update banner when the backend is newer than the loaded script (`?v=`); the user's tab had run pre-0.12 code ("no master model", no domain switcher) → reload once
 - **Capabilities + calendar** (v0.18.0, `capabilities.py`, `spec/calendar.md`; owner design: shared things are interfaces, not tables): providers register, entries stay in their module, only `name` required; core provider = AAC's plans/time triggers (occurrences); planning tools `calendar`, `add_to_calendar`; next 24 h in open loops
 - **Modules** (v0.18.0, `modules/`, `spec/module.md`): built-in loader with a context (storage per domain, calendar, LLM API per domain, WS commands, panel page, settings per domain); panel segment MODULES + SETTINGS → Modules (generic settings form). `lists` (tree entries, free fields, 7 tools, calendar provider, page) and `calendar` (HA calendars via get_events/create_event, target choice, agenda page). Real HA test (35B, test domain): chili recipe as sections with qty fields + shopping list in 20 s (first try was flat until the tool texts got a nested example). HA here has no calendar entities yet
 - **Job queue** (v0.17.0, `jobs.py`, user design 2026-10-19): automatic jobs carry classes (priority high/normal/low, due, critical + fallback text, tags); wait for an allowed model instead of failing; time-critical ones reach the owner without a model at their due time (HA notification + From AAC), others expire visibly; owner settings notify_no_model (once per outage) and postpone_notice (a late job is told so). Heartbeat = low, time triggers/own plans = high + critical, state triggers = normal; overridable in `do`. Waiting trigger jobs survive restarts (`aac.jobs`, v0.17.1). Panel: Triggers → Queue

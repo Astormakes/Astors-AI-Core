@@ -16,8 +16,48 @@ def aac_agent_entity_id(hass: HomeAssistant, entry_id: str) -> str | None:
     return er.async_get(hass).async_get_entity_id("conversation", DOMAIN, entry_id)
 
 
-def setup_steps(hass: HomeAssistant, store: AACStore, domain: DomainSettings | None = None) -> list[dict]:
-    """The SETUP workflow of a domain (most steps are shared). Closed when done or skipped (optional only)."""
+def _done(hass: HomeAssistant, store: AACStore, cond: dict, values: dict) -> bool:
+    """A module step's done_when (spec/module.md)."""
+    if "setting" in cond:
+        return bool(values.get(cond["setting"]))
+    if "entity_exists" in cond:
+        return hass.states.get(cond["entity_exists"]) is not None
+    if "entities_of" in cond:
+        return bool(hass.states.async_entity_ids(cond["entities_of"]))
+    if "role" in cond:
+        return bool(store.pools.get(cond["role"]))
+    if cond.get("rule"):
+        return any(t.get("rule") for t in store.data["traits"].values())
+    return False
+
+
+def module_steps(hass: HomeAssistant, entry, domain: DomainSettings) -> list[dict]:
+    """Setup steps the domain's enabled modules declare in their manifests."""
+    from .modules import access, setting  # noqa: PLC0415
+
+    steps = []
+    for module in entry.runtime_data.modules if entry else []:
+        if not access(entry, module.id, domain.id)["enabled"]:
+            continue
+        schema = module.manifest.get("settings", {})
+        values = {k: setting(entry, module.manifest, domain.id, k) for k in schema}
+        for step in module.manifest.get("setup", []):
+            steps.append({
+                "id": f"{domain.id}/mod/{module.id}/{step['id']}",
+                "title": step.get("title", step["id"]),
+                "hint": step.get("hint", ""),
+                "target": step.get("target") or f"settings/module/{module.id}",
+                "optional": bool(step.get("optional", False)),
+                "done": _done(hass, entry.runtime_data.store, step.get("done_when") or {}, values),
+                "module": module.id,
+                "how": step.get("how", ["panel"]),
+            })
+    return steps
+
+
+def setup_steps(hass: HomeAssistant, store: AACStore, domain: DomainSettings | None = None, entry=None) -> list[dict]:
+    """The SETUP workflow of a domain (most steps are shared, modules add theirs).
+    Closed when done or skipped (optional only)."""
     domain = domain or store.default_domain
     skipped = set(store.data["setup"]["skipped"])
     steps = [
@@ -71,6 +111,7 @@ def setup_steps(hass: HomeAssistant, store: AACStore, domain: DomainSettings | N
             "done": bool(domain.heartbeat["enabled"]),
         },
     ]
+    steps += module_steps(hass, entry, domain)
     for step in steps:
         step["skipped"] = step["optional"] and step["id"] in skipped and not step["done"]
     return steps

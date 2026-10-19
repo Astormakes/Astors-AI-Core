@@ -37,6 +37,7 @@ from .schedule_api import API_ID as SCHEDULE_API_ID
 from .setup_api import API_ID as SETUP_API_ID, owner_present
 from .domains import Domain
 from .jobs import NO_MODEL
+from .modules import access as module_access
 from .runs import current_run
 
 
@@ -275,7 +276,9 @@ class AACConversationEntity(
             if store.autonomy.get("schedule", "allowed") != "off":
                 api_ids.append(self.domain.api_id(SCHEDULE_API_ID))  # and may plan for itself
             for module in self.entry.runtime_data.modules:  # tools the modules bring (lists, …)
-                if api_id := module.api_ids.get(self.domain.id):
+                if (api_id := module.api_ids.get(self.domain.id)) and module_access(
+                    self.entry, module.id, self.domain.id
+                )["enabled"]:
                     api_ids.append(api_id)
             if await owner_present(self.hass, user_input.context.user_id):
                 api_ids.append(self.domain.api_id(SETUP_API_ID))  # with the owner present it helps set itself up

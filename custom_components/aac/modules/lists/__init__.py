@@ -24,14 +24,6 @@ from ...runs import async_notify
 from .. import ModuleContext
 from .store import VIEWS, ListStore, walk
 
-API_PROMPT = (
-    "Lists hold anything the user keeps: shopping, recipes, packing, ideas, projects. Use the structure: "
-    "sections are entries with children (never header lines like 'Ingredients:'), and details go into "
-    "fields instead of the text (qty, store, url, …), e.g. {\"text\": \"Ingredients\", \"children\": "
-    "[{\"text\": \"Minced beef\", \"fields\": {\"qty\": \"500 g\"}}]}. A date in fields.when "
-    "(YYYY-MM-DD or YYYY-MM-DDTHH:MM, optional fields.end) puts the entry on the calendar. Look at the "
-    "existing lists before creating a new one (reuse e.g. the shopping list), and ask before deleting a whole list."
-)
 CALENDAR_LIST = "Calendar"
 
 
@@ -192,7 +184,8 @@ class ListsAPI(llm.API):
 
     async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
         tools = [OverviewTool, ReadTool, CreateTool, AddTool, UpdateTool, RemoveTool, DeleteTool]
-        return llm.APIInstance(api=self, api_prompt=API_PROMPT, llm_context=llm_context,
+        return llm.APIInstance(api=self, api_prompt="",  # the guard puts in the manifest's (or the owner's) instructions
+                               llm_context=llm_context,
                                tools=[t(self.lists, self.notify) for t in tools])
 
 

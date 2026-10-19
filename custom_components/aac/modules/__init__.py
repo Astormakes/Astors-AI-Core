@@ -29,6 +29,16 @@ if TYPE_CHECKING:
     from .. import AACConfigEntry
     from ..domains import Domain
 
+# The owner's per-domain permissions and properties of a module (always there, for every module)
+ACCESS_DEFAULTS: dict[str, Any] = {
+    "enabled": True,  # off: no tools, no page, no calendar entries in this domain
+    "name": None,  # own display name (None = the manifest's)
+    "instructions": None,  # own instructions for the AI (None = the manifest's)
+    "access": "full",  # what agents may do with its tools: full · read · none
+    "auto": True,  # automatic runs (heartbeat, triggers) may use its tools
+    "destructive_needs_owner": True,  # deleting tools only while the owner is in a chat
+}
+
 MODULES_DIR = Path(__file__).parent
 MODULES_URL = "/aac_modules"
 _WS_DONE = f"{DOMAIN}_module_ws"
@@ -48,11 +58,17 @@ class LoadedModule:
         return self.manifest["id"]
 
     def summary(self, entry: AACConfigEntry | None = None, domain_id: str | None = None) -> dict[str, Any]:
-        """For the panel (pages a domain switched off are left out)."""
+        """For the panel (pages a domain switched off, or a disabled module's, are left out)."""
         m = self.manifest
-        pages = [p for p in self.pages if not (entry and domain_id and p.get("visible_setting"))
-                 or setting(entry, m, domain_id, p["visible_setting"])]
-        return {"id": m["id"], "name": m.get("name", m["id"]), "version": m.get("version"),
+        acc = access(entry, self.id, domain_id) if entry and domain_id else ACCESS_DEFAULTS
+        pages = [] if not acc["enabled"] else [
+            p for p in self.pages if not (entry and domain_id and p.get("visible_setting"))
+            or setting(entry, m, domain_id, p["visible_setting"])
+        ]
+        name = acc["name"] or m.get("name", m["id"])
+        if acc["name"] and len(pages) == 1:
+            pages = [{**pages[0], "title": acc["name"]}]
+        return {"id": m["id"], "name": name, "version": m.get("version"), "enabled": acc["enabled"],
                 "description": m.get("description", ""), "pages": pages}
 
 
@@ -76,7 +92,8 @@ class ModuleContext:
         return Store(self.hass, 1, f"{DOMAIN}.mod.{self.module.id}.{name}{suffix}")
 
     def add_calendar(self, provider: CalendarProvider) -> None:
-        """Provide (and maybe take) calendar entries."""
+        """Provide (and maybe take) calendar entries (not in domains where the module is off)."""
+        provider.module = self.module.id
         self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_calendar(provider))
 
     def add_llm_api(self, factory: Callable[[Domain, str, str], llm.API]) -> None:
@@ -85,7 +102,9 @@ class ModuleContext:
         for dom in self.domains.values():
             api_id = dom.api_id(f"aac_{self.module.id}")
             name = f"AAC {title.lower()}" + ("" if dom.first else f" ({dom.name})")
-            self.entry.async_on_unload(llm.async_register_api(self.hass, factory(dom, api_id, name)))
+            guarded = GuardedAPI(hass=self.hass, id=api_id, name=name, inner=factory(dom, api_id, name),
+                                 entry=self.entry, module=self.module, domain_id=dom.id)
+            self.entry.async_on_unload(llm.async_register_api(self.hass, guarded))
             self.module.api_ids[dom.id] = api_id
 
     def add_ws_commands(self, *handlers) -> None:
@@ -108,6 +127,64 @@ class ModuleContext:
         version = self.module.manifest.get("version", "0")
         self.module.pages.append({"id": page_id, "title": title, "element": element, "visible_setting": visible_setting,
                                   "url": f"{MODULES_URL}/{self.module.id}/{script}?v={version}"})
+
+
+@dataclass(kw_only=True)
+class GuardedAPI(llm.API):
+    """A module's tools as the owner allows them in one domain: the permissions are applied every
+    time an agent asks for tools, so a module cannot get around them."""
+
+    inner: llm.API
+    entry: Any
+    module: LoadedModule
+    domain_id: str
+
+    async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
+        """The inner tools, filtered, with the owner's (or the manifest's) instructions."""
+        from ..runs import current_run  # noqa: PLC0415
+        from ..setup_api import owner_present  # noqa: PLC0415
+
+        inst = await self.inner.async_get_api_instance(llm_context)
+        acc = access(self.entry, self.module.id, self.domain_id)
+        run = current_run.get()
+        tools = list(inst.tools)
+        if not acc["enabled"] or acc["access"] == "none" or (run and run.kind == "auto" and not acc["auto"]):
+            tools = []
+        elif acc["access"] == "read":
+            tools = [t for t in tools if t.annotations and t.annotations.read_only]
+        if acc["destructive_needs_owner"] and any(_destructive(t) for t in tools):
+            user_id = llm_context.context.user_id if llm_context.context else None
+            if not await owner_present(self.hass, user_id):
+                tools = [t for t in tools if not _destructive(t)]
+        prompt = acc["instructions"] or self.module.manifest.get("instructions") or inst.api_prompt
+        return llm.APIInstance(api=self, api_prompt=prompt, llm_context=llm_context, tools=tools,
+                               custom_serializer=inst.custom_serializer)
+
+
+def _destructive(tool: llm.Tool) -> bool:
+    """Explicitly marked as deleting something (read-only tools never are)."""
+    ann = tool.annotations
+    return bool(ann and ann.destructive is True and not ann.read_only)
+
+
+def access(entry: AACConfigEntry, module_id: str, domain_id: str | None) -> dict[str, Any]:
+    """A module's permissions and properties in a domain (defaults filled in)."""
+    stored = entry.runtime_data.store.data["module_access"].get(domain_id or "", {}).get(module_id, {})
+    return {**ACCESS_DEFAULTS, **{k: v for k, v in stored.items() if k in ACCESS_DEFAULTS}}
+
+
+async def async_set_access(entry: AACConfigEntry, module_id: str, domain_id: str, values: dict[str, Any]) -> None:
+    """Store permissions/properties (None or "" resets a text field to the manifest's)."""
+    store = entry.runtime_data.store
+    current = store.data["module_access"].setdefault(domain_id, {}).setdefault(module_id, {})
+    for key, value in values.items():
+        if key not in ACCESS_DEFAULTS:
+            continue
+        if key in ("name", "instructions") and not (value or "").strip():
+            current.pop(key, None)
+        else:
+            current[key] = value.strip() if isinstance(value, str) else value
+    await store.async_save()
 
 
 def setting(entry: AACConfigEntry, manifest: dict[str, Any], domain_id: str, key: str) -> Any:
@@ -137,6 +214,7 @@ def _manifests() -> list[dict[str, Any]]:
 
 async def async_load_modules(hass: HomeAssistant, entry: AACConfigEntry) -> list[LoadedModule]:
     """Load every built-in module (a failing one is skipped, the rest keep working)."""
+    entry.runtime_data.capabilities.module_enabled = lambda domain_id, module_id: access(entry, module_id, domain_id)["enabled"]
     loaded = []
     for manifest in await hass.async_add_executor_job(_manifests):
         module = LoadedModule(manifest)

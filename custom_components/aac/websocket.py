@@ -27,7 +27,7 @@ from .memory import KINDS, SOURCES, summarize
 from .runs import SIGNAL_UPDATE, async_notify
 from .status import aac_agent_entity_id, setup_steps
 from .pools import ROLES, async_set_role
-from .modules import async_set_settings, setting as module_setting
+from .modules import access as module_access, async_set_access, async_set_settings, setting as module_setting
 from .skins import list_skins, user_dir
 from .domains import Domain, async_remove_domain_data
 from .store import AACStore
@@ -68,6 +68,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_skins,
         ws_modules,
         ws_module_settings,
+        ws_module_access,
         ws_jobs,
         ws_jobs_settings,
         ws_domain_create,
@@ -130,7 +131,7 @@ def _state(hass: HomeAssistant, entry, dom: Domain) -> dict[str, Any]:
         "voice_domain": store.data["voice_domain"],
         "agent_entity_id": dom.entity_id(hass, entry.entry_id),
         "master": settings.master,
-        "setup": setup_steps(hass, store, settings),
+        "setup": setup_steps(hass, store, settings, entry),
         "heartbeat": settings.heartbeat,
         "memory": settings.memory,
         "ui": store.data["ui"],
@@ -721,7 +722,11 @@ def _module_view(hass: HomeAssistant, entry, module, domain_id: str) -> dict[str
             field_def["options"] = [list(o) for o in resolver(domain_id)] if resolver else []
         schema[key] = field_def
     return {**module.summary(entry, domain_id), "settings": schema,
-            "values": {k: module_setting(entry, module.manifest, domain_id, k) for k in schema}}
+            "values": {k: module_setting(entry, module.manifest, domain_id, k) for k in schema},
+            "access": module_access(entry, module.id, domain_id), "manifest": module.manifest,
+            "default_name": module.manifest.get("name", module.id),
+            "default_instructions": module.manifest.get("instructions", ""),
+            "has_tools": bool(module.api_ids)}
 
 
 @aac_command({vol.Required("type"): "aac/modules"})
@@ -747,6 +752,26 @@ async def ws_module_settings(hass: HomeAssistant, connection, msg) -> None:
         return
     dom = _d(entry, msg)
     await async_set_settings(entry, module, dom.id, msg["values"])
+    async_notify(hass, "modules", domain=dom.id)
+    connection.send_result(msg["id"], _module_view(hass, entry, module, dom.id))
+
+
+@aac_command({vol.Required("type"): "aac/module/access", vol.Required("module"): str, vol.Required("values"): {
+    vol.Optional("enabled"): bool, vol.Optional("name"): vol.Any(str, None), vol.Optional("instructions"): vol.Any(str, None),
+    vol.Optional("access"): vol.In(["full", "read", "none"]), vol.Optional("auto"): bool,
+    vol.Optional("destructive_needs_owner"): bool}})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_module_access(hass: HomeAssistant, connection, msg) -> None:
+    """A module's permissions and properties in the selected domain (empty name/instructions = default)."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    module = next((m for m in entry.runtime_data.modules if m.id == msg["module"]), None)
+    if module is None:
+        connection.send_error(msg["id"], "not_found", "No such module")
+        return
+    dom = _d(entry, msg)
+    await async_set_access(entry, module.id, dom.id, msg["values"])
     async_notify(hass, "modules", domain=dom.id)
     connection.send_result(msg["id"], _module_view(hass, entry, module, dom.id))
 

@@ -1,6 +1,9 @@
 // AAC – Astor's AI Core: the panel.
 // Plain web component, no build step, no external resources (works offline).
 // Talks to the backend via the aac/* WebSocket commands.
+
+// The version this script was loaded as (HA adds ?v=<version>); a newer backend means: reload
+const PANEL_VERSION = (() => { try { return new URL(import.meta.url).searchParams.get("v"); } catch (e) { return null; } })();
 // Sizes are in em on top of a fluid base font, so it scales from phone to TV.
 
 const esc = (v) =>
@@ -64,6 +67,8 @@ nav {
 .brand .name { font-size: 1.45em; font-weight: 700; letter-spacing: .28em; color: var(--magenta);
   text-shadow: 0 0 .2em var(--magenta), 0 0 .7em rgba(255, 43, 214, .6); }
 .brand .ver { font-size: .8em; color: var(--dim); }
+.update-banner { display: flex; align-items: center; gap: 1em; padding: .5em 1.7em; background: rgba(255, 176, 0, .12); color: var(--amber); border-bottom: 1px solid var(--amber); font-size: .9em; }
+.tab .modmore { margin-left: auto; padding: 0 .3em; font-size: 1.1em; line-height: 1; opacity: .6; }
 .dswitch { position: relative; padding: 0 1em .7em; border-bottom: 1px solid var(--line); }
 .dbtn { width: 100%; display: flex; align-items: center; gap: .5em; background: transparent; color: var(--cyan); border: 1px solid var(--line);
   padding: .45em .7em; font: inherit; font-size: .93em; letter-spacing: .12em; cursor: pointer; text-align: left; text-shadow: 0 0 .3em rgba(0, 240, 255, .5); }
@@ -503,7 +508,7 @@ class AacPanel extends HTMLElement {
     }
     if (view.startsWith("settings/audio")) this._loadAudio();
     if (view === "settings/triggers") this._loadJobs();
-    if (view === "settings/modules") this._loadModuleSettings();
+    if (view === "settings/modules" || view.startsWith("settings/module/")) this._loadModuleSettings();
     if (view === "settings/memory") this._loadMemory();
     if (view === "settings/appearance") this._ws("aac/skins").then((r) => { this._skins = r; this._render(); }).catch(() => {});
     if (view.startsWith("chat/") && view !== "chat/new") { this._openChat(view.slice(5)); return; }
@@ -617,9 +622,13 @@ class AacPanel extends HTMLElement {
           </div>
           ${autoList}
         </div>
-        ${this._modulePages().length ? `<div class="seg">
+        ${(this._state?.modules || []).length ? `<div class="seg">
           <div class="seg-title">${icon("workers")}MODULES</div><div class="seg-line"></div>
-          ${this._modulePages().map((p) => this._tab(`mod/${p.module}/${p.id}`, p.title)).join("")}
+          ${(this._state.modules).map((m) => {
+            const more = `<button class="icon-btn modmore" data-go="settings/module/${esc(m.id)}" title="${esc(m.name)}: properties, instructions, permissions, settings">⋯</button>`;
+            if (!m.pages.length) return this._tab(`settings/module/${m.id}`, m.name, "", m.enabled ? "" : "soon", more);
+            return m.pages.map((p) => this._tab(`mod/${m.id}/${p.id}`, p.title, "", "", more)).join("");
+          }).join("")}
         </div>` : ""}
         <div class="seg">
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
@@ -640,7 +649,8 @@ class AacPanel extends HTMLElement {
   }
 
   _header(title, meta = "", actions = "") {
-    return `<header>
+    const stale = PANEL_VERSION && this._state?.version && PANEL_VERSION !== this._state.version;
+    return `${stale ? `<div class="update-banner">AAC was updated to v${esc(this._state.version)} (this page runs v${esc(PANEL_VERSION)}). <button class="btn primary" id="reload-page">Reload</button></div>` : ""}<header>
       ${this._narrow ? "<ha-menu-button></ha-menu-button>" : ""}
       <button class="icon-btn menu-btn" id="nav-toggle" title="AAC segments" aria-label="AAC segments">${icon("panel")}</button>
       <h1>${esc(title)}</h1><span class="meta">${meta}</span>${actions}</header>`;
@@ -662,6 +672,7 @@ class AacPanel extends HTMLElement {
     if (v === "settings/appearance") return this._renderAppearance();
     if (v.startsWith("mod/")) return this._renderModulePage(v);
     if (v === "settings/modules") return this._renderModules();
+    if (v.startsWith("settings/module/")) return this._renderModuleSettings(v.slice(16));
     if (v === "settings/charter") return this._renderCharter();
     if (v === "settings/triggers") return this._renderTriggers();
     if (v === "trigger/new" || v.startsWith("trigger/edit/")) return this._renderTriggerForm();
@@ -705,7 +716,8 @@ class AacPanel extends HTMLElement {
           <div class="txt">${esc(m.text)}</div>${this._stepsHtml(m.steps)}
           ${m.run_id && isAac ? `<div class="steps"><span tabindex="0" role="button" data-go="run/${esc(m.run_id)}" style="cursor:pointer">details ›</span></div>` : ""}
         </div>`).join("")
-      : `<div class="welcome"><div class="big">AAC</div>${master ? "Ask me anything." : "No master model yet. Open SETUP to choose one."}</div>`;
+      : `<div class="welcome"><div class="big">AAC</div>${!master ? "No master model yet. Open SETUP to choose one."
+          : this._state?.pools?.roles?.master?.active ? "Ask me anything." : "No master model is reachable right now (see Pools)."}</div>`;
     const busy = this._busy ? '<div class="bubble aac"><div class="who">AAC</div><span class="cursor"></span></div>' : "";
     const title = chat ? chat.title : "NEW CHAT";
     const del = chat ? `<button class="icon-btn" id="chat-delete" title="Delete chat">${icon("trash")}</button>` : "";
@@ -975,30 +987,93 @@ class AacPanel extends HTMLElement {
     this._render();
   }
 
+  _settingField(m, key, f) {
+    const v = m.values[key], id = `ms-${m.id}-${key}`;
+    const help = f.help ? `<div class="hint">${esc(f.help)}</div>` : "";
+    if (f.type === "bool") return `<label class="check"><input type="checkbox" data-ms="${esc(m.id)}" data-key="${esc(key)}" ${v ? "checked" : ""}>${esc(f.title || key)}</label>${help}`;
+    if (f.type === "entities") {
+      const opts = f.options || [];
+      return `<label>${esc(f.title || key)}</label>${opts.length ? opts.map(([val, name]) => `<label class="check"><input type="checkbox" data-ms="${esc(m.id)}" data-key="${esc(key)}" data-multi="${esc(val)}" ${v === "all" || (v || []).includes(val) ? "checked" : ""}>${esc(name)}</label>`).join("") : '<p class="hint">None in Home Assistant yet.</p>'}${help}`;
+    }
+    if (f.type === "select" || f.type === "entity") {
+      const opts = f.options || [];
+      return `<label for="${id}">${esc(f.title || key)}</label><select id="${id}" data-ms="${esc(m.id)}" data-key="${esc(key)}">${opts.map(([val, name]) => `<option value="${esc(val)}" ${val === v ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>${help}`;
+    }
+    return `<label for="${id}">${esc(f.title || key)}</label><input id="${id}" data-ms="${esc(m.id)}" data-key="${esc(key)}" type="${f.type === "number" ? "number" : "text"}" value="${esc(v ?? "")}">${help}`;
+  }
+
   _renderModules() {
     if (!this._mods) return this._page("MODULES", "", '<div class="card"><p>Loading…</p></div>');
-    const field = (m, key, f) => {
-      const v = m.values[key], id = `ms-${m.id}-${key}`;
-      const help = f.help ? `<div class="hint">${esc(f.help)}</div>` : "";
-      if (f.type === "bool") return `<label class="check"><input type="checkbox" data-ms="${esc(m.id)}" data-key="${esc(key)}" ${v ? "checked" : ""}>${esc(f.title || key)}</label>${help}`;
-      if (f.type === "entities") {
-        const opts = f.options || [];
-        return `<label>${esc(f.title || key)}</label>${opts.length ? opts.map(([val, name]) => `<label class="check"><input type="checkbox" data-ms="${esc(m.id)}" data-key="${esc(key)}" data-multi="${esc(val)}" ${v === "all" || (v || []).includes(val) ? "checked" : ""}>${esc(name)}</label>`).join("") : '<p class="hint">None in Home Assistant yet.</p>'}${help}`;
-      }
-      if (f.type === "select" || f.type === "entity") {
-        const opts = f.options || [];
-        return `<label for="${id}">${esc(f.title || key)}</label><select id="${id}" data-ms="${esc(m.id)}" data-key="${esc(key)}">${opts.map(([val, name]) => `<option value="${esc(val)}" ${val === v ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>${help}`;
-      }
-      return `<label for="${id}">${esc(f.title || key)}</label><input id="${id}" data-ms="${esc(m.id)}" data-key="${esc(key)}" type="${f.type === "number" ? "number" : "text"}" value="${esc(v ?? "")}">${help}`;
-    };
+    const field = (m, key, f) => this._settingField(m, key, f);
     return this._page("MODULES", `${this._mods.length} loaded · settings for ${esc(this._state?.domain?.name || "")}`, `
       <div class="cards">${this._mods.map((m) => `
-        <div class="card"><h2>${esc(m.name)} <span class="tag">${esc(m.version || "")}</span></h2>
+        <div class="card"><h2>${esc(m.name)} <span class="tag">${esc(m.version || "")}</span>${m.enabled ? "" : ' <span class="tag plan">OFF</span>'}</h2>
           <p>${esc(m.description)}</p>
+          <div class="actions" style="margin-top:0"><button class="btn" data-go="settings/module/${esc(m.id)}">Properties, instructions, permissions</button></div>
           ${Object.entries(m.settings).map(([k, f]) => field(m, k, f)).join("") || '<p class="hint">No settings.</p>'}
           ${Object.keys(m.settings).length ? `<div class="actions"><button class="btn primary" data-ms-save="${esc(m.id)}">Save</button></div>` : ""}
         </div>`).join("")}</div>
       ${this._flashHtml()}`);
+  }
+
+  _renderModuleSettings(id) {
+    const m = (this._mods || []).find((x) => x.id === id);
+    if (!m) return this._page("MODULE", "", `<div class="card"><p>${this._mods ? "This module is not loaded." : "Loading…"}</p></div>`);
+    const a = m.access, provides = m.manifest.provides || {}, uses = m.manifest.uses || {};
+    const list = (o) => Object.entries(o).map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${esc(Array.isArray(v) ? v.join(", ") : typeof v === "object" ? Object.keys(v).join(", ") : v)}</span>`).join("");
+    const settings = Object.entries(m.settings);
+    return this._page(m.name.toUpperCase(), `module · settings for ${esc(this._state?.domain?.name || "")}`, `
+      <div class="cards">
+        <div class="card"><h2>PROPERTIES</h2>
+          <label for="ma-name">Name</label><input id="ma-name" value="${esc(a.name || "")}" placeholder="${esc(m.default_name)}">
+          <p class="hint">Empty = "${esc(m.default_name)}". Shown in the sidebar for this domain.</p>
+          <div class="kv"><span class="k">Id</span><span class="v">${esc(m.id)}</span><span class="k">Version</span><span class="v">${esc(m.version || "")}</span>
+            <span class="k">Kind</span><span class="v">${esc(m.manifest.kind || "")}</span>${list(provides)}${Object.keys(uses).length ? list(uses) : ""}</div>
+          <p style="margin-top:.8em">${esc(m.description)}</p>
+        </div>
+        <div class="card"><h2>PERMISSIONS</h2>
+          <label class="check"><input type="checkbox" id="ma-enabled" ${a.enabled ? "checked" : ""}>On in this domain</label>
+          <p class="hint">Off: no tools for AAC, no page, no calendar entries in "${esc(this._state?.domain?.name || "")}". Its data stays.</p>
+          ${m.has_tools ? `
+          <label for="ma-access">What AAC may do with it</label>
+          <select id="ma-access">${[["full", "Everything"], ["read", "Only read"], ["none", "Nothing"]].map(([v, l]) => `<option value="${v}" ${a.access === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+          <label class="check"><input type="checkbox" id="ma-auto" ${a.auto ? "checked" : ""}>Automatic runs (heartbeat, triggers) may use it</label>
+          <label class="check"><input type="checkbox" id="ma-destr" ${a.destructive_needs_owner ? "checked" : ""}>Deleting only while I am in the chat</label>` : '<p class="hint">This module brings no tools for AAC.</p>'}
+        </div>
+      </div>
+      ${m.has_tools ? `<div class="card"><h2>INSTRUCTIONS FOR AAC</h2>
+        <p>How AAC should use this module (sent along with its tools). Change it to your liking; empty or "Reset" = the module's own.</p>
+        <textarea id="ma-instr" class="thin-scroll" placeholder="${esc(m.default_instructions)}">${esc(a.instructions || m.default_instructions)}</textarea>
+        <div class="actions"><button class="btn" id="ma-reset">Reset to the module's instructions</button></div>
+      </div>` : ""}
+      <div class="actions"><button class="btn primary" id="ma-save" data-module="${esc(m.id)}">Save</button></div>
+      ${settings.length ? `<div class="card"><h2>SETTINGS</h2>${settings.map(([k, f]) => this._settingField(m, k, f)).join("")}
+        <div class="actions"><button class="btn primary" data-ms-save="${esc(m.id)}">Save settings</button></div></div>` : ""}
+      <div class="card"><h2>MANIFEST</h2><details><summary class="hint" style="cursor:pointer">Show</summary><pre class="code">${esc(JSON.stringify(m.manifest, null, 2))}</pre></details></div>
+      ${this._flashHtml()}`);
+  }
+
+  async _saveModuleAccess(id) {
+    const sr = this.shadowRoot, m = this._mods.find((x) => x.id === id);
+    const instr = sr.querySelector("#ma-instr");
+    const values = {
+      name: sr.querySelector("#ma-name").value.trim() || null,
+      enabled: sr.querySelector("#ma-enabled").checked,
+    };
+    if (m.has_tools) {
+      Object.assign(values, {
+        access: sr.querySelector("#ma-access").value,
+        auto: sr.querySelector("#ma-auto").checked,
+        destructive_needs_owner: sr.querySelector("#ma-destr").checked,
+        instructions: instr && instr.value.trim() !== (m.default_instructions || "").trim() ? instr.value : null,
+      });
+    }
+    try {
+      const updated = await this._ws("aac/module/access", { module: id, values });
+      this._mods = this._mods.map((x) => (x.id === id ? updated : x));
+      this._flash = { ok: true, text: "Saved." };
+      await this._loadState();
+    } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; this._render(); }
   }
 
   async _saveModule(id) {
@@ -1474,6 +1549,13 @@ class AacPanel extends HTMLElement {
       });
       this._flash = { ok: true, text: "Saved." };
       this._render();
+    });
+    sr.querySelector("#reload-page")?.addEventListener("click", () => location.reload());
+    sr.querySelector("#ma-save")?.addEventListener("click", (e) => this._saveModuleAccess(e.target.dataset.module));
+    sr.querySelector("#ma-reset")?.addEventListener("click", () => {
+      const m = this._mods.find((x) => `settings/module/${x.id}` === this._view);
+      const t = sr.querySelector("#ma-instr");
+      if (m && t) t.value = m.default_instructions || "";
     });
     sr.querySelectorAll("[data-ms-save]").forEach((el) => el.addEventListener("click", () => this._saveModule(el.dataset.msSave)));
     sr.querySelectorAll("[data-skin]").forEach((el) => el.addEventListener("click", async () => {

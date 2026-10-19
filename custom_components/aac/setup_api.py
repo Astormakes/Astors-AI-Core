@@ -95,7 +95,7 @@ class SetupStatusTool(_SetupTool):
                 "steps": [
                     {"id": s["id"], "title": s["title"], "why": s["hint"], "optional": s["optional"],
                      "state": "done" if s["done"] else "skipped" if s["skipped"] else "open"}
-                    for s in setup_steps(hass, store, self._domain.settings)
+                    for s in setup_steps(hass, store, self._domain.settings, self._entry)
                 ],
                 "domain": self._domain.name,
                 "pools": {
@@ -422,7 +422,7 @@ class SkipStepTool(_SetupTool):
 
     async def _async_run(self, hass, args):
         store = self._entry.runtime_data.store
-        step = next((s for s in setup_steps(hass, store, self._domain.settings) if s["id"] == args["step"]), None)
+        step = next((s for s in setup_steps(hass, store, self._domain.settings, self._entry) if s["id"] == args["step"]), None)
         if step is None or not step["optional"]:
             return llm.ToolResult(data={"error": "Only optional steps can be skipped."}, error=True)
         await store.async_set_skipped(step["id"], True)
