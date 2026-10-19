@@ -53,7 +53,7 @@ def home_snapshot(hass: HomeAssistant, settings=None) -> str:
     lines = []
     for state in sorted(hass.states.async_all(), key=lambda s: s.entity_id):
         if settings is not None:
-            if level(hass, settings, state.entity_id) == "hidden":
+            if level(hass, settings, state.entity_id) not in ("read", "control"):
                 continue
         elif not async_should_expose(hass, "conversation", state.entity_id):
             continue

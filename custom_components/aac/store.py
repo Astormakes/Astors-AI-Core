@@ -80,6 +80,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "queue": {"notify_no_model": True, "postpone_notice": 10},
     # Module settings per domain: {domain id: {module id: {key: value}}} (defaults in the manifests)
     "module_settings": {},
+    # Read/write per entity, for every domain and module: {entity_id: {"read": bool, "write": bool}}.
+    # None = not chosen yet: what HA exposes to Assist may be read and written (entities.py)
+    "entity_access": None,
     # Requests from AAC that wait for the owner's OK (requests.py)
     "requests": [],
     # Module permissions and properties per domain (modules/__init__.py ACCESS_DEFAULTS):
@@ -118,9 +121,9 @@ DOMAIN_DEFAULTS: dict[str, Any] = {
     "charter": "",
     # Long-term memory (its embedding model is the pool role "memory"; none = keywords only)
     "memory": {"enabled": True},
-    # What AAC may see and control: {entity_id: "read" | "control"} (missing = hidden).
-    # None = not chosen yet: follow HA's "expose to Assist" setting (entities.py)
-    "entities": None,
+    # The entities this domain can see at all (the owner's tick list; entities.py). Read/write per
+    # entity are global (entity_access). None = not chosen yet: what HA exposes to Assist
+    "visible": None,
 }
 
 MASTER_KEYS = set(DOMAIN_DEFAULTS["master"])
@@ -156,7 +159,12 @@ def _domain_from(stored: dict[str, Any], domain_id: str, name: str) -> dict[str,
     d["autonomy"].update(stored.get("autonomy", {}))
     d["charter"] = stored.get("charter", "")
     d["memory"].update({k: v for k, v in stored.get("memory", {}).items() if k != "embed_model"})
-    d["entities"] = dict(stored["entities"]) if isinstance(stored.get("entities"), dict) else None
+    if isinstance(stored.get("visible"), list):
+        d["visible"] = list(stored["visible"])
+    elif isinstance(stored.get("entities"), dict):  # 0.21 kept one level list per domain
+        d["visible"] = list(stored["entities"])
+    else:
+        d["visible"] = None
     return {"id": domain_id, "name": name, **d}
 
 
@@ -171,6 +179,11 @@ class DomainSettings:
     async def async_save(self) -> None:
         """Save the whole config."""
         await self._store.async_save()
+
+    @property
+    def store(self) -> AACStore:
+        """The whole config (models, pools, entity access are shared)."""
+        return self._store
 
     @property
     def id(self) -> str:
@@ -250,13 +263,13 @@ class DomainSettings:
         await self.async_save()
 
     @property
-    def entities(self) -> dict[str, str] | None:
-        """AAC's own entity access ({entity_id: read | control}); None = follow HA's Assist exposure."""
-        return self.data["entities"]
+    def visible(self) -> list[str] | None:
+        """The entities this domain can see at all (None = not chosen: HA's Assist exposure)."""
+        return self.data["visible"]
 
-    async def async_set_entities(self, levels: dict[str, str]) -> None:
-        """Replace the access list (the caller merges)."""
-        self.data["entities"] = {e: lvl for e, lvl in levels.items() if lvl in ("read", "control")}
+    async def async_set_visible(self, entity_ids: list[str]) -> None:
+        """The owner's tick list."""
+        self.data["visible"] = sorted(set(entity_ids))
         await self.async_save()
 
     @property
@@ -275,6 +288,7 @@ class AACStore:
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize."""
+        self.hass = hass
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self.data: dict[str, Any] = deepcopy(DEFAULT_CONFIG)
         self.domains: dict[str, DomainSettings] = {}
@@ -293,6 +307,26 @@ class AACStore:
         data["module_settings"] = dict(stored.get("module_settings", {}))
         data["module_access"] = dict(stored.get("module_access", {}))
         data["requests"] = list(stored.get("requests", []))[-100:]
+        if isinstance(stored.get("entity_access"), dict):
+            data["entity_access"] = dict(stored["entity_access"])
+        elif any(isinstance(d.get("entities"), dict) for d in stored.get("domains", [])):
+            # 0.21: per-domain levels → global read/write (the most any domain had)
+            access: dict[str, dict[str, bool]] = {}
+            for d in stored["domains"]:
+                levels = d.get("entities")
+                if not isinstance(levels, dict):  # this domain followed HA's Assist exposure
+                    # From HA's exposure settings, not the states: during startup many entities have none yet
+                    from homeassistant.components.homeassistant.exposed_entities import (  # noqa: PLC0415
+                        async_get_assistant_settings,
+                    )
+
+                    levels = {entity_id: "control" for entity_id, opts in
+                              async_get_assistant_settings(self.hass, "conversation").items() if opts.get("should_expose")}
+                for entity_id, lvl in levels.items():
+                    cur = access.setdefault(entity_id, {"read": False, "write": False})
+                    cur["read"] = True
+                    cur["write"] = cur["write"] or lvl == "control"
+            data["entity_access"] = access
         # Up to 0.14 there was one implicit domain: its settings were at the top level
         domains = stored.get("domains") or [_domain_from(stored, DEFAULT_DOMAIN_ID, "Assistant")]
         data["domains"] = [_domain_from(d, d["id"], d.get("name") or d["id"]) for d in domains]
@@ -335,6 +369,8 @@ class AACStore:
             domain_id, n = f"{slug}_{n}", n + 1
         data = _domain_from(base, domain_id, name.strip() or domain_id)
         data["triggers"] = [t for t in data["triggers"] if t.get("created_by") != "agent"]
+        if not base:
+            data["visible"] = []  # a new domain sees nothing until the owner ticks entities
         self.data["domains"].append(data)
         self.domains[domain_id] = DomainSettings(self, data)
         await self.async_save()
@@ -463,6 +499,17 @@ class AACStore:
     async def async_prefer(self, role: str, resource: str) -> None:
         """Make a resource the first choice of a role."""
         await self.async_set_pool(role, [resource, *self.pools.get(role, [])])
+
+    @property
+    def entity_access(self) -> dict[str, dict[str, bool]] | None:
+        """Read/write per entity (None = not chosen: HA's Assist exposure)."""
+        return self.data["entity_access"]
+
+    async def async_set_entity_access(self, access: dict[str, dict[str, bool]]) -> None:
+        """Replace read/write (the caller merges)."""
+        self.data["entity_access"] = {e: {"read": bool(a.get("read") or a.get("write")), "write": bool(a.get("write"))}
+                                      for e, a in access.items() if a.get("read") or a.get("write")}
+        await self.async_save()
 
     @property
     def audio(self) -> dict[str, Any]:

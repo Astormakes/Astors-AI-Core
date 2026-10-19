@@ -98,11 +98,11 @@ def setup_steps(hass: HomeAssistant, store: AACStore, domain: DomainSettings | N
         {
             "id": "entities",
             "title": "Choose what AAC may see and control",
-            "hint": "AAC keeps its own list (HA's Assist settings stay HA's). Until you choose, it uses what you "
-                    "exposed to Assist. It can also ask you for more, with a reason, and you decide.",
-            "target": "settings/entities",
+            "hint": "Two lists: which entities this domain can see at all (domain menu), and which of them may be "
+                    "read or switched (Entities). HA's Assist settings stay HA's. AAC can ask you for more.",
+            "target": "domain/visible",
             "optional": True,
-            "done": domain.entities is not None,
+            "done": domain.visible is not None,
         },
         {
             "id": "rules",

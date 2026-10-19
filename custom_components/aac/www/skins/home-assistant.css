@@ -37,6 +37,8 @@ nav { border-right: 0; box-shadow: none; }
 .brand { border-bottom: 0; }
 .brand .name { color: var(--text); font-weight: 700; }
 .dswitch { border-bottom: 0; }
+.lit.on { color: var(--accent-fg); background: var(--accent-bg); border-color: var(--accent-bg); box-shadow: none; }
+.lit[data-what="write"].on { background: var(--text); border-color: var(--text); color: var(--bg); box-shadow: none; }
 .dbtn { color: var(--text); border: 0; background: var(--hover); border-radius: .75em; }
 .dmenu { background: var(--card); border: 1px solid var(--line); border-radius: .75em; box-shadow: var(--ha-card-box-shadow, 0 .5em 1.5em rgba(0, 0, 0, .25)); overflow: hidden; }
 .ditem.on { color: var(--accent-bg); }

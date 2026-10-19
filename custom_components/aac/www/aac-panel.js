@@ -71,6 +71,15 @@ nav {
 .ent-table td { padding: .3em .4em; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); vertical-align: middle; }
 .ent-table td:last-child { width: 9em; }
 .ent-table select { min-height: 0; padding: .3em .4em; }
+.lits { white-space: nowrap; width: 11em; text-align: right; }
+.lit { font: inherit; font-size: .8em; padding: .3em .8em; margin-left: .3em; cursor: pointer; border: 1px solid var(--line); background: transparent; color: var(--dim); border-radius: 1em; }
+.lit.on { color: var(--bg); background: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 .5em color-mix(in srgb, var(--cyan) 60%, transparent); }
+.lit[data-what="write"].on { background: var(--magenta); border-color: var(--magenta); box-shadow: 0 0 .5em color-mix(in srgb, var(--magenta) 60%, transparent); }
+.vis-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(18em, 1fr)); gap: .1em 1.2em; }
+.vis-item { align-items: flex-start; margin: .25em 0; min-width: 0; }
+.vis-item > span { min-width: 0; overflow: hidden; }
+.vis-item .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8em; }
+.vis-item input { margin-top: .2em; }
 .dlg-back { position: absolute; inset: 0; z-index: 60; background: rgba(0, 0, 0, .55); display: grid; place-items: center; padding: 1em; }
 .dlg { width: min(32em, 100%); margin: 0; }
 .dlg textarea { min-height: 8em; }
@@ -416,33 +425,62 @@ class AacPanel extends HTMLElement {
     this._render();
   }
 
+  _entityGroups(list) {
+    const q = (this._entQuery || "").toLowerCase(), groups = {};
+    for (const e of list) if (!q || `${e.name} ${e.entity_id} ${e.area || ""}`.toLowerCase().includes(q)) (groups[e.area || "No room"] ||= []).push(e);
+    return groups;
+  }
+
+  _entitySearch() {
+    return `<div class="row"><div><label for="ent-q">Search</label><input id="ent-q" value="${esc(this._entQuery || "")}" placeholder="name, room, entity id"></div></div>`;
+  }
+
+  async _loadVisible() {
+    try {
+      const r = await this._ws("aac/domain/visible");
+      this._vis = { entities: r.entities, chosen: r.chosen, picked: new Set(r.entities.filter((e) => e.visible).map((e) => e.entity_id)), dirty: false };
+    } catch (e) { this._vis = { entities: [], picked: new Set(), error: e.message }; }
+    this._render();
+  }
+
+  _renderVisible() {
+    const v = this._vis, dom = this._state?.domain?.name || "";
+    if (!v) return this._page("WHAT THIS DOMAIN CAN SEE", "", '<div class="card"><p>Loading…</p></div>');
+    const groups = this._entityGroups(v.entities);
+    return this._page(`WHAT "${dom.toUpperCase()}" CAN SEE`, `${v.picked.size} of ${v.entities.length} ticked${v.dirty ? " · not saved" : ""}`, `
+      <div class="card">
+        <p>Only ticked entities exist for "${esc(dom)}": its agent, its automatic runs and the modules in it. Whether it may read or switch them is set separately under SETTINGS → Entities. ${v.chosen ? "" : "Not chosen yet: the ticks show what you exposed to Assist in HA."}</p>
+        ${this._entitySearch()}
+        <div class="actions"><button class="btn primary" id="vis-save" ${v.dirty ? "" : "disabled"}>Save</button>
+          <button class="btn" id="vis-all">Tick all</button><button class="btn" id="vis-none">Untick all</button></div>
+      </div>
+      ${Object.entries(groups).map(([area, list]) => {
+        const on = list.filter((e) => v.picked.has(e.entity_id)).length;
+        return `<div class="card"><h2>${esc(area.toUpperCase())} <span class="tag">${on}/${list.length}</span>
+          <span class="actions" style="margin:0 0 0 auto"><button class="btn" data-vis-area="${esc(area)}" data-vis-to="1">all</button><button class="btn" data-vis-area="${esc(area)}" data-vis-to="0">none</button></span></h2>
+          <div class="vis-grid">${list.map((e) => `<label class="check vis-item"><input type="checkbox" class="vis-tick" value="${esc(e.entity_id)}" ${v.picked.has(e.entity_id) ? "checked" : ""}>
+            <span title="${esc(e.entity_id)}">${esc(e.name)}<span class="hint" style="display:block;margin:0">${esc(e.entity_id)}</span></span></label>`).join("")}</div></div>`;
+      }).join("")}`);
+  }
+
   _renderEntities() {
     const d = this._ents;
     if (!d) return this._page("ENTITIES", "", '<div class="card"><p>Loading…</p></div>');
-    const q = (this._entQuery || "").toLowerCase(), show = this._entShow || "all";
-    const rows = d.entities.filter((e) => (!q || `${e.name} ${e.entity_id} ${e.area || ""}`.toLowerCase().includes(q))
-      && (show === "all" || (show === "visible" ? e.level !== "hidden" : e.level === "hidden")));
-    const groups = {};
-    for (const e of rows) (groups[e.area || "No room"] ||= []).push(e);
-    const counts = { read: 0, control: 0 };
-    for (const e of d.entities) if (e.level !== "hidden") counts[e.level]++;
-    const sel = (e) => `<select class="ent-level" data-ent="${esc(e.entity_id)}">${[["hidden", "hidden"], ["read", "read"], ["control", "control"]]
-      .map(([v, l]) => `<option value="${v}" ${e.level === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
-    const shown = Object.entries(groups).slice(0, 60);
-    return this._page("ENTITIES", `${counts.control} control · ${counts.read} read · ${d.entities.length} in total`, `
-      <div class="card"><h2>WHAT AAC MAY SEE AND CONTROL</h2>
-        <p>AAC's own list for "${esc(this._state?.domain?.name || "")}"; Home Assistant's Assist settings stay as they are. <b>read</b> = AAC sees the state, <b>control</b> = it may also switch it (locks, alarms and doors only while you are in the chat), <b>hidden</b> = it only knows the entity exists. ${d.own_list ? "" : "You have not chosen yet, so this shows what you exposed to Assist in HA; your first change makes it AAC's own list."} AAC can also ask you for more; requests appear under WORKERS → Requests.</p>
-        <div class="row"><div><label for="ent-q">Search</label><input id="ent-q" value="${esc(this._entQuery || "")}" placeholder="name, room, entity id"></div>
-          <div style="flex:none;min-width:12em"><label for="ent-show">Show</label><select id="ent-show">${[["all", "All"], ["visible", "AAC can see"], ["hidden", "Hidden"]].map(([v, l]) => `<option value="${v}" ${show === v ? "selected" : ""}>${l}</option>`).join("")}</select></div></div>
+    const groups = this._entityGroups(d.entities);
+    const reads = d.entities.filter((e) => e.read).length, writes = d.entities.filter((e) => e.write).length;
+    const tog = (e, what) => `<button class="lit ${e[what] ? "on" : ""}" data-acc="${esc(e.entity_id)}" data-what="${what}" aria-pressed="${!!e[what]}">${what === "read" ? "Read" : "Write"}</button>`;
+    return this._page("ENTITIES", `${writes} write · ${reads} read · ${d.entities.length} in total`, `
+      <div class="card"><h2>READ AND WRITE</h2>
+        <p>For every domain and module: <b>Read</b> = AAC may see the state, <b>Write</b> = it may also switch it (locks, alarms and doors only while you are in the chat). What a domain can see at all is its own tick list (domain menu → "What … can see"); both together decide. Home Assistant's Assist settings stay as they are. ${d.chosen ? "" : "Not chosen yet: this shows what you exposed to Assist in HA; your first change makes it AAC's own."}</p>
+        ${this._entitySearch()}
       </div>
       ${(this._state?.master?.llm_hass_api || []).length ? `<div class="card"><h2>HOME ASSISTANT'S OWN TOOLS ARE ALSO ON</h2>
-        <p>The master agent also has Home Assistant's tools (${esc(this._state.master.llm_hass_api.join(", "))}). Those follow HA's own "expose to Assist" setting, not this list, so AAC can still see and switch what is exposed there. They also bring things like timers and HA's to-do lists.</p>
-        <div class="actions"><button class="btn primary" id="ent-only-aac">Use only AAC's list</button><button class="btn" data-go="settings/master">Master agent settings</button></div></div>` : ""}
-      ${shown.map(([area, list]) => `<div class="card"><h2>${esc(area.toUpperCase())} <span class="tag">${list.length}</span>
-          <span class="actions" style="margin:0 0 0 auto">${["hidden", "read", "control"].map((l) => `<button class="btn" data-ent-area="${esc(area)}" data-ent-to="${l}">all ${l}</button>`).join("")}</span></h2>
-        <table class="ent-table"><tbody>${list.map((e) => `<tr><td>${esc(e.name)}<div class="hint" style="margin:0">${esc(e.entity_id)}</div></td><td class="hint">${esc(e.device_class || e.domain)}</td><td>${sel(e)}</td></tr>`).join("")}</tbody></table>
-      </div>`).join("")}
-      ${Object.keys(groups).length > 60 ? '<div class="card"><p class="hint">More rooms than shown; narrow it down with the search.</p></div>' : ""}`);
+        <p>The master agent of "${esc(this._state?.domain?.name || "")}" also has Home Assistant's tools (${esc(this._state.master.llm_hass_api.join(", "))}). Those follow HA's own "expose to Assist" setting, not these lists. They also bring things like timers and HA's to-do lists.</p>
+        <div class="actions"><button class="btn primary" id="ent-only-aac">Use only AAC's lists</button><button class="btn" data-go="settings/master">Master agent settings</button></div></div>` : ""}
+      ${Object.entries(groups).map(([area, list]) => `<div class="card"><h2>${esc(area.toUpperCase())} <span class="tag">${list.length}</span>
+          <span class="actions" style="margin:0 0 0 auto"><button class="btn" data-acc-area="${esc(area)}" data-acc-to="read">all read</button><button class="btn" data-acc-area="${esc(area)}" data-acc-to="write">all write</button><button class="btn" data-acc-area="${esc(area)}" data-acc-to="none">none</button></span></h2>
+        <table class="ent-table"><tbody>${list.map((e) => `<tr><td>${esc(e.name)}<div class="hint" style="margin:0">${esc(e.entity_id)}</div></td><td class="hint">${esc(e.device_class || e.domain)}</td><td class="lits">${tog(e, "read")}${tog(e, "write")}</td></tr>`).join("")}</tbody></table>
+      </div>`).join("")}`);
   }
 
   _renderRequests() {
@@ -612,6 +650,7 @@ class AacPanel extends HTMLElement {
     if (view.startsWith("settings/audio")) this._loadAudio();
     if (view === "settings/triggers") this._loadJobs();
     if (view === "settings/entities") this._loadEntities();
+    if (view === "domain/visible") this._loadVisible();
     if (view === "requests") this._loadRequests();
     if (view === "settings/modules" || view.startsWith("settings/module/")) this._loadModuleSettings();
     if (view === "settings/memory") this._loadMemory();
@@ -783,6 +822,7 @@ class AacPanel extends HTMLElement {
     if (v.startsWith("mod/")) return this._renderModulePage(v);
     if (v === "settings/modules") return this._renderModules();
     if (v === "settings/entities") return this._renderEntities();
+    if (v === "domain/visible") return this._renderVisible();
     if (v === "requests") return this._renderRequests();
     if (v.startsWith("settings/module/")) return this._renderModuleSettings(v.slice(16));
     if (v === "settings/charter") return this._renderCharter();
@@ -1244,6 +1284,7 @@ class AacPanel extends HTMLElement {
         ${st.domains.map((d) => `<button class="ditem ${d.id === st.domain.id ? "on" : ""}" data-domain-go="${esc(d.id)}">${esc(d.name)}${d.id === voice ? ' <span class="tag">VOICE</span>' : ""}</button>`).join("")}
         <div class="dsep"></div>
         <button class="ditem" id="dom-new">New domain…</button>
+        <button class="ditem" id="dom-visible">What "${esc(st.domain.name)}" can see…</button>
         <button class="ditem" id="dom-rename">Rename "${esc(st.domain.name)}"…</button>
         ${st.domain.id === voice ? "" : `<button class="ditem" id="dom-voice">Let "${esc(st.domain.name)}" own the voice</button>`}
         ${st.domain.first ? "" : `<button class="ditem danger" id="dom-delete">Delete "${esc(st.domain.name)}"…</button>`}
@@ -1622,6 +1663,7 @@ class AacPanel extends HTMLElement {
       if (el.dataset.domainGo === this._state?.domain?.id) { this._domainMenu = false; this._render(); return; }
       this._switchDomain(el.dataset.domainGo);
     }));
+    sr.querySelector("#dom-visible")?.addEventListener("click", () => { this._domainMenu = false; this._go("domain/visible"); });
     for (const [id, kind] of [["#dom-new", "new"], ["#dom-rename", "rename"], ["#dom-delete", "delete"], ["#dom-voice", "voice"]]) {
       sr.querySelector(id)?.addEventListener("click", () => this._domainAction(kind));
     }
@@ -1669,23 +1711,51 @@ class AacPanel extends HTMLElement {
     });
     sr.querySelector("#ent-only-aac")?.addEventListener("click", async () => {
       this._state = await this._ws("aac/master/update", { llm_hass_api: [] });
-      this._flash = { ok: true, text: "AAC now only uses its own list." };
+      this._flash = { ok: true, text: "AAC now only uses its own lists." };
       this._render();
     });
     sr.querySelector("#ent-show")?.addEventListener("change", (e) => { this._entShow = e.target.value; this._render(); });
-    sr.querySelectorAll(".ent-level").forEach((el) => el.addEventListener("change", async () => {
-      this._ents = await this._ws("aac/entities/set", { levels: { [el.dataset.ent]: el.value } });
+    sr.querySelectorAll("[data-acc]").forEach((el) => el.addEventListener("click", async () => {
+      const on = !el.classList.contains("on");
+      el.classList.toggle("on", on);  // light up at once, the save follows
+      this._ents = await this._ws("aac/entities/set", { access: { [el.dataset.acc]: { [el.dataset.what]: on } } });
+      this._render();
+    }));
+    sr.querySelectorAll("[data-acc-area]").forEach((el) => el.addEventListener("click", async () => {
+      const to = el.dataset.accTo, list = this._entityGroups(this._ents.entities)[el.dataset.accArea] || [];
+      const value = to === "write" ? { write: true } : to === "read" ? { read: true, write: false } : { read: false };
+      this._ents = await this._ws("aac/entities/set", { access: Object.fromEntries(list.map((e) => [e.entity_id, value])) });
+      this._render();
+    }));
+    sr.querySelectorAll(".vis-tick").forEach((el) => el.addEventListener("change", () => {
+      if (el.checked) this._vis.picked.add(el.value); else this._vis.picked.delete(el.value);
+      this._vis.dirty = true;
+      this._render();
+    }));
+    sr.querySelectorAll("[data-vis-area]").forEach((el) => el.addEventListener("click", () => {
+      for (const e of this._entityGroups(this._vis.entities)[el.dataset.visArea] || []) {
+        if (el.dataset.visTo === "1") this._vis.picked.add(e.entity_id); else this._vis.picked.delete(e.entity_id);
+      }
+      this._vis.dirty = true;
+      this._render();
+    }));
+    sr.querySelector("#vis-all")?.addEventListener("click", () => {
+      for (const list of Object.values(this._entityGroups(this._vis.entities))) for (const e of list) this._vis.picked.add(e.entity_id);
+      this._vis.dirty = true;
+      this._render();
+    });
+    sr.querySelector("#vis-none")?.addEventListener("click", () => {
+      for (const list of Object.values(this._entityGroups(this._vis.entities))) for (const e of list) this._vis.picked.delete(e.entity_id);
+      this._vis.dirty = true;
+      this._render();
+    });
+    sr.querySelector("#vis-save")?.addEventListener("click", async () => {
+      const r = await this._ws("aac/domain/visible/set", { visible: [...this._vis.picked] });
+      this._vis = { entities: r.entities, chosen: true, picked: new Set(r.entities.filter((e) => e.visible).map((e) => e.entity_id)), dirty: false };
+      this._flash = { ok: true, text: "Saved." };
       this._render();
       this._loadState();
-    }));
-    sr.querySelectorAll("[data-ent-area]").forEach((el) => el.addEventListener("click", async () => {
-      const area = el.dataset.entArea, to = el.dataset.entTo, q = (this._entQuery || "").toLowerCase();
-      const ids = this._ents.entities.filter((e) => (e.area || "No room") === area && (!q || `${e.name} ${e.entity_id} ${e.area || ""}`.toLowerCase().includes(q))).map((e) => e.entity_id);
-      if (!(await this._confirm(`Set ${ids.length} entities in "${area}" to ${to}?`, "Set"))) return;
-      this._ents = await this._ws("aac/entities/set", { levels: Object.fromEntries(ids.map((i) => [i, to])) });
-      this._render();
-      this._loadState();
-    }));
+    });
     sr.querySelectorAll("[data-req-ok]").forEach((el) => el.addEventListener("click", async () => {
       const ids = [...sr.querySelectorAll(`.req-item[data-req="${CSS.escape(el.dataset.reqOk)}"]:checked`)].map((c) => c.value);
       await this._ws("aac/request/decide", { request_id: el.dataset.reqOk, approve: ids });

@@ -19,7 +19,7 @@ from homeassistant.helpers import llm
 
 from .const import DOMAIN
 from .context import _state_text
-from .entities import SENSITIVE_DOMAINS, async_set_levels, everything, info, level
+from .entities import SENSITIVE_DOMAINS, async_set_access, domain_view, info, level
 
 if TYPE_CHECKING:
     from . import AACConfigEntry
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 API_ID = "aac_home"
 API_PROMPT = (
-    "You see and control the home through the owner's access list for you (not HA's own Assist settings). "
+    "You know only the entities the owner lets this domain see, and may read or switch only those allowed. "
     "If a task needs an entity you cannot see or control, find it with list_entities and ask with "
     "request_access and a short reason; the owner decides outside the chat, you hear the outcome in "
     "'From AAC'. Ask only for what the task needs."
@@ -48,8 +48,8 @@ class _HomeTool(llm.Tool):
 class ListEntitiesTool(_HomeTool):
     name = "list_entities"
     description = (
-        "Entities in the home: name, room, type and your access (hidden / read / control); the state only where "
-        "you may read. Filter by room, type (light, sensor, …) or a search word."
+        "The entities you may know about: name, room, type and your access (hidden = no read / read / control); "
+        "the state only where you may read. Filter by room, type (light, sensor, …) or a search word."
     )
     annotations = llm.ToolAnnotations(read_only=True, open_world=False)
     parameters = probatio.Schema({probatio.Optional("area"): str, probatio.Optional("type"): str,
@@ -58,7 +58,7 @@ class ListEntitiesTool(_HomeTool):
     async def async_call(self, hass, tool_input, llm_context):
         args = tool_input.tool_args
         found = []
-        for e in everything(hass, self._domain.settings):
+        for e in domain_view(hass, self._domain.settings):
             if args.get("only_accessible") and e["level"] == "hidden":
                 continue
             if args.get("area") and (e["area"] or "").lower() != args["area"].lower():
@@ -85,8 +85,10 @@ class GetStateTool(_HomeTool):
             state = hass.states.get(entity_id)
             if state is None:
                 out[entity_id] = {"error": "does not exist"}
-            elif self._level(hass, entity_id) == "hidden":
-                out[entity_id] = {"error": "no access (request_access)"}
+            elif (lvl := self._level(hass, entity_id)) == "invisible":
+                out[entity_id] = {"error": "does not exist"}
+            elif lvl == "hidden":
+                out[entity_id] = {"error": "no read access (request_access)"}
             else:
                 attrs = {k: v for k, v in state.attributes.items() if k not in ("friendly_name", "icon", "entity_picture")}
                 out[entity_id] = {"state": _state_text(state), "attributes": attrs, "changed": state.last_changed.isoformat()}
@@ -108,7 +110,7 @@ class ControlTool(_HomeTool):
 
         args = tool_input.tool_args
         entity_id, action = args["entity_id"], args["action"]
-        if (state := hass.states.get(entity_id)) is None:
+        if (state := hass.states.get(entity_id)) is None or self._level(hass, entity_id) == "invisible":
             return llm.ToolResult(data={"error": "That entity does not exist."}, error=True)
         if self._level(hass, entity_id) != "control":
             return llm.ToolResult(data={"error": "You may not control it; ask with request_access."}, error=True)
@@ -142,8 +144,8 @@ class RequestAccessTool(_HomeTool):
         rank = {"hidden": 0, "read": 1, "control": 2}
         items = []
         for entity_id in dict.fromkeys(args["entity_ids"][:50]):
-            if (state := hass.states.get(entity_id)) is None:
-                continue
+            if (state := hass.states.get(entity_id)) is None or self._level(hass, entity_id) == "invisible":
+                continue  # it may only ask about what its domain can see
             if rank[self._level(hass, entity_id)] >= rank[args["level"]]:
                 continue  # already allowed
             e = info(hass, state)
@@ -161,7 +163,8 @@ class RequestAccessTool(_HomeTool):
 async def apply_entities(entry: AACConfigEntry, domain_id: str, request: dict[str, Any], approved: list[str]) -> None:
     """An approved entity request: raise those entities to the requested level."""
     if dom := entry.runtime_data.domain(domain_id):
-        await async_set_levels(dom.chats.hass, dom.settings, {e: request["payload"]["level"] for e in approved})
+        write = request["payload"]["level"] == "control"
+        await async_set_access(dom.chats.hass, entry.runtime_data.store, {e: {"read": True, **({"write": True} if write else {})} for e in approved})
 
 
 @dataclass(kw_only=True)

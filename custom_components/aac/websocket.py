@@ -28,7 +28,7 @@ from .runs import SIGNAL_UPDATE, async_notify
 from .status import aac_agent_entity_id, setup_steps
 from .pools import ROLES, async_set_role
 from .modules import access as module_access, async_set_access, async_set_settings, setting as module_setting
-from .entities import async_set_levels, everything as entity_list
+from .entities import all_entities, async_set_access as async_set_entity_access, async_set_visible
 from .skins import list_skins, user_dir
 from .domains import Domain, async_remove_domain_data
 from .store import AACStore
@@ -69,6 +69,8 @@ def async_register(hass: HomeAssistant) -> None:
         ws_skins,
         ws_entities,
         ws_entities_set,
+        ws_domain_visible,
+        ws_domain_visible_set,
         ws_requests,
         ws_request_decide,
         ws_modules,
@@ -786,23 +788,46 @@ async def ws_module_access(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.require_admin
 @callback
 def ws_entities(hass: HomeAssistant, connection, msg) -> None:
-    """All entities with AAC's access level in the selected domain."""
+    """Every entity with read/write (for all domains and modules)."""
     if entry := _entry(hass, connection, msg):
-        settings = _d(entry, msg).settings
-        connection.send_result(msg["id"], {"entities": entity_list(hass, settings),
-                                           "own_list": settings.entities is not None})
+        store = entry.runtime_data.store
+        connection.send_result(msg["id"], {"entities": all_entities(hass, store), "chosen": store.entity_access is not None})
 
 
-@aac_command({vol.Required("type"): "aac/entities/set", vol.Required("levels"): {str: vol.In(["hidden", "read", "control"])}})
+@aac_command({vol.Required("type"): "aac/entities/set",
+              vol.Required("access"): {str: {vol.Optional("read"): bool, vol.Optional("write"): bool}}})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_entities_set(hass: HomeAssistant, connection, msg) -> None:
-    """Change some entities' access (the first change makes AAC's own list from HA's Assist exposure)."""
+    """Change read/write of some entities (write needs read)."""
+    if entry := _entry(hass, connection, msg):
+        store = entry.runtime_data.store
+        await async_set_entity_access(hass, store, msg["access"])
+        async_notify(hass, "entities")
+        connection.send_result(msg["id"], {"entities": all_entities(hass, store), "chosen": True})
+
+
+@aac_command({vol.Required("type"): "aac/domain/visible"})
+@websocket_api.require_admin
+@callback
+def ws_domain_visible(hass: HomeAssistant, connection, msg) -> None:
+    """Every entity, ticked where the selected domain can see it."""
     if entry := _entry(hass, connection, msg):
         settings = _d(entry, msg).settings
-        await async_set_levels(hass, settings, msg["levels"])
-        async_notify(hass, "entities", domain=_d(entry, msg).id)
-        connection.send_result(msg["id"], {"entities": entity_list(hass, settings), "own_list": True})
+        connection.send_result(msg["id"], {"entities": all_entities(hass, entry.runtime_data.store, settings),
+                                           "chosen": settings.visible is not None})
+
+
+@aac_command({vol.Required("type"): "aac/domain/visible/set", vol.Required("visible"): [str]})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_domain_visible_set(hass: HomeAssistant, connection, msg) -> None:
+    """The selected domain's tick list (what it can see at all)."""
+    if entry := _entry(hass, connection, msg):
+        dom = _d(entry, msg)
+        await async_set_visible(hass, dom.settings, msg["visible"])
+        async_notify(hass, "entities", domain=dom.id)
+        connection.send_result(msg["id"], {"entities": all_entities(hass, entry.runtime_data.store, dom.settings), "chosen": True})
 
 
 @aac_command({vol.Required("type"): "aac/requests"})
