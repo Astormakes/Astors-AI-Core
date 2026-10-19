@@ -59,6 +59,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_memory_delete,
         ws_memory_settings,
         ws_memory_reembed,
+        ws_charter,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -88,6 +89,8 @@ def _state(hass: HomeAssistant, store: AACStore, entry_id: str) -> dict[str, Any
         "setup": setup_steps(hass, store),
         "heartbeat": store.heartbeat,
         "memory": store.memory,
+        "charter": store.charter,
+        "charter_is_default": not store.data["charter"],
         "triggers": store.triggers,
         "llm_apis": [{"id": api.id, "name": api.name} for api in llm.async_get_apis(hass)],
     }
@@ -546,3 +549,16 @@ async def ws_memory_reembed(hass: HomeAssistant, connection, msg) -> None:
     if entry := _entry(hass, connection, msg):
         done = await entry.runtime_data.memory.async_reembed()
         connection.send_result(msg["id"], {"embedded": done})
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "aac/charter", vol.Required("text"): vol.All(str, vol.Length(min=1))}
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_charter(hass: HomeAssistant, connection, msg) -> None:
+    """Set the charter (the owner's values). Only the owner, never an agent."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    await entry.runtime_data.store.async_set_charter(msg["text"])
+    connection.send_result(msg["id"], _state(hass, entry.runtime_data.store, entry.entry_id))

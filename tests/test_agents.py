@@ -169,7 +169,12 @@ async def test_state_trigger_with_cooldown(
     """A state change wakes the master once; the cooldown blocks repeats."""
     hass.states.async_set("binary_sensor.door", "off", {"friendly_name": "Door"})
     await setup_aac(hass, mock_entry)
-    payloads = _replies(aioclient_mock, _reply("The door opened."), _reply("again"))
+    payloads = _replies(
+        aioclient_mock,
+        _reply("The door opened."),
+        _reply('{"speak": true, "message": "The door opened."}'),
+        _reply("again"),
+    )
     ws = await hass_ws_client(hass)
     await ws.send_json_auto_id(
         {"type": "aac/trigger/save", "name": "Door",
@@ -184,7 +189,7 @@ async def test_state_trigger_with_cooldown(
     hass.states.async_set("binary_sensor.door", "on", {"friendly_name": "Door"})
     await hass.async_block_till_done(wait_background_tasks=True)
 
-    assert len(payloads) == 1
+    assert len(payloads) == 2  # answer + decision, then the cooldown blocks the repeat
     assert "Door (binary_sensor.door) changed from off to on" in payloads[0]["messages"][-1]["content"]
     assert "Tell me when the door opens." in payloads[0]["messages"][0]["content"]
     assert mock_entry.runtime_data.chats.get("aac")["messages"][-1]["text"] == "The door opened."
@@ -231,9 +236,10 @@ async def test_auto_run_forced_to_answer(
     await ws.send_json_auto_id({"type": "aac/heartbeat/run"})
     run = mock_entry.runtime_data.runs.get((await ws.receive_json())["result"]["run_id"])
     assert run.status == "silent"
-    assert len(payloads) == 5  # 4 tool rounds + 1 forced answer
-    assert "tools" not in payloads[-1]
-    assert "Stop using tools" in payloads[-1]["messages"][-1]["content"]
+    assert len(payloads) == 6  # 4 tool rounds + 1 forced answer + 1 decision
+    assert "tools" not in payloads[4]
+    assert "Stop using tools" in payloads[4]["messages"][-1]["content"]
+    assert payloads[5]["response_format"]["json_schema"]["name"] == "decision"
     assert run.context.startswith("Heartbeat: a scheduled check-in")
     # The heartbeat sees the home without asking
     assert "Current state of the home" in payloads[0]["messages"][0]["content"]
@@ -297,7 +303,11 @@ async def test_time_trigger_weekdays(
     await hass.config.async_set_time_zone("UTC")
     freezer.move_to("2026-10-19 07:29:00+00:00")  # a Monday
     await setup_aac(hass, mock_entry)
-    payloads = _replies(aioclient_mock, _reply("Time for your pills."))
+    payloads = _replies(
+        aioclient_mock,
+        _reply("Time for your pills."),
+        _reply('{"speak": true, "message": "Time for your pills."}'),
+    )
     await mock_entry.runtime_data.store.async_save_trigger(
         {"name": "Pills", "enabled": True, "cooldown": 0, "quiet_hours": None,
          "when": {"type": "time", "at": "07:30", "weekdays": [0, 2, 4]},
@@ -308,7 +318,7 @@ async def test_time_trigger_weekdays(
     freezer.move_to("2026-10-19 07:30:00+00:00")
     async_fire_time_changed(hass, dt_util.utcnow())
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert len(payloads) == 1
+    assert len(payloads) == 2
     assert "Remind me to take my pills." in payloads[0]["messages"][0]["content"]
     assert "remind or tell the user" in payloads[0]["messages"][0]["content"]
     assert mock_entry.runtime_data.chats.get("aac")["messages"][-1]["text"] == "Time for your pills."
@@ -316,7 +326,7 @@ async def test_time_trigger_weekdays(
     freezer.move_to("2026-10-20 07:30:00+00:00")  # Tuesday: not a trigger day
     async_fire_time_changed(hass, dt_util.utcnow())
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert len(payloads) == 1
+    assert len(payloads) == 2
 
 
 async def test_old_triggers_migrate(hass: HomeAssistant, hass_storage, mock_entry):

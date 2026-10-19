@@ -20,6 +20,9 @@ needed and ended afterwards (framework, section 3).
 }
 ```
 
+Every agent's system prompt starts with the owner's **charter** (their values in plain
+words, editable only by the owner, see the framework design), then the template's prompt.
+
 | Field | Meaning |
 |---|---|
 | `prompt` | the template's instructions (the owner can override them) |
@@ -40,7 +43,9 @@ server's grammar (OpenAI `response_format` / JSON schema):
 {"speak": false, "message": ""}
 ```
 
-`speak: false` → run status `silent`, nothing is posted. Tested: Qwen3-8B 12/12,
+`speak: false` → run status `silent`, nothing is posted. Automatic runs that
+were allowed tools end with one extra call (no tools, same JSON) after their tool
+rounds, so every automatic run decides the same way. Tested: Qwen3-8B 12/12,
 Qwen3.6-35B 23/24 (alarm vs. quiet home), much better than asking for a magic
 word. Servers without JSON schema support fall back to the text rule
 ("answer exactly NOTHING") plus a paraphrase check.

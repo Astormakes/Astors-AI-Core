@@ -35,6 +35,19 @@ DEFAULT_HEARTBEAT = (
     "(lights, closed doors, weather, time, values in normal ranges) are not worth "
     "mentioning: then answer exactly NOTHING."
 )
+# Draft from the framework design (section 3b); the owner edits it in the panel.
+DEFAULT_CHARTER = (
+    "Charter (the owner's values; you follow it and never change it):\n"
+    "- Honesty over comfort: never hide or soften facts to be liked, never fake progress, "
+    "say when you made a mistake.\n"
+    "- Nudge, don't nag: suggest something at most once, accept \"no\", no guilt, no fake urgency.\n"
+    "- My decisions stay mine: you advise, I decide. Ask before anything that cannot be "
+    "undone or leaves the house (buying, sending, unlocking).\n"
+    "- Little noise: speak up only when it matters.\n"
+    "- What you learn about me stays private.\n"
+    "- Help me manage without you: explain, don't only do.\n"
+    "- Limits are not puzzles: if a rule stops you, say so instead of working around it."
+)
 STORAGE_KEY = f"{DOMAIN}.config"
 
 CONF_MASTER_MODEL = "model"
@@ -66,6 +79,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Triggers in the contract format (spec/trigger.md):
     # {id, name, enabled, when: {type, ...}, do: {template, instruction}, cooldown, quiet_hours}
     "triggers": [],
+    # The owner's values for every agent; "" = the built-in draft
+    "charter": "",
     # Long-term memory; embed_model = a model id from Models (None: keywords only)
     "memory": {"enabled": True, "embed_model": None},
 }
@@ -110,6 +125,7 @@ class AACStore:
         data["heartbeat"].update(stored.get("heartbeat", {}))
         data["triggers"] = [_trigger_v1(t) for t in stored.get("triggers", [])]
         data["memory"].update(stored.get("memory", {}))
+        data["charter"] = stored.get("charter", "")
         self.data = data
 
     async def async_save(self) -> None:
@@ -188,6 +204,16 @@ class AACStore:
     async def async_delete_trigger(self, trigger_id: str) -> None:
         """Remove an event trigger."""
         self.data["triggers"] = [t for t in self.triggers if t["id"] != trigger_id]
+        await self.async_save()
+
+    @property
+    def charter(self) -> str:
+        """The effective charter."""
+        return self.data["charter"] or DEFAULT_CHARTER
+
+    async def async_set_charter(self, text: str) -> None:
+        """Change the charter (the built-in draft is stored as "")."""
+        self.data["charter"] = "" if text.strip() == DEFAULT_CHARTER.strip() else text.strip()
         await self.async_save()
 
     @property

@@ -128,6 +128,10 @@ DECISION_RULE = (
     'Not worth mentioning (NOTHING) means "speak": false.'
 )
 DECISION_TEMPERATURE = 0.3
+DECIDE_NOW = (
+    "Now decide: is what you found worth telling the user right now? "
+    "Normal states are not."
+)
 
 
 def _decision_text(content: str | None) -> str | None:
@@ -255,7 +259,8 @@ class AACConversationEntity(
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),
                 api_ids or None,
-                options.get(CONF_PROMPT),
+                # Charter first: the owner's values for every agent, stable (prompt cache)
+                f"{store.charter}\n\n{options.get(CONF_PROMPT) or ''}".strip(),
                 user_input.extra_system_prompt,
             )
         except conversation.ConverseError as err:
@@ -341,4 +346,29 @@ class AACConversationEntity(
 
         if run:
             run.steps.extend(_steps(chat_log.content[first_new:]))
+
+        # Automatic runs that used tools still end in a structured decision: one more
+        # short call without tools. Free-text answers ("No urgent updates. The lamp is
+        # off.") slipped past the silence check too often.
+        if run and run.kind == "auto" and not decide and chat_log.content[-1].role == "assistant":
+            messages = [m for c in chat_log.content if (m := _content_to_message(c)) is not None]
+            messages.append({"role": "user", "content": DECIDE_NOW + DECISION_RULE})
+            try:
+                reply = await provider.chat(
+                    endpoint.model,
+                    messages,
+                    None,
+                    **{**params, "response_format": DECISION_FORMAT,
+                       "temperature": min(params["temperature"], DECISION_TEMPERATURE)},
+                )
+            except ProviderError as err:
+                LOGGER.warning("Decision call failed, keeping the text answer: %s", err)
+            else:
+                decided = _decision_text(reply.get("content"))
+                run.steps.append({"type": "text", "text": f"decision: {decided}"})
+                async for _ in chat_log.async_add_assistant_content(
+                    conversation.AssistantContent(agent_id=self.entity_id, content=decided)
+                ):
+                    pass
+
         return conversation.async_get_result_from_chat_log(user_input, chat_log)

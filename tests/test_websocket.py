@@ -22,7 +22,7 @@ async def test_state_fresh(hass: HomeAssistant, hass_ws_client, mock_entry):
     msg = await ws.receive_json()
     assert msg["success"]
     state = msg["result"]
-    assert state["version"] == "0.6.0"
+    assert state["version"] == "0.7.0"
     assert state["agent_entity_id"] == "conversation.aac"
     steps = {s["id"]: s for s in state["setup"]}
     assert not steps["models"]["done"]
@@ -143,3 +143,26 @@ async def test_admin_only(hass: HomeAssistant, hass_ws_client, hass_read_only_ac
     msg = await ws.receive_json()
     assert not msg["success"]
     assert msg["error"]["code"] == "unauthorized"
+
+
+async def test_charter_reaches_every_agent(
+    hass: HomeAssistant, hass_ws_client, aioclient_mock: AiohttpClientMocker, mock_entry, configured
+):
+    """The charter comes first in the system prompt; the draft is stored as default."""
+    from custom_components.aac.store import DEFAULT_CHARTER, STORAGE_KEY
+
+    await setup_aac(hass, mock_entry)
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/state"})
+    state = (await ws.receive_json())["result"]
+    assert state["charter"] == DEFAULT_CHARTER and state["charter_is_default"]
+
+    await ws.send_json_auto_id({"type": "aac/charter", "text": "Be kind. Never lie."})
+    assert (await ws.receive_json())["result"]["charter_is_default"] is False
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", json=_reply("ok"))
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "hi"})
+    await ws.receive_json()
+    system = aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
+    assert system.startswith("Be kind. Never lie.")
+    assert "You are a test." in system
+    assert mock_entry.runtime_data.store.data["charter"] == "Be kind. Never lie."

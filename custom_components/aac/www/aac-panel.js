@@ -537,6 +537,7 @@ class AacPanel extends HTMLElement {
         </div>
         <div class="seg">
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
+          ${this._tab("settings/charter", "Charter")}
           ${this._tab("settings/master", "Master agent", this._stepOpen("master") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/triggers", "Triggers")}
           ${this._tab("models", "Models", this._stepOpen("models") ? '<span class="dot open"></span>' : "")}
@@ -568,6 +569,7 @@ class AacPanel extends HTMLElement {
     if (v === "models/new" || v.startsWith("model/edit/")) return this._renderModelForm();
     if (v.startsWith("model/")) return this._renderModel(v.slice(6));
     if (v === "settings/master") return this._renderMaster();
+    if (v === "settings/charter") return this._renderCharter();
     if (v === "settings/triggers") return this._renderTriggers();
     if (v === "trigger/new" || v.startsWith("trigger/edit/")) return this._renderTriggerForm();
     if (v === "settings/audio") return this._renderAudio();
@@ -822,6 +824,19 @@ class AacPanel extends HTMLElement {
       </div>`);
   }
 
+  // ---------------------------------------------------------------- settings: charter
+  _renderCharter() {
+    const st = this._state;
+    if (!st) return this._page("CHARTER", "", "");
+    return this._page("CHARTER", st.charter_is_default ? "built-in draft" : "your own", `<div class="card"><h2>CHARTER</h2>
+        <p>Your values in plain words. Every AAC agent gets this first, before anything else, and no agent can change it; only you can, here. It is not a score to optimize: it tells AAC how to behave (honest, sparing, your decisions stay yours).</p>
+        <label for="ch-text">Charter</label>
+        <textarea id="ch-text" class="thin-scroll" style="min-height:20em">${esc(st.charter)}</textarea>
+        <div class="actions"><button class="btn primary" id="ch-save">Save</button></div>
+        ${this._flashHtml()}
+      </div>`);
+  }
+
   // ---------------------------------------------------------------- settings: master
   _renderMaster() {
     const st = this._state;
@@ -1023,6 +1038,13 @@ class AacPanel extends HTMLElement {
     sr.querySelector("#f-test")?.addEventListener("click", () => this._formTest());
     sr.querySelector("#f-save")?.addEventListener("click", () => this._formSave());
     sr.querySelector("#m-save")?.addEventListener("click", () => this._saveMaster());
+    sr.querySelector("#ch-save")?.addEventListener("click", async () => {
+      try {
+        this._state = await this._ws("aac/charter", { text: sr.querySelector("#ch-text").value });
+        this._flash = { ok: true, text: "Saved. Every agent follows it from the next message on." };
+      } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
+      this._render();
+    });
     sr.querySelector("#hb-save")?.addEventListener("click", () => this._saveHeartbeat());
     sr.querySelector("#hb-run")?.addEventListener("click", () => this._runHeartbeat());
     sr.querySelector("#t-save")?.addEventListener("click", () => this._saveTrigger());
