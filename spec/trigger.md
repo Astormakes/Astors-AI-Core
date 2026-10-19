@@ -65,3 +65,14 @@ Heartbeat (`aac.config` → `heartbeat`), still separate:
 `{"enabled", "interval", "quiet_start", "quiet_end", "instructions" ("" = built-in default), "tools"}`
 
 Code: `custom_components/aac/triggers.py`, `store.py`.
+
+## More kinds of "when" (v0.24.0)
+
+| when | Fires |
+|---|---|
+| `{"type": "state", "entity_id", "attribute"?, "to"?}` | the state changes, or with `attribute` that attribute (e.g. `game` on a Steam sensor); `to` = only to that value |
+| `{"type": "event", "event_type", "event_data"?}` | an HA event of that type (e.g. `zha_event`, `mobile_app_notification_action`, `tag_scanned`), filtered by data values |
+
+AAC can set these up itself with the planning tool `watch` (same autonomy rules as `schedule`; only entities it
+may read; noisy events like `state_changed` are refused; at least 60 s between reactions).
+

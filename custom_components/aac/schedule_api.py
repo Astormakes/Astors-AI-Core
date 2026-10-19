@@ -169,6 +169,83 @@ class ScheduleTool(llm.Tool):
         )
 
 
+# Events that fire constantly; AAC's own triggers may not listen to them
+NOISY_EVENTS = {"state_changed", "time_changed", "call_service", "service_registered", "service_removed",
+                "entity_registry_updated", "device_registry_updated", "area_registry_updated", "recorder_5min_statistics_generated",
+                "homeassistant_final_write", "component_loaded", "core_config_updated", "themes_updated", "panels_updated",
+                "lovelace_updated", "persistent_notifications_updated", "user_added", "user_updated"}
+
+
+class WatchTool(llm.Tool):
+    """Let AAC react to something in Home Assistant on its own."""
+
+    name = "watch"
+    title = "Watch"
+    description = (
+        "Plan to react when something happens in Home Assistant: an entity's state (or one attribute, e.g. "
+        "'game' on a Steam sensor) changes, optionally to a value; or an HA event (event_type, optional "
+        "event_data filter). instruction = what your future self should do then. Only entities you may read."
+    )
+    annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
+    integration = DOMAIN
+    parameters = probatio.Schema(
+        {
+            probatio.Required("name"): str,
+            probatio.Required("instruction"): str,
+            probatio.Optional("entity_id"): str,
+            probatio.Optional("attribute", description="Watch this attribute instead of the state."): str,
+            probatio.Optional("to", description="Only when it becomes this value."): str,
+            probatio.Optional("event_type"): str,
+            probatio.Optional("event_data", description="Only events whose data has these values."): dict,
+            probatio.Optional("cooldown_minutes", description="At least this long between two reactions (default 10)."): int,
+        }
+    )
+
+    def __init__(self, entry: AACConfigEntry, domain: Domain) -> None:
+        """Initialize."""
+        self._entry = entry
+        self._domain = domain
+
+    async def async_call(self, hass: HomeAssistant, tool_input: llm.ToolInput, llm_context: llm.LLMContext):
+        """Same rules as schedule: the owner's autonomy setting, a cap, everything visible in From AAC."""
+        from .entities import level  # noqa: PLC0415
+
+        args = tool_input.tool_args
+        dom = self._domain
+        mode = dom.settings.autonomy.get("schedule", "allowed")
+        if mode == "off":
+            return llm.ToolResult(data={"error": "The owner does not allow AAC to plan things."}, error=True)
+        if sum(t.get("created_by") == "agent" for t in dom.settings.triggers) >= MAX_AGENT_TRIGGERS:
+            return llm.ToolResult(data={"error": "Too many own plans already; cancel one first."}, error=True)
+        if args.get("entity_id"):
+            if level(hass, dom.settings, args["entity_id"]) not in ("read", "control"):
+                return llm.ToolResult(data={"error": "You may not read that entity (request_access first)."}, error=True)
+            when = {"type": "state", "entity_id": args["entity_id"], "attribute": args.get("attribute", ""), "to": args.get("to", "")}
+            what = f"{args['entity_id']}{' ' + args['attribute'] if args.get('attribute') else ''} changes"
+        elif args.get("event_type"):
+            if args["event_type"] in NOISY_EVENTS:
+                return llm.ToolResult(data={"error": "That event fires constantly; watch an entity instead."}, error=True)
+            when = {"type": "event", "event_type": args["event_type"],
+                    "event_data": {k: v for k, v in (args.get("event_data") or {}).items() if isinstance(v, (str, int, float, bool))}}
+            what = f"event {args['event_type']}"
+        else:
+            return llm.ToolResult(data={"error": "Give entity_id or event_type."}, error=True)
+        if when.get("to"):
+            what += f" to {when['to']}"
+        proposed = mode == "ask"
+        trig = await dom.settings.async_save_trigger({
+            "name": args["name"], "enabled": not proposed, "when": when,
+            "do": {"template": "event-reaction", "instruction": args["instruction"]},
+            "cooldown": max(60, int(args.get("cooldown_minutes", 10)) * 60), "quiet_hours": None,
+            "created_by": "agent", "proposed": proposed,
+        })
+        dom.triggers.async_start()
+        text = (f"I'd like to watch \"{args['name']}\" (when {what}): {args['instruction']} Approve or reject it under SETTINGS → Triggers."
+                if proposed else f"I'm now watching \"{args['name']}\" (when {what}): {args['instruction']}")
+        dom.chats.add_message(AAC_CHAT_ID, "aac", text, proactive=True, trigger="Own plan")
+        return llm.ToolResult(data={"id": trig["id"], "status": "waiting for the owner's approval" if proposed else "active"})
+
+
 class ListSchedulesTool(llm.Tool):
     """See what is scheduled."""
 
@@ -189,7 +266,9 @@ class ListSchedulesTool(llm.Tool):
             data={
                 "schedules": [
                     {"id": t["id"], "name": t["name"], "by": t.get("created_by", "owner"),
-                     "when": _when_text(t["when"]) if t["when"]["type"] == "time" else t["when"].get("entity_id"),
+                     "when": _when_text(t["when"]) if t["when"]["type"] == "time"
+                     else t["when"].get("event_type") if t["when"]["type"] == "event"
+                     else f"{t['when'].get('entity_id')} {t['when'].get('attribute') or ''}".strip(),
                      "instruction": (t.get("do") or {}).get("instruction", ""),
                      "status": "proposed" if t.get("proposed") else ("on" if t.get("enabled") else "off")}
                     for t in self._domain.settings.triggers
@@ -385,7 +464,7 @@ class AACScheduleAPI(llm.API):
             api=self,
             api_prompt=API_PROMPT,
             llm_context=llm_context,
-            tools=[ScheduleTool(self.entry, self.domain), ListSchedulesTool(self.entry, self.domain),
+            tools=[ScheduleTool(self.entry, self.domain), WatchTool(self.entry, self.domain), ListSchedulesTool(self.entry, self.domain),
                    CancelScheduleTool(self.entry, self.domain), CalendarTool(self.entry, self.domain),
                    AddCalendarTool(self.entry, self.domain), ChangeCalendarTool(self.entry, self.domain),
                    RemoveCalendarTool(self.entry, self.domain)],

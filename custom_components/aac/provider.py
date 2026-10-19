@@ -8,6 +8,8 @@ the same small interface (list_models, chat, embed, transcribe).
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import json
 import math
 import time
 from typing import Any
@@ -71,6 +73,95 @@ class OpenAICompatProvider:
             raise ProviderConnectionError(str(err) or type(err).__name__) from err
         except aiohttp.ClientError as err:
             raise ProviderError(str(err)) from err
+
+    async def chat_stream(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        on_delta: Callable[[str, str | None], None] | None = None,
+        **params: Any,
+    ) -> dict[str, Any]:
+        """Like chat, but streamed (server-sent events): on_delta(text so far, tool being called or None)
+        is called while the answer arrives. Returns the same message dict as chat."""
+        payload: dict[str, Any] = {"model": model, "messages": messages, "stream": True,
+                                   "stream_options": {"include_usage": True}, **params}
+        if tools:
+            payload["tools"] = tools
+        started = time.monotonic()
+        content, reasoning = "", ""
+        calls: dict[int, dict[str, Any]] = {}
+        usage: dict[str, Any] = {}
+        timings: dict[str, Any] = {}
+        try:
+            # llama.cpp closes the connection after a stream; reusing it would fail the next request
+            async with self._session.post(f"{self._base_url}/chat/completions", json=payload,
+                                          headers={**self._headers, "Connection": "close"}, timeout=self._timeout) as resp:
+                if resp.status in (401, 403):
+                    raise ProviderAuthError(await resp.text())
+                if resp.status == 404:
+                    raise ProviderNotFoundError("HTTP 404: /chat/completions")
+                if resp.status >= 400:
+                    raise ProviderError(f"HTTP {resp.status}: {await resp.text()}")
+                if "event-stream" not in (resp.headers.get("Content-Type") or ""):
+                    # The server ignored "stream": an ordinary answer
+                    data = await resp.json(content_type=None)
+                    try:
+                        message = data["choices"][0]["message"]
+                    except (KeyError, IndexError, TypeError) as err:
+                        raise ProviderError(f"Unexpected response: {data}") from err
+                    if on_delta and message.get("content"):
+                        on_delta(message["content"], None)
+                    tokens = (data.get("usage") or {}).get("completion_tokens")
+                    speed = (data.get("timings") or {}).get("predicted_per_second")
+                    if speed is None and tokens:
+                        speed = tokens / max(time.monotonic() - started, 0.001)
+                    return {**message, "_stats": {"completion_tokens": tokens, "tokens_per_second": speed}}
+                async for raw in resp.content:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        continue  # read to the end, so the connection is clean for the next request
+                    try:
+                        chunk = json.loads(data)
+                    except ValueError:
+                        continue
+                    usage = chunk.get("usage") or usage
+                    timings = chunk.get("timings") or timings
+                    for choice in chunk.get("choices") or []:
+                        delta = choice.get("delta") or {}
+                        if delta.get("reasoning_content"):
+                            reasoning += delta["reasoning_content"]
+                        if delta.get("content"):
+                            content += delta["content"]
+                            if on_delta:
+                                on_delta(content, None)
+                        for tc in delta.get("tool_calls") or []:
+                            call = calls.setdefault(tc.get("index", len(calls)),
+                                                    {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                            call["id"] = tc.get("id") or call["id"]
+                            fn = tc.get("function") or {}
+                            if fn.get("name"):
+                                call["function"]["name"] += fn["name"]
+                                if on_delta:
+                                    on_delta(content, call["function"]["name"])
+                            call["function"]["arguments"] += fn.get("arguments") or ""
+        except (aiohttp.ClientConnectionError, TimeoutError) as err:
+            raise ProviderConnectionError(str(err) or type(err).__name__) from err
+        except aiohttp.ClientError as err:
+            raise ProviderError(str(err)) from err
+        tokens = usage.get("completion_tokens")
+        speed = timings.get("predicted_per_second")
+        if speed is None and tokens:
+            speed = tokens / max(time.monotonic() - started, 0.001)
+        message: dict[str, Any] = {"role": "assistant", "content": content or None}
+        if reasoning:
+            message["reasoning_content"] = reasoning
+        if calls:
+            message["tool_calls"] = [calls[i] for i in sorted(calls)]
+        return {**message, "_stats": {"completion_tokens": tokens, "tokens_per_second": speed}}
 
     async def models_meta(self) -> dict[str, dict[str, Any]]:
         """Model id → metadata the server gives (llama.cpp: n_params, size, n_ctx_train, …)."""

@@ -500,7 +500,13 @@ _WHEN = vol.Any(
     {
         vol.Required("type"): "state",
         vol.Required("entity_id"): vol.All(str, vol.Length(min=3)),
+        vol.Optional("attribute", default=""): str,
         vol.Optional("to", default=""): str,
+    },
+    {
+        vol.Required("type"): "event",
+        vol.Required("event_type"): vol.All(str, vol.Length(min=2)),
+        vol.Optional("event_data", default={}): {str: vol.Any(str, int, float, bool)},
     },
     {
         vol.Required("type"): "time",

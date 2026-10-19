@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Literal
 
 import probatio
@@ -39,7 +40,7 @@ from .setup_api import API_ID as SETUP_API_ID, owner_present
 from .domains import Domain
 from .jobs import NO_MODEL
 from .modules import access as module_access
-from .runs import current_run
+from .runs import async_notify, current_run
 
 
 async def async_setup_entry(
@@ -239,6 +240,20 @@ class AACConversationEntity(
             conversation.async_unset_agent(self.hass, self.entry)
         await super().async_will_remove_from_hass()
 
+    def _streamer(self, run):
+        """on_delta for a panel chat: the text so far (and a tool being called) to open panels, throttled."""
+        last = [0.0, None]
+
+        def send(text: str, tool: str | None) -> None:
+            now = time.monotonic()
+            if tool == last[1] and now - last[0] < 0.08:
+                return
+            last[0], last[1] = now, tool
+            async_notify(self.hass, "delta", chat_id=run.chat_id, domain=self.domain.id,
+                         text=_strip_tool_text(text) or "", tool=tool.split("__")[-1] if tool else None)
+
+        return send
+
     def _provider(self, endpoint) -> OpenAICompatProvider:
         # Short connect timeout: a machine that is off must not stall the answer
         return OpenAICompatProvider(
@@ -347,6 +362,7 @@ class AACConversationEntity(
             params["response_format"] = DECISION_FORMAT
             params["temperature"] = min(params["temperature"], DECISION_TEMPERATURE)
         limit = MAX_TOOL_ITERATIONS_AUTO if run and run.kind == "auto" else MAX_TOOL_ITERATIONS
+        stream_to = self._streamer(run) if run and run.kind == "chat" and run.chat_id and not decide else None
         for iteration in range(limit + 1):
             # Last round: no tools, so the model has to answer instead of exploring on
             final = iteration == limit
@@ -366,9 +382,14 @@ class AACConversationEntity(
                 messages[0] = {**messages[0], "content": messages[0]["content"] + DECISION_RULE}
             while True:
                 try:
-                    reply = await provider.chat(
-                        endpoint.model, messages, None if final else tools, **params
-                    )
+                    if stream_to:  # the owner watches the panel: show the answer while it is written
+                        reply = await provider.chat_stream(
+                            endpoint.model, messages, None if final else tools, on_delta=stream_to, **params
+                        )
+                    else:
+                        reply = await provider.chat(
+                            endpoint.model, messages, None if final else tools, **params
+                        )
                 except ProviderConnectionError as err:
                     # Its machine did not answer (e.g. a PC that is off): next in the pool
                     broker.mark_down(model_id, str(err))

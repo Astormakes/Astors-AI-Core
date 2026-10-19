@@ -85,6 +85,14 @@ nav {
 @media (hover: none) { .msg-acts { opacity: .6; } }
 .msg-acts .icon-btn { font-size: .75em; padding: .1em .5em; color: var(--dim); }
 #msg-edit { min-height: 5em; width: 100%; }
+.unread.drop { animation: req-drop .7s cubic-bezier(.55, 0, 1, .45) both; transform-origin: center bottom; }
+@keyframes req-drop {
+  0% { transform: translateY(-1.6em) scale(2.6); opacity: .2; }
+  80% { transform: translateY(0) scale(1); opacity: 1; }
+  90% { transform: translateY(0) scale(1.15, .85); }
+  100% { transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .unread.drop { animation: none; } }
 .dlg-back { position: absolute; inset: 0; z-index: 60; background: rgba(0, 0, 0, .55); display: grid; place-items: center; padding: 1em; }
 .dlg { width: min(32em, 100%); margin: 0; }
 .dlg textarea { min-height: 8em; }
@@ -380,6 +388,8 @@ class AacPanel extends HTMLElement {
       }
       if (this._run && this._run.id === run.id) this._run = run;
       this._render();
+    } else if (ev.what === "delta") {
+      this._onDelta(ev);
     } else if (ev.what === "lists") {
       for (const [key, el] of Object.entries(this._modEls || {})) if (key.endsWith("|lists/lists") || key.endsWith("|calendar/agenda")) el.refresh?.();
     } else if (ev.what === "modules") {
@@ -569,7 +579,9 @@ class AacPanel extends HTMLElement {
   }
 
   async _loadState() {
+    const before = this._state?.requests_open || 0;
     try { this._state = await this._ws("aac/state"); } catch (e) { this._state = { error: e.message || String(e) }; }
+    if ((this._state?.requests_open || 0) > before) this._reqAnimAt = Date.now();
     this._render();
   }
   async _loadModels() {
@@ -644,12 +656,13 @@ class AacPanel extends HTMLElement {
       const m = (this._models?.manual || []).find((x) => x.id === view.slice(11));
       this._form = m ? { id: m.id, name: m.name, base_url: m.base_url, api_key: "", has_key: m.has_key, model: m.model, models: [m.model], msg: null } : null;
     }
-    if (view === "trigger/new") this._form = { type: "state", name: "", entity_id: "", to: "", at: "07:30", weekdays: [], instruction: "", cooldown: 300, enabled: true, quiet: null, msg: null };
+    if (view === "trigger/new") this._form = { type: "state", name: "", entity_id: "", attribute: "", to: "", event_type: "", event_data: "", at: "07:30", weekdays: [], instruction: "", cooldown: 300, enabled: true, quiet: null, msg: null };
     if (view.startsWith("trigger/edit/")) {
       const t = (this._state?.triggers || []).find((x) => x.id === view.slice(13));
       this._form = t ? {
         id: t.id, name: t.name, enabled: t.enabled, cooldown: t.cooldown, quiet: t.quiet_hours,
-        type: t.when.type, entity_id: t.when.entity_id || "", to: t.when.to || "", at: t.when.at || "07:30",
+        type: t.when.type, entity_id: t.when.entity_id || "", attribute: t.when.attribute || "", to: t.when.to || "", at: t.when.at || "07:30",
+        event_type: t.when.event_type || "", event_data: Object.entries(t.when.event_data || {}).map(([k, v]) => `${k}=${v}`).join(", "),
         weekdays: t.when.weekdays || [], instruction: t.do?.instruction || "", msg: null,
       } : null;
     }
@@ -752,7 +765,11 @@ class AacPanel extends HTMLElement {
       : '<div class="empty">no chats yet</div>';
     const running = this._runs.filter((r) => r.status === "running").length;
     const openRequests = this._state?.requests_open || 0;
-    const requestsTab = this._tab("requests", "Requests", "", "", openRequests ? `<span class="unread">${openRequests}</span>` : "");
+    // Only there while something waits (or the eye shows everything); a new request drops in to be noticed
+    const since = this._reqAnimAt ? Date.now() - this._reqAnimAt : 9999;
+    const drop = since < 900 ? ` drop" style="animation-delay:-${since}ms` : "";
+    const requestsTab = openRequests || this._showAll || this._view === "requests"
+      ? this._tab("requests", "Requests", "", "", openRequests ? `<span class="unread${drop}">${openRequests}</span>` : "") : "";
     const autoList = !this._autoOpen ? "" : (this._runs.length
       ? this._runs.slice(0, 25).map((r) => this._tab(`run/${r.id}`, r.title, `<span class="dot ${STATUS_DOT[r.status] || ""}"></span>`, "deep",
           `<span class="time">${esc(fmtTime(r.started))}</span>`)).join("")
@@ -887,7 +904,7 @@ class AacPanel extends HTMLElement {
         }).join("")
       : `<div class="welcome"><div class="big">AAC</div>${!master ? "No master model yet. Open SETUP to choose one."
           : this._state?.pools?.roles?.master?.active ? "Ask me anything." : "No master model is reachable right now (see Pools)."}</div>`;
-    const busy = this._busy ? '<div class="bubble aac"><div class="who">AAC</div><span class="cursor"></span></div>' : "";
+    const busy = this._busy ? `<div class="bubble aac busy"><div class="who">AAC</div>${this._streamHtml()}</div>` : "";
     const title = chat ? chat.title : "NEW CHAT";
     const del = chat ? `<button class="icon-btn" id="chat-delete" title="Delete chat">${icon("trash")}</button>` : "";
     return `${this._header(title, `model: ${esc(this._modelLabel(master))}`, del)}
@@ -1013,27 +1030,38 @@ class AacPanel extends HTMLElement {
       const days = when.date ? `once on ${when.date}` : (when.weekdays || []).length ? when.weekdays.map((d) => WEEKDAYS[d]).join(" ") : "every day";
       return `${days} at ${when.at}`;
     }
-    return `${when.entity_id}${when.to ? ` → ${when.to}` : " changes"}`;
+    if (when.type === "event") {
+      const filter = Object.entries(when.event_data || {}).map(([k, v]) => `${k}=${v}`).join(", ");
+      return `HA event ${when.event_type}${filter ? ` (${filter})` : ""}`;
+    }
+    return `${when.entity_id}${when.attribute ? ` · ${when.attribute}` : ""}${when.to ? ` → ${when.to}` : " changes"}`;
   }
 
   _renderTriggerForm() {
     const f = this._form;
     if (!f) return this._renderTriggers();
     const ids = Object.keys(this._hass.states).sort();
-    const isTime = f.type === "time";
+    const isTime = f.type === "time", isEvent = f.type === "event";
     return this._page(f.id ? "EDIT TRIGGER" : "NEW TRIGGER", "", `<div class="card"><h2>TRIGGER</h2>
         <div class="form-grid">
           <div>
             <label for="t-name">Name</label><input id="t-name" value="${esc(f.name)}" placeholder="${isTime ? "e.g. Pills" : "e.g. Front door"}">
             <label for="t-type">When</label>
-            <select id="t-type"><option value="state" ${isTime ? "" : "selected"}>Something changes in Home Assistant</option><option value="time" ${isTime ? "selected" : ""}>At a time</option></select>
-            ${isTime ? `
+            <select id="t-type"><option value="state" ${f.type === "state" ? "selected" : ""}>An entity changes (state or attribute)</option>
+              <option value="event" ${isEvent ? "selected" : ""}>A Home Assistant event happens</option>
+              <option value="time" ${isTime ? "selected" : ""}>At a time</option></select>
+            ${isEvent ? `
+              <label for="t-event">Event type</label><input id="t-event" value="${esc(f.event_type)}" placeholder="e.g. zha_event, mobile_app_notification_action, tag_scanned">
+              <label for="t-edata">Only when its data has (optional)</label><input id="t-edata" value="${esc(f.event_data)}" placeholder="e.g. command=on, device_id=…">
+              <label for="t-cool">Cooldown (seconds)</label><input id="t-cool" type="number" min="0" max="86400" value="${esc(f.cooldown)}" inputmode="numeric">
+            ` : isTime ? `
               <label for="t-at">Time</label><input id="t-at" type="time" value="${esc(f.at)}">
               <label>Days (none = every day)</label>
               <div class="row" style="gap:.3em">${WEEKDAYS.map((d, i) => `<label class="check" style="flex:none;min-width:0;margin:0 .6em 0 0"><input type="checkbox" class="t-day" value="${i}" ${f.weekdays.includes(i) ? "checked" : ""}>${d}</label>`).join("")}</div>
             ` : `
               <label for="t-entity">Entity</label><input id="t-entity" list="t-entities" value="${esc(f.entity_id)}" placeholder="binary_sensor.front_door" autocomplete="off">
               <datalist id="t-entities">${ids.map((i) => `<option value="${esc(i)}">${esc(this._hass.states[i].attributes.friendly_name || "")}</option>`).join("")}</datalist>
+              <label for="t-attr">Attribute instead of the state (optional)</label><input id="t-attr" value="${esc(f.attribute)}" placeholder="e.g. game (Steam), brightness, temperature">
               <label for="t-to">Only when it becomes (optional)</label><input id="t-to" value="${esc(f.to)}" placeholder="e.g. on, open, home">
               <label for="t-cool">Cooldown (seconds)</label><input id="t-cool" type="number" min="0" max="86400" value="${esc(f.cooldown)}" inputmode="numeric">
             `}
@@ -1998,6 +2026,25 @@ class AacPanel extends HTMLElement {
     this._render();
   }
 
+  // The answer while it is written (deltas from the backend)
+  _streamHtml() {
+    const st = this._stream || {};
+    return `<div class="txt">${esc(st.text || "")}</div>${st.tool ? `<div class="steps">→ ${esc(st.tool)}…</div>` : ""}<span class="cursor"></span>`;
+  }
+
+  _onDelta(ev) {
+    if (!this._busy) return;
+    const mine = this._chat?.id ? ev.chat_id === this._chat.id : !this._streamChat || ev.chat_id === this._streamChat;
+    if (!mine) return;
+    this._streamChat = ev.chat_id;
+    this._stream = { text: ev.text, tool: ev.tool };
+    const bubble = this.shadowRoot.querySelector(".bubble.busy");
+    if (!bubble) { this._render(); return; }
+    bubble.innerHTML = `<div class="who">AAC</div>${this._streamHtml()}`;
+    const log = this.shadowRoot.querySelector(".log");
+    if (log && log.scrollHeight - log.scrollTop - log.clientHeight < 160) log.scrollTop = log.scrollHeight;  // follow, unless scrolled up
+  }
+
   // Edit or rerun: cut the chat off at a message and send again (the backend gives the model the rest as context)
   async _resend(index, text) {
     if (!this._chat?.id || this._busy || !text?.trim()) return;
@@ -2019,10 +2066,13 @@ class AacPanel extends HTMLElement {
     if (!this._chat || !chatId) this._chat = { id: null, title: text.slice(0, 48), messages: [] };
     this._chat.messages = [...this._chat.messages, { role: "user", text }];
     this._busy = true;
+    this._stream = null;
+    this._streamChat = null;
     this._render();
     try {
       const r = await this._ws("aac/chat", { text, chat_id: chatId });
       this._busy = false;
+      this._stream = null;
       await this._openChat(r.chat_id);
       await this._loadChats();
     } catch (e) {
@@ -2139,8 +2189,13 @@ class AacPanel extends HTMLElement {
     if (f.type === "time") {
       f.at = val("#t-at") || f.at;
       f.weekdays = [...sr.querySelectorAll(".t-day:checked")].map((el) => parseInt(el.value, 10));
+    } else if (f.type === "event") {
+      f.event_type = val("#t-event").trim();
+      f.event_data = val("#t-edata").trim();
+      f.cooldown = parseInt(val("#t-cool"), 10) || 0;
     } else {
       f.entity_id = val("#t-entity").trim();
+      f.attribute = val("#t-attr").trim();
       f.to = val("#t-to").trim();
       f.cooldown = parseInt(val("#t-cool"), 10) || 0;
     }
@@ -2150,9 +2205,12 @@ class AacPanel extends HTMLElement {
   async _saveTrigger() {
     this._readTriggerForm();
     const f = this._form;
+    const data_ = Object.fromEntries((f.event_data || "").split(",").map((p) => p.split("=").map((x) => x.trim())).filter(([k, v]) => k && v !== undefined));
     const when = f.type === "time"
       ? { type: "time", at: f.at, weekdays: f.weekdays }
-      : { type: "state", entity_id: f.entity_id, to: f.to };
+      : f.type === "event" ? { type: "event", event_type: f.event_type, event_data: data_ }
+      : { type: "state", entity_id: f.entity_id, attribute: f.attribute || "", to: f.to };
+    if (f.type === "event" && !f.event_type) { f.msg = { ok: false, text: "Give an event type." }; return this._render(); }
     if (f.type === "state" && !this._hass.states[f.entity_id]) { f.msg = { ok: false, text: "Unknown entity." }; return this._render(); }
     const data = { name: f.name, when, instruction: f.instruction, cooldown: f.type === "time" ? 0 : f.cooldown, quiet_hours: f.quiet, enabled: f.enabled };
     if (f.id) data.trigger_id = f.id;

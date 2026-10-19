@@ -98,7 +98,7 @@ async def test_auto_models_from_ha(
     await ws.send_json_auto_id({"type": "aac/chat", "text": "hello"})
     assert (await ws.receive_json())["result"]["message"]["text"] == "auto ok"
     assert aioclient_mock.mock_calls[-1][2]["model"] == "qwen3-8b"
-    assert aioclient_mock.mock_calls[-1][3] == {"Authorization": "Bearer lk"}
+    assert aioclient_mock.mock_calls[-1][3]["Authorization"] == "Bearer lk"
 
 
 async def test_offline_server(

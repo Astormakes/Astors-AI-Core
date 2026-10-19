@@ -141,3 +141,44 @@ def test_weekday_names():
     assert parse_weekdays([0, 2, "4"]) == [0, 2, 4]
     assert parse_weekdays(["sa-mo"]) == [0, 5, 6]
     assert parse_weekdays([]) == []
+
+
+async def test_attribute_and_event_triggers(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """AAC watches an attribute (Steam game) and an HA event; noisy events and unreadable entities are refused."""
+    import json
+
+    from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
+
+    hass.states.async_set("sensor.astor", "online", {"friendly_name": "Astor", "game": None})
+    hass.states.async_set("sensor.hidden", "1")
+    await setup_aac(hass, mock_entry)
+    async_expose_entity(hass, "conversation", "sensor.astor", True)
+    _queue(
+        aioclient_mock,
+        _tool_reply("aac-planning__watch", json.dumps({"name": "Gaming", "instruction": "Free the PC.", "entity_id": "sensor.astor", "attribute": "game"})),
+        _tool_reply("aac-planning__watch", json.dumps({"name": "Bad", "instruction": "x", "event_type": "state_changed"})),
+        _tool_reply("aac-planning__watch", json.dumps({"name": "Hidden", "instruction": "x", "entity_id": "sensor.hidden"})),
+        _tool_reply("aac-planning__watch", json.dumps({"name": "Button", "instruction": "Toggle the lamp.", "event_type": "zha_event", "event_data": {"command": "on"}})),
+        _text("Done."),
+    )
+    ws = await hass_ws_client(hass)
+    message = await _chat(ws, "Free my PC when I start a game, and react to my button.")
+    results = [s for s in message["steps"] if s["type"] == "tool_result"]
+    assert [bool(r.get("error")) for r in results] == [False, True, True, False]
+    store = mock_entry.runtime_data.store
+    assert [t["when"]["type"] for t in store.triggers] == ["state", "event"]
+
+    aioclient_mock.clear_requests()  # the first mock would still answer
+    payloads = _queue(aioclient_mock, *[_text("NOTHING"), _text('{"speak": false, "message": ""}')] * 3)
+    hass.states.async_set("sensor.astor", "online", {"friendly_name": "Astor", "game": None, "level": 5})  # other attribute
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert payloads == []
+    hass.states.async_set("sensor.astor", "online", {"friendly_name": "Astor", "game": "Factorio"})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert "attribute game changed from nothing to Factorio" in payloads[0]["messages"][-1]["content"]
+    hass.bus.async_fire("zha_event", {"command": "off"})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(payloads) == 2  # filtered out (off ≠ on); only the decision call of the game run
+    hass.bus.async_fire("zha_event", {"command": "on", "device": "button"})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert "zha_event" in payloads[2]["messages"][-1]["content"]

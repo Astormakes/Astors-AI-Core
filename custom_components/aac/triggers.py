@@ -109,6 +109,8 @@ class TriggerEngine:
             self._unsubs.append(
                 async_track_state_change_event(self.hass, entity_ids, self._async_state_changed)
             )
+        for event_type in sorted({t["when"].get("event_type") for t in active if t["when"]["type"] == "event"} - {None, ""}):
+            self._unsubs.append(self.hass.bus.async_listen(event_type, self._async_bus_event))
         for trig in active:
             if trig["when"]["type"] == "time" and (at := _parse(trig["when"].get("at", ""))):
                 self._unsubs.append(
@@ -247,23 +249,46 @@ class TriggerEngine:
     @callback
     def _async_state_changed(self, event: Event[EventStateChangedData]) -> None:
         old, new = event.data["old_state"], event.data["new_state"]
-        if new is None or (old is not None and old.state == new.state):
-            return  # removed, or only attributes changed
+        if new is None:
+            return  # removed
         for trig in self._store.triggers:
             when = trig["when"]
             if not trig.get("enabled") or when["type"] != "state" or when.get("entity_id") != new.entity_id:
                 continue
-            if when.get("to") and new.state != when["to"]:
+            # A state trigger watches the state, or one attribute (e.g. the game on a Steam sensor)
+            attr = when.get("attribute")
+            before = (old.attributes.get(attr) if attr else old.state) if old is not None else None
+            after = new.attributes.get(attr) if attr else new.state
+            if old is not None and before == after:
+                continue  # nothing changed in what this trigger watches
+            if when.get("to") and str(after) != when["to"]:
                 continue
             if not self._may_fire(trig):
                 continue
             name = new.attributes.get("friendly_name", new.entity_id)
+            what = f"{name} ({new.entity_id}){f' attribute {attr}' if attr else ''}"
             self._fire(
                 trig,
                 name,
-                f"Event: {name} ({new.entity_id}) changed from "
-                f"{old.state if old else 'unknown'} to {new.state}. Does this matter to me right now?",
+                f"Event: {what} changed from {before if before is not None else ('nothing' if attr else 'unknown')} to {after}. "
+                "Does this matter to me right now?",
             )
+
+    @callback
+    def _async_bus_event(self, event: Event) -> None:
+        """An HA event (any type) that an AAC trigger listens to."""
+        for trig in self._store.triggers:
+            when = trig["when"]
+            if not trig.get("enabled") or when["type"] != "event" or when.get("event_type") != event.event_type:
+                continue
+            wanted = when.get("event_data") or {}
+            if any(str(event.data.get(k)) != str(v) for k, v in wanted.items()):
+                continue
+            if not self._may_fire(trig):
+                continue
+            data = {k: v for k, v in event.data.items() if isinstance(v, (str, int, float, bool)) or v is None}
+            self._fire(trig, event.event_type,
+                       f"Event: Home Assistant event {event.event_type} with {data}. Does this matter to me right now?")
 
     def _time_callback(self, trigger_id: str):
         @callback
