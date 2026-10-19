@@ -12,6 +12,7 @@ from homeassistant.core import Context, HomeAssistant
 from .runs import Run, current_run
 
 if TYPE_CHECKING:
+    from .domains import Domain
     from . import AACConfigEntry
 
 SILENT = "NOTHING"
@@ -49,9 +50,11 @@ async def async_run_master(
     user_id: str | None = None,
     allow_tools: bool = True,
     tier: str = "master",
+    domain: Domain | None = None,
 ) -> tuple[Run, conversation.ConversationResult | None]:
-    """Run the master once and record it as a run (steps come from the agent)."""
-    runs = entry.runtime_data.runs
+    """Run a domain's master once and record it as a run (steps come from the agent)."""
+    domain = domain or entry.runtime_data.domain()
+    runs = domain.runs
     run = runs.start(
         kind,
         trigger,
@@ -69,7 +72,7 @@ async def async_run_master(
             text,
             conversation_id,
             Context(user_id=user_id),
-            agent_id=entry.entry_id,
+            agent_id=domain.entity_id(hass, entry.entry_id) or entry.entry_id,
             extra_system_prompt=extra_system_prompt,
         )
     except Exception as err:  # noqa: BLE001 - a failed run must not kill the caller

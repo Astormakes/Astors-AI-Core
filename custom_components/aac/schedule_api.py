@@ -25,6 +25,7 @@ from .chats import AAC_CHAT_ID
 from .const import DOMAIN
 
 if TYPE_CHECKING:
+    from .domains import Domain
     from . import AACConfigEntry
 
 API_ID = "aac_schedule"
@@ -110,18 +111,19 @@ class ScheduleTool(llm.Tool):
         }
     )
 
-    def __init__(self, entry: AACConfigEntry) -> None:
-        """Initialize."""
+    def __init__(self, entry: AACConfigEntry, domain: Domain) -> None:
+        """Initialize (plans belong to one AAC domain)."""
         self._entry = entry
+        self._domain = domain
 
     async def async_call(self, hass: HomeAssistant, tool_input: llm.ToolInput, llm_context: llm.LLMContext):
         """Validate, store, tell the owner."""
         args = tool_input.tool_args
-        data = self._entry.runtime_data
-        mode = data.store.autonomy.get("schedule", "allowed")
+        dom = self._domain
+        mode = dom.settings.autonomy.get("schedule", "allowed")
         if mode == "off":
             return llm.ToolResult(data={"error": "The owner does not allow AAC to schedule things."}, error=True)
-        if sum(t.get("created_by") == "agent" for t in data.store.triggers) >= MAX_AGENT_TRIGGERS:
+        if sum(t.get("created_by") == "agent" for t in dom.settings.triggers) >= MAX_AGENT_TRIGGERS:
             return llm.ToolResult(data={"error": "Too many own plans already; cancel one first."}, error=True)
 
         when: dict = {"type": "time", "weekdays": []}
@@ -140,7 +142,7 @@ class ScheduleTool(llm.Tool):
             return llm.ToolResult(data={"error": "Give in_minutes, or at (HH:MM)."}, error=True)
 
         proposed = mode == "ask"
-        trig = await data.store.async_save_trigger(
+        trig = await dom.settings.async_save_trigger(
             {
                 "name": args["name"],
                 "enabled": not proposed,
@@ -152,14 +154,14 @@ class ScheduleTool(llm.Tool):
                 "proposed": proposed,
             }
         )
-        data.triggers.async_start()
+        dom.triggers.async_start()
         text = (
             f"I'd like to plan \"{args['name']}\" ({_when_text(when)}): {args['instruction']} "
             "Approve or reject it under SETTINGS → Triggers."
             if proposed
             else f"I planned \"{args['name']}\" ({_when_text(when)}): {args['instruction']}"
         )
-        data.chats.add_message(AAC_CHAT_ID, "aac", text, proactive=True, trigger="Own plan")
+        dom.chats.add_message(AAC_CHAT_ID, "aac", text, proactive=True, trigger="Own plan")
         return llm.ToolResult(
             data={"id": trig["id"], "status": "waiting for the owner's approval" if proposed else "active",
                   "when": _when_text(when)}
@@ -175,9 +177,10 @@ class ListSchedulesTool(llm.Tool):
     annotations = llm.ToolAnnotations(read_only=True, open_world=False)
     integration = DOMAIN
 
-    def __init__(self, entry: AACConfigEntry) -> None:
-        """Initialize."""
+    def __init__(self, entry: AACConfigEntry, domain: Domain) -> None:
+        """Initialize (plans belong to one AAC domain)."""
         self._entry = entry
+        self._domain = domain
 
     async def async_call(self, hass: HomeAssistant, tool_input: llm.ToolInput, llm_context: llm.LLMContext):
         """List."""
@@ -188,7 +191,7 @@ class ListSchedulesTool(llm.Tool):
                      "when": _when_text(t["when"]) if t["when"]["type"] == "time" else t["when"].get("entity_id"),
                      "instruction": (t.get("do") or {}).get("instruction", ""),
                      "status": "proposed" if t.get("proposed") else ("on" if t.get("enabled") else "off")}
-                    for t in self._entry.runtime_data.store.triggers
+                    for t in self._domain.settings.triggers
                 ]
             }
         )
@@ -204,21 +207,22 @@ class CancelScheduleTool(llm.Tool):
     integration = DOMAIN
     parameters = probatio.Schema({probatio.Required("id", description="The plan id."): str})
 
-    def __init__(self, entry: AACConfigEntry) -> None:
-        """Initialize."""
+    def __init__(self, entry: AACConfigEntry, domain: Domain) -> None:
+        """Initialize (plans belong to one AAC domain)."""
         self._entry = entry
+        self._domain = domain
 
     async def async_call(self, hass: HomeAssistant, tool_input: llm.ToolInput, llm_context: llm.LLMContext):
         """Only agent-made triggers."""
-        data = self._entry.runtime_data
-        trig = next((t for t in data.store.triggers if t["id"] == tool_input.tool_args["id"]), None)
+        dom = self._domain
+        trig = next((t for t in dom.settings.triggers if t["id"] == tool_input.tool_args["id"]), None)
         if trig is None:
             return llm.ToolResult(data={"error": "No such plan."}, error=True)
         if trig.get("created_by") != "agent":
             return llm.ToolResult(data={"error": "That is the owner's trigger; agents cannot change it."}, error=True)
-        await data.store.async_delete_trigger(trig["id"])
-        data.triggers.async_start()
-        data.chats.add_message(AAC_CHAT_ID, "aac", f"I cancelled my plan \"{trig['name']}\".", proactive=True, trigger="Own plan")
+        await dom.settings.async_delete_trigger(trig["id"])
+        dom.triggers.async_start()
+        dom.chats.add_message(AAC_CHAT_ID, "aac", f"I cancelled my plan \"{trig['name']}\".", proactive=True, trigger="Own plan")
         return llm.ToolResult(data={"cancelled": trig["id"]})
 
 
@@ -227,6 +231,7 @@ class AACScheduleAPI(llm.API):
     """The planning tools as an LLM API."""
 
     entry: AACConfigEntry
+    domain: Domain
 
     async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
         """Tools + prompt."""
@@ -234,5 +239,6 @@ class AACScheduleAPI(llm.API):
             api=self,
             api_prompt=API_PROMPT,
             llm_context=llm_context,
-            tools=[ScheduleTool(self.entry), ListSchedulesTool(self.entry), CancelScheduleTool(self.entry)],
+            tools=[ScheduleTool(self.entry, self.domain), ListSchedulesTool(self.entry, self.domain),
+                   CancelScheduleTool(self.entry, self.domain)],
         )

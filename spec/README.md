@@ -20,7 +20,7 @@ some of it exists, **planned** = spec only, nothing in the code yet.
 | [Audio source](audio-source.md) | a microphone streaming to AAC and AAC's spoken answers | partial |
 | [Event](event.md) | everything that happens, on one bus | partial |
 | [Module manifest](module.md) | a bundle of the above, installable and shareable | planned |
-| [Domain package](domain.md) | a whole AAC setup, exportable and importable | planned |
+| [Domain package](domain.md) | a whole AAC setup, exportable and importable | partial |
 
 ## Rules that hold for every contract
 

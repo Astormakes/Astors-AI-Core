@@ -132,7 +132,7 @@ async def test_heartbeat_default_not_stored(hass: HomeAssistant, hass_ws_client,
     await ws.send_json_auto_id({"type": "aac/heartbeat/update", "instructions": DEFAULT_HEARTBEAT})
     state = (await ws.receive_json())["result"]
     assert state["heartbeat"]["instructions"] == DEFAULT_HEARTBEAT
-    assert hass_storage[STORAGE_KEY]["data"]["heartbeat"]["instructions"] == ""
+    assert hass_storage[STORAGE_KEY]["data"]["domains"][0]["heartbeat"]["instructions"] == ""
     await ws.send_json_auto_id({"type": "aac/heartbeat/update", "instructions": "Mine."})
     assert (await ws.receive_json())["result"]["heartbeat"]["instructions"] == "Mine."
 

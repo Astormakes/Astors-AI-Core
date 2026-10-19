@@ -38,7 +38,7 @@ async def setup_ha_core(hass: HomeAssistant) -> None:
 @pytest.fixture(autouse=True)
 def isolated_memory_db(tmp_path):
     """Each test gets its own memory database (HA's test config dir is shared)."""
-    with patch("custom_components.aac.memory_path", return_value=tmp_path / "memory.db"):
+    with patch("custom_components.aac.memory_path", side_effect=lambda hass, suffix="": tmp_path / f"memory{suffix}.db"):
         yield
 
 

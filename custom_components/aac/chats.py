@@ -23,15 +23,21 @@ MAX_MESSAGES = 200
 class ChatStore:
     """Chats with their messages."""
 
-    def __init__(self, hass: HomeAssistant) -> None:
-        """Initialize."""
+    def __init__(self, hass: HomeAssistant, domain_id: str | None = None, suffix: str = "") -> None:
+        """Initialize (suffix: storage per AAC domain; the first domain has none)."""
         self.hass = hass
-        self._store: Store[dict[str, Any]] = Store(hass, 1, f"{DOMAIN}.chats")
+        self.domain_id = domain_id
+        self._store: Store[dict[str, Any]] = Store(hass, 1, f"{DOMAIN}.chats{suffix}")
         self.chats: dict[str, dict[str, Any]] = {}
 
     async def async_load(self) -> None:
         """Load from disk."""
         self.chats = (await self._store.async_load() or {}).get("chats", {})
+
+    @property
+    def store(self):
+        """The HA storage behind it (to remove a domain's data)."""
+        return self._store
 
     def _save(self) -> None:
         self._store.async_delay_save(lambda: {"chats": self.chats}, 1)
@@ -65,7 +71,7 @@ class ChatStore:
         }
         self.chats[chat["id"]] = chat
         self._save()
-        async_notify(self.hass, "chats")
+        async_notify(self.hass, "chats", domain=self.domain_id)
         return chat
 
     @callback
@@ -83,7 +89,7 @@ class ChatStore:
         if role == "aac" and extra.get("proactive"):
             chat["unread"] += 1
         self._save()
-        async_notify(self.hass, "chat", chat_id=chat_id)
+        async_notify(self.hass, "chat", chat_id=chat_id, domain=self.domain_id)
         return message
 
     @callback
@@ -92,7 +98,7 @@ class ChatStore:
         if (chat := self.chats.get(chat_id)) and chat["unread"]:
             chat["unread"] = 0
             self._save()
-            async_notify(self.hass, "chats")
+            async_notify(self.hass, "chats", domain=self.domain_id)
 
     @callback
     def set_conversation(self, chat_id: str, conversation_id: str | None) -> None:
@@ -106,4 +112,4 @@ class ChatStore:
         """Remove a chat."""
         if self.chats.pop(chat_id, None) is not None:
             self._save()
-            async_notify(self.hass, "chats")
+            async_notify(self.hass, "chats", domain=self.domain_id)

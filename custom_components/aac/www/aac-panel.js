@@ -60,10 +60,23 @@ nav {
   width: var(--nav-w); flex: none; display: flex; flex-direction: column; background: var(--bg2);
   border-right: 1px solid var(--line); box-shadow: 1px 0 1em rgba(0, 240, 255, .18);
 }
-.brand { display: flex; align-items: center; gap: .7em; padding: 1em 1em .85em; border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: .7em; padding: 1em 1em .6em; }
 .brand .name { font-size: 1.45em; font-weight: 700; letter-spacing: .28em; color: var(--magenta);
   text-shadow: 0 0 .2em var(--magenta), 0 0 .7em rgba(255, 43, 214, .6); }
 .brand .ver { font-size: .8em; color: var(--dim); }
+.dswitch { position: relative; padding: 0 1em .7em; border-bottom: 1px solid var(--line); }
+.dbtn { width: 100%; display: flex; align-items: center; gap: .5em; background: transparent; color: var(--cyan); border: 1px solid var(--line);
+  padding: .45em .7em; font: inherit; font-size: .93em; letter-spacing: .12em; cursor: pointer; text-align: left; text-shadow: 0 0 .3em rgba(0, 240, 255, .5); }
+.dbtn .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dbtn .ico { width: 1em; height: 1em; transform: rotate(90deg); transition: transform .15s; }
+.dbtn .ico.rot { transform: rotate(-90deg); }
+.dmenu { position: absolute; left: 1em; right: 1em; top: calc(100% - .5em); z-index: 45; background: var(--bg2); border: 1px solid var(--line);
+  box-shadow: 0 .5em 1.5em rgba(0, 0, 0, .6); display: flex; flex-direction: column; padding: .3em 0; }
+.ditem { background: none; border: 0; color: var(--text); font: inherit; font-size: .9em; text-align: left; padding: .5em .9em; cursor: pointer; display: flex; gap: .5em; align-items: center; }
+.ditem.on { color: var(--magenta); }
+.ditem.danger { color: var(--red); }
+.dsep { height: 1px; background: var(--line); margin: .3em 0; }
+@media (hover: hover) { .ditem:hover { background: rgba(0, 240, 255, .08); } }
 .brand .sp { flex: 1; }
 button.icon-btn { background: none; border: 1px solid transparent; color: var(--cyan); padding: .3em; cursor: pointer; display: grid; place-items: center; font-size: 1em; }
 button.icon-btn.on { color: var(--magenta); }
@@ -315,7 +328,12 @@ class AacPanel extends HTMLElement {
     if (this._unsub) { this._unsub.then((u) => u()).catch(() => {}); this._unsub = null; this._loaded = false; }
   }
 
-  _ws(type, data = {}) { return this._hass.callWS({ type, ...data }); }
+  _ws(type, data = {}) { return this._hass.callWS({ type, domain: this._domainId(), ...data }); }
+
+  _domainId() {
+    if (this._domain === undefined) { try { this._domain = localStorage.getItem("aac-domain") || null; } catch (e) { this._domain = null; } }
+    return this._domain;
+  }
 
   _subscribe() {
     this._unsub = this._hass.connection.subscribeMessage((ev) => this._onUpdate(ev), { type: "aac/subscribe" });
@@ -323,6 +341,7 @@ class AacPanel extends HTMLElement {
   }
 
   _onUpdate(ev) {
+    if (ev.domain && ev.domain !== (this._state?.domain?.id || this._domainId())) return; // another domain
     if (ev.what === "run") {
       const run = ev.run;
       if (run.kind === "auto") {
@@ -571,6 +590,7 @@ class AacPanel extends HTMLElement {
         <span class="name">AAC</span><span class="ver">v${esc(this._state?.version || "")}</span><span class="sp"></span>
         <button class="icon-btn ${this._showAll ? "on" : ""}" id="eye" title="${this._showAll ? "Hide finished segments" : "Show all segments"}" aria-pressed="${this._showAll}">${icon(this._showAll ? "eye" : "eyeOff")}</button>
       </div>
+      ${this._renderDomainSwitch()}
       <div class="scroll thin-scroll">
         ${setup}
         <div class="seg">
@@ -905,6 +925,68 @@ class AacPanel extends HTMLElement {
       </div>`);
   }
 
+  // ---------------------------------------------------------------- domains
+  _renderDomainSwitch() {
+    const st = this._state;
+    if (!st?.domain) return "";
+    const voice = st.voice_domain;
+    const menu = !this._domainMenu ? "" : `<div class="dmenu">
+        ${st.domains.map((d) => `<button class="ditem ${d.id === st.domain.id ? "on" : ""}" data-domain-go="${esc(d.id)}">${esc(d.name)}${d.id === voice ? ' <span class="tag">VOICE</span>' : ""}</button>`).join("")}
+        <div class="dsep"></div>
+        <button class="ditem" id="dom-new">New domain…</button>
+        <button class="ditem" id="dom-rename">Rename "${esc(st.domain.name)}"…</button>
+        ${st.domain.id === voice ? "" : `<button class="ditem" id="dom-voice">Let "${esc(st.domain.name)}" own the voice</button>`}
+        ${st.domain.first ? "" : `<button class="ditem danger" id="dom-delete">Delete "${esc(st.domain.name)}"…</button>`}
+      </div>`;
+    return `<div class="dswitch"><button class="dbtn" id="dom-toggle" aria-expanded="${!!this._domainMenu}" title="Domain: a whole AAC setup with its own charter, memory, chats and triggers">
+        <span class="grow">${esc(st.domain.name)}</span>${icon("chev", this._domainMenu ? "rot" : "")}</button>${menu}</div>`;
+  }
+
+  async _switchDomain(id) {
+    this._domain = id;
+    try { localStorage.setItem("aac-domain", id); } catch (e) { /* private mode */ }
+    this._domainMenu = false;
+    this._chat = null; this._run = null; this._memory = null;
+    this._view = "chat/new";
+    await this._loadAll();
+  }
+
+  async _afterReload(domainId) {
+    // AAC reloads after domain changes; wait until it answers again
+    this._domainMenu = false;
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      try { await this._hass.callWS({ type: "aac/state", domain: domainId }); break; } catch (e) { /* still reloading */ }
+    }
+    await this._switchDomain(domainId);
+  }
+
+  async _domainAction(kind) {
+    const st = this._state;
+    try {
+      if (kind === "new") {
+        const name = prompt("Name of the new domain (e.g. Work):");
+        if (!name?.trim()) return;
+        const copy = confirm(`Start with the settings of "${st.domain.name}" (charter, master, triggers)? Its memory and chats are never copied.\n\nOK = copy settings, Cancel = start empty.`);
+        const r = await this._ws("aac/domain/create", { name: name.trim(), copy_from: copy ? st.domain.id : null });
+        await this._afterReload(r.domain);
+      } else if (kind === "rename") {
+        const name = prompt("New name:", st.domain.name);
+        if (!name?.trim() || name.trim() === st.domain.name) return;
+        await this._ws("aac/domain/rename", { domain_id: st.domain.id, name: name.trim() });
+        await this._afterReload(st.domain.id);
+      } else if (kind === "delete") {
+        if (!confirm(`Delete "${st.domain.name}" with its memory, chats, runs and triggers? This cannot be undone.`)) return;
+        await this._ws("aac/domain/delete", { domain_id: st.domain.id });
+        await this._afterReload(st.domains[0].id);
+      } else if (kind === "voice") {
+        this._state = await this._ws("aac/domain/voice", { domain_id: st.domain.id });
+        this._domainMenu = false;
+        this._render();
+      }
+    } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; this._render(); }
+  }
+
   // ---------------------------------------------------------------- settings: appearance
   _renderAppearance() {
     const sk = this._skins;
@@ -1219,6 +1301,14 @@ class AacPanel extends HTMLElement {
       try { localStorage.setItem("aac.autoOpen", this._autoOpen ? "1" : "0"); } catch (e) { /* ignore */ }
       this._render();
     });
+    sr.querySelector("#dom-toggle")?.addEventListener("click", () => { this._domainMenu = !this._domainMenu; this._render(); });
+    sr.querySelectorAll("[data-domain-go]").forEach((el) => el.addEventListener("click", () => {
+      if (el.dataset.domainGo === this._state?.domain?.id) { this._domainMenu = false; this._render(); return; }
+      this._switchDomain(el.dataset.domainGo);
+    }));
+    for (const [id, kind] of [["#dom-new", "new"], ["#dom-rename", "rename"], ["#dom-delete", "delete"], ["#dom-voice", "voice"]]) {
+      sr.querySelector(id)?.addEventListener("click", () => this._domainAction(kind));
+    }
     sr.querySelector("#eye")?.addEventListener("click", () => {
       this._showAll = !this._showAll;
       try { localStorage.setItem("aac.showAll", this._showAll ? "1" : "0"); } catch (e) { /* ignore */ }

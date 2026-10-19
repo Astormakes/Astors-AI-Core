@@ -6,7 +6,7 @@ Everything is configured in the AAC panel; the config entry only anchors it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from homeassistant.components import frontend, panel_custom
@@ -41,6 +41,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .audio_hub import AudioHub
 from .audio_view import AACAudioView
 from .chats import ChatStore
+from .domains import Domain, async_load_domain
 from .pools import Broker
 from .skins import USER_URL as USER_SKINS_URL, user_dir
 from .memory import MemoryStore, memory_path
@@ -61,16 +62,43 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 @dataclass
 class AACData:
-    """Runtime data of the loaded entry."""
+    """Runtime data of the loaded entry: shared parts + one Domain per AAC domain."""
 
     store: AACStore
     version: str
-    runs: RunRegistry
-    chats: ChatStore
-    memory: MemoryStore | None = None
-    triggers: TriggerEngine | None = None
+    domains: dict[str, Domain] = field(default_factory=dict)
     audio: AudioHub | None = None
     broker: Broker | None = None
+
+    def domain(self, domain_id: str | None = None) -> Domain | None:
+        """A domain by id (None = the first)."""
+        return next(iter(self.domains.values()), None) if domain_id is None else self.domains.get(domain_id)
+
+    @property
+    def voice_domain(self) -> Domain:
+        """The domain the microphones talk to."""
+        return self.domain(self.store.data["voice_domain"]) or self.domain()
+
+    # The first domain's parts, for code that is not domain-aware
+    @property
+    def chats(self) -> ChatStore:
+        """First domain."""
+        return self.domain().chats
+
+    @property
+    def runs(self) -> RunRegistry:
+        """First domain."""
+        return self.domain().runs
+
+    @property
+    def memory(self) -> MemoryStore | None:
+        """First domain."""
+        return self.domain().memory
+
+    @property
+    def triggers(self) -> TriggerEngine | None:
+        """First domain."""
+        return self.domain().triggers
 
 
 type AACConfigEntry = ConfigEntry[AACData]
@@ -98,11 +126,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     store = AACStore(hass)
     await store.async_load()
     version = str((await async_get_integration(hass, DOMAIN)).version)
-    runs = RunRegistry(hass)
-    await runs.async_load()
-    chats = ChatStore(hass)
-    await chats.async_load()
-    entry.runtime_data = AACData(store, version, runs, chats)
+    entry.runtime_data = AACData(store, version)
     broker = entry.runtime_data.broker = Broker(hass, store)
     entry.runtime_data.audio = AudioHub(hass, entry)
 
@@ -121,22 +145,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         broker.mark_up(model_id)
         return vectors, endpoint.model
 
-    memory = MemoryStore(hass, memory_path(hass), embed)
-    await memory.async_open()
-    entry.runtime_data.memory = memory
-    entry.async_on_unload(
-        llm.async_register_api(
-            hass, AACMemoryAPI(hass=hass, id="aac_memory", name="AAC memory", memory=memory)
-        )
-    )
-    entry.async_on_unload(
-        llm.async_register_api(
-            hass, AACScheduleAPI(hass=hass, id="aac_schedule", name="AAC planning", entry=entry)
-        )
-    )
-    entry.async_on_unload(
-        llm.async_register_api(hass, AACSetupAPI(hass=hass, id="aac_setup", name="AAC setup", entry=entry))
-    )
+    for i, settings in enumerate(store.domains.values()):
+        dom = await async_load_domain(hass, settings, first=i == 0)
+        entry.runtime_data.domains[dom.id] = dom
+        dom.memory = MemoryStore(hass, memory_path(hass, dom.suffix), embed)
+        await dom.memory.async_open()
+        label = "" if dom.first else f" ({dom.name})"
+        for api in (
+            AACMemoryAPI(hass=hass, id=dom.api_id("aac_memory"), name=f"AAC memory{label}", memory=dom.memory),
+            AACScheduleAPI(hass=hass, id=dom.api_id("aac_schedule"), name=f"AAC planning{label}", entry=entry, domain=dom),
+            AACSetupAPI(hass=hass, id=dom.api_id("aac_setup"), name=f"AAC setup{label}", entry=entry, domain=dom),
+        ):
+            entry.async_on_unload(llm.async_register_api(hass, api))
 
     await panel_custom.async_register_panel(
         hass,
@@ -154,21 +174,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Heartbeat and event triggers start once HA is up (entities exist)
-    engine = TriggerEngine(hass, entry)
-    entry.runtime_data.triggers = engine
-    entry.async_on_unload(engine.async_stop)
+    # Heartbeats and event triggers (one engine per domain) start once HA is up (entities exist)
+    for dom in entry.runtime_data.domains.values():
+        dom.triggers = TriggerEngine(hass, entry, dom)
+        entry.async_on_unload(dom.triggers.async_stop)
+
+    @callback
+    def _start(_event: Event | None = None) -> None:
+        for dom in entry.runtime_data.domains.values():
+            dom.triggers.async_start()
+
     if hass.is_running:
-        engine.async_start()
+        _start()
     else:
-
-        @callback
-        def _started(_event: Event) -> None:
-            engine.async_start()
-
-        entry.async_on_unload(
-            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _started)
-        )
+        entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start))
     return True
 
 
@@ -176,8 +195,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool
     """Unload a config entry."""
     frontend.async_remove_panel(hass, PANEL_URL, warn_if_unknown=False)
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unloaded and entry.runtime_data.memory:
-        await entry.runtime_data.memory.async_close()
+    if unloaded:
+        for dom in entry.runtime_data.domains.values():
+            if dom.memory:
+                await dom.memory.async_close()
     return unloaded
 
 

@@ -4,7 +4,7 @@ An open, modular AI core for Home Assistant. Home Assistant stays the connection
 to the world (devices, sensors, calendars …); AAC is meant to grow into the brain
 on top: memory, initiative, agents and modules.
 
-> **Status: early (v0.9.0).** AAC has its own panel, a master agent that talks to
+> **Status: early (v0.15.0).** AAC has its own panel, a master agent that talks to
 > any OpenAI-compatible model server and can control Home Assistant through the
 > Assist API, a memory (text memories + structured facts), triggers (heartbeat,
 > state, time), planning for itself, and it helps you set itself up in a chat.
@@ -43,9 +43,10 @@ Tool use (controlling HA) needs a model and server with function calling
 
 ## The panel
 
+- **Domain switcher** under "AAC": several whole setups (e.g. Assistant, Work), each with its own charter, memory, chats and triggers; models and pools are shared
 - **SETUP**: the workflow; hides itself when nothing is open (the eye at the top shows all segments)
 - **WORKERS**: your chats with the master, "From AAC" (when it speaks up on its own) and the automatic runs (folded, with every step visible)
-- **SETTINGS**: charter (your values, first in every prompt), master agent, triggers, models, AAC's own audio pipeline (planned, separate from HA's Assist), MCP (planned), memory
+- **SETTINGS**: charter (your values, first in every prompt), appearance (skins: Neon, Home Assistant, own CSS files), master agent, triggers, pools (which model or engine serves which role, with fallback) and models, AAC's own audio pipeline (separate from HA's Assist), MCP (planned), memory
 
 Works on phones, tablets, desktops and TVs (scales with the screen, touch and keyboard friendly).
 

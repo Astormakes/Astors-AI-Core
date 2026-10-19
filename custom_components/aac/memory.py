@@ -424,9 +424,9 @@ def fuse(keyword_ids: list[str], vector_hits: list[tuple[str, float]], min_score
     return sorted(scores, key=scores.get, reverse=True)
 
 
-def memory_path(hass: HomeAssistant) -> Path:
-    """Where the database lives (inside HA's config dir, so backups include it)."""
-    return Path(hass.config.path("aac", "memory.db"))
+def memory_path(hass: HomeAssistant, suffix: str = "") -> Path:
+    """Where the database lives (inside HA's config dir, so backups include it); one per AAC domain."""
+    return Path(hass.config.path("aac", f"memory{suffix}.db"))
 
 
 class MemoryStore:

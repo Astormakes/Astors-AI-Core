@@ -1,4 +1,4 @@
-# Domain package — planned
+# Domain package — partial
 
 A domain is a self-contained, portable package of a whole AAC setup: purpose,
 charter, master configuration, active modules, triggers, memory, budget and
@@ -39,4 +39,20 @@ Rules:
   belong to the home, not to a domain. A domain names the capabilities it needs (`{"tier": "master"}`,
   "speech to text, multilingual"), never a machine; on import the broker maps them to the local pools.
 
-Today there is exactly one implicit domain (the AAC config entry).
+## Built (v0.15.0): domains inside one AAC
+
+- Config: `domains` = list of `{id, name, master, heartbeat, triggers, autonomy, charter, memory}`;
+  `voice_domain` = the one the microphones talk to. Shared (above domains): models, pools,
+  traits, audio, skins, setup. Settings from before 0.15 become the first domain "Assistant".
+- Per domain at runtime: chats (`aac.chats[.<id>]`), runs (`aac.runs[.<id>]`), memory file
+  (`memory[_<id>].db`), trigger engine, a conversation agent (`conversation.aac_<name>`; the first
+  domain keeps its entity), and its own LLM APIs (`aac_memory[_<id>]`, `aac_schedule[_<id>]`,
+  `aac_setup[_<id>]`), so an agent only sees its own memory and plans.
+- Every `aac/*` WebSocket command takes an optional `domain` (default: the first).
+  `aac/domain/create` (name, optional `copy_from`: settings only, never memory or chats; agent plans
+  are not copied), `aac/domain/rename`, `aac/domain/delete` (not the first; removes its memory,
+  chats and runs), `aac/domain/voice`. Create/rename/delete reload AAC.
+- Panel: the domain switcher under "AAC" at the top of the sidebar.
+
+Planned: export/import as a package (above), memory sharing between domains, per-module setup steps
+per domain (a module a domain uses but that is not set up brings SETUP back for that domain).

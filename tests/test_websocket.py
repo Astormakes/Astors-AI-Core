@@ -171,4 +171,4 @@ async def test_charter_reaches_every_agent(
     system = aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
     assert system.startswith("Be kind. Never lie.")
     assert "You are a test." in system
-    assert mock_entry.runtime_data.store.data["charter"] == "Be kind. Never lie."
+    assert mock_entry.runtime_data.store.default_domain.data["charter"] == "Be kind. Never lie."

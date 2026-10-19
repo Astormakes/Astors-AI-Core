@@ -8,7 +8,7 @@ from homeassistant.helpers import entity_registry as er
 from .const import DOMAIN
 from .models import known_servers
 from .pools import role_configured
-from .store import AACStore
+from .store import AACStore, DomainSettings
 
 
 def aac_agent_entity_id(hass: HomeAssistant, entry_id: str) -> str | None:
@@ -16,8 +16,9 @@ def aac_agent_entity_id(hass: HomeAssistant, entry_id: str) -> str | None:
     return er.async_get(hass).async_get_entity_id("conversation", DOMAIN, entry_id)
 
 
-def setup_steps(hass: HomeAssistant, store: AACStore) -> list[dict]:
-    """The SETUP workflow. A step is closed when done or skipped (optional only)."""
+def setup_steps(hass: HomeAssistant, store: AACStore, domain: DomainSettings | None = None) -> list[dict]:
+    """The SETUP workflow of a domain (most steps are shared). Closed when done or skipped (optional only)."""
+    domain = domain or store.default_domain
     skipped = set(store.data["setup"]["skipped"])
     steps = [
         {
@@ -58,7 +59,7 @@ def setup_steps(hass: HomeAssistant, store: AACStore) -> list[dict]:
             "hint": "A heartbeat wakes the master now and then; it only speaks up when it matters.",
             "target": "settings/triggers",
             "optional": True,
-            "done": bool(store.heartbeat["enabled"]),
+            "done": bool(domain.heartbeat["enabled"]),
         },
     ]
     for step in steps:

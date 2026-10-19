@@ -25,6 +25,7 @@ from .master import SILENT, async_run_master
 from .pools import role_configured
 
 if TYPE_CHECKING:
+    from .domains import Domain
     from . import AACConfigEntry
 
 SILENCE_RULE = f"If nothing needs to be said, answer exactly {SILENT}."
@@ -52,21 +53,22 @@ def in_quiet_hours(now: datetime, start: str, end: str) -> bool:
 class TriggerEngine:
     """Schedules the heartbeat and listens for event triggers."""
 
-    def __init__(self, hass: HomeAssistant, entry: AACConfigEntry) -> None:
-        """Initialize."""
+    def __init__(self, hass: HomeAssistant, entry: AACConfigEntry, domain: Domain) -> None:
+        """Initialize (one engine per AAC domain)."""
         self.hass = hass
         self.entry = entry
+        self.domain = domain
         self._unsubs: list[CALLBACK_TYPE] = []
         self._last_fired: dict[str, datetime] = {}
 
     @property
     def _store(self):
-        return self.entry.runtime_data.store
+        return self.domain.settings
 
     async def _async_open_loops(self) -> str:
         """Open plans (memory kind 'plan') and AAC's own schedules, for automatic runs."""
         lines = []
-        if (memory := self.entry.runtime_data.memory) and self._store.memory["enabled"]:
+        if (memory := self.domain.memory) and self._store.memory["enabled"]:
             lines += [f"- plan: {m.text} (since {m.created[:10]})" for m in await memory.async_plans()]
         lines += [
             f"- your own scheduled check-in: {t['name']} ({t['when'].get('date') or 'repeating'} at {t['when'].get('at')})"
@@ -116,10 +118,10 @@ class TriggerEngine:
             self._unsubs.pop()()
 
     def _master_ready(self) -> bool:
-        return role_configured(self.hass, self._store, "master")
+        return role_configured(self.hass, self.entry.runtime_data.store, "master")
 
     def _busy(self, trigger: str) -> bool:
-        return any(r.trigger == trigger for r in self.entry.runtime_data.runs.running("auto"))
+        return any(r.trigger == trigger for r in self.domain.runs.running("auto"))
 
     async def _async_heartbeat_tick(self, _now: datetime) -> None:
         await self.async_heartbeat()
@@ -259,10 +261,11 @@ class TriggerEngine:
             extra_system_prompt=prompt,
             allow_tools=allow_tools,
             tier=tier,
+            domain=self.domain,
         )
         if result is not None and run.status == "done" and run.result:
             run.chat_id = AAC_CHAT_ID
-            self.entry.runtime_data.chats.add_message(
+            self.domain.chats.add_message(
                 AAC_CHAT_ID, "aac", run.result, proactive=True, run_id=run.id, trigger=title
             )
         LOGGER.debug("Automatic run %s (%s): %s", run.id, trigger, run.status)

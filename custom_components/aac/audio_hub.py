@@ -364,10 +364,10 @@ class AudioHub:
         return True
 
     async def async_answer(self, source: Source, text: str) -> None:
-        """The master answers a spoken line; the answer goes back by voice."""
+        """The voice domain's master answers a spoken line; the answer goes back by voice."""
         from .master import async_run_master  # noqa: PLC0415 - avoid an import cycle
 
-        data = self.entry.runtime_data
+        data = self.entry.runtime_data.voice_domain  # one domain owns the voice
         chat_id = f"voice_{source.id}"
         chat = data.chats.get(chat_id) or data.chats.create(f"Voice · {source.name}", chat_id)
         data.chats.add_message(chat_id, "user", text)
@@ -380,6 +380,7 @@ class AudioHub:
             ),
             # Anyone can talk into a microphone: voice is anonymous until there is voice ID
             user_id=None,
+            domain=data,
         )
         if result is not None:
             data.chats.set_conversation(chat_id, result.conversation_id)

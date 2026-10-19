@@ -35,6 +35,7 @@ from .extractor import async_extract
 from .memory_api import API_ID as MEMORY_API_ID
 from .schedule_api import API_ID as SCHEDULE_API_ID
 from .setup_api import API_ID as SETUP_API_ID, owner_present
+from .domains import Domain
 from .runs import current_run
 
 
@@ -43,8 +44,8 @@ async def async_setup_entry(
     entry: AACConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the conversation entity."""
-    async_add_entities([AACConversationEntity(entry)])
+    """One conversation agent per AAC domain."""
+    async_add_entities([AACConversationEntity(entry, dom) for dom in entry.runtime_data.domains.values()])
 
 
 def _format_tool(tool: llm.Tool, custom_serializer: Any) -> dict[str, Any]:
@@ -194,10 +195,13 @@ class AACConversationEntity(
     _attr_name = None
     _attr_supports_streaming = False
 
-    def __init__(self, entry: AACConfigEntry) -> None:
-        """Initialize the agent."""
+    def __init__(self, entry: AACConfigEntry, domain: Domain) -> None:
+        """Initialize the agent of one domain (the first keeps the old unique id and entity id)."""
         self.entry = entry
-        self._attr_unique_id = entry.entry_id
+        self.domain = domain
+        self._attr_unique_id = domain.unique_id(entry.entry_id)
+        if not domain.first:
+            self._attr_name = domain.name
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=DEFAULT_NAME,
@@ -210,7 +214,8 @@ class AACConversationEntity(
     @property
     def supported_features(self) -> conversation.ConversationEntityFeature:
         """CONTROL while the master may use an HA API (settings change live)."""
-        if self.entry.runtime_data.store.master.get(CONF_LLM_HASS_API) or self.entry.runtime_data.store.memory["enabled"]:
+        settings = self.domain.settings
+        if settings.master.get(CONF_LLM_HASS_API) or settings.memory["enabled"]:
             return conversation.ConversationEntityFeature.CONTROL
         return conversation.ConversationEntityFeature(0)
 
@@ -222,11 +227,13 @@ class AACConversationEntity(
     async def async_added_to_hass(self) -> None:
         """Register as an agent."""
         await super().async_added_to_hass()
-        conversation.async_set_agent(self.hass, self.entry, self)
+        if self.domain.first:  # the entry itself stays an agent id (older automations use it)
+            conversation.async_set_agent(self.hass, self.entry, self)
 
     async def async_will_remove_from_hass(self) -> None:
         """Unregister the agent."""
-        conversation.async_unset_agent(self.hass, self.entry)
+        if self.domain.first:
+            conversation.async_unset_agent(self.hass, self.entry)
         await super().async_will_remove_from_hass()
 
     def _provider(self, endpoint) -> OpenAICompatProvider:
@@ -241,7 +248,7 @@ class AACConversationEntity(
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
         """Answer one user message, running tool calls as needed."""
-        store = self.entry.runtime_data.store
+        store = self.domain.settings  # this domain's settings (models and pools are shared)
         broker = self.entry.runtime_data.broker
         options = store.master
         run = current_run.get()
@@ -262,11 +269,11 @@ class AACConversationEntity(
         if not run or run.allow_tools:
             api_ids = list(options.get(CONF_LLM_HASS_API) or [])
             if store.memory["enabled"]:
-                api_ids.append(MEMORY_API_ID)  # the master always has its own memory
+                api_ids.append(self.domain.api_id(MEMORY_API_ID))  # the master always has its own memory
             if store.autonomy.get("schedule", "allowed") != "off":
-                api_ids.append(SCHEDULE_API_ID)  # and may plan for itself
+                api_ids.append(self.domain.api_id(SCHEDULE_API_ID))  # and may plan for itself
             if await owner_present(self.hass, user_input.context.user_id):
-                api_ids.append(SETUP_API_ID)  # with the owner present it helps set itself up
+                api_ids.append(self.domain.api_id(SETUP_API_ID))  # with the owner present it helps set itself up
         try:
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),
@@ -282,14 +289,14 @@ class AACConversationEntity(
         # small models rarely call recall on their own. Attached to the user message,
         # not the system prompt, so the server's prompt cache keeps working.
         memory_hint = None
-        if store.memory["enabled"] and self.entry.runtime_data.memory and user_input.text:
-            found = await self.entry.runtime_data.memory.async_context(user_input.text)
+        if store.memory["enabled"] and self.domain.memory and user_input.text:
+            found = await self.domain.memory.async_context(user_input.text)
             if found:
                 memory_hint = "Memories that may help (from your long-term memory):\n" + "\n".join(
                     f"- {m.text} ({m.source}{'' if m.confirmed else ', unconfirmed'}, {m.created[:10]})"
                     for m in found
                 )
-                if series := await self.entry.runtime_data.memory.async_series_for(found):
+                if series := await self.domain.memory.async_series_for(found):
                     memory_hint += "\nExact values (structured facts):\n" + "\n".join(f"- {line}" for line in series)
                 if run:
                     run.context = f"{run.context}\n\n{memory_hint}".strip()
@@ -403,7 +410,7 @@ class AACConversationEntity(
                     pass
 
         # Memory write path: keep what was worth keeping, in the background
-        memory = self.entry.runtime_data.memory
+        memory = self.domain.memory
         if store.memory["enabled"] and memory and user_input.text and (not run or run.kind == "chat"):
             stored_now = [
                 str(call.tool_args.get("text", ""))

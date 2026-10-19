@@ -63,10 +63,11 @@ def async_notify(hass: HomeAssistant, what: str, **data: Any) -> None:
 class RunRegistry:
     """Keeps the last runs (persisted) and tells the panel about changes."""
 
-    def __init__(self, hass: HomeAssistant) -> None:
-        """Initialize."""
+    def __init__(self, hass: HomeAssistant, domain_id: str | None = None, suffix: str = "") -> None:
+        """Initialize (suffix: storage per AAC domain; the first domain has none)."""
         self.hass = hass
-        self._store: Store[list[dict[str, Any]]] = Store(hass, 1, f"{DOMAIN}.runs")
+        self.domain_id = domain_id
+        self._store: Store[list[dict[str, Any]]] = Store(hass, 1, f"{DOMAIN}.runs{suffix}")
         self.runs: list[Run] = []
 
     async def async_load(self) -> None:
@@ -76,6 +77,11 @@ class RunRegistry:
             if run.status == "running":
                 run.status, run.result = "failed", "interrupted by a restart"
             self.runs.append(run)
+
+    @property
+    def store(self):
+        """The HA storage behind it (to remove a domain's data)."""
+        return self._store
 
     def _save(self) -> None:
         self.runs = self.runs[-MAX_RUNS:]
@@ -87,7 +93,7 @@ class RunRegistry:
         run = Run(kind=kind, trigger=trigger, title=title, **kwargs)
         self.runs.append(run)
         self._save()
-        async_notify(self.hass, "run", run=run.as_dict())
+        async_notify(self.hass, "run", run=run.as_dict(), domain=self.domain_id)
         return run
 
     @callback
@@ -97,7 +103,7 @@ class RunRegistry:
         run.result = result
         run.finished = dt_util.utcnow().isoformat()
         self._save()
-        async_notify(self.hass, "run", run=run.as_dict())
+        async_notify(self.hass, "run", run=run.as_dict(), domain=self.domain_id)
 
     def get(self, run_id: str) -> Run | None:
         """Find a run."""

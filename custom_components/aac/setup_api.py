@@ -28,6 +28,7 @@ from .status import setup_steps
 from .pools import async_set_role, is_entity
 
 if TYPE_CHECKING:
+    from .domains import Domain
     from . import AACConfigEntry
 
 API_ID = "aac_setup"
@@ -59,9 +60,10 @@ class _SetupTool(llm.Tool):
 
     integration = DOMAIN
 
-    def __init__(self, entry: AACConfigEntry) -> None:
-        """Initialize."""
+    def __init__(self, entry: AACConfigEntry, domain: Domain) -> None:
+        """Initialize (models and pools are shared; the heartbeat belongs to the domain)."""
         self._entry = entry
+        self._domain = domain
 
     async def async_call(self, hass: HomeAssistant, tool_input: llm.ToolInput, llm_context: llm.LLMContext):
         """Refuse unless the owner is present."""
@@ -84,7 +86,7 @@ class SetupStatusTool(_SetupTool):
 
     async def _async_run(self, hass, args):
         store = self._entry.runtime_data.store
-        hb = store.heartbeat
+        hb = self._domain.settings.heartbeat
         data = self._entry.runtime_data
         audio = audio_overview(hass, data.audio, store.audio)
         return llm.ToolResult(
@@ -92,8 +94,9 @@ class SetupStatusTool(_SetupTool):
                 "steps": [
                     {"id": s["id"], "title": s["title"], "why": s["hint"], "optional": s["optional"],
                      "state": "done" if s["done"] else "skipped" if s["skipped"] else "open"}
-                    for s in setup_steps(hass, store)
+                    for s in setup_steps(hass, store, self._domain.settings)
                 ],
+                "domain": self._domain.name,
                 "pools": {
                     name: {"list": [f"{i['id']} ({i['state']})" for i in data.broker.status()["roles"][role]["items"]],
                            "in_use_now": data.broker.status()["roles"][role]["active"]}
@@ -281,10 +284,10 @@ class HeartbeatTool(_SetupTool):
                 if not _TIME_RE.match(args[key]):
                     return llm.ToolResult(data={"error": f"{key} must be HH:MM"}, error=True)
                 changes[key] = args[key]
-        data = self._entry.runtime_data
-        await data.store.async_update_heartbeat(changes)
-        data.triggers.async_start()
-        hb = data.store.heartbeat
+        dom = self._domain
+        await dom.settings.async_update_heartbeat(changes)
+        dom.triggers.async_start()
+        hb = dom.settings.heartbeat
         return llm.ToolResult(data={k: hb[k] for k in ("enabled", "interval", "quiet_start", "quiet_end")})
 
 
@@ -350,7 +353,7 @@ class SkipStepTool(_SetupTool):
 
     async def _async_run(self, hass, args):
         store = self._entry.runtime_data.store
-        step = next((s for s in setup_steps(hass, store) if s["id"] == args["step"]), None)
+        step = next((s for s in setup_steps(hass, store, self._domain.settings) if s["id"] == args["step"]), None)
         if step is None or not step["optional"]:
             return llm.ToolResult(data={"error": "Only optional steps can be skipped."}, error=True)
         await store.async_set_skipped(step["id"], True)
@@ -362,6 +365,7 @@ class AACSetupAPI(llm.API):
     """The setup tools as an LLM API."""
 
     entry: AACConfigEntry
+    domain: Domain
 
     async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
         """Tools + prompt."""
@@ -370,5 +374,5 @@ class AACSetupAPI(llm.API):
             api=self,
             api_prompt=API_PROMPT,
             llm_context=llm_context,
-            tools=[tool(self.entry) for tool in tools],
+            tools=[tool(self.entry, self.domain) for tool in tools],
         )
