@@ -1815,7 +1815,7 @@ class AacPanel extends HTMLElement {
           <p class="hint" style="margin-top:.2em">Shorter = shorter lines (snappier, but the recognizer gets less context); longer = whole thoughts. Watch the LIVE meter while you try.</p>
           <label for="au-volume">AAC's voice volume: <span id="au-volume-val">${esc(set.volume ?? 40)}</span> %</label>
           <input id="au-volume" type="range" min="0" max="100" step="5" value="${esc(set.volume ?? 40)}" style="width:100%">
-          <p class="hint" style="margin-top:.2em">0 = AAC never speaks aloud (answers still appear in the Voice chat). The speaker's own buttons still work on top.</p>
+          <p class="hint" style="margin-top:.2em">Saved when you let go, with a short test sentence. 0 = AAC never speaks aloud (answers still appear in the Voice chat). The speaker's own buttons still work on top.</p>
           <label>Speech to text</label>${this._roleSummary("stt", eng.stt)}
           <label>Voice (text to speech)</label>${this._roleSummary("tts", eng.tts)}
           <p class="hint">Engines come from the voice pool below: speech models from Compute (e.g. a multilingual whisper; without a language it detects German, English, … per sentence) or HA's engines, in your order, with fallback. HA's own voice assistants stay as they are.</p>
@@ -1998,6 +1998,16 @@ class AacPanel extends HTMLElement {
       if (await this._confirm("Forget all voices? Every voice print is deleted and AAC learns voices anew.", "Forget all", true)) this._voiceChange({ action: "forget_all" });
     });
     sr.querySelector("#au-volume")?.addEventListener("input", (e) => { sr.querySelector("#au-volume-val").textContent = e.target.value; });
+    sr.querySelector("#au-volume")?.addEventListener("change", async (e) => {  // saves on release and lets you hear it
+      const volume = Number(e.target.value);
+      try {
+        this._audio = { ...this._audio, ...(await this._ws("aac/audio/settings", { volume })) };
+        const src = (this._audio.connected || [])[0];
+        if (src && volume > 0) await this._ws("aac/audio/say", { source_id: src.id, text: `This is my voice at ${volume} percent.` });
+        this._flash = { ok: true, text: `Volume ${volume} % saved.` };
+      } catch (err) { this._flash = { ok: false, text: err.message || String(err) }; }
+      this._render();
+    });
     sr.querySelectorAll("[data-machine-toggle]").forEach((el) => {
       const toggle = (e) => {
         if (e.target.closest("button")) return;  // the ⚙ button opens the settings instead
