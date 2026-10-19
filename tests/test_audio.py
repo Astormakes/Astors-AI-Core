@@ -515,3 +515,21 @@ def test_the_model_hears_which_voice_spoke():
     assert voice_label({"name": "Astor", "kind": "person"}) == "Astor (person)"
     assert spoken({"role": "user", "text": "hi", "via": "voice", "mic": "PC", "voice": "voice #8"}) == \
         "[spoken at the microphone 'PC' by voice #8] hi"
+
+
+async def test_owner_manages_voices(hass: HomeAssistant, hass_ws_client, mock_entry, configured):
+    """The panel lists, names and forgets voices (all of them for a fresh start)."""
+    await setup_aac(hass, mock_entry)
+    voices, _ = hass.data["aac_voices"][mock_entry.entry_id]
+    voices.match([1.0, 0.0], 0.8)
+    voices.match([0.0, 1.0], 0.8)
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/voices"})
+    listed = (await ws.receive_json())["result"]["voices"]
+    assert [v["name"] for v in listed] == ["voice #1", "voice #2"] and "print" not in listed[0]
+    await ws.send_json_auto_id({"type": "aac/voices/change", "action": "name", "voice": "v2", "name": "Astor", "kind": "person"})
+    assert (await ws.receive_json())["result"]["voices"][1]["name"] == "Astor"
+    await ws.send_json_auto_id({"type": "aac/voices/change", "action": "forget", "voice": "v1"})
+    assert [v["name"] for v in (await ws.receive_json())["result"]["voices"]] == ["Astor"]
+    await ws.send_json_auto_id({"type": "aac/voices/change", "action": "forget_all"})
+    assert (await ws.receive_json())["result"]["voices"] == []

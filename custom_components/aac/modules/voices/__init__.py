@@ -12,7 +12,10 @@ from datetime import timedelta
 from typing import Any
 
 import probatio
+import voluptuous as vol
 
+from homeassistant.components import websocket_api
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -207,5 +210,50 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         return {"speaker": {"id": voice["id"], "name": voice["name"], "kind": voice["kind"], "note": voice["note"],
                             "score": round(score, 2), "new": new, "sure": new or score >= sure}}
 
+    ctx.hass.data.setdefault(f"{DOMAIN}_voices", {})[ctx.entry.entry_id] = (voices, keep)
+    ctx.add_ws_commands(ws_voices, ws_voice_change)
     ctx.add_stage(Stage(id="voices", title="Voices", kind="segment", run=run, order=20))
     ctx.add_llm_api(lambda dom, api_id, name: VoicesAPI(hass=ctx.hass, id=api_id, name=name, voices=voices, keep=keep))
+
+
+def _voices(hass: HomeAssistant):
+    entries = hass.config_entries.async_loaded_entries(DOMAIN)
+    return hass.data.get(f"{DOMAIN}_voices", {}).get(entries[0].entry_id) if entries else None
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/voices", vol.Optional("domain"): vol.Any(str, None)})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_voices(hass: HomeAssistant, connection, msg) -> None:
+    """The known voices for the panel (without prints)."""
+    if (found := _voices(hass)) is None:
+        connection.send_error(msg["id"], "not_loaded", "The Voices module is not loaded")
+        return
+    connection.send_result(msg["id"], {"voices": [public(v) for v in found[0].voices]})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "aac/voices/change", vol.Optional("domain"): vol.Any(str, None),
+    vol.Required("action"): vol.In(["name", "forget", "forget_all"]), vol.Optional("voice"): str,
+    vol.Optional("name"): str, vol.Optional("kind"): vol.In(KINDS), vol.Optional("note"): str,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_voice_change(hass: HomeAssistant, connection, msg) -> None:
+    """The owner names or forgets voices (or all of them: a fresh start)."""
+    if (found := _voices(hass)) is None:
+        connection.send_error(msg["id"], "not_loaded", "The Voices module is not loaded")
+        return
+    voices, keep = found
+    if msg["action"] == "forget_all":
+        voices.voices = []
+    elif (voice := voices.get(msg.get("voice", ""))) is None:
+        connection.send_error(msg["id"], "not_found", "No such voice")
+        return
+    elif msg["action"] == "forget":
+        voices.voices.remove(voice)
+    else:
+        voice.update(name=(msg.get("name") or voice["name"]).strip(), kind=msg.get("kind", voice["kind"]),
+                     note=msg.get("note", voice["note"]), named=True)
+    voices.save(keep())
+    connection.send_result(msg["id"], {"voices": [public(v) for v in voices.voices]})

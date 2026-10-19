@@ -8,7 +8,7 @@ Runs on any machine in AAC's Compute (CPU is enough). Endpoints (16-bit mono WAV
 Models (downloaded on first start): MIT/ast-finetuned-audioset-10-10-0.4593 (sound tagger),
 microsoft/wavlm-base-plus-sv (speaker verification x-vector).
 
-    python server.py --port 8083 [--api-key-file FILE] [--threads 4]
+    python server.py --port 8083 [--api-key-file FILE] [--threads 4] [--no-tagger] [--no-voices]
 """
 
 from __future__ import annotations
@@ -51,13 +51,16 @@ def read_wav(data: bytes) -> np.ndarray:
 class Senses:
     """Both models, loaded once; calls run in a thread, one at a time."""
 
-    def __init__(self) -> None:
-        LOG.info("Loading %s", TAGGER)
-        self.tag_fx = ASTFeatureExtractor.from_pretrained(TAGGER)
-        self.tagger = ASTForAudioClassification.from_pretrained(TAGGER).eval()
-        LOG.info("Loading %s", VOICES)
-        self.voice_fx = AutoFeatureExtractor.from_pretrained(VOICES)
-        self.voices = WavLMForXVector.from_pretrained(VOICES).eval()
+    def __init__(self, tagger: bool = True, voices: bool = True) -> None:
+        self.tagger = self.voices = None
+        if tagger:
+            LOG.info("Loading %s", TAGGER)
+            self.tag_fx = ASTFeatureExtractor.from_pretrained(TAGGER)
+            self.tagger = ASTForAudioClassification.from_pretrained(TAGGER).eval()
+        if voices:
+            LOG.info("Loading %s", VOICES)
+            self.voice_fx = AutoFeatureExtractor.from_pretrained(VOICES)
+            self.voices = WavLMForXVector.from_pretrained(VOICES).eval()
         self.lock = asyncio.Lock()
 
     @torch.inference_mode()
@@ -96,9 +99,13 @@ def make_app(senses: Senses, api_key: str | None) -> web.Application:
             return web.json_response(await asyncio.to_thread(fn, audio))
 
     async def tags(request: web.Request) -> web.Response:
+        if senses.tagger is None:
+            return web.json_response({"error": "the sound tagger is not loaded (--no-tagger)"}, status=404)
         return await run(request, lambda a: {"labels": senses.tags(a)})
 
     async def voiceprint(request: web.Request) -> web.Response:
+        if senses.voices is None:
+            return web.json_response({"error": "voice prints are not loaded (--no-voices)"}, status=404)
         return await run(request, lambda a: {"embedding": senses.voiceprint(a)})
 
     app = web.Application(middlewares=[auth], client_max_size=32 * 1024 * 1024)
@@ -113,11 +120,13 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8083)
     parser.add_argument("--api-key-file", type=Path)
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--no-tagger", action="store_true", help="do not load the sound tagger")
+    parser.add_argument("--no-voices", action="store_true", help="do not load the voice print model")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     torch.set_num_threads(args.threads)
     key = args.api_key_file.read_text().strip() if args.api_key_file else None
-    web.run_app(make_app(Senses(), key), host=args.host, port=args.port)
+    web.run_app(make_app(Senses(not args.no_tagger, not args.no_voices), key), host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

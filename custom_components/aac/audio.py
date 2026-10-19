@@ -25,7 +25,7 @@ STAGES = [
     ("vad", "Voice activity", "Cheap, always on. Cuts speech segments.", "built"),
     ("arbitration", "Arbitration", "Same sentence on several mics: the best one wins (also tells where you are).", "planned"),
     ("stt", "Speech to text", "Only on speech. An HA speech-to-text engine used as a tool (e.g. faster-whisper).", "built"),
-    ("speaker", "Speaker ID", "Who said it (voice print). For personalization, not security.", "planned"),
+    ("speaker", "Voices and sounds", "Who said it (Voices module, voice prints) and what else is heard (Sounds module). For personalization, not security.", "built"),
     ("transcript", "Transcript", "Rolling text with time and mic, handed to the hearing modules.", "built"),
     ("hearing", "Hearing modules", "Decide what to do with what was heard: Wake word (answers its name), Companion (planned).", "built"),
     ("tts", "Voice", "The answer is spoken on the same source by an HA text-to-speech engine (own voices later).", "built"),

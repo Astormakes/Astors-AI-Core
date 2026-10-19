@@ -710,6 +710,26 @@ class AacPanel extends HTMLElement {
   }
   async _loadAudio() {
     try { this._audio = await this._ws("aac/audio"); } catch (e) { this._audio = { stages: [], sources: [], error: e.message }; }
+    try { this._voices = (await this._ws("aac/voices")).voices; } catch (e) { this._voices = null; }  // module off or missing
+    this._render();
+  }
+
+  // The Voices module's voices: the owner can see, name and forget them
+  _voicesCard() {
+    if (!this._voices) return "";
+    const kindText = { person: "person", media: "video/TV", unknown: "unknown" };
+    const rows = this._voices.slice().sort((a, b) => (b.named - a.named) || (b.heard || 0) - (a.heard || 0)).map((v) => `
+      <div class="wrow"><span>🗣 <b>${esc(v.name)}</b> <span class="tag">${esc(kindText[v.kind] || v.kind)}</span>
+        <span class="hint">heard ${esc(v.heard || 0)}× · last ${esc(new Date(v.last).toLocaleString([], { hour12: false }))}${v.note ? ` · ${esc(v.note)}` : ""}${v.merged?.length ? ` · joined: ${esc(v.merged.join(", "))}` : ""}</span></span>
+        <span class="actions"><button class="btn" data-voice-name="${esc(v.id)}">Name</button><button class="icon-btn" data-voice-forget="${esc(v.id)}" title="Forget this voice">${icon("trash")}</button></span></div>`).join("");
+    return `<div class="card"><h2>VOICES</h2><p class="hint">The voices AAC tells apart (Voices module). A voice print cannot be split again: if two people got mixed into one, forget it and AAC learns them anew. Unnamed voices are forgotten on their own after a few days.</p>
+      ${rows || '<p class="hint">No voices yet.</p>'}
+      ${this._voices.length ? '<div class="actions"><button class="btn danger" id="voices-forget-all">Forget all voices</button></div>' : ""}</div>`;
+  }
+
+  async _voiceChange(data) {
+    try { this._voices = (await this._ws("aac/voices/change", data)).voices; }
+    catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
     this._render();
   }
   async _loadChats() {
@@ -1778,6 +1798,7 @@ class AacPanel extends HTMLElement {
         <p class="hint" style="margin-top:0">Everything heard (RAM only, the last lines), oldest at the top. While someone talks, the words appear live and get corrected; the finished line is handed to the hearing modules that are on. Per line: start · length · language · loudness · how sure the recognizer was · which engine and how fast.</p>
         <div class="buffer thin-scroll" id="audio-buffer">${lines || '<p class="hint">Nothing heard yet.</p>'}<div id="audio-partial">${this._partialHtml()}</div></div>
       </div>
+      ${this._voicesCard()}
       <div class="split">
         <div class="card"><h2>${icon("mic")} CONNECTED</h2>
           ${this._liveSources(a.connected || [])}
@@ -1962,6 +1983,20 @@ class AacPanel extends HTMLElement {
         this._bufScroll = buf.scrollTop;
       });
     }
+    sr.querySelectorAll("[data-voice-forget]").forEach((el) => el.addEventListener("click", async () => {
+      const v = (this._voices || []).find((x) => x.id === el.dataset.voiceForget);
+      if (await this._confirm(`Forget ${v?.name || "this voice"}? Its voice print is deleted.`, "Forget", true)) this._voiceChange({ action: "forget", voice: el.dataset.voiceForget });
+    }));
+    sr.querySelectorAll("[data-voice-name]").forEach((el) => el.addEventListener("click", async () => {
+      const v = (this._voices || []).find((x) => x.id === el.dataset.voiceName);
+      const name = await this._prompt("Who is this voice?", v?.named ? v.name : "");
+      if (!name?.trim()) return;
+      const media = await this._confirm(`Is ${name} from a video, the TV or the radio (not someone in the room)?`, "Yes, video/TV", false, "No, a person");
+      this._voiceChange({ action: "name", voice: el.dataset.voiceName, name: name.trim(), kind: media ? "media" : "person" });
+    }));
+    sr.querySelector("#voices-forget-all")?.addEventListener("click", async () => {
+      if (await this._confirm("Forget all voices? Every voice print is deleted and AAC learns voices anew.", "Forget all", true)) this._voiceChange({ action: "forget_all" });
+    });
     sr.querySelector("#au-volume")?.addEventListener("input", (e) => { sr.querySelector("#au-volume-val").textContent = e.target.value; });
     sr.querySelectorAll("[data-machine-toggle]").forEach((el) => {
       const toggle = (e) => {

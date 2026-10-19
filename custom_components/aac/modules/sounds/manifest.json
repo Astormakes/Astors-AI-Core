@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "contract": 1,
   "kind": "code",
+  "enabled_by_default": false,
   "description": "Names the sounds in the room like subtitles: [laughter], [music], [door], [motorbike] … and tags what is behind each spoken line (music, a TV). Needs a sound tagger in the voice pool (the AAC senses service).",
   "instructions": "",
   "provides": {"capabilities": {"audio_stage": {"segment": true, "window": true}}},
