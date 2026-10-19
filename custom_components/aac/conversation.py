@@ -36,6 +36,7 @@ from .memory_api import API_ID as MEMORY_API_ID
 from .schedule_api import API_ID as SCHEDULE_API_ID
 from .setup_api import API_ID as SETUP_API_ID, owner_present
 from .domains import Domain
+from .jobs import NO_MODEL
 from .runs import current_run
 
 
@@ -259,7 +260,7 @@ class AACConversationEntity(
             response = intent.IntentResponse(language=user_input.language)
             response.async_set_error(
                 intent.IntentResponseErrorCode.UNKNOWN,
-                "AAC has no reachable master model. Open the AAC panel (SETTINGS → Pools).",
+                f"{NO_MODEL}. Open the AAC panel (SETTINGS → Pools).",
             )
             return conversation.ConversationResult(
                 response=response, conversation_id=chat_log.conversation_id
@@ -350,7 +351,7 @@ class AACConversationEntity(
                     # Its machine did not answer (e.g. a PC that is off): next in the pool
                     broker.mark_down(model_id, str(err))
                     if (picked := broker.endpoint_for(tier, background)) is None:
-                        raise HomeAssistantError(f"No master model reachable: {err}") from err
+                        raise HomeAssistantError(f"{NO_MODEL}: {err}") from err
                     LOGGER.info("Master model %s unreachable, using %s", model_id, picked[0])
                     if run:
                         run.steps.append({"type": "text", "text": f"{model_id} unreachable, switched to {picked[0]}"})

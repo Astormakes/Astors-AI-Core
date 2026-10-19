@@ -21,6 +21,7 @@ from homeassistant.util import dt as dt_util
 from .chats import AAC_CHAT_ID
 from .context import home_snapshot
 from .const import LOGGER
+from .jobs import Job
 from .master import SILENT, async_run_master
 from .pools import role_configured
 
@@ -121,6 +122,9 @@ class TriggerEngine:
         return role_configured(self.hass, self.entry.runtime_data.store, "master")
 
     def _busy(self, trigger: str) -> bool:
+        if any(j.domain is self.domain and trigger == "heartbeat" and "heartbeat" in j.tags
+               for j in self.entry.runtime_data.jobs.waiting):
+            return True  # one waiting heartbeat is enough
         return any(r.trigger == trigger for r in self.domain.runs.running("auto"))
 
     async def _async_heartbeat_tick(self, _now: datetime) -> None:
@@ -134,22 +138,31 @@ class TriggerEngine:
             return None
         if not self._master_ready() or self._busy("heartbeat"):
             return None
-        prompt = (
-            "Heartbeat: a scheduled check-in, nobody asked you anything.\n"
-            f"Local time: {now.strftime('%A %Y-%m-%d %H:%M')}.\n"
-            "Current state of the home (area | name | state):\n"
-            f"{home_snapshot(self.hass)}"
-            f"{await self._async_open_loops()}\n\n"
-            f"{hb['instructions']}"
-        )
-        return await self._async_auto_run(
-            "heartbeat",
-            "Heartbeat",
-            "Check-in: anything I should know right now?",
-            prompt,
-            allow_tools=bool(hb["tools"]),
-            tier=hb.get("tier") or "fast",
-        )
+
+        async def start(note: str = ""):
+            # Built when it really runs, so a postponed heartbeat sees the current home
+            prompt = (
+                "Heartbeat: a scheduled check-in, nobody asked you anything.\n"
+                f"Local time: {dt_util.now().strftime('%A %Y-%m-%d %H:%M')}.\n"
+                "Current state of the home (area | name | state):\n"
+                f"{home_snapshot(self.hass)}"
+                f"{await self._async_open_loops()}\n\n"
+                f"{hb['instructions']}"
+                f"{chr(10) * 2 + note if note else ''}"
+            )
+            return await self._async_auto_run(
+                "heartbeat", "Heartbeat", "Check-in: anything I should know right now?", prompt,
+                allow_tools=bool(hb["tools"]), tier=hb.get("tier") or "fast",
+            )
+
+        if force:  # the owner pressed "Run once now": no queue
+            return (await start()).id
+        # Low priority; pointless once the next heartbeat is due
+        await self.entry.runtime_data.jobs.async_submit(Job(
+            self.domain, "Heartbeat", hb.get("tier") or "fast", "low", start,
+            due=dt_util.utcnow() + timedelta(minutes=int(hb["interval"])), tags=["heartbeat"],
+        ))
+        return None
 
     def _may_fire(self, trig: dict) -> bool:
         """Cooldown, quiet hours, master ready, not already running."""
@@ -184,19 +197,33 @@ class TriggerEngine:
             intro = "An event woke you; nobody asked you anything."
             rule = SILENCE_RULE
         who = "your own earlier instruction" if trig.get("created_by") == "agent" else "the user's instruction"
-        prompt = (
-            f"{intro}\n"
-            f"Local time: {dt_util.now().strftime('%A %Y-%m-%d %H:%M')}.\n"
-            "Current state of the home (area | name | state):\n"
-            f"{home_snapshot(self.hass)}"
-            f"{await self._async_open_loops()}\n\n"
-            f"Instruction ({who}): {instruction}\n"
-            f"{rule}"
-        )
-        await self._async_auto_run(
-            f"event: {trig['id']}", trig.get("name") or title, text, prompt,
-            tier=(trig.get("do") or {}).get("tier") or "master",
-        )
+        do = trig.get("do") or {}
+        name = trig.get("name") or title
+        tier = do.get("tier") or "master"
+
+        async def start(note: str = ""):
+            prompt = (
+                f"{intro}\n"
+                f"Local time: {dt_util.now().strftime('%A %Y-%m-%d %H:%M')}.\n"
+                "Current state of the home (area | name | state):\n"
+                f"{home_snapshot(self.hass)}"
+                f"{await self._async_open_loops()}\n\n"
+                f"Instruction ({who}): {instruction}\n"
+                f"{rule}"
+                f"{chr(10) + note if note else ''}"
+            )
+            return await self._async_auto_run(f"event: {trig['id']}", name, text, prompt, tier=tier)
+
+        # Job classes: reminders/appointments (time triggers) are high and time-critical: if no model
+        # comes in time, the instruction reaches the owner as a plain notification. Events are normal.
+        timed = trig["when"]["type"] == "time"
+        await self.entry.runtime_data.jobs.async_submit(Job(
+            self.domain, name, tier, do.get("priority") or ("high" if timed else "normal"), start,
+            due=dt_util.utcnow() + timedelta(minutes=int(do.get("due_minutes") or (30 if timed else 15))),
+            critical=bool(do.get("critical", timed)),
+            fallback=f"{name}: {instruction}",
+            tags=["reminder" if timed else "event", *(["own plan"] if trig.get("created_by") == "agent" else [])],
+        ))
 
     @callback
     def _async_state_changed(self, event: Event[EventStateChangedData]) -> None:
@@ -269,5 +296,5 @@ class TriggerEngine:
                 AAC_CHAT_ID, "aac", run.result, proactive=True, run_id=run.id, trigger=title
             )
         LOGGER.debug("Automatic run %s (%s): %s", run.id, trigger, run.status)
-        return run.id
+        return run
 

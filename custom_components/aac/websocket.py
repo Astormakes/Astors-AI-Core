@@ -65,6 +65,8 @@ def async_register(hass: HomeAssistant) -> None:
         ws_memory_settings,
         ws_pools,
         ws_skins,
+        ws_jobs,
+        ws_jobs_settings,
         ws_domain_create,
         ws_domain_rename,
         ws_domain_delete,
@@ -677,6 +679,29 @@ async def ws_domain_voice(hass: HomeAssistant, connection, msg) -> None:
     if entry := _entry(hass, connection, msg):
         await entry.runtime_data.store.async_set_voice_domain(msg["domain_id"])
         connection.send_result(msg["id"], _state(hass, *_ctx(hass, msg)))
+
+
+@aac_command({vol.Required("type"): "aac/jobs"})
+@websocket_api.require_admin
+@callback
+def ws_jobs(hass: HomeAssistant, connection, msg) -> None:
+    """Waiting and recent automatic jobs, queue settings."""
+    if entry := _entry(hass, connection, msg):
+        connection.send_result(msg["id"], entry.runtime_data.jobs.overview())
+
+
+@aac_command({vol.Required("type"): "aac/jobs/settings", vol.Optional("notify_no_model"): bool,
+              vol.Optional("postpone_notice"): vol.All(vol.Coerce(int), vol.Range(0, 1440))})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_jobs_settings(hass: HomeAssistant, connection, msg) -> None:
+    """Queue settings."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    store = entry.runtime_data.store
+    store.data["queue"].update({k: v for k, v in msg.items() if k in ("notify_no_model", "postpone_notice")})
+    await store.async_save()
+    connection.send_result(msg["id"], entry.runtime_data.jobs.overview())
 
 
 @aac_command({vol.Required("type"): "aac/skins"})

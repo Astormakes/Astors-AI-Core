@@ -103,6 +103,25 @@ Real test (35B): "use my PC for heavy background stuff, but only while I'm at wo
 trackers report "unknown", asked, and from "Monday to Friday, roughly 7 to 16" set a weekday
 07:00–16:00 background rule. Before the tool text was sharpened it picked a computer's tracker.
 
+## Job queue (built, v0.17.0)
+
+Automatic work (heartbeat, triggers, AAC's own plans, later module jobs) is a **job** with classes,
+like models have traits (`jobs.py`):
+
+| Field | Meaning |
+|---|---|
+| `priority` | `high` (reminders, appointments) · `normal` (event reactions) · `low` (heartbeat, background) |
+| `due` | after this the job is pointless (heartbeat: the next one; reminders: +30 min; events: +15 min) |
+| `critical` | if no model came before `due`, the `fallback` text reaches the owner anyway (HA notification + "From AAC"), without a model |
+| `tags` | e.g. `heartbeat`, `reminder`, `event`, `own plan` |
+
+A job runs at once when the broker has an allowed model (background rules apply), else it waits,
+highest priority first, checked every 30 s. Owner settings (`store.queue`): `notify_no_model` (tell
+once per outage), `postpone_notice` (minutes; a job that waited longer is told so when it runs). The
+owner's chats and voice never queue. Triggers may override the classes in `do`: `priority`,
+`critical`, `due_minutes`. Not persisted yet (a restart forgets waiting jobs). WebSocket
+`aac/jobs`, `aac/jobs/settings`; panel: Triggers → Queue, "+n waiting" next to Auto.
+
 ## Broker request (planned)
 
 Agents never grab hardware; they ask the broker:

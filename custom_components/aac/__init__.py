@@ -42,6 +42,7 @@ from .audio_hub import AudioHub
 from .audio_view import AACAudioView
 from .chats import ChatStore
 from .domains import Domain, async_load_domain
+from .jobs import JobQueue
 from .pools import Broker
 from .skins import USER_URL as USER_SKINS_URL, user_dir
 from .memory import MemoryStore, memory_path
@@ -69,6 +70,7 @@ class AACData:
     domains: dict[str, Domain] = field(default_factory=dict)
     audio: AudioHub | None = None
     broker: Broker | None = None
+    jobs: JobQueue | None = None
 
     def domain(self, domain_id: str | None = None) -> Domain | None:
         """A domain by id (None = the first)."""
@@ -128,6 +130,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     version = str((await async_get_integration(hass, DOMAIN)).version)
     entry.runtime_data = AACData(store, version)
     broker = entry.runtime_data.broker = Broker(hass, store)
+    entry.runtime_data.jobs = JobQueue(hass, entry)
     entry.runtime_data.audio = AudioHub(hass, entry)
 
     async def embed(texts: list[str]):
@@ -179,8 +182,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         dom.triggers = TriggerEngine(hass, entry, dom)
         entry.async_on_unload(dom.triggers.async_stop)
 
+    entry.async_on_unload(entry.runtime_data.jobs.async_stop)
+
     @callback
     def _start(_event: Event | None = None) -> None:
+        entry.runtime_data.jobs.async_start()
         for dom in entry.runtime_data.domains.values():
             dom.triggers.async_start()
 

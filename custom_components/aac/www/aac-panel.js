@@ -351,6 +351,9 @@ class AacPanel extends HTMLElement {
       }
       if (this._run && this._run.id === run.id) this._run = run;
       this._render();
+    } else if (ev.what === "jobs") {
+      clearTimeout(this._jobsTimer);
+      this._jobsTimer = setTimeout(() => this._loadJobs(), 300);
     } else if (ev.what === "pools") {
       clearTimeout(this._poolTimer);
       this._poolTimer = setTimeout(async () => { await this._loadState(); if (!this._typing()) this._render(); }, 300);
@@ -371,7 +374,7 @@ class AacPanel extends HTMLElement {
   }
 
   async _loadAll() {
-    await Promise.all([this._loadState(), this._loadModels(), this._loadAudio(), this._loadChats(), this._loadRuns()]);
+    await Promise.all([this._loadState(), this._loadModels(), this._loadAudio(), this._loadChats(), this._loadRuns(), this._loadJobs()]);
     if (!this._view) {
       if (this._setupOpen()) this._view = "setup";
       else if (this._chats.length) await this._openChat(this._chats[0].id, false);
@@ -402,6 +405,11 @@ class AacPanel extends HTMLElement {
     } catch (e) { css = this._skinCss || ""; }
     this._skinId = id; this._skinCss = css; this._skinLoading = null;
     try { localStorage.setItem("aac-skin", JSON.stringify({ id, css })); } catch (e) { /* private mode */ }
+    this._render();
+  }
+
+  async _loadJobs() {
+    try { this._jobs = await this._ws("aac/jobs"); } catch (e) { this._jobs = null; }
     this._render();
   }
 
@@ -490,6 +498,7 @@ class AacPanel extends HTMLElement {
       } : null;
     }
     if (view.startsWith("settings/audio")) this._loadAudio();
+    if (view === "settings/triggers") this._loadJobs();
     if (view === "settings/memory") this._loadMemory();
     if (view === "settings/appearance") this._ws("aac/skins").then((r) => { this._skins = r; this._render(); }).catch(() => {});
     if (view.startsWith("chat/") && view !== "chat/new") { this._openChat(view.slice(5)); return; }
@@ -598,7 +607,7 @@ class AacPanel extends HTMLElement {
           <div class="seg-line"></div>
           ${chats}
           <div class="tab fold ${this._autoOpen ? "open" : ""}" id="auto-fold" tabindex="0" role="button" aria-expanded="${this._autoOpen}">
-            ${icon("chev")}<span class="grow">Auto<span class="count ${running ? "" : "zero"}">(${running})</span></span>
+            ${icon("chev")}<span class="grow">Auto<span class="count ${running ? "" : "zero"}">(${running})</span>${this._jobs?.waiting?.length ? `<span class="count" title="waiting for a model">+${this._jobs.waiting.length} waiting</span>` : ""}</span>
           </div>
           ${autoList}
         </div>
@@ -784,7 +793,25 @@ class AacPanel extends HTMLElement {
             </div>`).join("") : '<p class="hint">No triggers yet.</p>'}
           <div class="actions"><button class="btn primary" data-go="trigger/new">${icon("plus")} New trigger</button></div>
         </div>
+        ${this._renderQueueCard()}
       </div>`);
+  }
+
+  _renderQueueCard() {
+    const q = this._jobs;
+    if (!q) return "";
+    const row = (j) => `<div class="src"><span class="dot ${j.status === "queued" ? "open" : j.status === "done" ? "ok" : j.status === "notified" ? "open" : ""}"></span>
+      <div style="flex:1;min-width:0"><div class="n">${esc(j.title)} <span class="tag">${esc(j.priority.toUpperCase())}</span>${j.critical ? ' <span class="tag plan">TIME-CRITICAL</span>' : ""}</div>
+      <div class="m">${esc(j.status)}${j.reason && j.status === "queued" ? ` · ${esc(j.reason)}` : ""} · since ${esc(fmtTime(j.created))}${j.due ? ` · due ${esc(fmtTime(j.due))}` : ""}</div></div></div>`;
+    const recent = q.history.filter((j) => j.status !== "done").slice(0, 5);
+    return `<div class="card"><h2>QUEUE</h2>
+      <p>Automatic jobs wait here when no allowed model is free, most important first. Reminders and appointments are time-critical: if no model comes before they are due, the reminder reaches you anyway as a plain notification. Others expire. Your own chats never wait here.</p>
+      <label class="check"><input type="checkbox" id="q-notify" ${q.settings.notify_no_model ? "checked" : ""}>Tell me when no model is available (once per outage)</label>
+      <div class="row"><div><label for="q-postpone">Tell a job it was late after (minutes)</label><input id="q-postpone" type="number" min="0" max="1440" value="${esc(q.settings.postpone_notice)}" inputmode="numeric"></div></div>
+      <div class="actions"><button class="btn primary" id="q-save">Save</button></div>
+      <h3 style="margin-top:1em">Waiting</h3>${q.waiting.length ? q.waiting.map(row).join("") : '<p class="hint">Nothing waits.</p>'}
+      ${recent.length ? `<h3>Recently expired or sent without a model</h3>${recent.map(row).join("")}` : ""}
+    </div>`;
   }
 
   _whenText(when) {
@@ -1344,6 +1371,14 @@ class AacPanel extends HTMLElement {
     poolMove("data-pool-up", (a, i) => a.splice(i - 1, 2, a[i], a[i - 1]));
     poolMove("data-pool-down", (a, i) => a.splice(i, 2, a[i + 1], a[i]));
     poolMove("data-pool-del", (a, i) => a.splice(i, 1));
+    sr.querySelector("#q-save")?.addEventListener("click", async () => {
+      this._jobs = await this._ws("aac/jobs/settings", {
+        notify_no_model: sr.querySelector("#q-notify").checked,
+        postpone_notice: Number(sr.querySelector("#q-postpone").value) || 0,
+      });
+      this._flash = { ok: true, text: "Saved." };
+      this._render();
+    });
     sr.querySelectorAll("[data-skin]").forEach((el) => el.addEventListener("click", async () => {
       this._skins = await this._ws("aac/skin/set", { skin: el.dataset.skin });
       if (this._state) this._state.ui = { ...(this._state.ui || {}), skin: el.dataset.skin };

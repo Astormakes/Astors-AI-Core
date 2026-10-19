@@ -75,6 +75,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "traits": {},
     # Panel look: a skin id (neon = the original; others are CSS files, see skins.py)
     "ui": {"skin": "neon"},
+    # Job queue (jobs.py): tell the owner once when no model is available; a job that waited
+    # longer than postpone_notice minutes is told so when it finally runs
+    "queue": {"notify_no_model": True, "postpone_notice": 10},
 }
 
 DEFAULT_DOMAIN_ID = "assistant"
@@ -265,6 +268,7 @@ class AACStore:
         data["audio"].update(stored.get("audio", {}))
         data["traits"] = dict(stored.get("traits", {}))
         data["ui"].update(stored.get("ui", {}))
+        data["queue"].update(stored.get("queue", {}))
         # Up to 0.14 there was one implicit domain: its settings were at the top level
         domains = stored.get("domains") or [_domain_from(stored, DEFAULT_DOMAIN_ID, "Assistant")]
         data["domains"] = [_domain_from(d, d["id"], d.get("name") or d["id"]) for d in domains]
