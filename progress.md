@@ -63,6 +63,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - Prompt experiments: talk to both models directly (OpenAI API, ~1 s per call on the 35B) with a fixed quiet/alarm/leak snapshot before changing prompts; that is how the heartbeat prompt was found
 - Test harness: `frontend` would pull in half of HA, so tests mark `frontend`/`panel_custom` as loaded and stub the panel registration (`tests/conftest.py`). The asset folder is `www/`, not `frontend/` (that name clashed with the `frontend` import when patching)
 - Gotchas: background tasks (event triggers) need `async_block_till_done(wait_background_tasks=True)` in tests; the HA test plugin pins sockets to 127.0.0.1 (live tests reaching other hosts call `pytest_socket.socket_allow_hosts`); tools must return `llm.ToolResult` (dicts deprecated, removed 2027.11); test memory DB is patched per test (HA's test config dir is shared)
+- **The real HA now holds the user's own data** (organic use from 2026-10-19): tests delete only what they created (by id), never all chats/memories/triggers. Experiments preferably in a separate test domain
 - **Tests on the real HA: only questions, never action sentences** ("turn off the light" made the 8B switch a real socket; it was already off)
 - When deploying, run the tests with `set -o pipefail` (a `| tail` hides failures)
 - HA tool names are namespaced since 2026.10 (`homeassistant__GetLiveContext`, `llm__GetDateTime`, `intent__HassTurnOn`)
