@@ -1,0 +1,37 @@
+{
+  "id": "lists",
+  "name": "Lists",
+  "version": "0.1.0",
+  "contract": 1,
+  "kind": "code",
+  "description": "Lists of anything: shopping, recipes, packing, ideas, projects. Entries with sub-entries and free fields; entries with a date show up in the calendar.",
+  "provides": {
+    "capabilities": {
+      "calendar": {
+        "read": true,
+        "write": true
+      }
+    },
+    "tools": [
+      "lists",
+      "read_list",
+      "create_list",
+      "add_items",
+      "update_item",
+      "remove_items",
+      "delete_list"
+    ],
+    "panel_pages": [
+      "lists"
+    ]
+  },
+  "settings": {
+    "in_calendar": {
+      "type": "bool",
+      "title": "Show dated entries in the calendar",
+      "help": "Entries with a 'when' field appear in AAC's calendar (and its agenda).",
+      "default": true
+    }
+  },
+  "setup": []
+}

@@ -351,6 +351,10 @@ class AacPanel extends HTMLElement {
       }
       if (this._run && this._run.id === run.id) this._run = run;
       this._render();
+    } else if (ev.what === "lists") {
+      for (const [key, el] of Object.entries(this._modEls || {})) if (key.endsWith("|lists/lists") || key.endsWith("|calendar/agenda")) el.refresh?.();
+    } else if (ev.what === "modules") {
+      this._loadState();
     } else if (ev.what === "jobs") {
       clearTimeout(this._jobsTimer);
       this._jobsTimer = setTimeout(() => this._loadJobs(), 300);
@@ -499,6 +503,7 @@ class AacPanel extends HTMLElement {
     }
     if (view.startsWith("settings/audio")) this._loadAudio();
     if (view === "settings/triggers") this._loadJobs();
+    if (view === "settings/modules") this._loadModuleSettings();
     if (view === "settings/memory") this._loadMemory();
     if (view === "settings/appearance") this._ws("aac/skins").then((r) => { this._skins = r; this._render(); }).catch(() => {});
     if (view.startsWith("chat/") && view !== "chat/new") { this._openChat(view.slice(5)); return; }
@@ -560,6 +565,7 @@ class AacPanel extends HTMLElement {
     const mb = sr.querySelector("ha-menu-button");
     if (mb) { mb.hass = this._hass; mb.narrow = this._narrow; }
     this._bind();
+    this._mountModule();
   }
 
   _tab(view, label, extra = "", cls = "", after = "") {
@@ -611,6 +617,10 @@ class AacPanel extends HTMLElement {
           </div>
           ${autoList}
         </div>
+        ${this._modulePages().length ? `<div class="seg">
+          <div class="seg-title">${icon("workers")}MODULES</div><div class="seg-line"></div>
+          ${this._modulePages().map((p) => this._tab(`mod/${p.module}/${p.id}`, p.title)).join("")}
+        </div>` : ""}
         <div class="seg">
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
           ${this._tab("settings/charter", "Charter")}
@@ -621,6 +631,7 @@ class AacPanel extends HTMLElement {
           ${this._tab("models", "Models", this._stepOpen("models") ? '<span class="dot open"></span>' : "", "deep")}
           ${this._tab("settings/audio", "Audio pipeline")}
           ${this._tab("settings/audio/sources", "Sources", "", "deep")}
+          ${this._tab("settings/modules", "Modules")}
           ${this._tab("settings/mcp", "MCP", "", "soon")}
           ${this._tab("settings/memory", "Memory", this._stepOpen("memory") ? '<span class="dot open"></span>' : "")}
         </div>
@@ -649,6 +660,8 @@ class AacPanel extends HTMLElement {
     if (v === "settings/master") return this._renderMaster();
     if (v === "settings/pools") return this._renderPools();
     if (v === "settings/appearance") return this._renderAppearance();
+    if (v.startsWith("mod/")) return this._renderModulePage(v);
+    if (v === "settings/modules") return this._renderModules();
     if (v === "settings/charter") return this._renderCharter();
     if (v === "settings/triggers") return this._renderTriggers();
     if (v === "trigger/new" || v.startsWith("trigger/edit/")) return this._renderTriggerForm();
@@ -952,6 +965,89 @@ class AacPanel extends HTMLElement {
       </div>`);
   }
 
+  // ---------------------------------------------------------------- modules
+  _modulePages() {
+    return (this._state?.modules || []).flatMap((m) => (m.pages || []).map((p) => ({ ...p, module: m.id, moduleName: m.name })));
+  }
+
+  async _loadModuleSettings() {
+    try { this._mods = (await this._ws("aac/modules")).modules; } catch (e) { this._mods = []; }
+    this._render();
+  }
+
+  _renderModules() {
+    if (!this._mods) return this._page("MODULES", "", '<div class="card"><p>Loading…</p></div>');
+    const field = (m, key, f) => {
+      const v = m.values[key], id = `ms-${m.id}-${key}`;
+      const help = f.help ? `<div class="hint">${esc(f.help)}</div>` : "";
+      if (f.type === "bool") return `<label class="check"><input type="checkbox" data-ms="${esc(m.id)}" data-key="${esc(key)}" ${v ? "checked" : ""}>${esc(f.title || key)}</label>${help}`;
+      if (f.type === "entities") {
+        const opts = f.options || [];
+        return `<label>${esc(f.title || key)}</label>${opts.length ? opts.map(([val, name]) => `<label class="check"><input type="checkbox" data-ms="${esc(m.id)}" data-key="${esc(key)}" data-multi="${esc(val)}" ${v === "all" || (v || []).includes(val) ? "checked" : ""}>${esc(name)}</label>`).join("") : '<p class="hint">None in Home Assistant yet.</p>'}${help}`;
+      }
+      if (f.type === "select" || f.type === "entity") {
+        const opts = f.options || [];
+        return `<label for="${id}">${esc(f.title || key)}</label><select id="${id}" data-ms="${esc(m.id)}" data-key="${esc(key)}">${opts.map(([val, name]) => `<option value="${esc(val)}" ${val === v ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>${help}`;
+      }
+      return `<label for="${id}">${esc(f.title || key)}</label><input id="${id}" data-ms="${esc(m.id)}" data-key="${esc(key)}" type="${f.type === "number" ? "number" : "text"}" value="${esc(v ?? "")}">${help}`;
+    };
+    return this._page("MODULES", `${this._mods.length} loaded · settings for ${esc(this._state?.domain?.name || "")}`, `
+      <div class="cards">${this._mods.map((m) => `
+        <div class="card"><h2>${esc(m.name)} <span class="tag">${esc(m.version || "")}</span></h2>
+          <p>${esc(m.description)}</p>
+          ${Object.entries(m.settings).map(([k, f]) => field(m, k, f)).join("") || '<p class="hint">No settings.</p>'}
+          ${Object.keys(m.settings).length ? `<div class="actions"><button class="btn primary" data-ms-save="${esc(m.id)}">Save</button></div>` : ""}
+        </div>`).join("")}</div>
+      ${this._flashHtml()}`);
+  }
+
+  async _saveModule(id) {
+    const sr = this.shadowRoot, m = this._mods.find((x) => x.id === id), values = {};
+    for (const [key, f] of Object.entries(m.settings)) {
+      const els = [...sr.querySelectorAll(`[data-ms="${CSS.escape(id)}"][data-key="${CSS.escape(key)}"]`)];
+      if (f.type === "entities") {
+        const picked = els.filter((e) => e.checked).map((e) => e.dataset.multi);
+        values[key] = picked.length === els.length && els.length ? "all" : picked;
+      } else if (f.type === "bool") values[key] = !!els[0]?.checked;
+      else if (f.type === "number") values[key] = Number(els[0]?.value);
+      else if (els[0]) values[key] = els[0].value;
+    }
+    try {
+      const updated = await this._ws("aac/module/settings", { module: id, values });
+      this._mods = this._mods.map((x) => (x.id === id ? updated : x));
+      this._flash = { ok: true, text: `${m.name}: saved.` };
+      await this._loadState();
+    } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; this._render(); }
+  }
+
+  _renderModulePage(view) {
+    const page = this._modulePages().find((p) => `mod/${p.module}/${p.id}` === view);
+    if (!page) return this._page("MODULE", "", '<div class="card"><p>This module is not loaded.</p></div>');
+    return this._page(page.title.toUpperCase(), esc(page.moduleName), '<div id="modhost"></div>');
+  }
+
+  // The module's element survives the panel's re-renders (it keeps its own state)
+  async _mountModule() {
+    const host = this.shadowRoot.querySelector("#modhost");
+    if (!host) return;
+    const page = this._modulePages().find((p) => `mod/${p.module}/${p.id}` === this._view);
+    if (!page) return;
+    const key = `${this._state?.domain?.id}|${page.module}/${page.id}`;
+    this._modEls ||= {};
+    if (!this._modEls[key]) {
+      if (!customElements.get(page.element)) {
+        try { await import(page.url); } catch (e) { host.innerHTML = `<div class="card"><p>Could not load the page: ${esc(e.message)}</p></div>`; return; }
+      }
+      const el = document.createElement(page.element);
+      el.ws = (type, data = {}) => this._ws(type, data);
+      el.panel = this;
+      this._modEls[key] = el;
+    }
+    const el = this._modEls[key];
+    el.hass = this._hass;
+    if (el.parentNode !== host) host.appendChild(el);
+  }
+
   // ---------------------------------------------------------------- domains
   _renderDomainSwitch() {
     const st = this._state;
@@ -973,7 +1069,7 @@ class AacPanel extends HTMLElement {
     this._domain = id;
     try { localStorage.setItem("aac-domain", id); } catch (e) { /* private mode */ }
     this._domainMenu = false;
-    this._chat = null; this._run = null; this._memory = null;
+    this._chat = null; this._run = null; this._memory = null; this._modEls = {};
     this._view = "chat/new";
     await this._loadAll();
   }
@@ -1379,6 +1475,7 @@ class AacPanel extends HTMLElement {
       this._flash = { ok: true, text: "Saved." };
       this._render();
     });
+    sr.querySelectorAll("[data-ms-save]").forEach((el) => el.addEventListener("click", () => this._saveModule(el.dataset.msSave)));
     sr.querySelectorAll("[data-skin]").forEach((el) => el.addEventListener("click", async () => {
       this._skins = await this._ws("aac/skin/set", { skin: el.dataset.skin });
       if (this._state) this._state.ui = { ...(this._state.ui || {}), skin: el.dataset.skin };

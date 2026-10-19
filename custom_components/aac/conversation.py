@@ -274,6 +274,9 @@ class AACConversationEntity(
                 api_ids.append(self.domain.api_id(MEMORY_API_ID))  # the master always has its own memory
             if store.autonomy.get("schedule", "allowed") != "off":
                 api_ids.append(self.domain.api_id(SCHEDULE_API_ID))  # and may plan for itself
+            for module in self.entry.runtime_data.modules:  # tools the modules bring (lists, …)
+                if api_id := module.api_ids.get(self.domain.id):
+                    api_ids.append(api_id)
             if await owner_present(self.hass, user_input.context.user_id):
                 api_ids.append(self.domain.api_id(SETUP_API_ID))  # with the owner present it helps set itself up
         try:

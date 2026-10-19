@@ -19,7 +19,8 @@ some of it exists, **planned** = spec only, nothing in the code yet.
 | [Model provider](model-provider.md) | talking to models; broker requests | partial |
 | [Audio source](audio-source.md) | a microphone streaming to AAC and AAC's spoken answers | partial |
 | [Event](event.md) | everything that happens, on one bus | partial |
-| [Module manifest](module.md) | a bundle of the above, installable and shareable | planned |
+| [Module manifest](module.md) | a bundle of the above, installable and shareable | partial |
+| [Calendar](calendar.md) | one calendar over all modules: an interface, no table | built |
 | [Domain package](domain.md) | a whole AAC setup, exportable and importable | partial |
 
 ## Rules that hold for every contract

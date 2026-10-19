@@ -1,4 +1,4 @@
-# Module manifest — planned
+# Module manifest — partial
 
 A module is a bundle of the other contracts with one manifest. Everything is a
 module, even the defaults; the core is small. Installable from a GitHub repo,
@@ -59,6 +59,22 @@ yet makes SETUP appear again there, until the steps are done or (optional ones) 
 
 The core is a module like any other: its steps (connect a model, master, memory, ears and voice,
 rules for the machines, heartbeat) are declared the same way, so SETUP has one code path.
+
+## Built (v0.18.0): built-in modules
+
+`custom_components/aac/modules/<id>/` with `manifest.json` and `async_setup_module(ctx)`. The context
+gives: `storage(domain, name)` (per AAC domain), `add_calendar(provider)`, `add_llm_api(factory)` (one
+LLM API per domain, offered to that domain's agent), `add_ws_commands(...)`, `add_panel_page(id, title,
+element, script, visible_setting)` (a web component without shadow DOM, so the panel's styles and skins
+apply; the panel keeps the element across re-renders), `setting(domain, key)`. Settings from the manifest
+are stored per domain (`store.module_settings`) and edited in SETTINGS → Modules (form built from the
+schema: bool, text, number, select, entity, entities; `options_from` = choices a module computes at runtime).
+A module that fails to load is skipped. Deleting a domain removes its module data too.
+
+Modules so far: `lists` (lists of anything: tree entries with free fields; tools; calendar provider;
+page; setting "show dated entries in the calendar") and `calendar` (HA calendars adapter; where new
+entries go; agenda page; setting "show the calendar page"). Still planned: setup steps from the manifest,
+external modules, AAC-made modules, sandbox for code modules.
 
 ## Two kinds
 

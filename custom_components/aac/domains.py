@@ -9,6 +9,7 @@ before there were several (aac.chats, aac.runs, memory.db), so nothing moves.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant
@@ -84,3 +85,11 @@ async def async_remove_domain_data(hass: HomeAssistant, dom: Domain) -> None:
             await hass.async_add_executor_job(lambda p=path.with_name(path.name + suffix): p.unlink(missing_ok=True))
     await dom.chats.store.async_remove()
     await dom.runs.store.async_remove()
+    # Modules keep their data per domain as .storage/aac.mod.<module>.<name>.<domain>
+    storage = Path(hass.config.path(".storage"))
+
+    def remove_module_data() -> None:
+        for path in storage.glob(f"{DOMAIN}.mod.*.*.{dom.id}"):
+            path.unlink(missing_ok=True)
+
+    await hass.async_add_executor_job(remove_module_data)

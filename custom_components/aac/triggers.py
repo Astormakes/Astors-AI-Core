@@ -21,6 +21,7 @@ from homeassistant.util import dt as dt_util
 from .chats import AAC_CHAT_ID
 from .context import home_snapshot
 from .const import LOGGER
+from .capabilities import parse_time
 from .jobs import Job
 from .master import SILENT, async_run_master
 from .pools import role_configured
@@ -76,7 +77,15 @@ class TriggerEngine:
             for t in self._store.triggers
             if t.get("created_by") == "agent" and t.get("enabled") and t["when"]["type"] == "time"
         ]
-        return ("\n\nOpen loops (what the user wants to achieve, your own plans):\n" + "\n".join(lines)) if lines else ""
+        # Coming up: everything the calendar providers know for the next 24 hours
+        now = dt_util.now()
+        upcoming = await self.entry.runtime_data.capabilities.async_calendar(self.domain.id, now, now + timedelta(hours=24))
+        lines += [
+            f"- coming up: {e['name']}" + (f" ({dt_util.as_local(parse_time(e['start'])).strftime('%a %H:%M')})" if parse_time(e.get('start')) else "")
+            + f" [{e['source']}]"
+            for e in upcoming if (e.get("ref") or {}).get("module") != "core"  # own plans are listed above
+        ][:15]
+        return ("\n\nOpen loops (what the user wants to achieve, your own plans, what is coming up):\n" + "\n".join(lines)) if lines else ""
 
     @callback
     def async_start(self) -> None:

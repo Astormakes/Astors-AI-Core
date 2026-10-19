@@ -44,6 +44,7 @@ Tool use (controlling HA) needs a model and server with function calling
 ## The panel
 
 - **Domain switcher** under "AAC": several whole setups (e.g. Assistant, Work), each with its own charter, memory, chats and triggers; models and pools are shared
+- **MODULES**: Lists (lists of anything, with sub-entries and fields) and Calendar (one agenda over lists, AAC's plans and your HA calendars)
 - **SETUP**: the workflow; hides itself when nothing is open (the eye at the top shows all segments)
 - **WORKERS**: your chats with the master, "From AAC" (when it speaks up on its own) and the automatic runs (folded, with every step visible)
 - **SETTINGS**: charter (your values, first in every prompt), appearance (skins: Neon, Home Assistant, own CSS files), master agent, triggers, pools (which model or engine serves which role, with fallback) and models, AAC's own audio pipeline (separate from HA's Assist), MCP (planned), memory

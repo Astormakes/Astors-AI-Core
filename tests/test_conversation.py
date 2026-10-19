@@ -54,7 +54,10 @@ async def test_simple_answer(
     assert payload["messages"][-1] == {"role": "user", "content": "hi"}
     # No HA tools, only AAC's own memory and planning
     assert sorted(t["function"]["name"] for t in payload["tools"]) == [
+        "aac-lists__add_items", "aac-lists__create_list", "aac-lists__delete_list", "aac-lists__lists",
+        "aac-lists__read_list", "aac-lists__remove_items", "aac-lists__update_item",
         "aac-memory__forget", "aac-memory__lookup_facts", "aac-memory__recall", "aac-memory__remember",
+        "aac-planning__add_to_calendar", "aac-planning__calendar",
         "aac-planning__cancel_schedule", "aac-planning__list_schedules", "aac-planning__schedule",
     ]
 

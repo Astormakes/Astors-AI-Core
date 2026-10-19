@@ -24,9 +24,10 @@ from .provider import ProviderAuthError, ProviderError, ProviderNotFoundError
 from .audio import audio_overview
 from .master import async_run_master
 from .memory import KINDS, SOURCES, summarize
-from .runs import SIGNAL_UPDATE
+from .runs import SIGNAL_UPDATE, async_notify
 from .status import aac_agent_entity_id, setup_steps
 from .pools import ROLES, async_set_role
+from .modules import async_set_settings, setting as module_setting
 from .skins import list_skins, user_dir
 from .domains import Domain, async_remove_domain_data
 from .store import AACStore
@@ -65,6 +66,8 @@ def async_register(hass: HomeAssistant) -> None:
         ws_memory_settings,
         ws_pools,
         ws_skins,
+        ws_modules,
+        ws_module_settings,
         ws_jobs,
         ws_jobs_settings,
         ws_domain_create,
@@ -131,13 +134,14 @@ def _state(hass: HomeAssistant, entry, dom: Domain) -> dict[str, Any]:
         "heartbeat": settings.heartbeat,
         "memory": settings.memory,
         "ui": store.data["ui"],
+        "modules": [m.summary(entry, dom.id) for m in entry.runtime_data.modules],
         "pools": entry.runtime_data.broker.status(),
         "charter": settings.charter,
         "autonomy": settings.autonomy,
         "charter_is_default": not settings.data["charter"],
         "triggers": settings.triggers,
         "llm_apis": [{"id": api.id, "name": api.name} for api in llm.async_get_apis(hass)
-                     if not api.id.startswith(("aac_memory", "aac_schedule", "aac_setup"))],
+                     if not api.id.startswith("aac_")],
     }
 
 
@@ -702,6 +706,49 @@ async def ws_jobs_settings(hass: HomeAssistant, connection, msg) -> None:
     store.data["queue"].update({k: v for k, v in msg.items() if k in ("notify_no_model", "postpone_notice")})
     await store.async_save()
     connection.send_result(msg["id"], entry.runtime_data.jobs.overview())
+
+
+def _module_view(hass: HomeAssistant, entry, module, domain_id: str) -> dict[str, Any]:
+    """A module with its settings schema (choices resolved) and this domain's values."""
+    schema = {}
+    for key, field_def in module.manifest.get("settings", {}).items():
+        field_def = dict(field_def)
+        if field_def.get("type") in ("entity", "entities") and field_def.get("domain"):
+            field_def["options"] = [[st.entity_id, st.attributes.get("friendly_name", st.entity_id)]
+                                    for st in hass.states.async_all(field_def["domain"])]
+        if source := field_def.get("options_from"):
+            resolver = entry.runtime_data.capabilities.options.get(source)
+            field_def["options"] = [list(o) for o in resolver(domain_id)] if resolver else []
+        schema[key] = field_def
+    return {**module.summary(entry, domain_id), "settings": schema,
+            "values": {k: module_setting(entry, module.manifest, domain_id, k) for k in schema}}
+
+
+@aac_command({vol.Required("type"): "aac/modules"})
+@websocket_api.require_admin
+@callback
+def ws_modules(hass: HomeAssistant, connection, msg) -> None:
+    """The loaded modules with their settings for the selected domain."""
+    if entry := _entry(hass, connection, msg):
+        dom = _d(entry, msg)
+        connection.send_result(msg["id"], {"modules": [_module_view(hass, entry, m, dom.id) for m in entry.runtime_data.modules]})
+
+
+@aac_command({vol.Required("type"): "aac/module/settings", vol.Required("module"): str, vol.Required("values"): dict})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_module_settings(hass: HomeAssistant, connection, msg) -> None:
+    """Save a module's settings for the selected domain."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    module = next((m for m in entry.runtime_data.modules if m.id == msg["module"]), None)
+    if module is None:
+        connection.send_error(msg["id"], "not_found", "No such module")
+        return
+    dom = _d(entry, msg)
+    await async_set_settings(entry, module, dom.id, msg["values"])
+    async_notify(hass, "modules", domain=dom.id)
+    connection.send_result(msg["id"], _module_view(hass, entry, module, dom.id))
 
 
 @aac_command({vol.Required("type"): "aac/skins"})

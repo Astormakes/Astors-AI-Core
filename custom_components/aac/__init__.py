@@ -42,7 +42,9 @@ from .audio_hub import AudioHub
 from .audio_view import AACAudioView
 from .chats import ChatStore
 from .domains import Domain, async_load_domain
+from .capabilities import CalendarProvider, Capabilities, plan_occurrences
 from .jobs import JobQueue
+from .modules import MODULES_DIR, MODULES_URL, LoadedModule, async_load_modules
 from .pools import Broker
 from .skins import USER_URL as USER_SKINS_URL, user_dir
 from .memory import MemoryStore, memory_path
@@ -71,6 +73,8 @@ class AACData:
     audio: AudioHub | None = None
     broker: Broker | None = None
     jobs: JobQueue | None = None
+    capabilities: Capabilities = field(default_factory=Capabilities)
+    modules: list[LoadedModule] = field(default_factory=list)
 
     def domain(self, domain_id: str | None = None) -> Domain | None:
         """A domain by id (None = the first)."""
@@ -118,6 +122,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 STATIC_URL, str(Path(__file__).parent / "www"), cache_headers=False
             ),
             StaticPathConfig(USER_SKINS_URL, str(skins_dir), cache_headers=False),
+            StaticPathConfig(MODULES_URL, str(MODULES_DIR), cache_headers=False),
         ]
     )
     return True
@@ -131,6 +136,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     entry.runtime_data = AACData(store, version)
     broker = entry.runtime_data.broker = Broker(hass, store)
     entry.runtime_data.jobs = JobQueue(hass, entry)
+
+    async def plans(domain_id: str, start, end):
+        dom = entry.runtime_data.domain(domain_id)
+        return plan_occurrences(dom.settings.triggers, start, end) if dom else []
+
+    entry.runtime_data.capabilities.add_calendar(CalendarProvider("core", "AAC's plans and timed triggers", plans))
     entry.runtime_data.audio = AudioHub(hass, entry)
 
     async def embed(texts: list[str]):
@@ -160,6 +171,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
             AACSetupAPI(hass=hass, id=dom.api_id("aac_setup"), name=f"AAC setup{label}", entry=entry, domain=dom),
         ):
             entry.async_on_unload(llm.async_register_api(hass, api))
+
+    # Modules after the domains (they keep data per domain), before the agents (they bring tools)
+    entry.runtime_data.modules = await async_load_modules(hass, entry)
 
     await panel_custom.async_register_panel(
         hass,

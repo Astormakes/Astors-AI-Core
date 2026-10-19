@@ -78,6 +78,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Job queue (jobs.py): tell the owner once when no model is available; a job that waited
     # longer than postpone_notice minutes is told so when it finally runs
     "queue": {"notify_no_model": True, "postpone_notice": 10},
+    # Module settings per domain: {domain id: {module id: {key: value}}} (defaults in the manifests)
+    "module_settings": {},
 }
 
 DEFAULT_DOMAIN_ID = "assistant"
@@ -269,6 +271,7 @@ class AACStore:
         data["traits"] = dict(stored.get("traits", {}))
         data["ui"].update(stored.get("ui", {}))
         data["queue"].update(stored.get("queue", {}))
+        data["module_settings"] = dict(stored.get("module_settings", {}))
         # Up to 0.14 there was one implicit domain: its settings were at the top level
         domains = stored.get("domains") or [_domain_from(stored, DEFAULT_DOMAIN_ID, "Assistant")]
         data["domains"] = [_domain_from(d, d["id"], d.get("name") or d["id"]) for d in domains]
