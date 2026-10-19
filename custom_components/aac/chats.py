@@ -101,6 +101,23 @@ class ChatStore:
             async_notify(self.hass, "chats", domain=self.domain_id)
 
     @callback
+    def history(self, chat_id: str, limit: int = 30) -> list[dict[str, Any]]:
+        """The chat so far without the newest message (the one being answered), errors left out."""
+        chat = self.chats.get(chat_id)
+        if not chat:
+            return []
+        return [{"role": m["role"], "text": m["text"]} for m in chat["messages"][:-1]
+                if not m.get("error") and m.get("text")][-limit:]
+
+    @callback
+    def rewind(self, chat_id: str, index: int) -> None:
+        """Cut the chat off before message `index` (edit or rerun); HA's conversation starts over."""
+        if chat := self.chats.get(chat_id):
+            chat["messages"] = chat["messages"][:max(0, index)]
+            chat["conversation_id"] = None
+            self._save()
+            async_notify(self.hass, "chat", chat_id=chat_id, domain=self.domain_id)
+
     def set_conversation(self, chat_id: str, conversation_id: str | None) -> None:
         """Remember HA's conversation id so the model keeps the context."""
         if chat := self.chats.get(chat_id):

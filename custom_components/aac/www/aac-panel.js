@@ -80,6 +80,11 @@ nav {
 .vis-item > span { min-width: 0; overflow: hidden; }
 .vis-item .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8em; }
 .vis-item input { margin-top: .2em; }
+.msg-acts { display: flex; justify-content: flex-end; gap: .3em; margin-top: .3em; opacity: 0; transition: opacity .1s; }
+.bubble:hover .msg-acts, .bubble:focus-within .msg-acts { opacity: .8; }
+@media (hover: none) { .msg-acts { opacity: .6; } }
+.msg-acts .icon-btn { font-size: .75em; padding: .1em .5em; color: var(--dim); }
+#msg-edit { min-height: 5em; width: 100%; }
 .dlg-back { position: absolute; inset: 0; z-index: 60; background: rgba(0, 0, 0, .55); display: grid; place-items: center; padding: 1em; }
 .dlg { width: min(32em, 100%); margin: 0; }
 .dlg textarea { min-height: 8em; }
@@ -593,6 +598,7 @@ class AacPanel extends HTMLElement {
     this._render();
   }
   async _openChat(id, navigate = true) {
+    if (this._chat?.id !== id) { this._editing = null; this._editText = null; }
     try {
       this._chat = await this._ws("aac/chat/get", { chat_id: id });
       if (navigate || !this._view) this._view = `chat/${id}`;
@@ -863,11 +869,22 @@ class AacPanel extends HTMLElement {
     const msgs = chat?.messages || [];
     const isAac = chat?.id === "aac";
     const log = msgs.length
-      ? msgs.map((m) => `<div class="bubble ${m.role} ${m.error ? "err" : ""}">
+      ? msgs.map((m, i) => {
+          const editing = this._editing === i && !isAac;
+          const prevUser = m.role === "aac" ? msgs.slice(0, i).map((x) => x.role).lastIndexOf("user") : -1;
+          const acts = isAac || this._busy || editing ? "" : m.role === "user"
+            ? `<div class="msg-acts"><button class="icon-btn" data-msg-edit="${i}" title="Edit and send again (the chat continues from here)">✎ Edit</button></div>`
+            : prevUser >= 0 ? `<div class="msg-acts"><button class="icon-btn" data-msg-rerun="${i}" title="Answer again (this answer is replaced)">↻ Rerun</button></div>` : "";
+          return `<div class="bubble ${m.role} ${m.error ? "err" : ""}">
           ${m.trigger ? `<div class="trig">⚡ ${esc(m.trigger)}</div>` : `<div class="who">${m.role === "user" ? "YOU" : "AAC"}</div>`}
-          <div class="txt">${esc(m.text)}</div>${this._stepsHtml(m.steps)}
+          ${editing ? `<textarea id="msg-edit" class="thin-scroll">${esc(this._editText ?? m.text)}</textarea>
+            <div class="actions" style="margin-top:.5em"><button class="btn primary" id="msg-edit-send">Send</button><button class="btn" id="msg-edit-cancel">Cancel</button></div>
+            <div class="hint" style="margin:.3em 0 0">Everything after this message is removed; AAC answers from here.</div>`
+          : `<div class="txt">${esc(m.text)}</div>`}${this._stepsHtml(m.steps)}
           ${m.run_id && isAac ? `<div class="steps"><span tabindex="0" role="button" data-go="run/${esc(m.run_id)}" style="cursor:pointer">details ›</span></div>` : ""}
-        </div>`).join("")
+          ${acts}
+        </div>`;
+        }).join("")
       : `<div class="welcome"><div class="big">AAC</div>${!master ? "No master model yet. Open SETUP to choose one."
           : this._state?.pools?.roles?.master?.active ? "Ask me anything." : "No master model is reachable right now (see Pools)."}</div>`;
     const busy = this._busy ? '<div class="bubble aac"><div class="who">AAC</div><span class="cursor"></span></div>' : "";
@@ -1830,6 +1847,23 @@ class AacPanel extends HTMLElement {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); this._send(); }
     });
     sr.querySelector("#chat-send")?.addEventListener("click", () => this._send());
+    sr.querySelectorAll("[data-msg-edit]").forEach((el) => el.addEventListener("click", () => {
+      this._editing = Number(el.dataset.msgEdit);
+      this._editText = null;
+      this._render();
+      this.shadowRoot.querySelector("#msg-edit")?.focus();
+    }));
+    sr.querySelector("#msg-edit")?.addEventListener("input", (e) => { this._editText = e.target.value; });
+    sr.querySelector("#msg-edit-cancel")?.addEventListener("click", () => { this._editing = null; this._editText = null; this._render(); });
+    sr.querySelector("#msg-edit-send")?.addEventListener("click", () => {
+      const i = this._editing;
+      this._resend(i, sr.querySelector("#msg-edit")?.value ?? this._chat.messages[i]?.text);
+    });
+    sr.querySelectorAll("[data-msg-rerun]").forEach((el) => el.addEventListener("click", () => {
+      const i = Number(el.dataset.msgRerun), msgs = this._chat.messages;
+      const u = msgs.slice(0, i).map((x) => x.role).lastIndexOf("user");
+      if (u >= 0) this._resend(u, msgs[u].text);
+    }));
     sr.querySelectorAll("[data-chat-del]").forEach((el) => el.addEventListener("click", async (e) => {
       e.stopPropagation();
       const chat = this._chats.find((c) => c.id === el.dataset.chatDel);
@@ -1950,6 +1984,18 @@ class AacPanel extends HTMLElement {
       this._flash = { ok: true, text: "Saved." };
     } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
     this._render();
+  }
+
+  // Edit or rerun: cut the chat off at a message and send again (the backend gives the model the rest as context)
+  async _resend(index, text) {
+    if (!this._chat?.id || this._busy || !text?.trim()) return;
+    this._editing = null;
+    this._editText = null;
+    await this._ws("aac/chat/rewind", { chat_id: this._chat.id, index });
+    this._chat.messages = this._chat.messages.slice(0, index);
+    const input = this.shadowRoot.querySelector("#chat-input");
+    if (input) input.value = text.trim();
+    await this._send();
   }
 
   async _send() {

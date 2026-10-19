@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
@@ -51,6 +51,7 @@ async def async_run_master(
     allow_tools: bool = True,
     tier: str = "master",
     domain: Domain | None = None,
+    history: list[dict[str, Any]] | None = None,
 ) -> tuple[Run, conversation.ConversationResult | None]:
     """Run a domain's master once and record it as a run (steps come from the agent)."""
     domain = domain or entry.runtime_data.domain()
@@ -64,6 +65,7 @@ async def async_run_master(
         context=extra_system_prompt or "",
         allow_tools=allow_tools,
         tier=tier,
+        history=history or [],
     )
     token = current_run.set(run)
     try:

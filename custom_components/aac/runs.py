@@ -48,10 +48,14 @@ class Run:
     model: str | None = None  # the model that answered (resource id)
     tier: str = "master"  # pool request: master (the owner's order), fast, smart, small or an own tag
     steps: list[dict[str, Any]] = field(default_factory=list)
+    # The chat so far ({role, text}); used when HA forgot the conversation (it does after 5 idle minutes)
+    history: list[dict[str, Any]] = field(default_factory=list, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
-        """Serialize."""
-        return asdict(self)
+        """Serialize (without the chat history, which lives in the chat)."""
+        data = asdict(self)
+        data.pop("history", None)
+        return data
 
 
 @callback

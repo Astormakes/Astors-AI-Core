@@ -381,6 +381,7 @@ class AudioHub:
             # Anyone can talk into a microphone: voice is anonymous until there is voice ID
             user_id=None,
             domain=data,
+            history=data.chats.history(chat_id),
         )
         if result is not None:
             data.chats.set_conversation(chat_id, result.conversation_id)

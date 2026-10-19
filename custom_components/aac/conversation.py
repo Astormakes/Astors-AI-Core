@@ -295,6 +295,20 @@ class AACConversationEntity(
         except conversation.ConverseError as err:
             return err.as_conversation_result()
 
+        # HA forgets a conversation after 5 idle minutes (and an edited chat starts over): then the
+        # model would get only the newest message. Put AAC's own record of the chat back in front of it.
+        if run and run.history:
+            contents = chat_log.content
+            last_user = max((i for i, c in enumerate(contents) if isinstance(c, conversation.UserContent)), default=None)
+            if last_user is not None and not any(
+                isinstance(c, (conversation.UserContent, conversation.AssistantContent)) for c in contents[:last_user]
+            ):
+                contents[last_user:last_user] = [
+                    conversation.UserContent(content=m["text"]) if m["role"] == "user"
+                    else conversation.AssistantContent(agent_id=self.entity_id, content=m["text"])
+                    for m in run.history
+                ]
+
         # Context engine (first piece): hand over matching memories ourselves, because
         # small models rarely call recall on their own. Attached to the user message,
         # not the system prompt, so the server's prompt cache keeps working.

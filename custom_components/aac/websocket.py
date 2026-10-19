@@ -51,6 +51,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_audio_say,
         ws_chat,
         ws_chats,
+        ws_chat_rewind,
         ws_chat_get,
         ws_chat_new,
         ws_chat_delete,
@@ -359,6 +360,7 @@ async def ws_chat(hass: HomeAssistant, connection, msg) -> None:
         conversation_id=chat["conversation_id"],
         user_id=connection.user.id,
         domain=_d(entry, msg),
+        history=chats.history(chat["id"]),
     )
     if result is not None:
         chats.set_conversation(chat["id"], result.conversation_id)
@@ -371,6 +373,17 @@ async def ws_chat(hass: HomeAssistant, connection, msg) -> None:
         steps=run.steps,
     )
     connection.send_result(msg["id"], {"chat_id": chat["id"], "message": message})
+
+
+@aac_command({vol.Required("type"): "aac/chat/rewind", vol.Required("chat_id"): str, vol.Required("index"): vol.All(int, vol.Range(0))})
+@websocket_api.require_admin
+@callback
+def ws_chat_rewind(hass: HomeAssistant, connection, msg) -> None:
+    """Cut a chat off before a message (edit / rerun); the next message gets the rest as context."""
+    if entry := _entry(hass, connection, msg):
+        chats = _d(entry, msg).chats
+        chats.rewind(msg["chat_id"], msg["index"])
+        connection.send_result(msg["id"], chats.get(msg["chat_id"]))
 
 
 @aac_command({vol.Required("type"): "aac/chats"})

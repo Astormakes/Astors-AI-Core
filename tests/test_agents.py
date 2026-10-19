@@ -344,3 +344,28 @@ async def test_old_triggers_migrate(hass: HomeAssistant, hass_storage, mock_entr
     assert trig["when"] == {"type": "state", "entity_id": "binary_sensor.door", "to": "on"}
     assert trig["do"] == {"template": "event-reaction", "instruction": "Tell me."}
     assert trig["cooldown"] == 60
+
+
+async def test_chat_context_survives_ha_forgetting(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """HA drops a conversation after 5 idle minutes; AAC puts its own record of the chat back."""
+    payloads = _replies(aioclient_mock, _reply("Steam is not set up."), _reply("Now I see it."), _reply("Edited answer."))
+    await setup_aac(hass, mock_entry)
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "Can you use the Steam integration?"})
+    chat_id = (await ws.receive_json())["result"]["chat_id"]
+    mock_entry.runtime_data.chats.set_conversation(chat_id, "01FORGOTTENBYHA0000000000")  # as if HA timed it out
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "Some changes were made, check again.", "chat_id": chat_id})
+    await ws.receive_json()
+    texts = [m.get("content") for m in payloads[1]["messages"]]
+    assert "Can you use the Steam integration?" in texts and "Steam is not set up." in texts
+    assert texts[-1] == "Some changes were made, check again."
+
+    # edit: cut off at the second user message and send a new one; the model sees only what came before
+    await ws.send_json_auto_id({"type": "aac/chat/rewind", "chat_id": chat_id, "index": 2})
+    assert len((await ws.receive_json())["result"]["messages"]) == 2
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "I turned on the entities, check again.", "chat_id": chat_id})
+    await ws.receive_json()
+    texts = [m.get("content") for m in payloads[2]["messages"]]
+    assert "Some changes were made, check again." not in texts and "Steam is not set up." in texts
+    assert [m["text"] for m in mock_entry.runtime_data.chats.get(chat_id)["messages"]][-2:] == [
+        "I turned on the entities, check again.", "Edited answer."]
