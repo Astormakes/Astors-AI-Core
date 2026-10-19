@@ -68,6 +68,10 @@ const md = (text) => {
   return out.join("");
 };
 
+// Where each pool is set: thinking in Compute, voice in the audio pipeline, vision under Video
+const POOL_HOME = { thinking: "models", voice: "settings/audio", vision: "settings/video" };
+const POOL_HOME_NAME = { models: "Compute", "settings/audio": "Audio pipeline", "settings/video": "Video" };
+
 const ICONS = {
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   eyeOff: '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
@@ -905,10 +909,10 @@ class AacPanel extends HTMLElement {
           ${this._tab("settings/master", "Master agent")}
           ${this._tab("settings/entities", "Entities", this._stepOpen("entities") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/triggers", "Triggers")}
-          ${this._tab("settings/pools", "Pools", this._stepOpen("master") || this._stepOpen("memory") ? '<span class="dot open"></span>' : "")}
-          ${this._tab("models", "Compute", this._stepOpen("models") ? '<span class="dot open"></span>' : "", "deep")}
+          ${this._tab("models", "Compute", ["models", "master", "memory"].some((x) => this._stepOpen(x)) ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/audio", "Audio pipeline")}
           ${this._tab("settings/audio/sources", "Sources", "", "deep")}
+          ${this._tab("settings/video", "Video")}
           ${this._tab("settings/modules", "Modules")}
           ${this._tab("settings/mcp", "MCP", "", "soon")}
           ${this._tab("settings/memory", "Memory", this._stepOpen("memory") ? '<span class="dot open"></span>' : "")}
@@ -938,7 +942,8 @@ class AacPanel extends HTMLElement {
     if (v === "models/new" || v.startsWith("model/edit/")) return this._renderModelForm();
     if (v.startsWith("model/")) return this._renderModel(v.slice(6));
     if (v === "settings/master") return this._renderMaster();
-    if (v === "settings/pools") return this._renderPools();
+    if (v === "settings/pools") return this._renderModels();  // old links: the thinking pool lives in Compute now
+    if (v === "settings/video") return this._renderVideo();
     if (v === "settings/appearance") return this._renderAppearance();
     if (v.startsWith("mod/")) return this._renderModulePage(v);
     if (v === "settings/modules") return this._renderModules();
@@ -1012,7 +1017,7 @@ class AacPanel extends HTMLElement {
         </div>`;
         }).join("")
       : `<div class="welcome"><div class="big">AAC</div>${!master ? "No master model yet. Open SETUP to choose one."
-          : this._state?.pools?.roles?.master?.active ? "Ask me anything." : "No master model is reachable right now (see Pools)."}</div>`;
+          : this._state?.pools?.roles?.master?.active ? "Ask me anything." : "No master model is reachable right now (see Compute)."}</div>`;
     const busy = this._busy ? `<div class="bubble aac busy"><div class="who">AAC</div>${this._streamHtml()}</div>` : "";
     const title = chat ? chat.title : "NEW CHAT";
     const del = chat ? `<button class="icon-btn" id="chat-delete" title="Delete chat">${icon("trash")}</button>` : "";
@@ -1229,7 +1234,8 @@ class AacPanel extends HTMLElement {
     return this._page("COMPUTE", "the machines AAC thinks with", `
       ${machines || '<div class="card"><p>No machines yet. Add a model server: any OpenAI-compatible one (llama.cpp, Ollama, vLLM, LM Studio, cloud APIs).</p></div>'}
       <div class="actions"><button class="btn primary" data-go="models/new">${icon("plus")} Add model</button></div>
-      <p class="hint">Found on their own: model servers set up in Home Assistant (only read, never changed) and everything the servers of your models offer. Who does what (master, speech, …) is set in Pools.</p>`,
+      <p class="hint">Found on their own: model servers set up in Home Assistant (only read, never changed) and everything the servers of your models offer. Speech and voice engines are ordered under Audio pipeline, vision under Video.</p>
+      ${this._poolCard("thinking")}`,
       `<button class="icon-btn" id="refresh-models" title="Scan again">${icon("refresh")}</button>`);
   }
 
@@ -1556,7 +1562,8 @@ class AacPanel extends HTMLElement {
     const active = r?.active || now;
     const state = !r || !r.items.length ? (now ? `automatic: ${esc(this._resourceLabel(now))}` : "none")
       : `${esc(this._resourceLabel(active || r.items[0].id))}${r.fallback ? ' <span class="tag plan">FALLBACK</span>' : ""}${r.items.length > 1 ? ` <span class="hint">· ${r.items.length} in the pool</span>` : ""}`;
-    return `<div class="src" style="margin:.2em 0 .6em"><div style="flex:1">${state}</div><button class="btn" data-go="settings/pools">Pools</button></div>`;
+    const home = POOL_HOME[r?.pool || "voice"], here = home === this._view;
+    return `<div class="src" style="margin:.2em 0 .6em"><div style="flex:1">${state}</div>${here ? "" : `<button class="btn" data-go="${home}">${POOL_HOME_NAME[home]}</button>`}</div>`;
   }
 
   _ruleText(rule) {
@@ -1592,9 +1599,10 @@ class AacPanel extends HTMLElement {
     return opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
   }
 
-  _renderPools() {
+  // A pool's roles in their order (each role uses the first entry that answers); shown on the page it belongs to
+  _poolCard(name) {
     const p = this._state?.pools;
-    if (!p) return this._page("POOLS", "", '<div class="card"><p>Loading…</p></div>');
+    if (!p) return '<div class="card"><p>Loading…</p></div>';
     const stateText = { ok: "ready", down: "not answering", missing: "gone", unused: "unused (one model only)" };
     const role = (id) => {
       const r = p.roles[id];
@@ -1624,12 +1632,14 @@ class AacPanel extends HTMLElement {
         <p class="hint">Rules for when a model may be used (e.g. "my PC only while I am at work") are yours: tell AAC in a chat and it writes them down. Events and agents can ask for a kind of model instead of a fixed one, chosen among the master's models that answer right now. fast = measured speed, smart = biggest, small = smallest, plus your own tags (e.g. efficient for energy-saving hardware).</p>
         <div class="kv">${Object.entries(p.by_tier || {}).map(([t, r]) => `<span class="k">${esc(t)}</span><span class="v">${r ? esc(this._resourceLabel(r)) : "—"}</span>`).join("")}</div>
         <div class="actions"><button class="btn" id="pool-measure">Measure speed</button></div></div>`;
-      return `<div class="card"><h2>${esc(name.toUpperCase())}</h2><p>${esc(p.pools[name])}</p>${roles.map(role).join("") || '<p class="hint">Nothing here yet.</p>'}${extra}</div>`;
+      return `<div class="card"><h2>${esc(name.toUpperCase())} POOL</h2><p>${esc(p.pools[name])}. Each role uses the first entry that answers: put a fast machine that is not always on (a PC) first and an always-on one after it; when the first does not answer, the next takes over and the first is tried again a minute later.</p>${roles.map(role).join("") || '<p class="hint">Nothing here yet.</p>'}${extra}</div>`;
     };
-    return this._page("POOLS", "the home's models and engines, shared by everything", `
-      <div class="card"><p>Each role uses the first entry that answers. Put a fast machine that is not always on (a PC) first and an always-on one after it: when the first does not answer, the next takes over and the first is tried again a minute later. Models themselves are added under Models.</p>
-        <div class="actions"><button class="btn" data-go="models">Models</button></div></div>
-      <div class="cards">${pool("thinking")}${pool("voice")}${pool("vision")}</div>`);
+    return pool(name);
+  }
+
+  _renderVideo() {
+    return this._page("VIDEO", "cameras and what AAC can see", `${this._poolCard("vision")}
+      <div class="card"><h2>CAMERAS <span class="tag plan">PLANNED</span></h2><p>Camera sources and detectors, like the audio pipeline: light per source, the heavy models shared from the vision pool.</p></div>`);
   }
 
   // ---------------------------------------------------------------- settings: master
@@ -1638,7 +1648,7 @@ class AacPanel extends HTMLElement {
     if (!st) return this._page("MASTER AGENT", "", "");
     const m = st.master;
     return this._page("MASTER AGENT", st.agent_entity_id ? esc(st.agent_entity_id) : "", `<div class="card"><h2>MASTER AGENT</h2>
-        <p>The persistent agent that answers, decides and acts. Which model thinks for it is the master role in SETTINGS → Pools.</p>
+        <p>The persistent agent that answers, decides and acts. Which model thinks for it is the master role in the thinking pool (SETTINGS → Compute).</p>
         <div class="form-grid">
           <div>
             <label>Model</label>${this._roleSummary("master")}
@@ -1759,7 +1769,7 @@ class AacPanel extends HTMLElement {
           </div>
           <label>Speech to text</label>${this._roleSummary("stt", eng.stt)}
           <label>Voice (text to speech)</label>${this._roleSummary("tts", eng.tts)}
-          <p class="hint">Engines are the voice pool (SETTINGS → Pools): speech models from Models (e.g. a multilingual whisper; without a language it detects German, English, … per sentence) or HA's engines, in your order, with fallback. HA's own voice assistants stay as they are.</p>
+          <p class="hint">Engines come from the voice pool below: speech models from Compute (e.g. a multilingual whisper; without a language it detects German, English, … per sentence) or HA's engines, in your order, with fallback. HA's own voice assistants stay as they are.</p>
           <div class="actions"><button class="btn primary" id="au-save">Save</button></div>
           ${this._flashHtml()}
         </div>
@@ -1767,7 +1777,8 @@ class AacPanel extends HTMLElement {
           <p>Every source gets its own light pipeline; the heavy parts are shared.</p>
           <div class="flow">${flow}</div>
         </div>
-      </div>`);
+      </div>
+      ${this._poolCard("voice")}`);
   }
 
   _liveSources(list) {

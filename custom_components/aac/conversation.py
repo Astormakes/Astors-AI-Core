@@ -279,7 +279,7 @@ class AACConversationEntity(
             response = intent.IntentResponse(language=user_input.language)
             response.async_set_error(
                 intent.IntentResponseErrorCode.UNKNOWN,
-                f"{NO_MODEL}. Open the AAC panel (SETTINGS → Pools).",
+                f"{NO_MODEL}. Open the AAC panel (SETTINGS → Compute).",
             )
             return conversation.ConversationResult(
                 response=response, conversation_id=chat_log.conversation_id
