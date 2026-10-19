@@ -13,14 +13,16 @@ HA TTS engine to the same source.
 from __future__ import annotations
 
 from array import array
-import io
-import wave
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+import io
+import json
 import re
+import sys
 import time
 from typing import TYPE_CHECKING, Any
+import wave
 
 from homeassistant.components import stt, tts
 from homeassistant.core import HomeAssistant, callback
@@ -49,6 +51,10 @@ TRANSCRIPT_LINES = 200
 # Integrations whose speech engines run locally (preferred when nothing is chosen)
 LOCAL_ENGINES = {"wyoming", "piper", "whisper", "faster_whisper"}
 
+# The attention check: how many earlier lines it sees, and its answer format
+GATE_CONTEXT = 6
+GATE_FORMAT = {"type": "json_schema", "json_schema": {"name": "attention", "schema": {
+    "type": "object", "properties": {"to_assistant": {"type": "boolean"}}, "required": ["to_assistant"]}}}
 VOICE_FAILED = "Sorry, that did not work. The details are in the AAC panel."
 VOICE_PROMPT = (
     "This message came in by voice from the microphone '{name}'{area}. Your answer is spoken "
@@ -239,10 +245,43 @@ class AudioHub:
                 "text": text, "addressed": self.addressed(source, text),
                 "language": heard.get("language"), "confidence": heard.get("confidence"),
                 "engine": heard.get("engine")}
+        earlier = [x["text"] for x in self.transcript if x["source"] == source.id][-GATE_CONTEXT:]
         self.transcript.append(line)
         async_notify(self.hass, "audio")
+        if line["addressed"] and self.entry.runtime_data.store.audio.get("gate", True):
+            # The name alone is not enough (a video says "computer"): a quick model judges the situation
+            if not await self._async_gate(text, earlier):
+                line["addressed"], line["gate"] = False, "not meant for AAC"
+                async_notify(self.hass, "audio")
         if line["addressed"]:
             await self.async_answer(source, text)
+
+    async def _async_gate(self, text: str, earlier: list[str]) -> bool:
+        """Is someone talking to AAC, or is the name just part of other speech (TV, a video, a talk)?"""
+        broker = self.entry.runtime_data.broker
+        if (picked := broker.endpoint_for("fast")) is None:
+            return True  # nothing to judge with: the name decides
+        model_id, endpoint = picked
+        provider = OpenAICompatProvider(
+            async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key, timeout=20, connect_timeout=3
+        )
+        names = ", ".join(self.entry.runtime_data.store.audio["names"])
+        heard = "\n".join(f"- {t}" for t in earlier) or "- (nothing)"
+        prompt = (f"You are the attention of a home assistant called {names}. A microphone in the room heard "
+                  f"these lines before:\n{heard}\nNow it heard: \"{text}\"\n"
+                  "Is a person speaking TO the assistant now (a request, a question, a greeting to it)? Or is the "
+                  "name only part of other speech: a video, TV, music, people talking about something else? "
+                  'Answer only with JSON: {"to_assistant": true or false}')
+        try:
+            reply = await provider.chat(endpoint.model, [{"role": "user", "content": prompt}], None,
+                                        temperature=0, max_tokens=20, response_format=GATE_FORMAT,
+                                        chat_template_kwargs={"enable_thinking": False})
+            answer = json.loads(reply.get("content") or "{}")
+        except (ProviderError, ValueError) as err:
+            LOGGER.info("AAC audio: attention check failed (%s), the name decides", err)
+            return True
+        broker.mark_up(model_id)
+        return bool(answer.get("to_assistant", True))
 
     def engine(self, kind: str) -> str | None:
         """What would serve STT/TTS now: the first usable resource of the pool role, else local first."""
@@ -355,9 +394,12 @@ class AudioHub:
             return None
 
     async def async_say(self, source: Source, text: str) -> bool:
-        """Speak text on a source."""
-        if not (audio := await self.async_tts(text)):
+        """Speak text on a source, at the owner's volume (0 = AAC does not speak aloud)."""
+        volume = int(self.entry.runtime_data.store.audio.get("volume", 40))
+        if volume <= 0 or not (audio := await self.async_tts(text)):
             return False
+        if volume < 100:
+            audio = await self.hass.async_add_executor_job(scale_wav, audio, volume / 100)
         source.playing = True
         async_notify(self.hass, "audio")
         await source.send({"type": "play", "format": "wav", "bytes": len(audio), "text": text})
@@ -401,3 +443,26 @@ class AudioHub:
             "stt": self.engine("stt"),
             "tts": self.engine("tts"),
         }
+
+
+def scale_wav(audio: bytes, gain: float) -> bytes:
+    """A 16-bit WAV, quieter (the speaker's own volume stays as it is)."""
+    try:
+        with wave.open(io.BytesIO(audio)) as src:
+            params, frames = src.getparams(), src.readframes(src.getnframes())
+    except (wave.Error, EOFError):
+        return audio
+    if params.sampwidth != 2:
+        return audio
+    samples = array("h", frames)
+    if sys.byteorder == "big":
+        samples.byteswap()
+    for i, v in enumerate(samples):
+        samples[i] = max(-32768, min(32767, int(v * gain)))
+    if sys.byteorder == "big":
+        samples.byteswap()
+    out = io.BytesIO()
+    with wave.open(out, "wb") as dst:
+        dst.setparams(params)
+        dst.writeframes(samples.tobytes())
+    return out.getvalue()

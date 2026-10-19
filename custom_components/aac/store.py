@@ -66,7 +66,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # AAC's own audio pipeline (engines are the pool roles "stt"/"tts"): language (None = detect),
     # the names that address AAC by voice, how long a follow-up needs no name (seconds),
     # known = sources that ever connected ({id, name}), for the setup step
-    "audio": {"language": None, "names": ["computer"], "follow_up": 10, "known": []},
+    "audio": {"language": None, "names": ["computer"], "follow_up": 10, "known": [], "volume": 40},
     # Pools (thinking / voice / vision, above domains): role → ordered list of model ids
     # or HA engine entity ids; the broker uses the first reachable one (pools.py)
     "pools": {"master": [], "memory": [], "stt": [], "tts": []},

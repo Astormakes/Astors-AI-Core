@@ -1749,7 +1749,7 @@ class AacPanel extends HTMLElement {
       </div>`).join("");
     const set = a.settings || {}, eng = a.engines || {};
     const lines = (a.transcript || []).slice().reverse().map((l) => `
-      <div class="tline ${l.addressed ? "to-aac" : ""}"><span class="m">${esc(new Date(l.time).toLocaleTimeString())} · ${esc(l.name)}${l.language ? ` · ${esc(l.language)}` : ""}${l.addressed ? " → AAC" : ""}</span><div>${esc(l.text)}</div></div>`).join("");
+      <div class="tline ${l.addressed ? "to-aac" : ""}"><span class="m">${esc(new Date(l.time).toLocaleTimeString())} · ${esc(l.name)}${l.language ? ` · ${esc(l.language)}` : ""}${l.addressed ? " → AAC" : ""}${l.gate ? ` · ${esc(l.gate)}` : ""}</span><div>${esc(l.text)}</div></div>`).join("");
     return this._page("AUDIO PIPELINE", `${(a.connected || []).length} connected · separate from HA's Assist`, `
       <div class="split">
         <div class="card"><h2>${icon("mic")} CONNECTED</h2>
@@ -1768,6 +1768,9 @@ class AacPanel extends HTMLElement {
             <div><label for="au-follow">Follow-up without name (s)</label><input id="au-follow" type="number" min="0" max="120" value="${esc(set.follow_up ?? 10)}" inputmode="numeric"></div>
             <div><label for="au-lang">Language (empty = HA's)</label><input id="au-lang" value="${esc(set.language || "")}" placeholder="en, de, …"></div>
           </div>
+          <label for="au-volume">AAC's voice volume: <span id="au-volume-val">${esc(set.volume ?? 40)}</span> %</label>
+          <input id="au-volume" type="range" min="0" max="100" step="5" value="${esc(set.volume ?? 40)}" style="width:100%">
+          <p class="hint" style="margin-top:.2em">0 = AAC never speaks aloud (answers still appear in the Voice chat). The speaker's own buttons still work on top.</p>
           <label>Speech to text</label>${this._roleSummary("stt", eng.stt)}
           <label>Voice (text to speech)</label>${this._roleSummary("tts", eng.tts)}
           <p class="hint">Engines come from the voice pool below: speech models from Compute (e.g. a multilingual whisper; without a language it detects German, English, … per sentence) or HA's engines, in your order, with fallback. HA's own voice assistants stay as they are.</p>
@@ -1873,6 +1876,7 @@ class AacPanel extends HTMLElement {
     sr.querySelector("#nav-toggle")?.addEventListener("click", () => { this._navOpen = !this._navOpen; this._render(); });
     sr.querySelector("#backdrop")?.addEventListener("click", () => { this._navOpen = false; this._render(); });
     sr.querySelector("#refresh-models")?.addEventListener("click", () => this._loadModels());
+    sr.querySelector("#au-volume")?.addEventListener("input", (e) => { sr.querySelector("#au-volume-val").textContent = e.target.value; });
     sr.querySelectorAll("[data-machine-toggle]").forEach((el) => {
       const toggle = (e) => {
         if (e.target.closest("button")) return;  // the ⚙ button opens the settings instead
@@ -2207,6 +2211,7 @@ class AacPanel extends HTMLElement {
       this._audio = await this._ws("aac/audio/settings", {
         names: sr.querySelector("#au-names").value.split(",").map((n) => n.trim()).filter(Boolean),
         follow_up: Number(sr.querySelector("#au-follow").value) || 0,
+        volume: Number(sr.querySelector("#au-volume").value),
         language: sr.querySelector("#au-lang").value.trim() || null,
       });
       this._flash = { ok: true, text: "Saved." };

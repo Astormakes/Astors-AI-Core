@@ -33,8 +33,9 @@ def test_segmenter_cuts_speech():
 async def test_satellite_round_trip(hass: HomeAssistant, hass_client, aioclient_mock, mock_entry, configured):
     """A satellite streams; a line with AAC's name is answered by voice, others only transcribed."""
     await setup_aac(hass, mock_entry)
-    payloads = _queue(aioclient_mock, _text("It is five o'clock."))
-    heard = iter(["hello there", "Computer, what time is it?"])
+    payloads = _queue(aioclient_mock, _text('{"to_assistant": true}'), _text("It is five o'clock."),
+                      _text('{"to_assistant": false}'))
+    heard = iter(["hello there", "Computer, what time is it?", "on the computer screen they asked"])
     hub = mock_entry.runtime_data.audio
     client = await hass_client()
     with (
@@ -60,14 +61,19 @@ async def test_satellite_round_trip(hass: HomeAssistant, hass_client, aioclient_
                 break
             await asyncio.sleep(0.01)
         assert not hub.sources["pc"].playing and hub.sources["pc"].last_answer
+        hub.sources["pc"].last_answer = None  # no follow-up window: only the name counts
+        await ws.send_bytes(speech)  # a video says the name: the attention check says it is not for AAC
+        await hass.async_block_till_done(wait_background_tasks=True)
         await ws.close()
     await hass.async_block_till_done(wait_background_tasks=True)
 
     assert [(line["text"], line["addressed"]) for line in hub.transcript] == [
-        ("hello there", False), ("Computer, what time is it?", True)]
-    assert len(payloads) == 1  # only the addressed line reached the master
-    assert "by voice" in payloads[0]["messages"][0]["content"]
-    assert not any(t["function"]["name"].startswith("aac-setup") for t in payloads[0]["tools"])  # voice is anonymous
+        ("hello there", False), ("Computer, what time is it?", True), ("on the computer screen they asked", False)]
+    assert hub.transcript[-1]["gate"] == "not meant for AAC"
+    assert len(payloads) == 3  # attention check, the answer, attention check (no second answer)
+    assert "hello there" in payloads[0]["messages"][0]["content"]  # the check sees what came before
+    assert "by voice" in payloads[1]["messages"][0]["content"]
+    assert not any(t["function"]["name"].startswith("aac-setup") for t in payloads[1]["tools"])  # voice is anonymous
     chat = mock_entry.runtime_data.chats.get("voice_pc")
     assert [m["text"] for m in chat["messages"]] == ["Computer, what time is it?", "It is five o'clock."]
     assert hub.sources == {}
@@ -191,3 +197,22 @@ async def test_satellite_app_access(hass: HomeAssistant, hass_ws_client, mock_en
         await ws.send_json_auto_id({"type": "aac/satellite/app"})
         await ws.receive_json()
         assert json.loads((tmp_path / "aac" / "satellite.json").read_text())["token"] == data["token"]  # kept
+
+
+def test_volume_scales_the_voice():
+    """AAC's voice at 50 %: the samples are halved; anything that is not a 16-bit WAV stays as it is."""
+    import io
+    import struct
+    import wave
+
+    from custom_components.aac.audio_hub import scale_wav
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(22050)
+        w.writeframes(struct.pack("<3h", 1000, -2000, 32767))
+    with wave.open(io.BytesIO(scale_wav(buf.getvalue(), 0.5))) as r:
+        assert struct.unpack("<3h", r.readframes(3)) == (500, -1000, 16383)
+    assert scale_wav(b"RIFFwave", 0.5) == b"RIFFwave"

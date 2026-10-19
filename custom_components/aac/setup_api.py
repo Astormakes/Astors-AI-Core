@@ -392,6 +392,7 @@ class AudioTool(_SetupTool):
             probatio.Optional("language", description="e.g. 'de'; empty = detect"): str,
             probatio.Optional("names", description="e.g. ['computer', 'glados']"): [str],
             probatio.Optional("follow_up_seconds"): int,
+            probatio.Optional("volume", description="0-100 % of AAC's voice; 0 = never speak aloud"): int,
         }
     )
 
@@ -407,9 +408,11 @@ class AudioTool(_SetupTool):
             changes["names"] = names
         if "follow_up_seconds" in args:
             changes["follow_up"] = min(120, max(0, int(args["follow_up_seconds"])))
+        if "volume" in args:
+            changes["volume"] = min(100, max(0, int(args["volume"])))
         await data.store.async_update_audio(changes)
         cfg = data.store.audio
-        return llm.ToolResult(data={k: cfg[k] for k in ("language", "names", "follow_up")})
+        return llm.ToolResult(data={k: cfg.get(k) for k in ("language", "names", "follow_up", "volume")})
 
 
 class SpeakTestTool(_SetupTool):
