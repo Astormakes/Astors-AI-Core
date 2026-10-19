@@ -412,6 +412,7 @@ async def test_a_split_segment_gets_a_voice_per_sentence(hass: HomeAssistant, ha
     """Speech to text splits a long piece: each sentence is its own line with its own voice; the next piece
     is recognized with the last line as context."""
     await setup_aac(hass, mock_entry)
+    mock_entry.runtime_data.store.data["module_settings"].setdefault("assistant", {})["stt"] = {"split": True}
     hub = mock_entry.runtime_data.audio
     prints = iter([[1.0, 0.0], [0.0, 1.0]])
     prompts: list = []
@@ -477,6 +478,7 @@ def test_unsure_lines_do_not_start_voices():
 async def test_split_utterance_is_answered_once(hass: HomeAssistant, hass_client, aioclient_mock, mock_entry, configured):
     """'Computer, are you there? Please say hello.' split into two sentences: one request with both."""
     await setup_aac(hass, mock_entry)
+    mock_entry.runtime_data.store.data["module_settings"].setdefault("assistant", {})["stt"] = {"split": True}
     await async_set_access(mock_entry, "wakeword", "assistant", {"enabled": True})
     await async_set_access(mock_entry, "voices", "assistant", {"enabled": False})
     payloads = _queue(aioclient_mock, _text('{"to_assistant": true}'), _text("Hello!"))
