@@ -327,7 +327,8 @@ def test_voice_messages_say_they_were_spoken():
     from custom_components.aac.chats import spoken
 
     assert spoken({"role": "user", "text": "hi", "via": "voice", "mic": "PC"}) == "[spoken at the microphone 'PC'] hi"
-    assert spoken({"role": "aac", "text": "Hello.", "via": "voice"}) == "[you said this aloud] Hello."
+    assert spoken({"role": "aac", "text": "Hello.", "via": "voice"}) == "Hello."  # marked answers got copied
+    assert spoken({"role": "aac", "text": "(You said this out loud) Hello.", "via": "voice"}) == "Hello."
     assert spoken({"role": "user", "text": "typed"}) == "typed"
 
 

@@ -32,6 +32,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from .const import LOGGER
+from .chats import strip_marks
 from .models import resolve_model
 from .pools import is_entity
 from .provider import OpenAICompatProvider, ProviderConnectionError, ProviderError
@@ -564,6 +565,7 @@ class AudioHub:
         )
         if result is not None:
             data.chats.set_conversation(chat_id, result.conversation_id)
+        run.result = strip_marks(run.result or "")
         data.chats.add_message(chat_id, "aac", run.result or "(no answer)", via="voice", mic=source.name,
                                error=run.status == "failed", run_id=run.id, steps=run.steps)
         if run.result and self.sources.get(source.id) is source:

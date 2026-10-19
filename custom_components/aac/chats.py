@@ -6,6 +6,7 @@ One special chat, "From AAC" (id `aac`), holds what AAC says on its own
 
 from __future__ import annotations
 
+import re
 from typing import Any
 import uuid
 
@@ -142,10 +143,18 @@ class ChatStore:
 
 
 def spoken(message: dict[str, Any]) -> str:
-    """A message as the model sees it: voice messages say they were spoken (per message, chats can mix)."""
-    if message.get("via") != "voice":
-        return message["text"]
-    if message["role"] == "user":
-        who = f" by {message['voice']}" if message.get("voice") else ""
-        return f"[spoken at the microphone '{message.get('mic') or '?'}'{who}] {message['text']}"
-    return f"[you said this aloud] {message['text']}"
+    """A message as the model sees it: the owner's spoken lines say so (per message, chats can mix).
+    AAC's own answers stay plain: marked ones were copied by the model into its next answers."""
+    if message.get("via") != "voice" or message["role"] != "user":
+        return strip_marks(message["text"]) if message["role"] == "aac" else message["text"]
+    who = f" by {message['voice']}" if message.get("voice") else ""
+    return f"[spoken at the microphone '{message.get('mic') or '?'}'{who}] {message['text']}"
+
+
+# Notes a model copied from marked history ("[you said this aloud]", "(you said this out loud)")
+_MARKS = re.compile(r"^\s*[\[(]\s*(you said this (aloud|out loud)|said aloud|spoken[^\])]*)\s*[\])]\s*", re.IGNORECASE)
+
+
+def strip_marks(text: str) -> str:
+    """An answer without such copied notes at its start."""
+    return _MARKS.sub("", text or "", count=1)
