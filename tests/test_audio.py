@@ -76,9 +76,10 @@ async def test_satellite_round_trip(hass: HomeAssistant, hass_client, aioclient_
     assert "hello there" in payloads[0]["messages"][0]["content"]  # the check sees what came before
     assert "by voice" in payloads[1]["messages"][0]["content"]
     asked = payloads[1]["messages"][-1]["content"]  # look back: what was said just before the name goes with it
-    assert "hello there" in asked and asked.endswith("Now to you: Computer, what time is it?")
+    assert "hello there" in asked and asked.endswith("spoken aloud there): Computer, what time is it?")
     assert not any(t["function"]["name"].startswith("aac-setup") for t in payloads[1]["tools"])  # voice is anonymous
     chat = mock_entry.runtime_data.chats.get("voice_pc")
+    assert chat["messages"][0]["via"] == "voice" and chat["messages"][0]["mic"] == "PC"
     assert [m["text"] for m in chat["messages"]] == ["Computer, what time is it?", "It is five o'clock."]
     assert hub.sources == {}
     assert mock_entry.runtime_data.store.audio["known"] == [{"id": "pc", "name": "PC"}]
@@ -282,3 +283,69 @@ async def test_stages_fill_the_buffer(hass: HomeAssistant, hass_client, mock_ent
     assert [(x["text"], x.get("mood")) for x in speech] == [("hello there", "calm"), ("", "calm")]
     assert seen == ["hello there", ""] and speech[0]["seconds"] > 0.5 and speech[0]["loudness_db"] < 0
     assert any(x["kind"] == "sound" and x["text"] == "[beeping]" for x in hub.transcript)
+
+
+async def test_follow_up_without_the_name(hass: HomeAssistant, hass_client, aioclient_mock, mock_entry, configured):
+    """Right after AAC spoke, the next sentence needs no name."""
+    await setup_aac(hass, mock_entry)
+    await async_set_access(mock_entry, "wakeword", "assistant", {"enabled": True})
+    payloads = _queue(aioclient_mock, _text('{"to_assistant": true}'), _text("It is five."),
+                      _text('{"to_assistant": true}'), _text("And the kitchen too."))
+    heard = iter(["Computer, what time is it?", "and the kitchen lights too"])
+    hub = mock_entry.runtime_data.audio
+    client = await hass_client()
+    speech = _audio((SILENCE, 0.3), (LOUD, 0.8), (SILENCE, 1))
+    with (
+        patch("custom_components.aac.audio_hub.make_vad", return_value=EnergyVad()),
+        patch.object(hub, "async_stt", AsyncMock(side_effect=lambda pcm: {"text": next(heard)})),
+        patch.object(hub, "async_tts", AsyncMock(return_value=b"RIFFwave")),
+    ):
+        ws = await client.ws_connect("/api/aac/audio")
+        await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "rate": 16000})
+        await ws.receive_json()
+        await ws.send_bytes(speech)
+        assert (await asyncio.wait_for(ws.receive_json(), 5))["type"] == "play"
+        await ws.receive_bytes()
+        await ws.send_json({"type": "played"})
+        await asyncio.sleep(0.05)
+        await ws.send_bytes(speech)
+        for _ in range(100):
+            if len(hub.transcript) == 2:
+                break
+            await asyncio.sleep(0.02)
+        play = await asyncio.wait_for(ws.receive_json(), 5)
+        assert play["text"] == "And the kitchen too."
+        await ws.close()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert [x["addressed"] for x in hub.transcript] == [True, True]
+    assert 'just finished saying: "It is five."' in payloads[2]["messages"][0]["content"]  # the check knows
+
+
+def test_voice_messages_say_they_were_spoken():
+    """Per message: the model sees which lines were spoken (a chat can mix voice and typing)."""
+    from custom_components.aac.chats import spoken
+
+    assert spoken({"role": "user", "text": "hi", "via": "voice", "mic": "PC"}) == "[spoken at the microphone 'PC'] hi"
+    assert spoken({"role": "aac", "text": "Hello.", "via": "voice"}) == "[you said this aloud] Hello."
+    assert spoken({"role": "user", "text": "typed"}) == "typed"
+
+
+async def test_voice_volume_tool(hass: HomeAssistant, mock_entry, configured):
+    """AAC can make itself louder or quieter."""
+    from homeassistant.helpers import llm
+
+    await setup_aac(hass, mock_entry)
+    api = await llm.async_get_api(hass, mock_entry.runtime_data.domain().api_id("aac_home"),
+                                  llm.LLMContext(platform="aac", context=None, language="en", assistant=None, device_id=None))
+    tool = next(t for t in api.tools if t.name == "set_voice_volume")
+    result = await tool.async_call(hass, llm.ToolInput(tool_name="set_voice_volume", tool_args={"percent": 55}), api.llm_context)
+    assert result.data["volume_now"] == 55 == mock_entry.runtime_data.store.audio["volume"]
+
+
+def test_whisper_sounds_become_sound_lines():
+    """*crunch*, (laughs) and [Music] are sounds, not speech; punctuation alone is nothing."""
+    from custom_components.aac.modules.stt import SOUND
+
+    assert [SOUND.match(t).group(1) for t in ("*crunch*", "(laughs)", "[Music]", " *door slams* ")] == [
+        "crunch", "laughs", "Music", "door slams"]
+    assert SOUND.match("Ha ha ha!") is None and SOUND.match("I said (maybe) yes") is None

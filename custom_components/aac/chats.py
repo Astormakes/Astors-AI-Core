@@ -106,7 +106,7 @@ class ChatStore:
         chat = self.chats.get(chat_id)
         if not chat:
             return []
-        return [{"role": m["role"], "text": m["text"]} for m in chat["messages"][:-1]
+        return [{"role": m["role"], "text": spoken(m)} for m in chat["messages"][:-1]
                 if not m.get("error") and m.get("text")][-limit:]
 
     @callback
@@ -139,3 +139,12 @@ class ChatStore:
         if self.chats.pop(chat_id, None) is not None:
             self._save()
             async_notify(self.hass, "chats", domain=self.domain_id)
+
+
+def spoken(message: dict[str, Any]) -> str:
+    """A message as the model sees it: voice messages say they were spoken (per message, chats can mix)."""
+    if message.get("via") != "voice":
+        return message["text"]
+    if message["role"] == "user":
+        return f"[spoken at the microphone '{message.get('mic') or '?'}'] {message['text']}"
+    return f"[you said this aloud] {message['text']}"

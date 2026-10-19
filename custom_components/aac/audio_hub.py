@@ -59,8 +59,9 @@ LOCAL_ENGINES = {"wyoming", "piper", "whisper", "faster_whisper"}
 EARLIER_LINES = 20
 VOICE_FAILED = "Sorry, that did not work. The details are in the AAC panel."
 VOICE_PROMPT = (
-    "This message came in by voice from the microphone '{name}'{area}. Your answer is spoken "
-    "aloud: one or two short sentences, plain words, no lists or markdown."
+    "This message came in by voice from the microphone '{name}'{area}. You DO speak: your answer is "
+    "read out aloud through the speaker there, in your own voice. One or two short sentences, plain words, "
+    "no lists or markdown. Your speaking volume is set_voice_volume (not Home Assistant's media players)."
 )
 
 
@@ -195,6 +196,7 @@ class Source:
     ring: deque[bytes] = field(default_factory=lambda: deque(maxlen=RING_SECONDS * 100))
     playing: bool = False
     last_answer: float = 0.0
+    saying: str = ""  # what AAC is speaking right now
     heard: int = 0  # segments
     transcribing: int = 0  # segments at speech to text right now
     partial: str = ""  # what the open segment said so far (live transcript)
@@ -217,6 +219,8 @@ class AudioHub:
         self.entry = entry
         self.sources: dict[str, Source] = {}
         self.transcript: deque[dict[str, Any]] = deque(maxlen=TRANSCRIPT_LINES)
+        # per source id: when AAC last finished speaking there, and what it said
+        self.spoke: dict[str, dict[str, Any]] = {}
 
     # ------------------------------------------------------------ sources
     @callback
@@ -268,6 +272,8 @@ class AudioHub:
         """The source finished playing AAC's answer: the follow-up window starts now."""
         source.playing = False
         source.last_answer = time.monotonic()
+        # kept by source id, so a reconnect does not lose it: the follow-up window counts from here
+        self.spoke[source.id] = {"at": dt_util.utcnow(), "text": source.saying}
         source.segmenter.reset()
         async_notify(self.hass, "audio")
 
@@ -460,7 +466,7 @@ class AudioHub:
             return False
         if volume < 100:
             audio = await self.hass.async_add_executor_job(scale_wav, audio, volume / 100)
-        source.playing = True
+        source.playing, source.saying = True, text
         async_notify(self.hass, "audio")
         await source.send({"type": "play", "format": "wav", "bytes": len(audio), "text": text})
         await source.send(audio)
@@ -474,10 +480,11 @@ class AudioHub:
         data = self.entry.runtime_data.voice_domain  # one domain owns the voice
         chat_id = f"voice_{source.id}"
         chat = data.chats.get(chat_id) or data.chats.create(f"Voice · {source.name}", chat_id)
-        data.chats.add_message(chat_id, "user", text)
-        said = text
+        data.chats.add_message(chat_id, "user", text, via="voice", mic=source.name)
+        said = f"[spoken at the microphone '{source.name}'; your answer is spoken aloud there] {text}"
         if before:  # the room's last lines go with it, so "…, remind me of that, computer" works
-            said = "Said just before in the room:\n" + "\n".join(f"- {b}" for b in before) + f"\n\nNow to you: {text}"
+            said = ("Said just before in the room:\n" + "\n".join(f"- {b}" for b in before)
+                    + f"\n\nNow to you, spoken at the microphone '{source.name}' (your answer is spoken aloud there): {text}")
         run, result = await async_run_master(
             self.hass, self.entry, said,
             kind="chat", trigger=f"voice: {source.name}", title=chat["title"], chat_id=chat_id,
@@ -492,7 +499,7 @@ class AudioHub:
         )
         if result is not None:
             data.chats.set_conversation(chat_id, result.conversation_id)
-        data.chats.add_message(chat_id, "aac", run.result or "(no answer)",
+        data.chats.add_message(chat_id, "aac", run.result or "(no answer)", via="voice", mic=source.name,
                                error=run.status == "failed", run_id=run.id, steps=run.steps)
         if run.result and self.sources.get(source.id) is source:
             # An error is not read out (long, technical, and loud in the room): one short sentence, details in the panel

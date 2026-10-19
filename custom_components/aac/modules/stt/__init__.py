@@ -16,9 +16,11 @@ from .. import ModuleContext
 # Whisper invents these on noise and silence
 HALLUCINATIONS = re.compile(
     r"^\W*(thank you( for watching)?|thanks for watching|bye|you|untertitel.*|vielen dank\W*|"
-    r"subtitles by.*|\[.*\]|\(.*\))\W*$",
+    r"subtitles by.*)\W*$",
     re.IGNORECASE,
 )
+# Whisper writes some sounds as *crunch*, (laughs), [music]: those become sound lines (subtitles)
+SOUND = re.compile(r"^\s*[\*\[\(]+\s*([^\*\]\)]+?)\s*[\*\]\)]+\W*$")
 
 
 async def async_setup_module(ctx: ModuleContext) -> None:
@@ -31,8 +33,11 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         started = time.monotonic()
         heard = await ctx.audio.async_stt(pcm) or {}
         text = (heard.get("text") or "").strip()
-        if not text or (ctx.setting(domain_id(), "filter") and HALLUCINATIONS.match(text)):
+        if not any(c.isalpha() for c in text) or (ctx.setting(domain_id(), "filter") and HALLUCINATIONS.match(text)):
             return {"drop": True}
+        if sound := SOUND.match(text):
+            return {"kind": "sound", "text": f"[{sound.group(1).lower()}]", "engine": heard.get("engine"),
+                    "stt_ms": int((time.monotonic() - started) * 1000)}
         return {"text": text, "language": heard.get("language"), "confidence": heard.get("confidence"),
                 "engine": heard.get("engine"), "words": heard.get("words") or [],
                 "stt_ms": int((time.monotonic() - started) * 1000)}

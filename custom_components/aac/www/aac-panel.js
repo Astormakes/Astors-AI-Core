@@ -1025,7 +1025,7 @@ class AacPanel extends HTMLElement {
           const editHint = m.role === "user" ? "Everything after this message is removed; AAC answers from here."
             : "AAC takes the changed text as its own words from now on; the rest of the chat stays. Putting words in a model's mouth can make it act oddly, so keep it plausible.";
           return `<div class="bubble ${m.role} ${m.error ? "err" : ""}">
-          ${m.trigger ? `<div class="trig">⚡ ${esc(m.trigger)}</div>` : `<div class="who">${m.role === "user" ? "YOU" : "AAC"}${m.edited ? `<span class="edited">EDITED</span>` : ""}</div>`}
+          ${m.trigger ? `<div class="trig">⚡ ${esc(m.trigger)}</div>` : `<div class="who">${m.role === "user" ? "YOU" : "AAC"}${m.via === "voice" ? `<span class="edited" title="${m.role === "user" ? "spoken at" : "said aloud at"} ${esc(m.mic || "")}">🎤 ${esc((m.mic || "VOICE").toUpperCase())}</span>` : ""}${m.edited ? `<span class="edited">EDITED</span>` : ""}</div>`}
           ${m.role === "aac" ? this._stepsHtml(m.steps, `m${i}`) : ""}
           ${editing ? `<textarea id="msg-edit" class="thin-scroll">${esc(this._editText ?? m.text)}</textarea>
             <div class="actions" style="margin-top:.5em"><button class="btn primary" id="msg-edit-send">${m.role === "user" ? "Send" : "Save"}</button><button class="btn" id="msg-edit-cancel">Cancel</button></div>

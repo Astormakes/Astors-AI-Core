@@ -185,6 +185,22 @@ class ControlTool(_HomeTool):
         return llm.ToolResult(data={"entity_id": entity_id, "state": _state_text(new) if new else None})
 
 
+class VoiceVolumeTool(_HomeTool):
+    name = "set_voice_volume"
+    description = (
+        "Your own speaking volume, in percent, on AAC's speakers (the ones you talk through, e.g. when someone "
+        "asks you to speak louder or quieter). Not for Home Assistant's media players. 0 = you stay silent."
+    )
+    annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
+    parameters = probatio.Schema({probatio.Required("percent"): probatio.All(probatio.Coerce(int), probatio.Range(min=0, max=100))})
+
+    async def async_call(self, hass, tool_input, llm_context):
+        store = self._entry.runtime_data.store
+        before = int(store.audio.get("volume", 40))
+        await store.async_update_audio({"volume": tool_input.tool_args["percent"]})
+        return llm.ToolResult(data={"volume_before": before, "volume_now": store.audio["volume"]})
+
+
 class RequestAccessTool(_HomeTool):
     name = "request_access"
     description = (
@@ -241,6 +257,7 @@ class AACHomeAPI(llm.API):
     domain: Domain
 
     async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
-        tools = [OverviewTool, ListEntitiesTool, GetStateTool, ControlTool, RequestAccessTool, RequestVisibilityTool]
+        tools = [OverviewTool, ListEntitiesTool, GetStateTool, ControlTool, RequestAccessTool, RequestVisibilityTool,
+                 VoiceVolumeTool]
         return llm.APIInstance(api=self, api_prompt=API_PROMPT, llm_context=llm_context,
                                tools=[t(self.entry, self.domain) for t in tools])

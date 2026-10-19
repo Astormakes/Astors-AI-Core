@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import json
-import time
 from typing import Any
 
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -25,7 +24,7 @@ ATTENTION_FORMAT = {"type": "json_schema", "json_schema": {"name": "attention", 
     "type": "object", "properties": {"to_assistant": {"type": "boolean"}}, "required": ["to_assistant"]}}}
 
 
-async def async_attention(ctx: ModuleContext, text: str, earlier: list[str]) -> bool:
+async def async_attention(ctx: ModuleContext, text: str, earlier: list[str], just_said: str | None = None) -> bool:
     """Is someone talking to AAC, or is the name just part of other speech (TV, a video, a talk)?"""
     broker = ctx.entry.runtime_data.broker
     if (picked := broker.endpoint_for("fast")) is None:
@@ -36,8 +35,10 @@ async def async_attention(ctx: ModuleContext, text: str, earlier: list[str]) -> 
     )
     names = ", ".join(ctx.entry.runtime_data.store.audio["names"])
     heard = "\n".join(f"- {t}" for t in earlier) or "- (nothing)"
+    said = (f"The assistant itself just finished saying: \"{just_said}\". The new line came right after it, "
+            "so it is likely a reply or a follow-up to the assistant.\n") if just_said else ""
     prompt = (f"You are the attention of a home assistant called {names}. A microphone in the room heard "
-              f"these lines before:\n{heard}\nNow it heard: \"{text}\"\n"
+              f"these lines before:\n{heard}\n{said}Now it heard: \"{text}\"\n"
               "Is a person speaking TO the assistant now (a request, a question, a greeting to it)? Or is the "
               "name only part of other speech: a video, TV, music, people talking about something else? "
               'Answer only with JSON: {"to_assistant": true or false}')
@@ -62,11 +63,16 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         hub = ctx.audio
         domain_id = ctx.entry.runtime_data.voice_domain.id
         follow_up = float(ctx.setting(domain_id, "follow_up") or 0)
-        if not (hub.mentions(line["text"]) or (source.last_answer and time.monotonic() - source.last_answer < follow_up)):
+        spoke = hub.spoke.get(source.id)
+        # measured to when the sentence STARTED (a long sentence takes a while to be recognized)
+        after = (datetime.fromisoformat(line["time"]) - spoke["at"]).total_seconds() if spoke else None
+        is_follow_up = after is not None and -5 <= after < follow_up  # the mic is muted while AAC speaks; -5 s = pre-roll and timing slack
+        if not (hub.mentions(line["text"]) or is_follow_up):
             return
         line["addressed"] = True
         if ctx.setting(domain_id, "attention") and not await async_attention(
-            ctx, line["text"], [x["text"] for x in earlier if x.get("kind", "speech") == "speech"][-ATTENTION_LINES:]
+            ctx, line["text"], [x["text"] for x in earlier if x.get("kind", "speech") == "speech"][-ATTENTION_LINES:],
+            spoke["text"] if is_follow_up else None,
         ):
             line["addressed"], line["gate"] = False, "not meant for AAC"
             hub.changed()
