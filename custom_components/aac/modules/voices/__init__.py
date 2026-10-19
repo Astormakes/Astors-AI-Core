@@ -119,8 +119,9 @@ class ListVoicesTool(_VoiceTool):
 
 class NameVoiceTool(_VoiceTool):
     name = "name_voice"
-    description = ("Say who a voice is (from list_voices or a line's voice): a name, the kind (person in or "
-                   "visiting the home, media = from a video, the TV, the radio) and a short note, e.g. the channel.")
+    description = ("Say who a voice is, only when the owner tells you: use the voice the line carries "
+                   "(\"[spoken … by voice #8]\" — \"that's me\" means that voice), never guess from list_voices. A "
+                   "name, the kind (person in or visiting the home, media = from a video, the TV, the radio) and a short note.")
     annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
     parameters = probatio.Schema({probatio.Required("voice"): str, probatio.Required("name"): str,
                                   probatio.Required("kind"): probatio.In(KINDS), probatio.Optional("note"): str})
@@ -150,8 +151,9 @@ class ForgetVoiceTool(_VoiceTool):
 
 class MergeVoicesTool(_VoiceTool):
     name = "merge_voices"
-    description = "Two voices are the same person (e.g. the owner says so): join them into the first one."
-    annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
+    description = "Two voices are the same person (only when the owner says so): join them into the first one."
+    # counts as destructive: only with the owner in a chat, never from an anonymous voice
+    annotations = llm.ToolAnnotations(read_only=False, destructive=True, open_world=False)
     parameters = probatio.Schema({probatio.Required("voice"): str, probatio.Required("same_as"): str})
 
     async def async_call(self, hass, tool_input, llm_context):

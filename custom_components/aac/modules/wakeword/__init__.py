@@ -106,6 +106,6 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         since = datetime.fromisoformat(line["time"]) - timedelta(seconds=seconds)
         before = [x["text"] for x in earlier if seconds and x.get("text") and x not in together
                   and datetime.fromisoformat(x["time"]) >= since]
-        await hub.async_answer(source, text, before)
+        await hub.async_answer(source, text, before, line.get("speaker"))
 
     ctx.add_hearing(Hearing(id="wakeword", title="Wake word", heard=heard))

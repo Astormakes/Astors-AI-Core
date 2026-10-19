@@ -146,5 +146,6 @@ def spoken(message: dict[str, Any]) -> str:
     if message.get("via") != "voice":
         return message["text"]
     if message["role"] == "user":
-        return f"[spoken at the microphone '{message.get('mic') or '?'}'] {message['text']}"
+        who = f" by {message['voice']}" if message.get("voice") else ""
+        return f"[spoken at the microphone '{message.get('mic') or '?'}'{who}] {message['text']}"
     return f"[you said this aloud] {message['text']}"

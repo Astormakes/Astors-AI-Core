@@ -5,7 +5,7 @@
   "contract": 1,
   "kind": "code",
   "description": "Tells voices apart: every spoken line gets a voice, a known one or a new \"voice #3\". Tell AAC who a voice is (\"that's Anna\", \"that's the guy from channel X, a video\") and it keeps that. Voice prints stay in Home Assistant; unnamed voices are forgotten after a few days. Not for security: voices can be imitated.",
-  "instructions": "Every spoken line carries its voice. Unknown voices are 'voice #n'. When the owner tells you who a voice is (a person in the home, a guest, or someone from a video or the TV), use name_voice with kind person or media and a short note (e.g. the channel). Voices of kind media are not talking to you.",
+  "instructions": "Every spoken line says which voice spoke it (\"[spoken at … by voice #8]\"). Only when someone tells you who a voice is (\"that's me, Astor\", \"that's the guy from channel X\") use name_voice, with the voice of that line — never guess which voice is whose. Voices of kind media are not talking to you. Do nothing with voices unless asked.",
   "provides": {"capabilities": {"audio_stage": {"segment": true}}, "tools": ["list_voices", "name_voice", "merge_voices", "forget_voice"]},
   "uses": {"capabilities": ["audio_stage"], "pool_roles": ["voices"]},
   "settings": {

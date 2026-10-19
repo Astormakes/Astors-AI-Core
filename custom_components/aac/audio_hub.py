@@ -55,6 +55,8 @@ TRANSCRIPT_LINES = 200
 # Integrations whose speech engines run locally (preferred when nothing is chosen)
 LOCAL_ENGINES = {"wyoming", "piper", "whisper", "faster_whisper"}
 
+# A voice chat ends after this much quiet; the next spoken request starts a new one
+VOICE_SESSION_GAP = timedelta(minutes=20)
 # How many earlier lines of the same source a listener gets with each new one
 EARLIER_LINES = 20
 VOICE_FAILED = "Sorry, that did not work. The details are in the AAC panel."
@@ -224,6 +226,7 @@ class AudioHub:
         self.transcript: deque[dict[str, Any]] = deque(maxlen=TRANSCRIPT_LINES)
         # per source id: when AAC last finished speaking there, and what it said
         self.spoke: dict[str, dict[str, Any]] = {}
+        self.voice_chats: dict[str, str] = {}  # per source id: the voice chat of the current session
 
     # ------------------------------------------------------------ sources
     @callback
@@ -530,19 +533,23 @@ class AudioHub:
         await source.send(audio)
         return True
 
-    async def async_answer(self, source: Source, text: str, before: list[str] | None = None) -> None:
+    async def async_answer(self, source: Source, text: str, before: list[str] | None = None,
+                           speaker: dict[str, Any] | None = None) -> None:
         """The voice domain's master answers a spoken line; the answer goes back by voice.
-        before = what was said just before it in the room (the wake word module's look-back)."""
+        before = what was said just before it in the room (the wake word module's look-back);
+        speaker = the line's voice (Voices module), so the model knows who talks ("that's me")."""
         from .master import async_run_master  # noqa: PLC0415 - avoid an import cycle
 
         data = self.entry.runtime_data.voice_domain  # one domain owns the voice
-        chat_id = f"voice_{source.id}"
+        chat_id = self._voice_chat(data, source)
         chat = data.chats.get(chat_id) or data.chats.create(f"Voice · {source.name}", chat_id)
-        data.chats.add_message(chat_id, "user", text, via="voice", mic=source.name)
-        said = f"[spoken at the microphone '{source.name}'; your answer is spoken aloud there] {text}"
+        who = voice_label(speaker)
+        data.chats.add_message(chat_id, "user", text, via="voice", mic=source.name, voice=who)
+        where = f"spoken at the microphone '{source.name}'{f' by {who}' if who else ''}"
+        said = f"[{where}; your answer is spoken aloud there] {text}"
         if before:  # the room's last lines go with it, so "…, remind me of that, computer" works
             said = ("Said just before in the room:\n" + "\n".join(f"- {b}" for b in before)
-                    + f"\n\nNow to you, spoken at the microphone '{source.name}' (your answer is spoken aloud there): {text}")
+                    + f"\n\nNow to you, {where} (your answer is spoken aloud there): {text}")
         run, result = await async_run_master(
             self.hass, self.entry, said,
             kind="chat", trigger=f"voice: {source.name}", title=chat["title"], chat_id=chat_id,
@@ -562,6 +569,16 @@ class AudioHub:
         if run.result and self.sources.get(source.id) is source:
             # An error is not read out (long, technical, and loud in the room): one short sentence, details in the panel
             await self.async_say(source, VOICE_FAILED if run.status == "failed" else run.result)
+
+    def _voice_chat(self, data, source: Source) -> str:
+        """The voice chat of a source: a new one after a quiet pause (a voice session), so old turns
+        and old mistakes do not pile up as examples in the model's context."""
+        current = self.voice_chats.get(source.id) or f"voice_{source.id}"
+        chat = data.chats.get(current)
+        if chat and chat["messages"] and (dt_util.utcnow() - datetime.fromisoformat(chat["updated"])) > VOICE_SESSION_GAP:
+            current = f"voice_{source.id}_{dt_util.utcnow().strftime('%Y%m%d%H%M')}"
+        self.voice_chats[source.id] = current
+        return current
 
     # ------------------------------------------------------------ panel
     def live(self) -> list[dict[str, Any]]:
@@ -634,3 +651,11 @@ def highs(pcm: bytes) -> float | None:
     freqs = np.fft.rfftfreq(len(samples), 1 / SAMPLE_RATE)
     total = float(power[freqs > 80].sum())
     return round(100 * float(power[freqs > 4000].sum()) / total, 2) if total > 0 else None
+
+
+def voice_label(speaker: dict[str, Any] | None) -> str | None:
+    """A line's voice in words for the model: "voice #8", "probably voice #8", "Astor (person)"."""
+    if not speaker:
+        return None
+    label = speaker["name"] + (f" ({speaker['kind']})" if speaker.get("kind") not in (None, "unknown") else "")
+    return ("probably " if speaker.get("sure") is False else "") + label

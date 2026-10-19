@@ -503,3 +503,15 @@ async def test_split_utterance_is_answered_once(hass: HomeAssistant, hass_client
     assert len(payloads) == 2  # one attention check, one answer
     assert payloads[1]["messages"][-1]["content"].endswith("Computer, are you there? Please say hello.")
     assert [x["addressed"] for x in hub.transcript] == [True, True]
+
+
+def test_the_model_hears_which_voice_spoke():
+    """The spoken prefix names the voice, so 'that's me' points at the right one."""
+    from custom_components.aac.audio_hub import voice_label
+    from custom_components.aac.chats import spoken
+
+    assert voice_label({"name": "voice #8", "kind": "unknown", "sure": True}) == "voice #8"
+    assert voice_label({"name": "voice #9", "kind": "unknown", "sure": False}) == "probably voice #9"
+    assert voice_label({"name": "Astor", "kind": "person"}) == "Astor (person)"
+    assert spoken({"role": "user", "text": "hi", "via": "voice", "mic": "PC", "voice": "voice #8"}) == \
+        "[spoken at the microphone 'PC' by voice #8] hi"
