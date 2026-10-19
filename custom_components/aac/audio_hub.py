@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 import io
 import json
+import math
 import re
 import sys
 import time
@@ -47,6 +48,8 @@ START_FRAMES = 3  # speech this long opens a segment
 END_SILENCE_FRAMES = 80  # 800 ms of silence closes it
 MAX_SEGMENT_FRAMES = 2000  # 20 s
 MIN_SPEECH_FRAMES = 30  # shorter blips are dropped
+METER_FRAMES = 10  # one meter point = 100 ms
+METER_POINTS = 100  # the live view shows the last 10 s
 TRANSCRIPT_LINES = 200
 # Integrations whose speech engines run locally (preferred when nothing is chosen)
 LOCAL_ENGINES = {"wyoming", "piper", "whisper", "faster_whisper"}
@@ -123,6 +126,25 @@ class Segmenter:
         self._run = 0  # consecutive speech frames before a segment
         self._silence = 0
         self._speech = 0
+        # The live view: per 100 ms (loudness 0–100, share of speech frames, inside a segment)
+        self.meter: deque[tuple[int, float, bool]] = deque(maxlen=METER_POINTS)
+        self._acc = [0, 0, 0]  # peak loudness, speech frames, frames
+
+    @property
+    def active(self) -> bool:
+        """Inside a speech segment right now."""
+        return self._segment is not None
+
+    def _measure(self, frame: bytes, speech: bool) -> None:
+        samples = array("h", frame)
+        peak = max(abs(min(samples)), max(samples)) if samples else 0
+        acc = self._acc
+        acc[0], acc[1], acc[2] = max(acc[0], peak), acc[1] + speech, acc[2] + 1
+        if acc[2] >= METER_FRAMES:
+            # loudness on a log scale: 0 = digital silence, 100 = full scale (about 60 dB of range)
+            level = 0 if acc[0] <= 0 else max(0, min(100, int(100 + 100 / 60 * 20 * math.log10(acc[0] / 32767))))
+            self.meter.append((level, round(acc[1] / acc[2], 2), self._segment is not None))
+            self._acc = [0, 0, 0]
 
     def feed(self, chunk: bytes) -> list[bytes]:
         """Add audio; returns finished segments."""
@@ -133,6 +155,7 @@ class Segmenter:
         for i in range(0, usable, FRAME_BYTES):
             frame = data[i : i + FRAME_BYTES]
             speech = self._vad(frame) >= 0.5
+            self._measure(frame, speech)
             if self._segment is None:
                 self._preroll.append(frame)
                 self._run = self._run + 1 if speech else 0
@@ -173,6 +196,7 @@ class Source:
     playing: bool = False
     last_answer: float = 0.0
     heard: int = 0  # segments
+    transcribing: int = 0  # segments at speech to text right now
 
     def summary(self) -> dict[str, Any]:
         """For the panel."""
@@ -236,7 +260,11 @@ class AudioHub:
         return any(f" {_norm(name)} " in said for name in self.entry.runtime_data.store.audio["names"] if _norm(name))
 
     async def _async_segment(self, source: Source, pcm: bytes) -> None:
-        heard = await self.async_stt(pcm)
+        source.transcribing += 1
+        try:
+            heard = await self.async_stt(pcm)
+        finally:
+            source.transcribing -= 1
         text = (heard or {}).get("text", "").strip()
         if not text or _HALLUCINATIONS.match(text):
             return
@@ -442,6 +470,12 @@ class AudioHub:
             await self.async_say(source, VOICE_FAILED if run.status == "failed" else run.result)
 
     # ------------------------------------------------------------ panel
+    def live(self) -> list[dict[str, Any]]:
+        """The live view per source: the last seconds of loudness and speech, and what happens now."""
+        return [{"id": s.id, "name": s.name, "meter": list(s.segmenter.meter),
+                 "state": "speaking" if s.playing else "transcribing" if s.transcribing else
+                 "hearing speech" if s.segmenter.active else "listening"} for s in self.sources.values()]
+
     @callback
     def changed(self) -> None:
         """A listener marked a line (addressed, a note): the panel shows it."""

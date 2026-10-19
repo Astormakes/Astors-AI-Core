@@ -51,6 +51,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_audio,
         ws_audio_settings,
         ws_audio_say,
+        ws_audio_live,
         ws_chat,
         ws_chats,
         ws_chat_rewind,
@@ -338,7 +339,19 @@ async def ws_audio_say(hass: HomeAssistant, connection, msg) -> None:
     if (source := hub.sources.get(msg["source_id"])) is None:
         connection.send_error(msg["id"], "not_found", "Source not connected")
         return
+    if int(entry.runtime_data.store.audio.get("volume", 40)) <= 0:
+        connection.send_error(msg["id"], "muted", "AAC's voice volume is 0 %: turn it up in the settings below.")
+        return
     connection.send_result(msg["id"], {"spoken": await hub.async_say(source, msg["text"])})
+
+
+@aac_command({vol.Required("type"): "aac/audio/live"})
+@websocket_api.require_admin
+@callback
+def ws_audio_live(hass: HomeAssistant, connection, msg) -> None:
+    """The live view: loudness and speech of the last seconds per source (the panel asks a few times a second)."""
+    if entry := _entry(hass, connection, msg):
+        connection.send_result(msg["id"], {"sources": entry.runtime_data.audio.live()})
 
 
 def _run_summary(run) -> dict[str, Any]:

@@ -260,6 +260,12 @@ textarea { min-height: 10em; resize: vertical; }
 .wrow { display: flex; align-items: center; justify-content: space-between; gap: .85em; margin: .55em 0; flex-wrap: wrap; }
 .wrow .actions { margin: 0; }
 .machine { padding-top: .6em; padding-bottom: .6em; }
+.live-src { margin: .6em 0; }
+.live-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .3em; }
+.meter { display: flex; align-items: flex-end; gap: 1px; height: 4.5em; border-bottom: 1px solid var(--line); }
+.meter i { flex: 1; background: var(--dim); opacity: .45; min-width: 1px; transition: height .2s; }
+.meter i.seg { background: var(--magenta); opacity: .8; }
+.meter i.sp { background: var(--cyan); opacity: 1; box-shadow: 0 0 .3em var(--cyan); }
 .mhead { display: flex; align-items: center; gap: .6em; cursor: pointer; user-select: none; flex-wrap: wrap; }
 .mhead .fold { color: var(--dim); width: 1em; }
 .mhead .mname { font-weight: bold; letter-spacing: .05em; }
@@ -768,6 +774,7 @@ class AacPanel extends HTMLElement {
       } : null;
     }
     if (view.startsWith("settings/audio")) this._loadAudio();
+    if (view === "settings/audio" && !this._liveTimer) this._liveTick();
     if (view === "settings/triggers") this._loadJobs();
     if (view === "settings/entities") this._loadEntities();
     if (view === "domain/visible") this._loadVisible();
@@ -1751,13 +1758,15 @@ class AacPanel extends HTMLElement {
     const lines = (a.transcript || []).slice().reverse().map((l) => `
       <div class="tline ${l.addressed ? "to-aac" : ""}"><span class="m">${esc(new Date(l.time).toLocaleTimeString())} · ${esc(l.name)}${l.language ? ` · ${esc(l.language)}` : ""}${l.addressed ? " → AAC" : ""}${l.gate ? ` · ${esc(l.gate)}` : ""}</span><div>${esc(l.text)}</div></div>`).join("");
     return this._page("AUDIO PIPELINE", `${(a.connected || []).length} connected · separate from HA's Assist`, `
+      ${this._liveTimer ? "" : (setTimeout(() => this._liveTimer || this._liveTick(), 0), "")}<div class="card"><h2>LIVE</h2><p class="hint">What each microphone hears right now: the last 10 seconds of loudness; the bright part is what the speech detector cut out as speech, which then goes to speech to text.</p>
+        <div id="audio-live">${this._liveHtml2()}</div></div>
       <div class="split">
         <div class="card"><h2>${icon("mic")} CONNECTED</h2>
           ${this._liveSources(a.connected || [])}
           <div class="actions"><button class="btn" data-go="settings/audio/sources">All sources</button></div>
         </div>
         <div class="card"><h2>TRANSCRIPT</h2>
-          <p class="hint">What AAC heard (RAM only, the last lines). Lines with one of its names, or right after it spoke, go to the master.</p>
+          <p class="hint">What AAC heard (RAM only, the last lines), handed to the hearing modules that are on.</p>
           <div class="transcript thin-scroll">${lines || '<p class="hint">Nothing heard yet.</p>'}</div>
         </div>
       </div>
@@ -1781,6 +1790,33 @@ class AacPanel extends HTMLElement {
         </div>
       </div>
       ${this._poolCard("voice")}`);
+  }
+
+  // The live view of the audio page (refreshed a few times a second while it is open)
+  _liveHtml2() {
+    const list = this._audioLive || [];
+    if (!list.length) return '<p class="hint">No source connected.</p>';
+    return list.map((src) => {
+      const pts = src.meter || [];
+      const pad = Array(Math.max(0, 100 - pts.length)).fill([0, 0, false]);
+      const bars = [...pad, ...pts].map(([lvl, sp, seg]) =>
+        `<i class="${seg ? (sp > 0.3 ? "sp" : "seg") : ""}" style="height:${Math.max(2, lvl)}%"></i>`).join("");
+      return `<div class="live-src"><div class="live-head"><b>${esc(src.name)}</b><span class="tag ${src.state === "listening" ? "" : "ok"}">${esc(src.state.toUpperCase())}</span></div>
+        <div class="meter">${bars}</div></div>`;
+    }).join("");
+  }
+
+  _liveTick() {
+    clearTimeout(this._liveTimer);
+    this._liveTimer = null;
+    if (this._view !== "settings/audio" || !this.isConnected) return;
+    this._liveTimer = setTimeout(() => this._liveTick(), 250);
+    if (document.hidden) return;
+    this._ws("aac/audio/live").then((r) => {
+      this._audioLive = r.sources;
+      const box = this.shadowRoot.querySelector("#audio-live");
+      if (box) box.innerHTML = this._liveHtml2();
+    }).catch(() => {});
   }
 
   _liveSources(list) {
