@@ -22,10 +22,11 @@ import uuid
 from homeassistant.components import persistent_notification
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .chats import AAC_CHAT_ID
-from .const import LOGGER
+from .const import DOMAIN, LOGGER
 from .runs import async_notify
 
 if TYPE_CHECKING:
@@ -54,6 +55,7 @@ class Job:
     created: datetime = field(default_factory=dt_util.utcnow)
     status: str = "queued"  # queued · running · done · expired · notified
     reason: str = ""
+    saved: dict[str, Any] | None = None  # how to rebuild it after a restart (None = not kept)
 
     def summary(self) -> dict[str, Any]:
         """For the panel."""
@@ -74,16 +76,26 @@ class JobQueue:
         self.history: list[Job] = []  # the last finished/expired ones, for the panel
         self._unsub: CALLBACK_TYPE | None = None
         self._outage_told = False
+        self._store: Store[list[dict[str, Any]]] = Store(hass, 1, f"{DOMAIN}.jobs")
 
     @property
     def settings(self) -> dict[str, Any]:
         """Owner settings: notify_no_model, postpone_notice (minutes)."""
         return self.entry.runtime_data.store.data["queue"]
 
-    @callback
-    def async_start(self) -> None:
-        """Check the waiting jobs regularly."""
+    async def async_start(self) -> None:
+        """Bring back the jobs that waited before a restart, then check regularly."""
+        for item in await self._store.async_load() or []:
+            dom = self.entry.runtime_data.domain(item.get("domain"))
+            if dom is None or dom.id != item.get("domain") or item.get("kind") != "trigger" or dom.triggers is None:
+                continue
+            job = dom.triggers.trigger_job(item["trigger"], item["title"], item["text"], saved=item)
+            job.reason = "waited before Home Assistant restarted"
+            self.waiting.append(job)
+        self.waiting.sort(key=lambda j: (PRIORITIES.get(j.priority, 1), j.created))
         self._unsub = async_track_time_interval(self.hass, self._tick, CHECK_EVERY)
+        if self.waiting:
+            self.hass.async_create_task(self._tick())
 
     @callback
     def async_stop(self) -> None:
@@ -108,6 +120,7 @@ class JobQueue:
             self.waiting.append(job)
             self.waiting.sort(key=lambda j: (PRIORITIES.get(j.priority, 1), j.created))
         LOGGER.info("AAC job %s waits: %s", job.title, reason)
+        self._save()
         if self.settings.get("notify_no_model") and not self._outage_told:
             self._outage_told = True
             self._tell(job.domain, "AAC has no model available right now; automatic jobs wait until one is back.",
@@ -139,6 +152,7 @@ class JobQueue:
         self.history = [job, *self.history][:30]
         if not self.waiting:
             self._outage_told = False
+        self._save()
         async_notify(self.hass, "jobs")
 
     async def _tick(self, now: datetime | None = None) -> None:
@@ -156,6 +170,14 @@ class JobQueue:
                 continue
             if self._model_free(job):
                 await self._async_run(job)
+
+    def _save(self) -> None:
+        """Keep the waiting jobs that can be rebuilt (heartbeats are not worth it)."""
+        self._store.async_delay_save(lambda: [
+            {**j.saved, "id": j.id, "domain": j.domain.id, "created": j.created.isoformat(),
+             "due": j.due.isoformat() if j.due else None}
+            for j in self.waiting if j.saved
+        ], 1)
 
     def _tell(self, domain: Domain, text: str, title: str) -> None:
         """Reach the owner without a model: HA notification + the domain's From AAC chat."""

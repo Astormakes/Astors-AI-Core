@@ -119,7 +119,7 @@ A job runs at once when the broker has an allowed model (background rules apply)
 highest priority first, checked every 30 s. Owner settings (`store.queue`): `notify_no_model` (tell
 once per outage), `postpone_notice` (minutes; a job that waited longer is told so when it runs). The
 owner's chats and voice never queue. Triggers may override the classes in `do`: `priority`,
-`critical`, `due_minutes`. Not persisted yet (a restart forgets waiting jobs). WebSocket
+`critical`, `due_minutes`. Waiting trigger jobs are saved (`.storage/aac.jobs`) and rebuilt after a restart; past their due time, critical ones reach the owner right away. Heartbeats are not kept. WebSocket
 `aac/jobs`, `aac/jobs/settings`; panel: Triggers → Queue, "+n waiting" next to Auto.
 
 ## Broker request (planned)

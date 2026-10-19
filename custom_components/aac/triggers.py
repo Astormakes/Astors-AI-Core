@@ -184,6 +184,10 @@ class TriggerEngine:
         )
 
     async def _async_fire(self, trig: dict, title: str, text: str) -> None:
+        await self.entry.runtime_data.jobs.async_submit(self.trigger_job(trig, title, text))
+
+    def trigger_job(self, trig: dict, title: str, text: str, saved: dict | None = None) -> Job:
+        """The job for a fired trigger (also rebuilt from storage after a restart: `saved`)."""
         instruction = (trig.get("do") or {}).get("instruction") or "tell me if it matters"
         if trig["when"]["type"] == "time":
             # A scheduled trigger usually *is* the message (a reminder); silence only
@@ -217,13 +221,19 @@ class TriggerEngine:
         # Job classes: reminders/appointments (time triggers) are high and time-critical: if no model
         # comes in time, the instruction reaches the owner as a plain notification. Events are normal.
         timed = trig["when"]["type"] == "time"
-        await self.entry.runtime_data.jobs.async_submit(Job(
+        job = Job(
             self.domain, name, tier, do.get("priority") or ("high" if timed else "normal"), start,
             due=dt_util.utcnow() + timedelta(minutes=int(do.get("due_minutes") or (30 if timed else 15))),
             critical=bool(do.get("critical", timed)),
             fallback=f"{name}: {instruction}",
             tags=["reminder" if timed else "event", *(["own plan"] if trig.get("created_by") == "agent" else [])],
-        ))
+            # Enough to rebuild it after a restart (one-off triggers are already gone by then)
+            saved={"kind": "trigger", "trigger": trig, "title": title, "text": text},
+        )
+        if saved:  # restored: keep its original times
+            job.id, job.created = saved["id"], dt_util.parse_datetime(saved["created"])
+            job.due = dt_util.parse_datetime(saved["due"]) if saved.get("due") else None
+        return job
 
     @callback
     def _async_state_changed(self, event: Event[EventStateChangedData]) -> None:

@@ -186,9 +186,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
 
     @callback
     def _start(_event: Event | None = None) -> None:
-        entry.runtime_data.jobs.async_start()
         for dom in entry.runtime_data.domains.values():
             dom.triggers.async_start()
+        entry.async_create_background_task(hass, entry.runtime_data.jobs.async_start(), "aac jobs restore")
 
     if hass.is_running:
         _start()
