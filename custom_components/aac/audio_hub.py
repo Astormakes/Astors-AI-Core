@@ -61,7 +61,9 @@ VOICE_FAILED = "Sorry, that did not work. The details are in the AAC panel."
 VOICE_PROMPT = (
     "This message came in by voice from the microphone '{name}'{area}. You DO speak: your answer is "
     "read out aloud through the speaker there, in your own voice. One or two short sentences, plain words, "
-    "no lists or markdown. Your speaking volume is set_voice_volume (not Home Assistant's media players)."
+    "no lists or markdown. Your speaking volume is set_voice_volume (not Home Assistant's media players). "
+    "When you are asked to do something you can do, call the tool NOW, in this turn, and then say what you did; "
+    "never only announce it (\"I'll turn it off\") without calling the tool."
 )
 
 

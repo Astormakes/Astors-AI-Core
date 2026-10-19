@@ -1767,7 +1767,9 @@ class AacPanel extends HTMLElement {
         <div class="body"><div class="name">${esc(s.name)} ${s.state === "built" ? "" : '<span class="tag plan">PLANNED</span>'}</div><div class="desc">${esc(s.desc)}</div></div>
       </div>`).join("");
     const set = a.settings || {}, eng = a.engines || {};
-    const lines = (a.transcript || []).slice().sort((x, y) => (x.time < y.time ? -1 : x.time > y.time ? 1 : 0))
+    // in the order the lines ENDED (= roughly when they appeared): a long sentence does not jump above what came in meanwhile
+    const end = (l) => new Date(l.time).getTime() + (l.seconds || 0) * 1000;
+    const lines = (a.transcript || []).slice().sort((x, y) => end(x) - end(y))
       .map((l) => this._bufferLine(l)).join("");
     return this._page("AUDIO PIPELINE", `${(a.connected || []).length} connected · separate from HA's Assist`, `
       ${this._liveTimer ? "" : (setTimeout(() => this._liveTimer || this._liveTick(), 0), "")}<div class="card"><h2>LIVE</h2><p class="hint">What each microphone hears right now: the last 10 seconds of loudness; the bright part is what the speech detector cut out as speech, which then goes to speech to text.</p>
