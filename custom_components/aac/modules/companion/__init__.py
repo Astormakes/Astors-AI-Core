@@ -24,8 +24,13 @@ from ...provider import OpenAICompatProvider, ProviderError
 from .. import ModuleContext
 
 DECISION = {"type": "json_schema", "json_schema": {"name": "companion", "schema": {
-    "type": "object", "properties": {"respond": {"type": "boolean"}, "why": {"type": "string"}},
-    "required": ["respond", "why"]}}}
+    "type": "object", "properties": {
+        "respond": {"type": "boolean"}, "why": {"type": "string"},
+        # how likely each earlier line belongs to what the newest line is about (the master weighs them)
+        "related": {"type": "array", "items": {"type": "object", "properties": {
+            "line": {"type": "integer"}, "percent": {"type": "integer"}}, "required": ["line", "percent"]}},
+    }, "required": ["respond", "why", "related"]}}}
+CONTEXT_LINES = 10  # the last lines that go to the master, each with its percentage
 
 RULES = {
     "spoken_to": ("Answer yes only when the NEWEST line is meant for the assistant: it is called by name, the line "
@@ -40,6 +45,8 @@ RULES = {
 }
 
 
+RATED_TITLE = ("The last lines in the room (the % says how likely each belongs to this request; some are related, "
+               "others are chatter, e.g. a video or other people — use only what fits)")
 SAME_VOICE_SECONDS = 60  # what the same person said this shortly before goes along with the request
 
 
@@ -54,16 +61,36 @@ def same_voice(lines: list[dict[str, Any]], line: dict[str, Any], seconds: float
             and datetime.fromisoformat(x["time"]) >= since][-4:]
 
 
-def room_line(line: dict[str, Any], start: datetime) -> str:
-    """One buffer line for the decision: time offset, who, text."""
-    t = (datetime.fromisoformat(line["time"]) - start).total_seconds()
+def who(line: dict[str, Any]) -> str:
+    """Who a line is from, in words."""
     if line.get("kind") == "aac":
-        who = "ASSISTANT (you)"
+        return "you (the assistant)"
+    if line.get("kind") == "sound":
+        return "(sound)"
+    return voice_label(line.get("speaker")) or "someone"
+
+
+def with_percent(lines: list[dict[str, Any]], related: dict[int, int]) -> list[str]:
+    """The last lines for the master, each with how likely it belongs to the request (unrated: "?")."""
+    out = []
+    for n, line in enumerate(lines, 1):
+        if n > len(lines) - CONTEXT_LINES:
+            pct = f"{related[n]} %" if n in related else "? %"
+            out.append(f"({pct}) {who(line)}: {line['text']}")
+    return out
+
+
+def room_line(line: dict[str, Any], start: datetime, n: int | None = None) -> str:
+    """One buffer line for the decision: number, time offset, who, text."""
+    t = (datetime.fromisoformat(line["time"]) - start).total_seconds()
+    num = f"{n}. " if n is not None else ""
+    if line.get("kind") == "aac":
+        speaker = "ASSISTANT (you)"
     elif line.get("kind") == "sound":
-        return f"[{t:5.0f}s] (sound) {line['text']}"
+        return f"{num}[{t:5.0f}s] (sound) {line['text']}"
     else:
-        who = voice_label(line.get("speaker")) or "someone"
-    return f"[{t:5.0f}s] {who}: {line['text']}"
+        speaker = voice_label(line.get("speaker")) or "someone"
+    return f"{num}[{t:5.0f}s] {speaker}: {line['text']}"
 
 
 async def async_setup_module(ctx: ModuleContext) -> None:
@@ -94,23 +121,28 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         system = (f"You are the ears of a home assistant called {names}. It hears the room through a microphone "
                   f"('{source.name}'). You decide whether the assistant should answer the NEWEST line now. "
                   f"{RULES.get(setting('mode'), RULES['spoken_to'])} Voices marked (media) are from a video or TV. "
-                  'Reply only with JSON: {"respond": true or false, "why": "a few words"}')
-        room = "\n".join(room_line(x, start) for x in recent[:-1]) or "(nothing before)"
+                  "Also rate every earlier line: how likely (0-100 %) it belongs to what the newest line is about "
+                  "(the same request, topic or person), so the assistant can tell context from chatter. "
+                  'Reply only with JSON: {"respond": true or false, "why": "a few words", '
+                  '"related": [{"line": 1, "percent": 80}, …]}')
+        room = "\n".join(room_line(x, start, n) for n, x in enumerate(recent[:-1], 1)) or "(nothing before)"
         user = f"The room, oldest first:\n{room}\n\nNEWEST line:\n{room_line(line, start)}"
         provider = OpenAICompatProvider(async_get_clientsession(ctx.hass), endpoint.base_url, endpoint.api_key,
                                         timeout=30, connect_timeout=3)
         try:
             reply = await provider.chat(endpoint.model, [{"role": "system", "content": system},
                                                          {"role": "user", "content": user}], None,
-                                        temperature=0, max_tokens=60, response_format=DECISION,
+                                        temperature=0, max_tokens=400, response_format=DECISION,
                                         chat_template_kwargs={"enable_thinking": False})
             answer = json.loads(reply.get("content") or "{}")
         except (ProviderError, ValueError) as err:
             LOGGER.info("AAC companion: decision failed: %s", err)
             return None
         broker.mark_up(model_id)
+        related = {int(r["line"]): max(0, min(100, int(r["percent"]))) for r in answer.get("related") or []
+                   if isinstance(r, dict) and isinstance(r.get("line"), int) and isinstance(r.get("percent"), (int, float))}
         return {"respond": bool(answer.get("respond")), "why": str(answer.get("why", ""))[:120],
-                "before": same_voice(recent[:-1], line)}
+                "before": with_percent(recent[:-1], related)}
 
     async def heard(source, line: dict[str, Any], earlier: list[dict[str, Any]]) -> None:
         if line.get("kind", "speech") != "speech" or not line.get("text") or wakeword_on():
@@ -130,7 +162,8 @@ async def async_setup_module(ctx: ModuleContext) -> None:
                         line["addressed"] = True
                     ctx.audio.changed()
                     if found["respond"]:
-                        await ctx.audio.async_answer(source, line["text"], found["before"], line.get("speaker"))
+                        await ctx.audio.async_answer(source, line["text"], found["before"], line.get("speaker"),
+                                                     before_title=RATED_TITLE)
                 if (nxt := waiting.pop(source.id, None)) is None:
                     break
                 source, line = nxt

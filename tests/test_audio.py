@@ -543,8 +543,9 @@ async def test_companion_follows_the_conversation(hass: HomeAssistant, hass_clie
     """No name needed: the Companion judges each line with the conversation so far and answers when it fits."""
     await setup_aac(hass, mock_entry)
     await async_set_access(mock_entry, "companion", "assistant", {"enabled": True})
-    payloads = _queue(aioclient_mock, _text('{"respond": false, "why": "people talk to each other"}'),
-                      _text('{"respond": true, "why": "a question for the assistant"}'), _text("It is five."))
+    payloads = _queue(aioclient_mock, _text('{"respond": false, "why": "people talk to each other", "related": []}'),
+                      _text('{"respond": true, "why": "a question for the assistant", "related": [{"line": 1, "percent": 10}]}'),
+                      _text("It is five."))
     heard = iter(["Anna, how was your day?", "Could you tell me what time it is?"])
     hub = mock_entry.runtime_data.audio
     client = await hass_client()
@@ -573,6 +574,8 @@ async def test_companion_follows_the_conversation(hass: HomeAssistant, hass_clie
     second = payloads[1]["messages"][1]["content"]  # the decision sees the conversation so far
     assert "Anna, how was your day?" in second and second.endswith("Could you tell me what time it is?")
     assert any(x["kind"] == "aac" and x["text"] == "It is five." for x in hub.transcript)
+    asked = payloads[2]["messages"][-1]["content"]  # the master gets the room with percentages
+    assert "(10 %) someone: Anna, how was your day?" in asked and "use only what fits" in asked
 
 
 async def test_companion_steps_back_for_the_wake_word(hass: HomeAssistant, mock_entry, configured):

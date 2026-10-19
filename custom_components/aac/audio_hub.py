@@ -538,7 +538,7 @@ class AudioHub:
         return True
 
     async def async_answer(self, source: Source, text: str, before: list[str] | None = None,
-                           speaker: dict[str, Any] | None = None) -> None:
+                           speaker: dict[str, Any] | None = None, before_title: str = "The same person said just before") -> None:
         """The voice domain's master answers a spoken line; the answer goes back by voice.
         before = what was said just before it in the room (the wake word module's look-back);
         speaker = the line's voice (Voices module), so the model knows who talks ("that's me")."""
@@ -552,7 +552,7 @@ class AudioHub:
         where = f"spoken at the microphone '{source.name}'{f' by {who}' if who else ''}"
         said = f"[{where}; your answer is spoken aloud there] {text}"
         if before:  # the room's last lines go with it, so "…, remind me of that, computer" works
-            said = ("The same person said just before:\n" + "\n".join(f"- {b}" for b in before)
+            said = (f"{before_title}:\n" + "\n".join(f"- {b}" for b in before)
                     + f"\n\nNow to you, {where} (your answer is spoken aloud there): {text}")
         run, result = await async_run_master(
             self.hass, self.entry, said,
