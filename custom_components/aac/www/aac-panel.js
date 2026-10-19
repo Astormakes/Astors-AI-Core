@@ -1605,7 +1605,8 @@ class AacPanel extends HTMLElement {
     const take = this._state?.pools?.roles?.[role]?.takes;
     const have = new Set(this._poolItems(role));
     const models = this._allModels().filter((m) => !have.has(m.id));
-    const kind = (m) => /whisper|large-v\d|parakeet|canary|voxtral|moonshine|speech|stt|asr/i.test(m.detail + " " + m.label) ? "speech"
+    const kind = (m) => /senses/i.test(m.detail + " " + m.label) ? "senses"
+      : /whisper|large-v\d|parakeet|canary|voxtral|moonshine|speech|stt|asr/i.test(m.detail + " " + m.label) ? "speech"
       : /embed|bge|e5|nomic|minilm|gte/i.test(m.detail + " " + m.label) ? "embedding" : "chat";
     const ents = (d) => Object.keys(this._hass?.states || {}).filter((e) => e.startsWith(d + ".") && !have.has(e)).sort();
     let opts = [];
@@ -1822,7 +1823,9 @@ class AacPanel extends HTMLElement {
     const meta = [hms, l.seconds != null ? `${l.seconds} s` : null, l.language, l.loudness_db != null ? `${l.loudness_db} dB` : null,
       l.confidence != null ? `${Math.round(l.confidence * 100)} % sure` : null,
       l.engine ? `${this._resourceLabel(l.engine)}${l.stt_ms != null ? ` ${l.stt_ms} ms` : ""}` : null].filter(Boolean);
-    for (const k of ["speaker", "mood"]) if (l[k]) meta.push(`${k}: ${typeof l[k] === "object" ? l[k].name || l[k].label : l[k]}`);
+    if (l.speaker) meta.push(`🗣 ${l.speaker.name}${l.speaker.new ? " (new)" : ""}${l.speaker.kind === "media" ? " · video/TV" : ""}${l.speaker.score > 0 ? ` ${Math.round(l.speaker.score * 100)} %` : ""}`);
+    if (l.mood) meta.push(`mood: ${typeof l.mood === "object" ? l.mood.label : l.mood}`);
+    if (l.sounds?.length) meta.push(`♪ ${l.sounds.slice(0, 3).map(([n, p]) => `${n} ${Math.round(p * 100)} %`).join(", ")}`);
     const mark = l.addressed ? '<b class="to">→ AAC</b>' : l.gate ? `<b class="no">${esc(l.gate)}</b>` : "";
     const text = l.kind === "sound" ? `<i>${esc(l.text)}</i>` : l.text ? esc(l.text) : '<i class="dim">[speech, not transcribed]</i>';
     return `<div class="bl ${l.addressed ? "to-aac" : ""} ${l.kind === "sound" ? "sound" : ""}"><div class="bm">${esc(meta.join(" · "))} ${mark}</div><div class="bt">${text}</div></div>`;

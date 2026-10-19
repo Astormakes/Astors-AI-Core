@@ -50,4 +50,9 @@ A manifest may say `"enabled_by_default": false`: the owner switches it on per d
   only), drops whisper's made-up lines. Settings: live, filter.
 - **Wake word** (`wakeword`, off by default): a name or a follow-up → attention check → the master
   answers by voice, with the lines of the last `look_back` seconds. Settings: follow_up, attention, look_back.
+- **Sounds** (`sounds`): window stage → sound lines ("[laughter, music]") between spoken lines, segment stage →
+  `sounds` on spoken lines (top AudioSet labels). Pool role `sounds` (services/aac_senses).
+- **Voices** (`voices`): segment stage → `speaker` {id, name, kind unknown/person/media, note, score, new}; voice
+  prints in HA storage, unnamed ones forgotten after keep_days; tools list_voices, name_voice, forget_voice.
+  Pool role `voices`. Wake word ignores voices of kind media, and its attention check sees voice and sounds.
 - **Companion** (planned): follows the room and speaks up on its own (decision tiers, interjection gate).

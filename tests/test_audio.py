@@ -349,3 +349,46 @@ def test_whisper_sounds_become_sound_lines():
     assert [SOUND.match(t).group(1) for t in ("*crunch*", "(laughs)", "[Music]", " *door slams* ")] == [
         "crunch", "laughs", "Music", "door slams"]
     assert SOUND.match("Ha ha ha!") is None and SOUND.match("I said (maybe) yes") is None
+
+
+async def test_sounds_and_voices(hass: HomeAssistant, hass_client, mock_entry, configured):
+    """The Sounds module tags spoken lines and writes sound lines; the Voices module gives each spoken line a
+    voice, a new one first, the same one again, and a voice the owner named as media is not talked to."""
+    from custom_components.aac.modules.voices import Voices
+
+    await setup_aac(hass, mock_entry)
+    await async_set_access(mock_entry, "sounds", "assistant", {"enabled": True})
+    hub = mock_entry.runtime_data.audio
+    prints = iter([[1.0, 0.0], [0.99, 0.141], [0.0, 1.0]])
+
+    async def senses(role, path, pcm):
+        if role == "voices":
+            return {"embedding": next(prints)}
+        return {"labels": [["Speech", 0.8], ["Music", 0.45], ["Laughter", 0.35]]}
+
+    client = await hass_client()
+    with (
+        patch("custom_components.aac.audio_hub.make_vad", return_value=EnergyVad()),
+        patch.object(hub, "async_stt", AsyncMock(return_value={"text": "hello there"})),
+        patch.object(hub, "async_senses", side_effect=senses),
+    ):
+        ws = await client.ws_connect("/api/aac/audio")
+        await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "rate": 16000})
+        await ws.receive_json()
+        for _ in range(3):
+            await ws.send_bytes(_audio((SILENCE, 0.3), (LOUD, 2.0), (SILENCE, 1)))
+            await hass.async_block_till_done(wait_background_tasks=True)
+            await asyncio.sleep(0.05)
+        await ws.close()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    speech = [x for x in hub.transcript if x["kind"] == "speech"]
+    assert [x["speaker"]["name"] for x in speech] == ["voice #1", "voice #1", "voice #2"]
+    assert [x["speaker"]["new"] for x in speech] == [True, False, True]
+    assert speech[0]["sounds"][1] == ["Music", 0.45]
+    assert any(x["kind"] == "sound" and x["text"] == "[music, laughter]" for x in hub.transcript)
+
+    voices = Voices.__new__(Voices)  # the match logic alone
+    voices.voices, voices.next = [], 1
+    a, _, new = voices.match([1.0, 0.0], 0.8)
+    b, score, again = voices.match([0.6, 0.8], 0.8)
+    assert new and again and a is not b and score < 0.8

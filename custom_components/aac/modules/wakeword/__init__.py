@@ -24,7 +24,23 @@ ATTENTION_FORMAT = {"type": "json_schema", "json_schema": {"name": "attention", 
     "type": "object", "properties": {"to_assistant": {"type": "boolean"}}, "required": ["to_assistant"]}}}
 
 
-async def async_attention(ctx: ModuleContext, text: str, earlier: list[str], just_said: str | None = None) -> bool:
+def describe(line: dict[str, Any]) -> str:
+    """What the other stages found about a line (voice, sounds), in words for the attention check."""
+    parts = []
+    if sp := line.get("speaker"):
+        who = sp["name"] + (" (new voice)" if sp.get("new") else "")
+        if sp.get("kind") == "media":
+            who += f", a voice from a video/TV{': ' + sp['note'] if sp.get('note') else ''}"
+        elif sp.get("kind") == "person":
+            who += f", a person{': ' + sp['note'] if sp.get('note') else ''}"
+        parts.append(f"voice: {who}")
+    if sounds := line.get("sounds"):
+        parts.append("sounds: " + ", ".join(f"{n} {round(p * 100)} %" for n, p in sounds[:4]))
+    return "; ".join(parts)
+
+
+async def async_attention(ctx: ModuleContext, text: str, earlier: list[str], just_said: str | None = None,
+                          about: str = "") -> bool:
     """Is someone talking to AAC, or is the name just part of other speech (TV, a video, a talk)?"""
     broker = ctx.entry.runtime_data.broker
     if (picked := broker.endpoint_for("fast")) is None:
@@ -38,7 +54,7 @@ async def async_attention(ctx: ModuleContext, text: str, earlier: list[str], jus
     said = (f"The assistant itself just finished saying: \"{just_said}\". The new line came right after it, "
             "so it is likely a reply or a follow-up to the assistant.\n") if just_said else ""
     prompt = (f"You are the attention of a home assistant called {names}. A microphone in the room heard "
-              f"these lines before:\n{heard}\n{said}Now it heard: \"{text}\"\n"
+              f"these lines before:\n{heard}\n{said}Now it heard: \"{text}\"{f' ({about})' if about else ''}\n"
               "Is a person speaking TO the assistant now (a request, a question, a greeting to it)? Or is the "
               "name only part of other speech: a video, TV, music, people talking about something else? "
               'Answer only with JSON: {"to_assistant": true or false}')
@@ -60,6 +76,8 @@ async def async_setup_module(ctx: ModuleContext) -> None:
     async def heard(source, line: dict[str, Any], earlier: list[dict[str, Any]]) -> None:
         if line.get("kind", "speech") != "speech" or not line.get("text"):
             return  # sounds and untranscribed speech do not carry a name
+        if (line.get("speaker") or {}).get("kind") == "media":
+            return  # the owner said this voice is from a video or the TV
         hub = ctx.audio
         domain_id = ctx.entry.runtime_data.voice_domain.id
         follow_up = float(ctx.setting(domain_id, "follow_up") or 0)
@@ -72,7 +90,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         line["addressed"] = True
         if ctx.setting(domain_id, "attention") and not await async_attention(
             ctx, line["text"], [x["text"] for x in earlier if x.get("kind", "speech") == "speech"][-ATTENTION_LINES:],
-            spoke["text"] if is_follow_up else None,
+            spoke["text"] if is_follow_up else None, describe(line),
         ):
             line["addressed"], line["gate"] = False, "not meant for AAC"
             hub.changed()

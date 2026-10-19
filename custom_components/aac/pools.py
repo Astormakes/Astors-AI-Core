@@ -36,6 +36,10 @@ ROLES: dict[str, dict[str, Any]] = {
             "help": "A speech model from Models or an HA engine. When none in the list is reachable, HA's local engine is used."},
     "tts": {"pool": "voice", "title": "Voice", "takes": "tts",
             "help": "HA text-to-speech engines (own voice models later). Without a list: local first."},
+    "sounds": {"pool": "voice", "title": "Sound tagger", "takes": "senses",
+               "help": "Names the sounds in the room (AudioSet: music, laughter, a door, a motorbike …), for the Sounds module. An AAC senses service (services/aac_senses)."},
+    "voices": {"pool": "voice", "title": "Voice prints", "takes": "senses",
+               "help": "Tells voices apart (who is talking), for the Voices module. An AAC senses service (services/aac_senses)."},
 }
 # Requests by trait, over the master role's models (the owner's chat models)
 TIERS = {
@@ -48,7 +52,7 @@ _PARAMS_RE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*[bB](?![a-zA-Z])")
 
 POOLS = {
     "thinking": "Chat models and embeddings",
-    "voice": "Speech to text, voices (later speaker ID, wake word)",
+    "voice": "Speech to text, voices, sounds and voice prints",
     "vision": "Detectors and vision models (planned)",
 }
 

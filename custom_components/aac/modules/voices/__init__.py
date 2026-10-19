@@ -1,0 +1,164 @@
+"""Voices: who is talking (owner, 2026-10-19). Every spoken line gets a voice print from the voice
+pool's "voices" role (e.g. the AAC senses service) and is matched against the voices AAC knows.
+A new voice gets a provisional id ("voice #3"); the owner can say who it is, also "someone from a
+video", so AAC learns to ignore it. Prints stay in HA's storage; unnamed voices are forgotten after
+`keep_days` without being heard (design: no permanent print of a non-household person without OK).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any
+
+import probatio
+
+from homeassistant.helpers import llm
+from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
+
+from ...capabilities import Stage
+from ...const import DOMAIN
+from .. import ModuleContext
+
+KINDS = ["unknown", "person", "media"]
+
+
+class Voices:
+    """The known voices (shared by all domains: a voice is the same whoever listens)."""
+
+    def __init__(self, store: Store) -> None:
+        """Initialize."""
+        self._store = store
+        self.voices: list[dict[str, Any]] = []
+        self.next = 1
+
+    async def async_load(self) -> None:
+        """Read from storage."""
+        data = await self._store.async_load() or {}
+        self.voices, self.next = data.get("voices", []), data.get("next", 1)
+
+    def save(self, keep_days: float) -> None:
+        """Forget unnamed voices not heard for keep_days, then save (delayed)."""
+        cutoff = (dt_util.utcnow() - timedelta(days=keep_days)).isoformat()
+        self.voices = [v for v in self.voices if v["named"] or v["last"] >= cutoff]
+        self._store.async_delay_save(lambda: {"voices": self.voices, "next": self.next}, 10)
+
+    def match(self, embedding: list[float], threshold: float) -> tuple[dict[str, Any], float, bool]:
+        """The known voice closest to a print (cosine; prints are normalized), or a new one."""
+        best, score = None, -1.0
+        for voice in self.voices:
+            s = sum(a * b for a, b in zip(voice["print"], embedding, strict=False))
+            if s > score:
+                best, score = voice, s
+        now = dt_util.utcnow().isoformat()
+        if best is not None and score >= threshold:
+            if score >= threshold + 0.05:  # sure enough: let the print learn this line (running mean)
+                n = min(best["n"], 50)
+                mixed = [(a * n + b) / (n + 1) for a, b in zip(best["print"], embedding, strict=False)]
+                norm = sum(x * x for x in mixed) ** 0.5 or 1
+                best["print"], best["n"] = [round(x / norm, 5) for x in mixed], best["n"] + 1
+            best["last"], best["heard"] = now, best.get("heard", 0) + 1
+            return best, score, False
+        voice = {"id": f"v{self.next}", "name": f"voice #{self.next}", "kind": "unknown", "note": "",
+                 "named": False, "print": embedding, "n": 1, "first": now, "last": now, "heard": 1}
+        self.next += 1
+        self.voices.append(voice)
+        return voice, score, True
+
+    def get(self, ref: str) -> dict[str, Any] | None:
+        """By id or name."""
+        ref = ref.strip().lower()
+        return next((v for v in self.voices if v["id"] == ref or v["name"].lower() == ref), None)
+
+
+def public(voice: dict[str, Any]) -> dict[str, Any]:
+    """Without the print."""
+    return {k: v for k, v in voice.items() if k not in ("print", "n")}
+
+
+class _VoiceTool(llm.Tool):
+    integration = DOMAIN
+
+    def __init__(self, voices: Voices, keep) -> None:
+        self.voices, self.keep = voices, keep
+
+
+class ListVoicesTool(_VoiceTool):
+    name = "list_voices"
+    description = "The voices AAC knows: id, name, kind (person / media = from a video or TV / unknown), note, when heard."
+    annotations = llm.ToolAnnotations(read_only=True, open_world=False)
+
+    async def async_call(self, hass, tool_input, llm_context):
+        return llm.ToolResult(data={"voices": [public(v) for v in self.voices.voices]})
+
+
+class NameVoiceTool(_VoiceTool):
+    name = "name_voice"
+    description = ("Say who a voice is (from list_voices or a line's voice): a name, the kind (person in or "
+                   "visiting the home, media = from a video, the TV, the radio) and a short note, e.g. the channel.")
+    annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
+    parameters = probatio.Schema({probatio.Required("voice"): str, probatio.Required("name"): str,
+                                  probatio.Required("kind"): probatio.In(KINDS), probatio.Optional("note"): str})
+
+    async def async_call(self, hass, tool_input, llm_context):
+        args = tool_input.tool_args
+        if (voice := self.voices.get(args["voice"])) is None:
+            return llm.ToolResult(data={"error": "No such voice; see list_voices."}, error=True)
+        voice.update(name=args["name"].strip(), kind=args["kind"], note=args.get("note", voice["note"]), named=True)
+        self.voices.save(self.keep())
+        return llm.ToolResult(data={"voice": public(voice)})
+
+
+class ForgetVoiceTool(_VoiceTool):
+    name = "forget_voice"
+    description = "Delete a voice and its voice print (e.g. when the owner asks, or a voice was a mistake)."
+    annotations = llm.ToolAnnotations(read_only=False, destructive=True, open_world=False)
+    parameters = probatio.Schema({probatio.Required("voice"): str})
+
+    async def async_call(self, hass, tool_input, llm_context):
+        if (voice := self.voices.get(tool_input.tool_args["voice"])) is None:
+            return llm.ToolResult(data={"error": "No such voice; see list_voices."}, error=True)
+        self.voices.voices.remove(voice)
+        self.voices.save(self.keep())
+        return llm.ToolResult(data={"forgotten": voice["name"]})
+
+
+@dataclass(kw_only=True)
+class VoicesAPI(llm.API):
+    """The voice tools."""
+
+    voices: Voices
+    keep: Any
+
+    async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
+        tools = [ListVoicesTool, NameVoiceTool, ForgetVoiceTool]
+        return llm.APIInstance(api=self, api_prompt="", llm_context=llm_context,
+                               tools=[t(self.voices, self.keep) for t in tools])
+
+
+async def async_setup_module(ctx: ModuleContext) -> None:
+    """Load the voices, register the stage and the tools."""
+    first = next(d for d in ctx.domains.values() if d.first)
+    voices = Voices(ctx.storage(first, "voices"))
+    await voices.async_load()
+
+    def setting(key: str) -> Any:
+        return ctx.setting(ctx.entry.runtime_data.voice_domain.id, key)
+
+    def keep() -> float:
+        return float(setting("keep_days") or 7)
+
+    async def run(source, pcm: bytes, line: dict[str, Any]) -> dict[str, Any] | None:
+        if line["seconds"] < float(setting("min_seconds") or 1.5):
+            return None
+        found = await ctx.audio.async_senses("voices", "/audio/voiceprint", pcm[-20 * 32000:])
+        if not found or not found.get("embedding"):
+            return None
+        voice, score, new = voices.match(found["embedding"], float(setting("match") or 80) / 100)
+        voices.save(keep())
+        return {"speaker": {"id": voice["id"], "name": voice["name"], "kind": voice["kind"], "note": voice["note"],
+                            "score": round(score, 2), "new": new}}
+
+    ctx.add_stage(Stage(id="voices", title="Voices", kind="segment", run=run, order=20))
+    ctx.add_llm_api(lambda dom, api_id, name: VoicesAPI(hass=ctx.hass, id=api_id, name=name, voices=voices, keep=keep))

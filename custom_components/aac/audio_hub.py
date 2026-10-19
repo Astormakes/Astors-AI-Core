@@ -440,6 +440,25 @@ class AudioHub:
         broker.mark_up(model_id)
         return heard | {"engine": model_id}
 
+    async def async_senses(self, role: str, path: str, pcm: bytes) -> dict[str, Any] | None:
+        """Ask the service of a voice-pool role (sounds / voices) about a piece of audio; None when none answers."""
+        broker = self.entry.runtime_data.broker
+        if (resource := broker.pick(role)) is None or is_entity(resource):
+            return None
+        if (endpoint := resolve_model(self.hass, self.entry.runtime_data.store, resource)) is None:
+            return None
+        provider = OpenAICompatProvider(async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key)
+        try:
+            result = await provider.audio_post(path, pcm_to_wav(pcm))
+        except ProviderConnectionError as err:
+            broker.mark_down(resource, str(err))
+            return None
+        except ProviderError as err:
+            LOGGER.info("AAC audio: %s failed: %s", role, err)
+            return None
+        broker.mark_up(resource)
+        return result
+
     # ------------------------------------------------------------ speaking
     async def async_tts(self, text: str) -> bytes | None:
         """Text to speech (WAV) with the chosen HA engine."""

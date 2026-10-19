@@ -1,0 +1,24 @@
+{
+  "id": "sounds",
+  "name": "Sounds",
+  "version": "0.1.0",
+  "contract": 1,
+  "kind": "code",
+  "description": "Names the sounds in the room like subtitles: [laughter], [music], [door], [motorbike] … and tags what is behind each spoken line (music, a TV). Needs a sound tagger in the voice pool (the AAC senses service).",
+  "instructions": "",
+  "provides": {"capabilities": {"audio_stage": {"segment": true, "window": true}}},
+  "uses": {"capabilities": ["audio_stage"], "pool_roles": ["sounds"]},
+  "settings": {
+    "threshold": {"type": "number", "title": "Show a sound from (percent sure)", "default": 30,
+                  "help": "Lower = more sound lines, also wrong ones."},
+    "window": {"type": "number", "title": "Listen in pieces of (seconds)", "default": 2,
+               "help": "Between spoken lines the room is tagged in pieces this long (1–10)."},
+    "speech_tags": {"type": "bool", "title": "Tag spoken lines too", "default": true,
+                    "help": "What is behind a spoken line: music, a TV, laughter … (a hint that it comes from a video)."}
+  },
+  "setup": [
+    {"id": "tagger", "title": "Add a sound tagger", "optional": true,
+     "hint": "Run the AAC senses service (services/aac_senses in the AAC repository) on a machine, add it under Compute and put it into the voice pool's Sound tagger role.",
+     "how": ["chat", "panel"]}
+  ]
+}

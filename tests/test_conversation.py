@@ -62,6 +62,8 @@ async def test_simple_answer(
         "aac-memory__forget", "aac-memory__lookup_facts", "aac-memory__recall", "aac-memory__remember",
         "aac-planning__add_to_calendar", "aac-planning__calendar", "aac-planning__cancel_schedule",
         "aac-planning__change_calendar_entry", "aac-planning__list_schedules", "aac-planning__remove_calendar_entry", "aac-planning__schedule", "aac-planning__watch",
+        # forget_voice deletes: held back without the owner
+        "aac-voices__list_voices", "aac-voices__name_voice",
     ]
 
 

@@ -41,7 +41,9 @@ _SPEECH_HINT = re.compile(r"whisper|large-v\d|parakeet|canary|voxtral|moonshine|
 
 
 def model_kind(model: str) -> str:
-    """Best guess from the name: "embedding", "speech" (to text) or "chat"."""
+    """Best guess from the name: "embedding", "speech" (to text), "senses" (sound tags, voice prints) or "chat"."""
+    if "senses" in model.lower():
+        return "senses"
     if _SPEECH_HINT.search(model):
         return "speech"
     return "embedding" if _EMBED_HINT.search(model) else "chat"
