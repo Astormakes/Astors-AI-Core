@@ -76,7 +76,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - License not chosen yet (open decision in the framework doc), so no LICENSE file
 
 ## Next steps
-- **PC big model = tests only** (user decision 2026-10-19). Start it by hand when testing, stop it afterwards; AAC's master stays on the 8B. Command and key file in `docs/dev-environment.md`
+- **Master = the 35B on the PC** (user decision 2026-10-19, replaces "PC = tests only"): user service `aac-llm`, master pool [35B, 8B server fallback]; whisper likewise. The PC is not always on, so every PC role keeps a server fallback. Move both to the server once it has its GPU (7800 XT)
 - **Charter**: the draft stays for now (user decision 2026-10-19); the user changes it when something feels off
 - User: check the phone again (safe-area fix); try the heartbeat for a day; GitHub release
 - **Own voices** (plan in `docs/plans.md`): GLaDOS EN/DE + Portal announcer via game lines → imitation model → owner hand-picks → retrain → dataset → Piper. Waiting for Portal 2 to be installed in Steam on the PC. Never in the public repo
