@@ -20,7 +20,7 @@ from .const import (
     CONF_THINKING,
     DOMAIN,
 )
-from .provider import ProviderAuthError, ProviderError
+from .provider import ProviderAuthError, ProviderError, ProviderNotFoundError
 from .audio import audio_overview
 from .master import async_run_master
 from .memory import KINDS, SOURCES, summarize
@@ -201,6 +201,9 @@ async def ws_server_models(hass: HomeAssistant, connection, msg) -> None:
         models = await async_list_models(hass, msg[CONF_BASE_URL], api_key, timeout=10)
     except ProviderAuthError:
         connection.send_error(msg["id"], "invalid_auth", "The server rejected the API key")
+    except ProviderNotFoundError:
+        # Reachable but cannot list models (e.g. whisper.cpp): the model name is typed by hand
+        connection.send_result(msg["id"], {"models": [], "unlisted": True})
     except (ProviderError, TimeoutError) as err:
         connection.send_error(msg["id"], "cannot_connect", str(err) or "timeout")
     else:

@@ -21,8 +21,8 @@ from homeassistant.helpers import llm
 
 from .audio import audio_overview
 from .const import CONF_BASE_URL, CONF_MODEL, DOMAIN
-from .models import async_list_models, async_overview, resolve_model
-from .provider import ProviderError
+from .models import async_list_models, async_overview, model_kind, resolve_model
+from .provider import ProviderError, ProviderNotFoundError
 from .runs import current_run
 from .status import setup_steps
 from .store import CONF_MASTER_MODEL
@@ -32,7 +32,6 @@ if TYPE_CHECKING:
 
 API_ID = "aac_setup"
 _TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")
-_EMBED_HINT = re.compile(r"embed|bge|e5|nomic|minilm|gte", re.I)
 
 API_PROMPT = (
     "You can help the owner set up AAC itself (models, memory, heartbeat, audio). Start with "
@@ -99,7 +98,8 @@ class SetupStatusTool(_SetupTool):
                 "audio": {
                     "connected_sources": [{"id": c["id"], "name": c["name"], "area": c["area"]} for c in audio["connected"]],
                     "sources_seen_before": [k["name"] for k in store.audio["known"]],
-                    "speech_to_text": audio["engines"]["stt"], "stt_options": audio["engines"]["stt_options"],
+                    "speech_to_text": audio["engines"]["stt"],
+                    "stt_options": audio["engines"]["stt_options"] + ["or any speech model from list_models (multilingual whisper detects the language)"],
                     "text_to_speech": audio["engines"]["tts"], "tts_options": audio["engines"]["tts_options"],
                     "names_that_wake_you": store.audio["names"],
                     "follow_up_seconds": store.audio["follow_up"],
@@ -115,7 +115,7 @@ class ListModelsTool(_SetupTool):
 
     name = "list_models"
     title = "List models"
-    description = "List the model servers and models AAC knows, whether they are online, and which look like embedding models."
+    description = "List the model servers and models AAC knows, whether they are online, and whether they look like chat, embedding or speech-to-text models."
     annotations = llm.ToolAnnotations(read_only=True, open_world=True)
 
     async def _async_run(self, hass, args):
@@ -131,7 +131,7 @@ class ListModelsTool(_SetupTool):
                 for m in server["models"]
             )
         for m in models:
-            m["looks_like"] = "embedding" if _EMBED_HINT.search(m["model"]) else "chat"
+            m["looks_like"] = model_kind(m["model"])
         return llm.ToolResult(data={"models": models})
 
 
@@ -158,11 +158,14 @@ class AddModelTool(_SetupTool):
         base_url = args["base_url"].strip().rstrip("/")
         try:
             available = await async_list_models(hass, base_url, args.get("api_key") or None)
+        except ProviderNotFoundError:
+            available = None  # reachable, but it cannot list its models (e.g. whisper.cpp)
         except (ProviderError, TimeoutError) as err:
             return llm.ToolResult(data={"error": f"Cannot reach the server: {err or 'timeout'}"}, error=True)
         if not args.get("model"):
-            return llm.ToolResult(data={"reachable": True, "models": available})
-        if args["model"] not in available:
+            return llm.ToolResult(data={"reachable": True, "models": available if available is not None
+                                        else "the server cannot list them; give the model name"})
+        if available is not None and args["model"] not in available:
             return llm.ToolResult(data={"error": "The server does not offer that model.", "models": available}, error=True)
         cfg = await self._entry.runtime_data.store.async_save_model(
             {"name": args.get("name") or args["model"], CONF_BASE_URL: base_url,
@@ -176,11 +179,14 @@ class UseModelTool(_SetupTool):
 
     name = "use_model"
     title = "Use model"
-    description = "Make a model (id from list_models) the master (thinks and answers) or the memory model (embeddings)."
+    description = (
+        "Give a model (id from list_models) a role: master (thinks and answers), memory (embeddings) "
+        "or speech (speech to text for the audio pipeline, e.g. a whisper model)."
+    )
     annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
     parameters = probatio.Schema(
         {
-            probatio.Required("role"): probatio.In(["master", "memory"]),
+            probatio.Required("role"): probatio.In(["master", "memory", "speech"]),
             probatio.Required("model_id"): str,
         }
     )
@@ -192,6 +198,9 @@ class UseModelTool(_SetupTool):
         if args["role"] == "master":
             await data.store.async_update_master({CONF_MASTER_MODEL: args["model_id"]})
             return llm.ToolResult(data={"master": args["model_id"], "note": "Takes effect from the next message."})
+        if args["role"] == "speech":
+            await data.store.async_update_audio({"stt": args["model_id"]})
+            return llm.ToolResult(data={"speech_to_text": args["model_id"]})
         changed = data.store.memory["embed_model"] != args["model_id"]
         await data.store.async_update_memory({"embed_model": args["model_id"]})
         if changed and data.memory:
@@ -239,7 +248,8 @@ class AudioTool(_SetupTool):
     name = "set_audio"
     title = "Set audio"
     description = (
-        "Audio settings: the speech-to-text and text-to-speech engines (entity ids from setup_status), "
+        "Audio settings: speech to text (an HA engine from setup_status, or a speech model id from list_models), "
+        "text to speech (an HA engine), "
         "the names that wake you by voice, and how many seconds a follow-up needs no name."
     )
     annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
@@ -257,7 +267,8 @@ class AudioTool(_SetupTool):
         changes: dict = {}
         for arg, key, domain in (("speech_to_text", "stt", "stt"), ("text_to_speech", "tts", "tts")):
             if arg in args:
-                if args[arg] not in hass.states.async_entity_ids(domain):
+                is_model = domain == "stt" and resolve_model(hass, data.store, args[arg]) is not None
+                if not is_model and args[arg] not in hass.states.async_entity_ids(domain):
                     return llm.ToolResult(data={"error": f"Unknown {domain} engine; see setup_status."}, error=True)
                 changes[key] = args[arg]
         if "names" in args:

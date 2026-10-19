@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from homeassistant.const import CONF_API_KEY, CONF_URL
@@ -21,7 +22,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import CONF_BASE_URL, CONF_MODEL
-from .provider import OpenAICompatProvider, ProviderError
+from .provider import OpenAICompatProvider, ProviderError, ProviderNotFoundError
 from .store import AACStore
 
 # HA integrations whose config entries point at an OpenAI-compatible server
@@ -32,6 +33,17 @@ _KNOWN_INTEGRATIONS = {
         lambda d: f"{d[CONF_URL].rstrip('/')}/v1" if d.get(CONF_URL) else None,
     ),
 }
+
+
+_EMBED_HINT = re.compile(r"embed|bge|e5|nomic|minilm|gte", re.I)
+_SPEECH_HINT = re.compile(r"whisper|large-v\d|parakeet|canary|voxtral|moonshine|speech|stt|asr", re.I)
+
+
+def model_kind(model: str) -> str:
+    """Best guess from the name: "embedding", "speech" (to text) or "chat"."""
+    if _SPEECH_HINT.search(model):
+        return "speech"
+    return "embedding" if _EMBED_HINT.search(model) else "chat"
 
 
 @dataclass
@@ -106,6 +118,9 @@ async def async_list_models(
 async def _probe(hass: HomeAssistant, server: Server) -> dict[str, Any]:
     try:
         models = await async_list_models(hass, server.base_url, server.api_key)
+    except ProviderNotFoundError:
+        # Reachable, but cannot list its models (e.g. whisper.cpp): manual models count as online
+        return {"online": True, "models": [], "error": None, "unlisted": True}
     except (ProviderError, TimeoutError) as err:
         return {"online": False, "models": [], "error": str(err) or "timeout"}
     return {"online": True, "models": models, "error": None}
@@ -130,7 +145,7 @@ async def async_overview(hass: HomeAssistant, store: AACStore) -> dict[str, Any]
                 "base_url": cfg[CONF_BASE_URL],
                 "model": cfg[CONF_MODEL],
                 "has_key": bool(cfg.get(CONF_API_KEY)),
-                "online": probe["online"] and cfg[CONF_MODEL] in probe["models"],
+                "online": probe["online"] and (cfg[CONF_MODEL] in probe["models"] or probe.get("unlisted", False)),
                 "error": probe["error"],
             }
         )

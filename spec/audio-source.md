@@ -19,8 +19,9 @@ Rules:
   that connected once.
 - Raw audio lives only in AAC's RAM ring buffer (last 30 s), never on disk.
 
-What AAC does with it (built): voice activity → speech segments → speech to text →
-transcript line `{time, source, name, text, addressed}` → when addressed, the master
+What AAC does with it (built): voice activity → speech segments → speech to text (a
+speech model from Models, see [model-provider.md](model-provider.md), or an HA STT engine) →
+transcript line `{time, source, name, text, addressed, language, confidence}` → when addressed, the master
 answers and the answer is spoken on the same source. Voice runs are anonymous (no
 setup tools) until there is speaker ID.
 

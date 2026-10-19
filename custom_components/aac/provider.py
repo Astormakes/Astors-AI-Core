@@ -3,11 +3,12 @@
 Works with llama.cpp (llama-server), Ollama, vLLM, LM Studio and most cloud
 APIs that speak the OpenAI chat completions format. This is the first
 "model provider" from the framework design; more can be added later behind
-the same small interface (list_models, chat).
+the same small interface (list_models, chat, embed, transcribe).
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import aiohttp
@@ -23,6 +24,10 @@ class ProviderConnectionError(ProviderError):
 
 class ProviderAuthError(ProviderError):
     """The server rejected the API key."""
+
+
+class ProviderNotFoundError(ProviderError):
+    """The server has no such endpoint (e.g. a speech server without /models)."""
 
 
 class OpenAICompatProvider:
@@ -42,18 +47,21 @@ class OpenAICompatProvider:
         self._timeout = aiohttp.ClientTimeout(total=timeout)
 
     async def _request(
-        self, method: str, path: str, json: dict[str, Any] | None = None, timeout=None
+        self, method: str, path: str, json: dict[str, Any] | None = None, timeout=None, data=None
     ) -> dict[str, Any]:
         try:
             async with self._session.request(
                 method,
                 f"{self._base_url}{path}",
                 json=json,
+                data=data,
                 headers=self._headers,
                 timeout=timeout or self._timeout,
             ) as resp:
                 if resp.status in (401, 403):
                     raise ProviderAuthError(await resp.text())
+                if resp.status == 404:
+                    raise ProviderNotFoundError(f"HTTP 404: {path}")
                 if resp.status >= 400:
                     raise ProviderError(f"HTTP {resp.status}: {await resp.text()}")
                 return await resp.json(content_type=None)
@@ -68,6 +76,51 @@ class OpenAICompatProvider:
             "GET", "/models", timeout=aiohttp.ClientTimeout(total=10)
         )
         return [m["id"] for m in data.get("data", []) if "id" in m]
+
+    async def transcribe(
+        self, model: str, wav: bytes, language: str | None = None
+    ) -> dict[str, Any]:
+        """Speech to text (OpenAI /audio/transcriptions, verbose_json when the server has it).
+
+        Returns {"text", "language", "confidence" (0..1 or None), "words" ([{word, start, end}])}.
+        Without a language the server detects it (multilingual models: German and English alike).
+        """
+        def form(verbose: bool) -> aiohttp.FormData:
+            fd = aiohttp.FormData()
+            fd.add_field("file", wav, filename="speech.wav", content_type="audio/wav")
+            fd.add_field("model", model)
+            fd.add_field("response_format", "verbose_json" if verbose else "json")
+            if verbose:
+                fd.add_field("timestamp_granularities[]", "word")
+                fd.add_field("timestamp_granularities[]", "segment")
+            if language:
+                fd.add_field("language", language)
+            return fd
+
+        try:
+            data = await self._request("POST", "/audio/transcriptions", data=form(True))
+        except ProviderAuthError:
+            raise
+        except ProviderConnectionError:
+            raise
+        except ProviderError:  # some servers only know plain json
+            data = await self._request("POST", "/audio/transcriptions", data=form(False))
+        if not isinstance(data, dict) or "text" not in data:
+            raise ProviderError(f"Unexpected response: {str(data)[:200]}")
+        segments = data.get("segments") or []
+        logprobs = [s["avg_logprob"] for s in segments if isinstance(s, dict) and "avg_logprob" in s]
+        confidence = None
+        if logprobs:
+            confidence = round(math.exp(sum(logprobs) / len(logprobs)), 3)
+        return {
+            "text": str(data["text"]).strip(),
+            "language": data.get("language"),
+            "confidence": confidence,
+            "words": [
+                {"word": w.get("word", ""), "start": w.get("start"), "end": w.get("end")}
+                for w in data.get("words") or [] if isinstance(w, dict)
+            ],
+        }
 
     async def embed(self, model: str, texts: list[str]) -> list[list[float]]:
         """Embedding vectors for texts (OpenAI /embeddings)."""

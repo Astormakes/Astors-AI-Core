@@ -10,9 +10,22 @@ How AAC talks to a model. Today one implementation: any OpenAI-compatible server
 | `list_models()` | `GET /v1/models` | finding models, online check |
 | `chat(model, messages, tools?, **params)` | `POST /v1/chat/completions` | agents |
 | `embed(model, texts)` | `POST /v1/embeddings` | memory |
+| `transcribe(model, wav, language?)` | `POST /v1/audio/transcriptions` (multipart, `verbose_json` with word timestamps, falls back to `json`) | audio pipeline |
+
+`transcribe` returns `{"text", "language", "confidence", "words": [{word, start, end}]}`;
+`confidence` = exp(mean `avg_logprob`) when the server gives segments, else null. Without
+`language` a multilingual model detects it per sentence. Tested servers: whisper.cpp
+(`whisper-server --inference-path /v1/audio/transcriptions`); faster-whisper servers
+(speaches) speak the same API.
+
+**Roles** are just model ids in settings, so every role is interchangeable and can be
+set in the panel or by AAC in a chat (`use_model`): master (chat), memory (embeddings),
+speech (speech to text; HA STT engines are the other choice). Model kind is guessed from
+the name for the pickers (`whisper|parakeet|…` = speech, `embed|bge|…` = embedding).
 
 Errors: `ProviderConnectionError` (unreachable/timeout), `ProviderAuthError` (401/403),
-`ProviderError` (anything else). Extra params passed through: `temperature`,
+`ProviderNotFoundError` (404, e.g. a speech server without `/v1/models`: it then counts
+as online and its model name is typed by hand), `ProviderError` (anything else). Extra params passed through: `temperature`,
 `max_tokens`, `response_format`, `chat_template_kwargs`.
 
 ## Model entry (built)

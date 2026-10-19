@@ -13,6 +13,8 @@ HA TTS engine to the same source.
 from __future__ import annotations
 
 from array import array
+import io
+import wave
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -23,9 +25,12 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.components import stt, tts
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from .const import LOGGER
+from .models import resolve_model
+from .provider import OpenAICompatProvider, ProviderError
 from .runs import async_notify
 
 if TYPE_CHECKING:
@@ -54,6 +59,17 @@ _HALLUCINATIONS = re.compile(
     r"subtitles by.*|\[.*\]|\(.*\))\W*$",
     re.IGNORECASE,
 )
+
+
+def pcm_to_wav(pcm: bytes) -> bytes:
+    """16 kHz mono 16-bit PCM as a WAV file."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(SAMPLE_RATE)
+        wav.writeframes(pcm)
+    return buf.getvalue()
 
 
 def _norm(text: str) -> str:
@@ -213,11 +229,13 @@ class AudioHub:
         return any(f" {_norm(name)} " in said for name in cfg["names"] if _norm(name))
 
     async def _async_segment(self, source: Source, pcm: bytes) -> None:
-        text = (await self.async_stt(pcm) or "").strip()
+        heard = await self.async_stt(pcm)
+        text = (heard or {}).get("text", "").strip()
         if not text or _HALLUCINATIONS.match(text):
             return
         line = {"time": dt_util.utcnow().isoformat(), "source": source.id, "name": source.name,
-                "text": text, "addressed": self.addressed(source, text)}
+                "text": text, "addressed": self.addressed(source, text),
+                "language": heard.get("language"), "confidence": heard.get("confidence")}
         self.transcript.append(line)
         async_notify(self.hass, "audio")
         if line["addressed"]:
@@ -248,8 +266,13 @@ class AudioHub:
                 return lang
         return supported[0] if supported else wanted
 
-    async def async_stt(self, pcm: bytes) -> str | None:
-        """Speech to text with the chosen HA engine."""
+    async def async_stt(self, pcm: bytes) -> dict[str, Any] | None:
+        """Speech to text: a model from Models (any OpenAI-compatible server) or an HA engine.
+
+        Returns {"text", "language", "confidence", "words"} (HA engines give only the text)."""
+        engine = self.engine("stt")
+        if engine and not engine.startswith("stt."):
+            return await self._async_stt_model(engine, pcm)
         if (entity := self._stt_entity()) is None:
             LOGGER.warning("AAC audio: no speech-to-text engine")
             return None
@@ -271,7 +294,24 @@ class AudioHub:
         except Exception as err:  # noqa: BLE001 - one bad segment must not stop the hub
             LOGGER.warning("AAC audio: speech-to-text failed: %s", err)
             return None
-        return result.text if result.result == stt.SpeechResultState.SUCCESS else None
+        if result.result != stt.SpeechResultState.SUCCESS:
+            return None
+        return {"text": result.text or "", "language": metadata.language, "confidence": None, "words": []}
+
+    async def _async_stt_model(self, model_id: str, pcm: bytes) -> dict[str, Any] | None:
+        store = self.entry.runtime_data.store
+        if (endpoint := resolve_model(self.hass, store, model_id)) is None:
+            LOGGER.warning("AAC audio: speech model %s is gone", model_id)
+            return None
+        provider = OpenAICompatProvider(
+            async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key, timeout=60
+        )
+        try:
+            # No language = the model detects it per sentence (German and English alike)
+            return await provider.transcribe(endpoint.model, pcm_to_wav(pcm), store.audio["language"] or None)
+        except ProviderError as err:
+            LOGGER.warning("AAC audio: speech-to-text failed: %s", err)
+            return None
 
     # ------------------------------------------------------------ speaking
     async def async_tts(self, text: str) -> bytes | None:

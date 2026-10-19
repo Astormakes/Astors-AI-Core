@@ -1003,9 +1003,9 @@ class AacPanel extends HTMLElement {
             <div><label for="au-follow">Follow-up without name (s)</label><input id="au-follow" type="number" min="0" max="120" value="${esc(set.follow_up ?? 10)}" inputmode="numeric"></div>
             <div><label for="au-lang">Language (empty = HA's)</label><input id="au-lang" value="${esc(set.language || "")}" placeholder="en, de, …"></div>
           </div>
-          <label for="au-stt">Speech to text</label><select id="au-stt">${opt(eng.stt_options, set.stt, eng.stt)}</select>
+          <label for="au-stt">Speech to text</label><select id="au-stt">${opt(eng.stt_options, set.stt, eng.stt)}${this._speechModelOptions(set.stt)}</select>
           <label for="au-tts">Voice (text to speech)</label><select id="au-tts">${opt(eng.tts_options, set.tts, eng.tts)}</select>
-          <p class="hint">HA's speech engines are used as tools; HA's own voice assistants stay as they are. "Local first" prefers engines running in your home (Wyoming: faster-whisper, Piper) over cloud ones.</p>
+          <p class="hint">Speech to text: any speech model from Models (e.g. a multilingual whisper on an OpenAI-compatible server; without a language it detects German, English, … per sentence), or one of HA's engines. HA's own voice assistants stay as they are. "Local first" prefers engines running in your home over cloud ones.</p>
           <div class="actions"><button class="btn primary" id="au-save">Save</button></div>
           ${this._flashHtml()}
         </div>
@@ -1014,6 +1014,15 @@ class AacPanel extends HTMLElement {
           <div class="flow">${flow}</div>
         </div>
       </div>`);
+  }
+
+  _speechModelOptions(chosen) {
+    const m = this._models || {};
+    const all = [...(m.manual || []).map((x) => ({ id: x.id, label: `${x.name} (${x.model})`, model: x.model })),
+      ...(m.auto || []).flatMap((srv) => (srv.models || []).map((x) => ({ id: x.id, label: `${srv.label}: ${x.model}`, model: x.model })))];
+    const speech = all.filter((x) => /whisper|large-v\d|parakeet|canary|voxtral|moonshine|speech|stt|asr/i.test(x.model) || x.id === chosen);
+    if (!speech.length) return "";
+    return `<optgroup label="Models">${speech.map((x) => `<option value="${esc(x.id)}" ${chosen === x.id ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</optgroup>`;
   }
 
   _liveSources(list) {
@@ -1281,9 +1290,9 @@ class AacPanel extends HTMLElement {
       if (f.id) data.model_id = f.id;
       const r = await this._ws("aac/server/models", data);
       f.models = r.models;
-      if (!f.models.includes(f.model)) f.model = f.models[0] || "";
+      if (!r.unlisted && !f.models.includes(f.model)) f.model = f.models[0] || "";
       if (!f.name) f.name = f.model;
-      f.msg = { ok: true, text: `Online · ${r.models.length} model(s)` };
+      f.msg = { ok: true, text: r.unlisted ? "Online · it cannot list its models, type the model name" : `Online · ${r.models.length} model(s)` };
     } catch (e) {
       f.msg = { ok: false, text: e.message || String(e) };
     }
