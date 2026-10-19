@@ -26,6 +26,7 @@ from .provider import ProviderError, ProviderNotFoundError
 from .runs import current_run
 from .status import setup_steps
 from .pools import async_set_role, is_entity
+from .schedule_api import parse_weekdays
 
 if TYPE_CHECKING:
     from .domains import Domain
@@ -103,6 +104,14 @@ class SetupStatusTool(_SetupTool):
                     for name, role in _ROLE_NAMES.items()
                 },
                 "requests_now": data.broker.status()["by_tier"],
+                "availability_rules": {r: data.broker.rule(r) for r in data.broker.candidates("master") if data.broker.rule(r)},
+                "presence_entities": [
+                    {"entity_id": st.entity_id, "name": st.attributes.get("friendly_name", st.entity_id),
+                     "kind": "zone" if st.domain == "zone" else "person" if st.domain == "person"
+                     else f"tracker ({st.attributes.get('source_type', 'unknown source')})",
+                     "state": st.state}
+                    for st in hass.states.async_all(("person", "device_tracker", "zone"))
+                ],
                 "heartbeat": {k: hb[k] for k in ("enabled", "interval", "quiet_start", "quiet_end")},
                 "triggers": len(store.triggers),
                 "audio": {
@@ -243,6 +252,66 @@ class TagModelTool(_SetupTool):
         return llm.ToolResult(data={"traits": broker.traits(args["model_id"]), "by_tier": broker.status()["by_tier"]})
 
 
+_CONDITION = probatio.Any(
+    probatio.Schema({probatio.Required("type"): "state", probatio.Required("entity_id"): str,
+                     probatio.Required("state"): probatio.Any(str, [str])}),
+    probatio.Schema({probatio.Required("type"): "time", probatio.Optional("after"): str, probatio.Optional("before"): str,
+                     probatio.Optional("weekdays"): [probatio.Any(str, int)]}),
+)
+
+
+class AvailabilityTool(_SetupTool):
+    """The owner's rule for when a model may be used."""
+
+    name = "set_availability"
+    title = "Set availability"
+    description = (
+        "Write down the OWNER's rule for when a model may be used, e.g. 'use my PC for heavy stuff only while "
+        "I am at work'. Only when the owner said so. Conditions (all must hold): a state condition on an "
+        "entity that tracks the OWNER (a person entity, or their phone; never a computer or another device), "
+        "where 'away/at work' = not_home or a work zone; and/or a time window (after/before HH:MM, weekdays). "
+        "setup_status lists presence entities with name, kind and state. If none tracks the owner reliably "
+        "(state unknown or unavailable), do not guess: propose a time window and ask the owner first. "
+        "applies_to 'background' (default) limits only automatic jobs, 'all' also the owner's chats. "
+        "clear=true removes the rule. Afterwards say plainly what the rule depends on."
+    )
+    annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
+    parameters = probatio.Schema(
+        {
+            probatio.Required("model_id"): str,
+            probatio.Optional("conditions"): [_CONDITION],
+            probatio.Optional("applies_to"): probatio.In(["background", "all"]),
+            probatio.Optional("note", description="The owner's words, e.g. 'only while I am at work'."): str,
+            probatio.Optional("clear"): bool,
+        }
+    )
+
+    async def _async_run(self, hass, args):
+        broker = self._entry.runtime_data.broker
+        resource = args["model_id"]
+        if resolve_model(hass, self._entry.runtime_data.store, resource) is None:
+            return llm.ToolResult(data={"error": "Unknown model id; use list_models."}, error=True)
+        if args.get("clear"):
+            await broker.async_set_rule(resource, None)
+            return llm.ToolResult(data={"cleared": resource})
+        conditions = []
+        for cond in args.get("conditions") or []:
+            if cond["type"] == "state":
+                if hass.states.get(cond["entity_id"]) is None:
+                    return llm.ToolResult(data={"error": f"{cond['entity_id']} does not exist."}, error=True)
+                conditions.append(dict(cond))
+            else:
+                for key in ("after", "before"):
+                    if key in cond and not _TIME_RE.match(cond[key]):
+                        return llm.ToolResult(data={"error": f"{key} must be HH:MM"}, error=True)
+                conditions.append({**cond, "weekdays": parse_weekdays(cond.get("weekdays"))})
+        if not conditions:
+            return llm.ToolResult(data={"error": "Give at least one condition (or clear=true)."}, error=True)
+        rule = {"applies_to": args.get("applies_to", "background"), "when": conditions, "note": args.get("note", "")}
+        await broker.async_set_rule(resource, rule)
+        return llm.ToolResult(data={"rule": rule, "allowed_for_background_jobs_now": broker.usable(resource, True)})
+
+
 class MeasureModelsTool(_SetupTool):
     """Measure speeds."""
 
@@ -369,7 +438,7 @@ class AACSetupAPI(llm.API):
 
     async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
         """Tools + prompt."""
-        tools = [SetupStatusTool, ListModelsTool, AddModelTool, UseModelTool, TagModelTool, MeasureModelsTool, HeartbeatTool, AudioTool, SpeakTestTool, SkipStepTool]
+        tools = [SetupStatusTool, ListModelsTool, AddModelTool, UseModelTool, TagModelTool, AvailabilityTool, MeasureModelsTool, HeartbeatTool, AudioTool, SpeakTestTool, SkipStepTool]
         return llm.APIInstance(
             api=self,
             api_prompt=API_PROMPT,

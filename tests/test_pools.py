@@ -120,3 +120,46 @@ async def test_speed_is_measured_from_calls(hass: HomeAssistant, hass_ws_client,
     run = mock_entry.runtime_data.runs.get(run_id)
     assert run.tier == "fast" and run.model == MODEL_CFG["id"]
     assert mock_entry.runtime_data.broker.traits(MODEL_CFG["id"])["speed"] == 42.0
+
+
+async def test_availability_rule_for_background_jobs(hass: HomeAssistant, hass_ws_client, hass_storage, aioclient_mock, mock_entry, configured, freezer):
+    """'Use my PC only while I'm at work': background jobs follow the rule, the owner's chats don't."""
+    await hass.config.async_set_time_zone("UTC")
+    freezer.move_to("2026-10-20 10:00:00+00:00")  # a Tuesday
+    _with_pc(hass_storage)
+    await setup_aac(hass, mock_entry)
+    broker = mock_entry.runtime_data.broker
+    hass.states.async_set("person.owner", "home")
+    await broker.async_set_rule(PC["id"], {"applies_to": "background", "note": "only while I am at work", "when": [
+        {"type": "state", "entity_id": "person.owner", "state": ["not_home", "work"]},
+        {"type": "time", "after": "08:00", "before": "17:00", "weekdays": [0, 1, 2, 3, 4]}]})
+    assert broker.pick("master") == PC["id"]  # the owner's chat may still use the PC
+    assert broker.pick("master", background=True) == MODEL_CFG["id"]  # the heartbeat may not
+    hass.states.async_set("person.owner", "not_home")
+    assert broker.pick("master", background=True) == PC["id"]
+    freezer.move_to("2026-10-20 18:30:00+00:00")
+    assert broker.pick("master", background=True) == MODEL_CFG["id"]  # after work hours
+    hass.states.async_set("person.owner", "unknown")
+    freezer.move_to("2026-10-20 10:00:00+00:00")
+    assert broker.pick("master", background=True) == MODEL_CFG["id"]  # presence not working = not met
+    assert broker.status()["roles"]["master"]["items"][0]["rule"]["note"] == "only while I am at work"
+
+
+async def test_setup_tool_writes_the_rule(hass: HomeAssistant, hass_ws_client, hass_storage, aioclient_mock, mock_entry, configured):
+    """AAC turns the owner's words into a rule; unknown entities are refused."""
+    _with_pc(hass_storage)
+    await setup_aac(hass, mock_entry)
+    hass.states.async_set("device_tracker.phone", "home")
+    aioclient_mock.post("http://pc.test/v1/chat/completions", exc=aiohttp.ClientConnectionError("off"))
+    rule = ('{"model_id": "m_pc000001", "note": "while I am at work", "conditions": ['
+            '{"type": "state", "entity_id": "device_tracker.phone", "state": "not_home"},'
+            '{"type": "time", "after": "08:00", "before": "17:00", "weekdays": ["weekdays"]}]}')
+    _queue(aioclient_mock,
+           _tool_reply("aac-setup__set_availability", rule.replace("device_tracker.phone", "person.nobody")), _text("?"),
+           _tool_reply("aac-setup__set_availability", rule), _text("Set."))
+    ws = await hass_ws_client(hass)
+    first = await _chat(ws, "Use my PC for heavy stuff only while I am at work.")
+    assert next(s for s in first["steps"] if s["type"] == "tool_result")["error"]
+    await _chat(ws, "Use the phone tracker.")
+    saved = mock_entry.runtime_data.broker.rule(PC["id"])
+    assert saved["applies_to"] == "background" and saved["when"][1]["weekdays"] == [0, 1, 2, 3, 4]

@@ -253,7 +253,8 @@ class AACConversationEntity(
         options = store.master
         run = current_run.get()
         tier = run.tier if run else "master"
-        picked = broker.endpoint_for(tier)
+        background = bool(run and run.kind == "auto")  # owner's availability rules apply
+        picked = broker.endpoint_for(tier, background)
         if picked is None:
             response = intent.IntentResponse(language=user_input.language)
             response.async_set_error(
@@ -348,7 +349,7 @@ class AACConversationEntity(
                 except ProviderConnectionError as err:
                     # Its machine did not answer (e.g. a PC that is off): next in the pool
                     broker.mark_down(model_id, str(err))
-                    if (picked := broker.endpoint_for(tier)) is None:
+                    if (picked := broker.endpoint_for(tier, background)) is None:
                         raise HomeAssistantError(f"No master model reachable: {err}") from err
                     LOGGER.info("Master model %s unreachable, using %s", model_id, picked[0])
                     if run:

@@ -1027,6 +1027,11 @@ class AacPanel extends HTMLElement {
     return `<div class="src" style="margin:.2em 0 .6em"><div style="flex:1">${state}</div><button class="btn" data-go="settings/pools">Pools</button></div>`;
   }
 
+  _ruleText(rule) {
+    return (rule.when || []).map((c) => c.type === "state" ? `${this._resourceLabel(c.entity_id)} is ${[].concat(c.state).join(" or ")}`
+      : `${c.after || "00:00"}–${c.before || "24:00"}${c.weekdays?.length ? " " + c.weekdays.map((d) => WEEKDAYS[d]).join(" ") : ""}`).join(" and ");
+  }
+
   _tierOptions(chosen) {
     const p = this._state?.pools;
     const tiers = { ...(p?.tiers || { master: "", fast: "", smart: "", small: "" }) };
@@ -1066,6 +1071,7 @@ class AacPanel extends HTMLElement {
           <span class="dot ${it.state === "ok" ? "ok" : it.state === "down" ? "bad" : "open"}"></span>
           <div style="flex:1;min-width:0"><div class="n">${i + 1}. ${esc(this._resourceLabel(it.id))} ${it.active ? '<span class="tag ok">IN USE</span>' : ""}</div>
             <div class="m">${esc(stateText[it.state] || it.state)}${it.error ? ` · ${esc(it.error)}` : ""}${it.traits ? ` · ${it.traits.speed ? `${esc(it.traits.speed)} tok/s` : "speed unknown"}${it.traits.params_b ? ` · ${esc(it.traits.params_b)}B` : ""}` : ""}</div>
+            ${it.rule ? `<div class="m">rule: ${esc(it.rule.note || this._ruleText(it.rule))} · ${it.rule.applies_to === "all" ? "everything" : "background jobs"} · ${it.background_now ? "allowed now" : "not now"} <button class="btn" style="padding:.1em .6em" data-pool-rule-clear="${esc(it.id)}">Remove rule</button></div>` : ""}
             ${it.tags?.length ? `<div class="m">${it.tags.map((t) => `<span class="tag ${["fast", "smart", "small"].includes(t) ? "aac" : "ok"}">${esc(t.toUpperCase())}</span>`).join(" ")}</div>` : ""}</div>
           <span class="actions" style="margin:0">
             ${i > 0 ? `<button class="icon-btn" data-pool-up="${esc(id)}|${i}" title="Up">↑</button>` : ""}
@@ -1083,7 +1089,7 @@ class AacPanel extends HTMLElement {
     const pool = (name) => {
       const roles = Object.keys(p.roles).filter((r) => p.roles[r].pool === name);
       const extra = name !== "thinking" ? "" : `<div class="role"><h3>Requests</h3>
-        <p class="hint">Events and agents can ask for a kind of model instead of a fixed one, chosen among the master's models that answer right now. fast = measured speed, smart = biggest, small = smallest, plus your own tags (e.g. efficient for energy-saving hardware).</p>
+        <p class="hint">Rules for when a model may be used (e.g. "my PC only while I am at work") are yours: tell AAC in a chat and it writes them down. Events and agents can ask for a kind of model instead of a fixed one, chosen among the master's models that answer right now. fast = measured speed, smart = biggest, small = smallest, plus your own tags (e.g. efficient for energy-saving hardware).</p>
         <div class="kv">${Object.entries(p.by_tier || {}).map(([t, r]) => `<span class="k">${esc(t)}</span><span class="v">${r ? esc(this._resourceLabel(r)) : "—"}</span>`).join("")}</div>
         <div class="actions"><button class="btn" id="pool-measure">Measure speed</button></div></div>`;
       return `<div class="card"><h2>${esc(name.toUpperCase())}</h2><p>${esc(p.pools[name])}</p>${roles.map(role).join("") || '<p class="hint">Nothing here yet.</p>'}${extra}</div>`;
@@ -1350,6 +1356,11 @@ class AacPanel extends HTMLElement {
       const text = prompt("Your own tags for this model, comma separated (e.g. efficient):", now);
       if (text === null) return;
       const pools = await this._ws("aac/pool/tags", { resource: id, tags: text.split(",").map((t) => t.trim()).filter(Boolean) });
+      if (this._state) this._state.pools = pools;
+      this._render();
+    }));
+    sr.querySelectorAll("[data-pool-rule-clear]").forEach((el) => el.addEventListener("click", async () => {
+      const pools = await this._ws("aac/pool/rule", { resource: el.dataset.poolRuleClear, rule: null });
       if (this._state) this._state.pools = pools;
       this._render();
     }));

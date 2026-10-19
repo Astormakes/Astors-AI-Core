@@ -88,6 +88,21 @@ gate (a fast model decides whether the smart one is needed), research and curato
 
 Measured on the real setup: Qwen3-8B on 2× K2200 6.1 tok/s, Qwen3.6-35B on the RTX 5070 Ti 86 tok/s.
 
+### Availability rules (built, v0.16.0)
+
+The owner's rule for when a model may be used, stored with its traits:
+`{"applies_to": "background" | "all", "when": [conditions], "note": "the owner's words"}`.
+Conditions (all must hold): `{"type": "state", "entity_id", "state": str | [str]}` (unknown or
+unavailable = not met) and `{"type": "time", "after", "before", "weekdays"}` (may wrap midnight).
+`background` rules limit only automatic runs (heartbeat, triggers, later research); the owner's
+chats may always use the model. Set by the owner: in a chat AAC turns their words into a rule
+(setup tool `set_availability`, owner present only; it must not guess a presence entity and asks
+when none tracks the owner), or `aac/pool/rule`. Agents can never set rules on their own.
+
+Real test (35B): "use my PC for heavy background stuff, but only while I'm at work" → it saw both
+trackers report "unknown", asked, and from "Monday to Friday, roughly 7 to 16" set a weekday
+07:00–16:00 background rule. Before the tool text was sharpened it picked a computer's tracker.
+
 ## Broker request (planned)
 
 Agents never grab hardware; they ask the broker:

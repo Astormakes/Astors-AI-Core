@@ -15,6 +15,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .models import Endpoint, resolve_model
 from .runs import async_notify
@@ -84,24 +85,26 @@ class Broker:
         """The owner's ordered list for a role."""
         return list(self.store.pools.get(role, []))
 
-    def usable(self, resource: str) -> bool:
-        """Known and not marked down."""
+    def usable(self, resource: str, background: bool = False) -> bool:
+        """Known, not marked down, and allowed by the owner's availability rule right now."""
         if (down := self._down.get(resource)) and down["until"] > time.monotonic():
+            return False
+        if not self.allowed(resource, background):
             return False
         if is_entity(resource):
             return self.hass.states.get(resource) is not None
         return resolve_model(self.hass, self.store, resource) is not None
 
-    def pick(self, role: str) -> str | None:
+    def pick(self, role: str, background: bool = False) -> str | None:
         """The first usable resource of a role (memory: only the first, it never switches models)."""
         items = self.candidates(role)
         if ROLES.get(role, {}).get("single"):
             items = items[:1]
-        return next((r for r in items if self.usable(r)), None)
+        return next((r for r in items if self.usable(r, background)), None)
 
-    def endpoint(self, role: str) -> tuple[str, Endpoint] | None:
+    def endpoint(self, role: str, background: bool = False) -> tuple[str, Endpoint] | None:
         """The first usable model of a role, resolved."""
-        if (resource := self.pick(role)) is None or is_entity(resource):
+        if (resource := self.pick(role, background)) is None or is_entity(resource):
             return None
         endpoint = resolve_model(self.hass, self.store, resource)
         return (resource, endpoint) if endpoint else None
@@ -129,6 +132,45 @@ class Broker:
     def forget(self, resource: str) -> None:
         """Drop a resource from every role (e.g. a deleted model)."""
         self._down.pop(resource, None)
+
+    # ------------------------------------------------------------ availability rules
+    def rule(self, resource: str) -> dict[str, Any] | None:
+        """The owner's availability rule of a resource (None = always)."""
+        return self.store.data["traits"].get(resource, {}).get("rule")
+
+    def allowed(self, resource: str, background: bool = False) -> bool:
+        """Does the owner's rule allow using it now? A rule for background jobs never blocks
+        the owner's own chats; an entity that is unknown or unavailable counts as not met."""
+        if not (rule := self.rule(resource)):
+            return True
+        if rule.get("applies_to", "background") == "background" and not background:
+            return True
+        return all(self._condition(c) for c in rule.get("when", []))
+
+    def _condition(self, cond: dict[str, Any]) -> bool:
+        if cond.get("type") == "state":
+            state = self.hass.states.get(cond.get("entity_id", ""))
+            wanted = cond.get("state")
+            wanted = wanted if isinstance(wanted, list) else [wanted]
+            return state is not None and state.state not in ("unknown", "unavailable") and state.state in wanted
+        if cond.get("type") == "time":
+            now = dt_util.now()
+            if (days := cond.get("weekdays")) and now.weekday() not in days:
+                return False
+            hm = now.strftime("%H:%M")
+            after, before = cond.get("after", "00:00"), cond.get("before", "24:00")
+            return after <= hm < before if after <= before else (hm >= after or hm < before)
+        return False
+
+    async def async_set_rule(self, resource: str, rule: dict[str, Any] | None) -> None:
+        """Set or clear an availability rule (the owner's decision; AAC writes it only for them)."""
+        entry = self._traits_entry(resource)
+        if rule:
+            entry["rule"] = rule
+        else:
+            entry.pop("rule", None)
+        await self.store.async_save()
+        async_notify(self.hass, "pools")
 
     # ------------------------------------------------------------ traits
     def traits(self, resource: str) -> dict[str, Any]:
@@ -203,9 +245,9 @@ class Broker:
         self.record_speed(resource, speed)
         return speed
 
-    def derived_tags(self, only_usable: bool = True) -> dict[str, list[str]]:
-        """fast / smart / small among the master role's models, plus the owner's tags."""
-        models = [r for r in self.candidates("master") if not is_entity(r) and (self.usable(r) or not only_usable)]
+    def derived_tags(self, background: bool = False) -> dict[str, list[str]]:
+        """fast / smart / small among the master role's usable models, plus the owner's tags."""
+        models = [r for r in self.candidates("master") if not is_entity(r) and self.usable(r, background)]
         tags = {r: list(self.traits(r)["tags"]) for r in models}
         timed = [r for r in models if self.traits(r)["speed"]]
         sized = [r for r in models if self.traits(r)["params_b"]]
@@ -217,21 +259,22 @@ class Broker:
                 tags[min(sized, key=lambda r: self.traits(r)["params_b"])].append("small")
         return tags
 
-    def pick_tier(self, tier: str) -> str | None:
+    def pick_tier(self, tier: str, background: bool = False) -> str | None:
         """A model for a request: master = the owner's order; fast/smart/small/own tag = among the
-        reachable master models; nothing fits → the master's first reachable."""
+        usable master models; nothing fits → the master's first usable. Background jobs also
+        respect the owner's availability rules."""
         if tier and tier != "master":
-            for resource, tags in self.derived_tags().items():
+            for resource, tags in self.derived_tags(background).items():
                 if tier in tags:
                     return resource
-            tagged = [r for r in self.candidates("master") if tier in self.traits(r)["tags"] and self.usable(r)]
+            tagged = [r for r in self.candidates("master") if tier in self.traits(r)["tags"] and self.usable(r, background)]
             if tagged:
                 return tagged[0]
-        return self.pick("master")
+        return self.pick("master", background)
 
-    def endpoint_for(self, tier: str) -> tuple[str, Endpoint] | None:
+    def endpoint_for(self, tier: str, background: bool = False) -> tuple[str, Endpoint] | None:
         """pick_tier, resolved."""
-        if (resource := self.pick_tier(tier)) is None:
+        if (resource := self.pick_tier(tier, background)) is None:
             return None
         endpoint = resolve_model(self.hass, self.store, resource)
         return (resource, endpoint) if endpoint else None
@@ -254,12 +297,14 @@ class Broker:
                 item = {"id": resource, "state": state, "active": resource == active,
                         "error": down["error"] if down and state == "down" else None}
                 if role == "master":
-                    item |= {"traits": self.traits(resource), "tags": derived.get(resource, [])}
+                    item |= {"traits": self.traits(resource), "tags": derived.get(resource, []),
+                             "rule": self.rule(resource), "background_now": self.usable(resource, True)}
                 items.append(item)
             roles[role] = {**meta, "items": items, "active": active,
                            "fallback": bool(items) and active != items[0]["id"]}
         return {"pools": POOLS, "roles": roles, "tiers": TIERS,
-                "by_tier": {tier: self.pick_tier(tier) for tier in TIERS}}
+                "by_tier": {tier: self.pick_tier(tier) for tier in TIERS},
+                "by_tier_background": {tier: self.pick_tier(tier, True) for tier in TIERS}}
 
 
 async def async_set_role(hass: HomeAssistant, entry: AACConfigEntry, role: str, items: list[str]) -> None:

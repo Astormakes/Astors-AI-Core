@@ -73,6 +73,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_pool_set,
         ws_pool_tags,
         ws_pool_measure,
+        ws_pool_rule,
         ws_memory_reembed,
         ws_charter,
         ws_autonomy,
@@ -724,6 +725,18 @@ async def ws_pool_tags(hass: HomeAssistant, connection, msg) -> None:
     """The owner's own tags for a model (e.g. efficient)."""
     if entry := _entry(hass, connection, msg):
         await entry.runtime_data.broker.async_set_tags(msg["resource"], msg["tags"])
+        connection.send_result(msg["id"], entry.runtime_data.broker.status())
+
+
+@aac_command({vol.Required("type"): "aac/pool/rule", vol.Required("resource"): str,
+              vol.Required("rule"): vol.Any(None, {vol.Optional("applies_to", default="background"): vol.In(["background", "all"]),
+                                                    vol.Required("when"): [dict], vol.Optional("note", default=""): str})})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_pool_rule(hass: HomeAssistant, connection, msg) -> None:
+    """Set or clear a model's availability rule (None = always usable)."""
+    if entry := _entry(hass, connection, msg):
+        await entry.runtime_data.broker.async_set_rule(msg["resource"], msg["rule"])
         connection.send_result(msg["id"], entry.runtime_data.broker.status())
 
 
