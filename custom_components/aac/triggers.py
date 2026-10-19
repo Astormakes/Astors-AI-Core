@@ -1,4 +1,4 @@
-"""What wakes the master on its own: the heartbeat and event triggers.
+"""What wakes the master on its own: the heartbeat and triggers (spec/trigger.md).
 
 Automatic runs show up under WORKERS → AUTO. When the master has something
 to say it lands in the "From AAC" chat; otherwise it answers NOTHING and
@@ -11,7 +11,11 @@ from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING
 
 from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, callback
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_change,
+    async_track_time_interval,
+)
 from homeassistant.util import dt as dt_util
 
 from .chats import AAC_CHAT_ID
@@ -74,13 +78,25 @@ class TriggerEngine:
                     name="AAC heartbeat",
                 )
             )
+        active = [t for t in self._store.triggers if t.get("enabled")]
         entity_ids = sorted(
-            {t["entity_id"] for t in self._store.triggers if t.get("enabled") and t.get("entity_id")}
+            {t["when"]["entity_id"] for t in active if t["when"]["type"] == "state" and t["when"].get("entity_id")}
         )
         if entity_ids:
             self._unsubs.append(
                 async_track_state_change_event(self.hass, entity_ids, self._async_state_changed)
             )
+        for trig in active:
+            if trig["when"]["type"] == "time" and (at := _parse(trig["when"].get("at", ""))):
+                self._unsubs.append(
+                    async_track_time_change(
+                        self.hass,
+                        self._time_callback(trig["id"]),
+                        hour=at.hour,
+                        minute=at.minute,
+                        second=0,
+                    )
+                )
 
     @callback
     def async_stop(self) -> None:
@@ -120,39 +136,84 @@ class TriggerEngine:
             allow_tools=bool(hb["tools"]),
         )
 
+    def _may_fire(self, trig: dict) -> bool:
+        """Cooldown, quiet hours, master ready, not already running."""
+        now = dt_util.utcnow()
+        last = self._last_fired.get(trig["id"])
+        if last and now - last < timedelta(seconds=int(trig.get("cooldown") or 0)):
+            return False
+        quiet = trig.get("quiet_hours")
+        if quiet and in_quiet_hours(dt_util.now(), quiet.get("start", ""), quiet.get("end", "")):
+            return False
+        if not self._master_ready() or self._busy(f"event: {trig['id']}"):
+            return False
+        self._last_fired[trig["id"]] = now
+        return True
+
+    def _fire(self, trig: dict, title: str, text: str) -> None:
+        instruction = (trig.get("do") or {}).get("instruction") or "tell me if it matters"
+        if trig["when"]["type"] == "time":
+            # A scheduled trigger usually *is* the message (a reminder); silence only
+            # makes sense for "check whether ..." instructions
+            intro = "A scheduled time the user set up has come; nobody asked you anything else."
+            rule = (
+                "Follow the instruction now. If it asks you to remind or tell the user something, "
+                f"write that message. Only if it asks you to check something and all is fine, answer exactly {SILENT}."
+            )
+        else:
+            intro = "An event woke you; nobody asked you anything."
+            rule = SILENCE_RULE
+        prompt = (
+            f"{intro}\n"
+            "Current state of the home (area | name | state):\n"
+            f"{home_snapshot(self.hass)}\n\n"
+            f"The user's instruction: {instruction}\n"
+            f"{rule}"
+        )
+        self.hass.async_create_background_task(
+            self._async_auto_run(f"event: {trig['id']}", trig.get("name") or title, text, prompt),
+            f"aac trigger {trig['id']}",
+        )
+
     @callback
     def _async_state_changed(self, event: Event[EventStateChangedData]) -> None:
         old, new = event.data["old_state"], event.data["new_state"]
         if new is None or (old is not None and old.state == new.state):
             return  # removed, or only attributes changed
-        now = dt_util.utcnow()
         for trig in self._store.triggers:
-            if not trig.get("enabled") or trig.get("entity_id") != new.entity_id:
+            when = trig["when"]
+            if not trig.get("enabled") or when["type"] != "state" or when.get("entity_id") != new.entity_id:
                 continue
-            if trig.get("to") and new.state != trig["to"]:
+            if when.get("to") and new.state != when["to"]:
                 continue
-            last = self._last_fired.get(trig["id"])
-            if last and now - last < timedelta(seconds=int(trig.get("cooldown") or 0)):
+            if not self._may_fire(trig):
                 continue
-            if not self._master_ready() or self._busy(f"event: {trig['id']}"):
-                continue
-            self._last_fired[trig["id"]] = now
             name = new.attributes.get("friendly_name", new.entity_id)
-            text = (
+            self._fire(
+                trig,
+                name,
                 f"Event: {name} ({new.entity_id}) changed from "
-                f"{old.state if old else 'unknown'} to {new.state}. Does this matter to me right now?"
+                f"{old.state if old else 'unknown'} to {new.state}. Does this matter to me right now?",
             )
-            prompt = (
-                "An event woke you; nobody asked you anything.\n"
-                "Current state of the home (area | name | state):\n"
-                f"{home_snapshot(self.hass)}\n\n"
-                f"The user's instruction for this event: {trig.get('instruction') or 'tell me if it matters'}\n"
-                f"{SILENCE_RULE}"
+
+    def _time_callback(self, trigger_id: str):
+        @callback
+        def fired(now: datetime) -> None:
+            trig = next((t for t in self._store.triggers if t["id"] == trigger_id), None)
+            if trig is None or not trig.get("enabled"):
+                return
+            weekdays = trig["when"].get("weekdays")  # 0 = Monday … 6 = Sunday; empty = every day
+            if weekdays and dt_util.as_local(now).weekday() not in weekdays:
+                return
+            if not self._may_fire(trig):
+                return
+            self._fire(
+                trig,
+                trig.get("name") or "Scheduled",
+                f"It is {trig['when'].get('at')}: time for \"{trig.get('name') or 'your scheduled task'}\".",
             )
-            self.hass.async_create_background_task(
-                self._async_auto_run(f"event: {trig['id']}", trig.get("name") or name, text, prompt),
-                f"aac trigger {trig['id']}",
-            )
+
+        return fired
 
     async def _async_auto_run(
         self, trigger: str, title: str, text: str, prompt: str, allow_tools: bool = True

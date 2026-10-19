@@ -13,13 +13,13 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - Keep docs tidy: design decisions go into `docs/assistant-framework.md`, status goes here, no duplicate notes
 - Version lives in `custom_components/aac/manifest.json` (`version`). Bump it for every release and tag it (`v0.1.0` …) so HACS shows the version
 
-## Current state (2026-10-19) – v0.5.0
+## Current state (2026-10-19) – v0.6.0
 - HACS-installable custom integration `aac` (`custom_components/aac`, `hacs.json`, min HA 2026.10.0), single instance
 - **Everything is configured in the AAC panel** (spec: `docs/design.md`). Config flow is one click; settings in `.storage/aac.config` (`store.py`), chats in `.storage/aac.chats` (`chats.py`), runs in `.storage/aac.runs` (`runs.py`, last 100). Entry v1 (0.1.0) migrates automatically
 - **HA's own AI is never changed** (user decision): no editing of Assist pipelines; HA AI only as optional tools. Other integrations are only read
 - Panel `www/aac-panel.js` (plain web component, no build, offline, responsive phone → 4K TV, keyboard/remote focus, safe areas). Segments: SETUP · WORKERS (chats, From AAC, folded Auto (n) runs) · SETTINGS (master agent, triggers, models, audio pipeline + sources, MCP/memory planned). Live updates via `aac/subscribe`
 - **Master runs** (`master.py`): every master call (chat, heartbeat, event) is a recorded run with context, steps (model text, tool calls, results) and result. `current_run` contextvar lets the conversation entity record steps
-- **Triggers** (`triggers.py`): heartbeat (interval, quiet hours, off by default, optional setup step) and event triggers (entity state change, optional target state, cooldown). Speaking up lands in the "From AAC" chat; silence is the normal case
+- **Triggers** (`triggers.py`, contract format `when`/`do` since 0.6.0, old flat ones migrate): heartbeat (interval, quiet hours, off by default, optional setup step), `state` (entity, optional target state, cooldown), `time` (at, weekdays; reminders: the agent is told to write the message). Per-trigger quiet hours. Speaking up lands in the "From AAC" chat; silence is the normal case
 - **Context recipe** (`context.py`): compact snapshot of exposed entities, binary sensors translated (DETECTED/OPEN/WET…)
 - **Silence**: automatic runs without tools answer a grammar-enforced JSON decision `{"speak", "message"}` (temperature ≤ 0.3); with tools, text + `is_silent()` heuristic. Forced last round without tools. Limits: 10 tool rounds (chat), 4 (auto). Lessons written into the framework doc
 - Models (`models.py`, WS `aac/models`, `aac/model/save|delete`; ids `m_xxxx` manual, `auto|<source>|<model>` auto, source `w:<id>` = a manual model's server): manual ones in the store (`models` key; 0.4.0 stored them as `workers` and the master's as `worker`, migrated on load), auto = models of servers in HA's llama.cpp/Ollama entries + manual servers. Naming rule: **workers = chats/agents, models = brains**
@@ -29,7 +29,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
   - Panel Memory page: settings, stats, remember form, search (words or meaning), unconfirmed filter, confirm/edit/delete
 - Audio pipeline (`audio.py`): AAC's own, planned; panel shows stages + candidate sources
 - WebSocket API (`websocket.py`): state, master, workers (models), chat(s), runs, heartbeat, triggers, audio, subscribe
-- Tests: 37 mocked, 6 live (`-m live`: answer, tool call, heartbeat ×2, smoke alarm must speak, memory round trip; `AAC_LIVE_EMBED_URL/KEY` for embeddings). Both models (8B server, 35B PC) pass the live suite. Real HA: chat with tool calls works, heartbeat on the 8B silent in ~11 s
+- Tests: 39 mocked, 6 live (`-m live`: answer, tool call, heartbeat ×2, smoke alarm must speak, memory round trip; `AAC_LIVE_EMBED_URL/KEY` for embeddings). Both models (8B server, 35B PC) pass the live suite. Real HA: chat with tool calls works, heartbeat on the 8B silent in ~11 s
 
 ## Testing in the real HA
 - No GitHub/HACS round trip needed: `scripts/deploy_ha.sh` copies the working tree over SSH and restarts HA Core (`AAC_HA_SSH`, `AAC_SSH_KEY`; real values in `docs/dev-environment.md`)
@@ -64,5 +64,5 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - User: check the phone again (safe-area fix); try the heartbeat for a day; GitHub release
 - Audio hub: first real source (probably the browser mic or a Wyoming/ESPHome satellite streaming continuously), ring buffer + VAD
 - Contracts first (framework "Rough order" step 0) before memory/context engine
-- Contracts written (`spec/`, 2026-10-19). Bring code closer: general trigger format (`when`/`do`), time triggers, templates as data
+- Contracts written (`spec/`, 2026-10-19); triggers follow the contract now. Next in that direction: templates as data, then declarative modules
 - Memory next: timeline/entities stores, curator (nightly merge/dedupe). **ai_memory stays separate** (user decision 2026-10-19: no import, don't touch it)

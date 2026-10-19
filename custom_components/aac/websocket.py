@@ -377,25 +377,47 @@ async def ws_heartbeat_run(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], {"run_id": run_id})
 
 
+_TIME = vol.Match(r"^\d{1,2}:\d{2}$")
+_WHEN = vol.Any(
+    {
+        vol.Required("type"): "state",
+        vol.Required("entity_id"): vol.All(str, vol.Length(min=3)),
+        vol.Optional("to", default=""): str,
+    },
+    {
+        vol.Required("type"): "time",
+        vol.Required("at"): _TIME,
+        vol.Optional("weekdays", default=[]): [vol.All(int, vol.Range(0, 6))],
+    },
+)
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "aac/trigger/save",
         vol.Optional("trigger_id"): str,
         vol.Required("name"): str,
-        vol.Required("entity_id"): vol.All(str, vol.Length(min=3)),
-        vol.Optional("to", default=""): str,
+        vol.Required("when"): _WHEN,
         vol.Optional("instruction", default=""): str,
         vol.Optional("cooldown", default=300): vol.All(vol.Coerce(int), vol.Range(0, 86400)),
+        vol.Optional("quiet_hours", default=None): vol.Any(None, {vol.Required("start"): _TIME, vol.Required("end"): _TIME}),
         vol.Optional("enabled", default=True): bool,
     }
 )
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_trigger_save(hass: HomeAssistant, connection, msg) -> None:
-    """Add or change an event trigger."""
+    """Add or change a trigger (contract format, spec/trigger.md)."""
     if not (entry := _entry(hass, connection, msg)):
         return
-    trig = {k: msg[k] for k in ("name", "entity_id", "to", "instruction", "cooldown", "enabled")}
+    trig = {
+        "name": msg["name"],
+        "enabled": msg["enabled"],
+        "when": msg["when"],
+        "do": {"template": "event-reaction", "instruction": msg["instruction"]},
+        "cooldown": msg["cooldown"],
+        "quiet_hours": msg["quiet_hours"],
+    }
     if "trigger_id" in msg:
         trig["id"] = msg["trigger_id"]
     saved = await entry.runtime_data.store.async_save_trigger(trig)

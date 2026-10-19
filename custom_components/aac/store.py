@@ -63,13 +63,29 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Small models explore every room with tools; the snapshot is usually enough
         "tools": False,
     },
-    # Event triggers: {id, name, entity_id, to, instruction, cooldown, enabled}
+    # Triggers in the contract format (spec/trigger.md):
+    # {id, name, enabled, when: {type, ...}, do: {template, instruction}, cooldown, quiet_hours}
     "triggers": [],
     # Long-term memory; embed_model = a model id from Models (None: keywords only)
     "memory": {"enabled": True, "embed_model": None},
 }
 
 MASTER_KEYS = set(DEFAULT_CONFIG["master"])
+
+
+def _trigger_v1(trig: dict[str, Any]) -> dict[str, Any]:
+    """0.4/0.5 stored flat state triggers; convert them to the contract format."""
+    if "when" in trig:
+        return trig
+    return {
+        "id": trig["id"],
+        "name": trig.get("name", ""),
+        "enabled": trig.get("enabled", True),
+        "when": {"type": "state", "entity_id": trig.get("entity_id", ""), "to": trig.get("to", "")},
+        "do": {"template": "event-reaction", "instruction": trig.get("instruction", "")},
+        "cooldown": trig.get("cooldown", 300),
+        "quiet_hours": None,
+    }
 
 
 class AACStore:
@@ -92,7 +108,7 @@ class AACStore:
         data["master"].update(master)
         data["setup"].update(stored.get("setup", {}))
         data["heartbeat"].update(stored.get("heartbeat", {}))
-        data["triggers"] = stored.get("triggers", [])
+        data["triggers"] = [_trigger_v1(t) for t in stored.get("triggers", [])]
         data["memory"].update(stored.get("memory", {}))
         self.data = data
 
@@ -159,13 +175,13 @@ class AACStore:
         await self.async_save()
 
     async def async_save_trigger(self, trigger: dict[str, Any]) -> dict[str, Any]:
-        """Add or update an event trigger."""
+        """Add or update a trigger (contract format)."""
         existing = next((t for t in self.triggers if t["id"] == trigger.get("id")), None)
         if existing is None:
             existing = {"id": f"t_{uuid.uuid4().hex[:8]}"}
             self.triggers.append(existing)
-        for key in ("name", "entity_id", "to", "instruction", "cooldown", "enabled"):
-            existing[key] = trigger[key]
+        for key in ("name", "enabled", "when", "do", "cooldown", "quiet_hours"):
+            existing[key] = trigger.get(key)
         await self.async_save()
         return existing
 

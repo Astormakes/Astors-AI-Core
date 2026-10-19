@@ -172,8 +172,9 @@ async def test_state_trigger_with_cooldown(
     payloads = _replies(aioclient_mock, _reply("The door opened."), _reply("again"))
     ws = await hass_ws_client(hass)
     await ws.send_json_auto_id(
-        {"type": "aac/trigger/save", "name": "Door", "entity_id": "binary_sensor.door",
-         "to": "on", "instruction": "Tell me when the door opens.", "cooldown": 600}
+        {"type": "aac/trigger/save", "name": "Door",
+         "when": {"type": "state", "entity_id": "binary_sensor.door", "to": "on"},
+         "instruction": "Tell me when the door opens.", "cooldown": 600}
     )
     assert (await ws.receive_json())["success"]
 
@@ -287,3 +288,49 @@ def test_snapshot_says_what_binary_sensors_mean(hass: HomeAssistant):
     assert "Smoke | DETECTED" in snapshot
     assert "Door | closed" in snapshot
     assert "Temp | 21.5 °C" in snapshot
+
+
+async def test_time_trigger_weekdays(
+    hass: HomeAssistant, aioclient_mock, mock_entry, configured, freezer
+):
+    """A time trigger fires at its time, only on its weekdays."""
+    await hass.config.async_set_time_zone("UTC")
+    freezer.move_to("2026-10-19 07:29:00+00:00")  # a Monday
+    await setup_aac(hass, mock_entry)
+    payloads = _replies(aioclient_mock, _reply("Time for your pills."))
+    await mock_entry.runtime_data.store.async_save_trigger(
+        {"name": "Pills", "enabled": True, "cooldown": 0, "quiet_hours": None,
+         "when": {"type": "time", "at": "07:30", "weekdays": [0, 2, 4]},
+         "do": {"template": "event-reaction", "instruction": "Remind me to take my pills."}}
+    )
+    mock_entry.runtime_data.triggers.async_start()
+
+    freezer.move_to("2026-10-19 07:30:00+00:00")
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(payloads) == 1
+    assert "Remind me to take my pills." in payloads[0]["messages"][0]["content"]
+    assert "remind or tell the user" in payloads[0]["messages"][0]["content"]
+    assert mock_entry.runtime_data.chats.get("aac")["messages"][-1]["text"] == "Time for your pills."
+
+    freezer.move_to("2026-10-20 07:30:00+00:00")  # Tuesday: not a trigger day
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(payloads) == 1
+
+
+async def test_old_triggers_migrate(hass: HomeAssistant, hass_storage, mock_entry):
+    """0.4/0.5 flat state triggers load in the contract format."""
+    from custom_components.aac.store import STORAGE_KEY
+
+    from .conftest import store_data
+
+    data = store_data()
+    data["data"]["triggers"] = [{"id": "t_old", "name": "Door", "entity_id": "binary_sensor.door",
+                                 "to": "on", "instruction": "Tell me.", "cooldown": 60, "enabled": True}]
+    hass_storage[STORAGE_KEY] = data
+    await setup_aac(hass, mock_entry)
+    trig = mock_entry.runtime_data.store.triggers[0]
+    assert trig["when"] == {"type": "state", "entity_id": "binary_sensor.door", "to": "on"}
+    assert trig["do"] == {"template": "event-reaction", "instruction": "Tell me."}
+    assert trig["cooldown"] == 60
