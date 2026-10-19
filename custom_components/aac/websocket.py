@@ -53,6 +53,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_chat,
         ws_chats,
         ws_chat_rewind,
+        ws_chat_edit,
         ws_chat_get,
         ws_chat_new,
         ws_chat_delete,
@@ -385,6 +386,18 @@ def ws_chat_rewind(hass: HomeAssistant, connection, msg) -> None:
     if entry := _entry(hass, connection, msg):
         chats = _d(entry, msg).chats
         chats.rewind(msg["chat_id"], msg["index"])
+        connection.send_result(msg["id"], chats.get(msg["chat_id"]))
+
+
+@aac_command({vol.Required("type"): "aac/chat/edit", vol.Required("chat_id"): str, vol.Required("index"): vol.All(int, vol.Range(0)),
+              vol.Required("text"): vol.All(str, vol.Length(min=1))})
+@websocket_api.require_admin
+@callback
+def ws_chat_edit(hass: HomeAssistant, connection, msg) -> None:
+    """Change a message's text (also an answer of AAC's); the model sees the changed text from then on."""
+    if entry := _entry(hass, connection, msg):
+        chats = _d(entry, msg).chats
+        chats.edit(msg["chat_id"], msg["index"], msg["text"])
         connection.send_result(msg["id"], chats.get(msg["chat_id"]))
 
 

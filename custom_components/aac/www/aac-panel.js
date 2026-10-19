@@ -9,6 +9,65 @@ const PANEL_VERSION = (() => { try { return new URL(import.meta.url).searchParam
 const esc = (v) =>
   String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
+// Markdown as the models write it (headings, lists, tables, code, bold/italic, links); escaped first, so no HTML gets in
+const mdInline = (t) => esc(t)
+  .replace(/`([^`]+)`/g, "<code>$1</code>")
+  .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+  .replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, "$1<i>$2</i>")
+  .replace(/(^|[\s(])_([^_\s][^_]*)_(?=[\s.,;:!?)]|$)/g, "$1<i>$2</i>")
+  .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+const md = (text) => {
+  const lines = String(text ?? "").replace(/\r/g, "").split("\n");
+  const out = [];
+  let para = [];
+  const flush = () => { if (para.length) out.push(`<p>${para.map(mdInline).join("<br>")}</p>`); para = []; };
+  const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*```/.test(l)) {  // code block (also an unfinished one while streaming)
+      flush();
+      const code = [];
+      while (++i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i]);
+      out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
+    } else if (/^\s*$/.test(l)) {
+      flush();
+    } else if (/^#{1,6}\s/.test(l)) {
+      flush();
+      const n = Math.min(l.match(/^#+/)[0].length + 2, 6);
+      out.push(`<h${n}>${mdInline(l.replace(/^#+\s*/, ""))}</h${n}>`);
+    } else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)) {
+      flush();
+      out.push("<hr>");
+    } else if (/^\s*\|.*\|\s*$/.test(l) && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1] || "") && (lines[i + 1] || "").includes("-")) {
+      flush();
+      const head = cells(l);
+      i++;
+      const rows = [];
+      while (i + 1 < lines.length && /^\s*\|.*\|\s*$/.test(lines[i + 1])) rows.push(cells(lines[++i]));
+      out.push(`<div class="md-table"><table><thead><tr>${head.map((c) => `<th>${mdInline(c)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${mdInline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+    } else if (/^\s*([-*+]|\d+[.)])\s+/.test(l)) {
+      flush();
+      const ordered = /^\s*\d/.test(l);
+      const items = [];
+      i--;
+      while (i + 1 < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i + 1])) {
+        const item = lines[++i];
+        const depth = Math.floor(item.match(/^\s*/)[0].length / 2);
+        items.push(`<li style="margin-left:${depth * 1.2}em">${mdInline(item.replace(/^\s*([-*+]|\d+[.)])\s+/, ""))}</li>`);
+      }
+      out.push(ordered ? `<ol>${items.join("")}</ol>` : `<ul>${items.join("")}</ul>`);
+    } else if (/^\s*>\s?/.test(l)) {
+      flush();
+      out.push(`<blockquote>${mdInline(l.replace(/^\s*>\s?/, ""))}</blockquote>`);
+    } else {
+      para.push(l);
+    }
+  }
+  flush();
+  return out.join("");
+};
+
 const ICONS = {
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   eyeOff: '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
@@ -210,6 +269,35 @@ textarea { min-height: 10em; resize: vertical; }
 .bubble.user { align-self: flex-end; border: 1px solid rgba(255, 43, 214, .6); box-shadow: 0 0 .55em rgba(255, 43, 214, .25); }
 .bubble.aac { align-self: flex-start; border: 1px solid var(--line); box-shadow: 0 0 .55em rgba(0, 240, 255, .18); }
 .bubble.err { border-color: var(--red); color: var(--red); }
+.bubble .md { white-space: normal; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md pre, .md blockquote, .md .md-table { margin: .45em 0; }
+.md ul, .md ol { padding-left: 1.3em; }
+.md h3, .md h4, .md h5, .md h6 { margin: .7em 0 .3em; font-size: 1em; letter-spacing: .05em; }
+.md h3 { font-size: 1.1em; }
+.md code { font-family: ui-monospace, monospace; font-size: .9em; padding: .05em .3em; background: rgba(127, 127, 127, .15); border-radius: .25em; }
+.md pre { padding: .6em .8em; overflow-x: auto; background: rgba(127, 127, 127, .12); border-radius: .3em; }
+.md pre code { padding: 0; background: none; }
+.md blockquote { border-left: 2px solid var(--line); padding-left: .8em; color: var(--dim); }
+.md hr { border: 0; border-top: 1px solid var(--line); }
+.md a { color: var(--cyan); }
+.md-table { overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: .92em; }
+.md th, .md td { border: 1px solid var(--line); padding: .25em .6em; text-align: left; vertical-align: top; }
+.md td { min-width: 4.5em; }
+.md th { white-space: nowrap; color: var(--dim); font-weight: normal; letter-spacing: .05em; }
+.work { margin: 0 0 .5em; font-size: .78em; color: var(--dim); }
+.work-head { cursor: pointer; letter-spacing: .1em; user-select: none; }
+.work-head::before { content: "▸ "; }
+.work.open .work-head::before { content: "▾ "; }
+.work .row { white-space: pre-wrap; overflow-wrap: anywhere; opacity: .8; margin: .2em 0 0 .8em; }
+.work:not(.open) .row { display: none; }
+.work:not(.open) .row.fold { display: block; overflow: hidden; animation: fold 1.1s cubic-bezier(.5, 0, .2, 1) forwards; }
+.work .row b { color: var(--cyan); font-weight: normal; }
+.work .row.err b { color: var(--red); }
+@keyframes fold { 0% { max-height: 14em; opacity: 1; } 35% { max-height: 14em; opacity: .9; } 100% { max-height: 0; opacity: 0; margin-top: 0; transform: translateY(-.8em); } }
+.bubble .edited { font-size: .7em; color: var(--dim); margin-left: .5em; letter-spacing: .1em; }
 .bubble .who { font-size: .7em; letter-spacing: .3em; color: var(--dim); margin-bottom: .3em; }
 .cursor { display: inline-block; width: .55em; height: 1.05em; background: var(--cyan); box-shadow: 0 0 .4em var(--cyan); vertical-align: -.15em; animation: blink 1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
@@ -306,7 +394,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3em 0 0; font: in
 .status.running { color: var(--amber); } .status.done { color: var(--green); } .status.silent { color: var(--dim); } .status.failed { color: var(--red); }
 .switch { display: flex; align-items: center; gap: .6em; }
 
-@media (prefers-reduced-motion: reduce) { .cursor, .dot.run { animation: none; } nav { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .cursor, .dot.run { animation: none; } .work:not(.open) .row.fold { display: none; } nav { transition: none; } }
 `;
 
 const WEEKDAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
@@ -868,16 +956,23 @@ class AacPanel extends HTMLElement {
   }
 
   // ---------------------------------------------------------------- workers: chats + runs
-  _stepsHtml(steps) {
+  // What AAC did on the way (thinking text, tool calls): one folded block above the answer, click to open
+  _stepRow(s) {
+    const cut = (t) => (t = String(t ?? "").trim()).length > 600 ? `${t.slice(0, 600)} …` : t;
+    return s.type === "text" ? `<div class="row">💭 ${esc(cut(s.text))}</div>`
+      : s.type === "tool_call" ? `<div class="row"><b>→ ${esc(s.tool.split("__").pop())}</b> ${esc(cut(JSON.stringify(s.args)))}</div>`
+      : `<div class="row ${s.error ? "err" : ""}"><b>← ${esc(s.tool.split("__").pop())}</b> ${esc(cut(s.data))}</div>`;
+  }
+
+  _workHead(n, tools) {
+    return `<div class="work-head" role="button" tabindex="0">⚙ ${n} step${n === 1 ? "" : "s"}${tools.length ? ` · ${esc([...new Set(tools)].join(", "))}` : ""}</div>`;
+  }
+
+  _stepsHtml(steps, key) {
     if (!steps || !steps.length) return "";
-    const calls = steps.filter((s) => s.type === "tool_call").map((s) => s.tool);
-    return `<details class="steps"><summary>⚙ ${esc(calls.join(", ") || "tools")}</summary>
-      ${steps.map((s) => s.type === "text"
-        ? `<div class="st">💭 ${esc(s.text)}</div>`
-        : s.type === "tool_call"
-        ? `<div class="st"><b>→ ${esc(s.tool)}</b> ${esc(JSON.stringify(s.args))}</div>`
-        : `<div class="st ${s.error ? "err" : ""}"><b>← ${esc(s.tool)}</b> ${esc(s.data)}</div>`).join("")}
-    </details>`;
+    const tools = steps.filter((s) => s.type === "tool_call").map((s) => s.tool.split("__").pop());
+    const n = steps.filter((s) => s.type !== "tool_result").length;
+    return `<div class="work ${this._openWork?.has(key) ? "open" : ""}" data-work="${esc(key)}">${this._workHead(n, tools)}${steps.map((s) => this._stepRow(s)).join("")}</div>`;
   }
 
   _renderChat() {
@@ -889,15 +984,19 @@ class AacPanel extends HTMLElement {
       ? msgs.map((m, i) => {
           const editing = this._editing === i && !isAac;
           const prevUser = m.role === "aac" ? msgs.slice(0, i).map((x) => x.role).lastIndexOf("user") : -1;
-          const acts = isAac || this._busy || editing ? "" : m.role === "user"
-            ? `<div class="msg-acts"><button class="icon-btn" data-msg-edit="${i}" title="Edit and send again (the chat continues from here)">✎ Edit</button></div>`
-            : prevUser >= 0 ? `<div class="msg-acts"><button class="icon-btn" data-msg-rerun="${i}" title="Answer again (this answer is replaced)">↻ Rerun</button></div>` : "";
+          const editBtn = `<button class="icon-btn" data-msg-edit="${i}" title="${m.role === "user" ? "Edit and send again (the chat continues from here)" : "Change what AAC said (the model takes it as its own words)"}">✎ Edit</button>`;
+          const acts = isAac || this._busy || editing || m.error ? "" : m.role === "user"
+            ? `<div class="msg-acts">${editBtn}</div>`
+            : `<div class="msg-acts">${editBtn}${prevUser >= 0 ? `<button class="icon-btn" data-msg-rerun="${i}" title="Answer again (this answer is replaced)">↻ Rerun</button>` : ""}</div>`;
+          const editHint = m.role === "user" ? "Everything after this message is removed; AAC answers from here."
+            : "AAC takes the changed text as its own words from now on; the rest of the chat stays. Putting words in a model's mouth can make it act oddly, so keep it plausible.";
           return `<div class="bubble ${m.role} ${m.error ? "err" : ""}">
-          ${m.trigger ? `<div class="trig">⚡ ${esc(m.trigger)}</div>` : `<div class="who">${m.role === "user" ? "YOU" : "AAC"}</div>`}
+          ${m.trigger ? `<div class="trig">⚡ ${esc(m.trigger)}</div>` : `<div class="who">${m.role === "user" ? "YOU" : "AAC"}${m.edited ? `<span class="edited">EDITED</span>` : ""}</div>`}
+          ${m.role === "aac" ? this._stepsHtml(m.steps, `m${i}`) : ""}
           ${editing ? `<textarea id="msg-edit" class="thin-scroll">${esc(this._editText ?? m.text)}</textarea>
-            <div class="actions" style="margin-top:.5em"><button class="btn primary" id="msg-edit-send">Send</button><button class="btn" id="msg-edit-cancel">Cancel</button></div>
-            <div class="hint" style="margin:.3em 0 0">Everything after this message is removed; AAC answers from here.</div>`
-          : `<div class="txt">${esc(m.text)}</div>`}${this._stepsHtml(m.steps)}
+            <div class="actions" style="margin-top:.5em"><button class="btn primary" id="msg-edit-send">${m.role === "user" ? "Send" : "Save"}</button><button class="btn" id="msg-edit-cancel">Cancel</button></div>
+            <div class="hint" style="margin:.3em 0 0">${editHint}</div>`
+          : m.role === "aac" && !m.error ? `<div class="txt md">${md(m.text)}</div>` : `<div class="txt">${esc(m.text)}</div>`}
           ${m.run_id && isAac ? `<div class="steps"><span tabindex="0" role="button" data-go="run/${esc(m.run_id)}" style="cursor:pointer">details ›</span></div>` : ""}
           ${acts}
         </div>`;
@@ -1895,9 +1994,25 @@ class AacPanel extends HTMLElement {
     }));
     sr.querySelector("#msg-edit")?.addEventListener("input", (e) => { this._editText = e.target.value; });
     sr.querySelector("#msg-edit-cancel")?.addEventListener("click", () => { this._editing = null; this._editText = null; this._render(); });
-    sr.querySelector("#msg-edit-send")?.addEventListener("click", () => {
-      const i = this._editing;
-      this._resend(i, sr.querySelector("#msg-edit")?.value ?? this._chat.messages[i]?.text);
+    sr.querySelector("#msg-edit-send")?.addEventListener("click", async () => {
+      const i = this._editing, text = sr.querySelector("#msg-edit")?.value ?? this._chat.messages[i]?.text;
+      if (this._chat.messages[i]?.role === "user") { this._resend(i, text); return; }
+      if (!text?.trim()) return;
+      try {
+        this._chat = { ...this._chat, ...(await this._ws("aac/chat/edit", { chat_id: this._chat.id, index: i, text: text.trim() })) };
+      } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
+      this._editing = null;
+      this._editText = null;
+      this._render();
+    });
+    sr.querySelectorAll("[data-work] .work-head").forEach((el) => {
+      const toggle = () => {
+        const box = el.parentElement, key = box.dataset.work;
+        this._openWork = this._openWork || new Set();
+        box.classList.toggle("open") ? this._openWork.add(key) : this._openWork.delete(key);
+      };
+      el.addEventListener("click", toggle);
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
     });
     sr.querySelectorAll("[data-msg-rerun]").forEach((el) => el.addEventListener("click", () => {
       const i = Number(el.dataset.msgRerun), msgs = this._chat.messages;
@@ -2026,10 +2141,25 @@ class AacPanel extends HTMLElement {
     this._render();
   }
 
-  // The answer while it is written (deltas from the backend)
+  // The answer while it is written (deltas from the backend). Every model call is a round; a finished
+  // round (text before a tool call) folds up into the steps block instead of vanishing.
+  _liveHtml() {
+    const rounds = this._stream?.rounds || [], cur = rounds[rounds.length - 1] || {};
+    return `<div class="txt md">${md(cur.text || "")}</div>${cur.tool ? `<div class="steps">→ ${esc(cur.tool)}…</div>` : ""}<span class="cursor"></span>`;
+  }
+
+  _roundRow(r, fold) {
+    return `<div class="row${fold ? " fold" : ""}">${r.text?.trim() ? `💭 ${esc(r.text.trim())} ` : ""}${r.tool ? `<b>→ ${esc(r.tool)}</b>` : ""}</div>`;
+  }
+
+  _workLiveHtml(fold) {
+    const done = (this._stream?.rounds || []).slice(0, -1).filter((r) => r.text || r.tool);
+    if (!done.length) return "";
+    return `${this._workHead(done.length, done.map((r) => r.tool).filter(Boolean))}${done.map((r, i) => this._roundRow(r, fold && i === done.length - 1)).join("")}`;
+  }
+
   _streamHtml() {
-    const st = this._stream || {};
-    return `<div class="txt">${esc(st.text || "")}</div>${st.tool ? `<div class="steps">→ ${esc(st.tool)}…</div>` : ""}<span class="cursor"></span>`;
+    return `<div class="work ${this._openWork?.has("live") ? "open" : ""}" data-work="live">${this._workLiveHtml(false)}</div><div class="live">${this._liveHtml()}</div>`;
   }
 
   _onDelta(ev) {
@@ -2037,10 +2167,20 @@ class AacPanel extends HTMLElement {
     const mine = this._chat?.id ? ev.chat_id === this._chat.id : !this._streamChat || ev.chat_id === this._streamChat;
     if (!mine) return;
     this._streamChat = ev.chat_id;
-    this._stream = { text: ev.text, tool: ev.tool };
+    const st = this._stream = this._stream || { rounds: [] };
+    const r = ev.round ?? 0, newRound = r >= st.rounds.length && st.rounds.length > 0;
+    st.rounds[r] = { text: ev.text, tool: ev.tool || st.rounds[r]?.tool };
     const bubble = this.shadowRoot.querySelector(".bubble.busy");
-    if (!bubble) { this._render(); return; }
-    bubble.innerHTML = `<div class="who">AAC</div>${this._streamHtml()}`;
+    if (!bubble?.querySelector(".live")) { this._render(); return; }
+    if (newRound) {  // the last round is done: it slides up into the steps block
+      const work = bubble.querySelector(".work");
+      work.innerHTML = this._workLiveHtml(true);
+      work.querySelector(".work-head")?.addEventListener("click", () => {
+        this._openWork = this._openWork || new Set();
+        work.classList.toggle("open") ? this._openWork.add("live") : this._openWork.delete("live");
+      });
+    }
+    bubble.querySelector(".live").innerHTML = this._liveHtml();
     const log = this.shadowRoot.querySelector(".log");
     if (log && log.scrollHeight - log.scrollTop - log.clientHeight < 160) log.scrollTop = log.scrollHeight;  // follow, unless scrolled up
   }

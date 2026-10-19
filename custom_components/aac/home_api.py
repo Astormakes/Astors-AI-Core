@@ -34,7 +34,7 @@ API_PROMPT = (
     "entities, request_access for reading/switching entities you can see, each with a short reason; the owner "
     "decides outside the chat and you hear the outcome in 'From AAC'. Ask only for what the task needs. "
     "The home changes during a chat: when asked to check again, use the tools again instead of repeating "
-    "what you found earlier."
+    "what you found earlier. To the owner, name entities by their names (and room), not by entity ids."
 )
 
 

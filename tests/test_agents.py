@@ -369,3 +369,19 @@ async def test_chat_context_survives_ha_forgetting(hass: HomeAssistant, hass_ws_
     assert "Some changes were made, check again." not in texts and "Steam is not set up." in texts
     assert [m["text"] for m in mock_entry.runtime_data.chats.get(chat_id)["messages"]][-2:] == [
         "I turned on the entities, check again.", "Edited answer."]
+
+
+async def test_edit_aac_answer(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """The owner changes what AAC said; the next request gives the model the changed words."""
+    payloads = _replies(aioclient_mock, _reply("Steam is not set up."), _reply("Fine."))
+    await setup_aac(hass, mock_entry)
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "Can you use the Steam integration?"})
+    chat_id = (await ws.receive_json())["result"]["chat_id"]
+    await ws.send_json_auto_id({"type": "aac/chat/edit", "chat_id": chat_id, "index": 1, "text": "Steam is there."})
+    result = (await ws.receive_json())["result"]
+    assert result["messages"][1] == {**result["messages"][1], "text": "Steam is there.", "edited": True}
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "Good.", "chat_id": chat_id})
+    await ws.receive_json()
+    texts = [m.get("content") for m in payloads[1]["messages"]]
+    assert "Steam is there." in texts and "Steam is not set up." not in texts

@@ -40,7 +40,8 @@ API_PROMPT = (
     "setup_status. Go one step at a time, explain in a sentence why a step is useful, and ask "
     "before you change anything. The charter and what you may do on your own are the owner's "
     "to set in the panel; you cannot change them. Settings change while you talk (the owner may fix things "
-    "in the panel meanwhile): when asked to check again, call setup_status again instead of repeating earlier answers."
+    "in the panel meanwhile): when asked to check again, call setup_status again instead of repeating earlier answers. "
+    "Ids (m_…, rule ids) are only for the tools: to the owner, call models and machines by their names."
 )
 
 

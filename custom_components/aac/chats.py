@@ -118,6 +118,15 @@ class ChatStore:
             self._save()
             async_notify(self.hass, "chat", chat_id=chat_id, domain=self.domain_id)
 
+    @callback
+    def edit(self, chat_id: str, index: int, text: str) -> None:
+        """Change a message in place (also AAC's answers); later messages stay, HA's conversation starts over."""
+        if (chat := self.chats.get(chat_id)) and 0 <= index < len(chat["messages"]):
+            chat["messages"][index] = {**chat["messages"][index], "text": text, "edited": True}
+            chat["conversation_id"] = None
+            self._save()
+            async_notify(self.hass, "chat", chat_id=chat_id, domain=self.domain_id)
+
     def set_conversation(self, chat_id: str, conversation_id: str | None) -> None:
         """Remember HA's conversation id so the model keeps the context."""
         if chat := self.chats.get(chat_id):

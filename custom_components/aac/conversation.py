@@ -249,8 +249,10 @@ class AACConversationEntity(
             if tool == last[1] and now - last[0] < 0.08:
                 return
             last[0], last[1] = now, tool
-            async_notify(self.hass, "delta", chat_id=run.chat_id, domain=self.domain.id,
+            async_notify(self.hass, "delta", chat_id=run.chat_id, domain=self.domain.id, round=send.round,
                          text=_strip_tool_text(text) or "", tool=tool.split("__")[-1] if tool else None)
+
+        send.round = 0  # one round per model call: the panel folds finished rounds away
 
         return send
 
@@ -380,6 +382,8 @@ class AACConversationEntity(
             if decide and messages and messages[0]["role"] == "system":
                 # Into the first system message: some chat templates allow no other
                 messages[0] = {**messages[0], "content": messages[0]["content"] + DECISION_RULE}
+            if stream_to:
+                stream_to.round = iteration
             while True:
                 try:
                     if stream_to:  # the owner watches the panel: show the answer while it is written
