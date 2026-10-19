@@ -48,6 +48,12 @@ Tool use (controlling HA) needs a model and server with function calling
 
 Works on phones, tablets, desktops and TVs (scales with the screen, touch and keyboard friendly).
 
+## Contracts
+
+The interfaces AAC is built around (runs, triggers, context recipes, agent
+templates, memory, model providers, events, modules, domains) are written down
+in [`spec/`](spec/README.md), with the status of each.
+
 ## Development
 
 ```bash

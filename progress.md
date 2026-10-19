@@ -7,6 +7,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - `docs/` holds the private design and homelab notes and is **gitignored** on purpose (IPs, hardware, personal plans). Never commit it, never copy private details into tracked files
   - `docs/assistant-framework.md` = the architecture/vision (source of truth for design)
   - `docs/design.md` = the panel UI spec (layout, segments, neon design language)
+  - **`spec/` (public, tracked)** = the contracts (run, trigger, context recipe, agent template, memory, model provider, event, module, domain) with built/partial/planned status. Keep them in sync with the code; no private details (IPs, hosts) in there
   - `docs/dev-environment.md` = how to reach the real HA, the model servers, where credentials live
   - `docs/projects.md` = personal, not part of this project, ignore it
 - Keep docs tidy: design decisions go into `docs/assistant-framework.md`, status goes here, no duplicate notes
@@ -63,4 +64,5 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - User: check the phone again (safe-area fix); try the heartbeat for a day; GitHub release
 - Audio hub: first real source (probably the browser mic or a Wyoming/ESPHome satellite streaming continuously), ring buffer + VAD
 - Contracts first (framework "Rough order" step 0) before memory/context engine
-- Memory next: import the existing `ai_memory` DB (user decision pending), timeline/entities stores, curator (nightly merge/dedupe)
+- Contracts written (`spec/`, 2026-10-19). Bring code closer: general trigger format (`when`/`do`), time triggers, templates as data
+- Memory next: timeline/entities stores, curator (nightly merge/dedupe). **ai_memory stays separate** (user decision 2026-10-19: no import, don't touch it)
