@@ -1,7 +1,7 @@
 {
   "id": "calendar",
   "name": "Calendar",
-  "version": "0.2.0",
+  "version": "0.3.3",
   "contract": 1,
   "kind": "code",
   "description": "One calendar over everything: entries from all modules (lists with dates, AAC's plans) and your Home Assistant calendars (Google, CalDAV, Local Calendar, …).",
@@ -43,6 +43,35 @@
       "options_from": "calendar_targets",
       "title": "New calendar entries go to",
       "default": "lists"
+    },
+    "view": {
+      "type": "select",
+      "title": "Calendar view",
+      "default": "week",
+      "options": [
+        [
+          "week",
+          "Week grid (days × hours)"
+        ],
+        [
+          "table",
+          "Table (one row per entry)"
+        ],
+        [
+          "month",
+          "Month"
+        ],
+        [
+          "agenda",
+          "Agenda (list by day)"
+        ]
+      ]
+    },
+    "days": {
+      "type": "number",
+      "title": "Days shown",
+      "default": 7,
+      "help": "For the week grid, table and agenda (1–31). The month view always shows a month."
     }
   },
   "setup": [

@@ -54,6 +54,6 @@ entries (not those of HA calendars, which HA shows already). HA's calendar page 
 - Agents: planning tools `calendar(from, to)`, `add_to_calendar(name, start?, end?, all_day?, notes?)`,
   `change_calendar_entry(uid, recurrence_id?, …)`, `remove_calendar_entry(uid, recurrence_id?)` (owner in the chat only).
 - Automatic runs: the next 24 h appear under "open loops".
-- Panel: the calendar module's agenda page.
+- Panel: the calendar module's page with four views (week grid = days × hours, table, month, agenda), paging (◀ Today ▶) and a number of days (1–31); view and days are module settings, so every device shows the same.
 
 Code: `custom_components/aac/capabilities.py`, `modules/lists`, `modules/calendar`.

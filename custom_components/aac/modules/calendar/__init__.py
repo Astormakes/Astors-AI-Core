@@ -22,7 +22,7 @@ from homeassistant.util import dt as dt_util
 
 from ...capabilities import CalendarProvider, parse_time
 from ...const import DOMAIN, LOGGER
-from .. import ModuleContext
+from .. import ModuleContext, setting
 
 
 def _foreign(hass: HomeAssistant) -> list[str]:
@@ -161,7 +161,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
 
 @websocket_api.websocket_command(
     {vol.Required("type"): "aac/calendar/agenda", vol.Optional("domain"): vol.Any(str, None),
-     vol.Optional("days", default=14): vol.All(int, vol.Range(1, 120))}
+     vol.Optional("days"): vol.All(int, vol.Range(1, 120)), vol.Optional("start"): str}
 )
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -173,10 +173,14 @@ async def ws_agenda(hass: HomeAssistant, connection, msg) -> None:
         return
     entry = entries_[0]
     dom = entry.runtime_data.domain(msg.get("domain")) or entry.runtime_data.domain()
-    start = dt_util.start_of_local_day()
+    module = next(m for m in entry.runtime_data.modules if m.id == "calendar")
+    view = setting(entry, module.manifest, dom.id, "view")
+    days = msg.get("days") or int(setting(entry, module.manifest, dom.id, "days") or 7)
+    first = dt_util.parse_date(msg["start"]) if msg.get("start") else None
+    start = dt_util.start_of_local_day(first) if first else dt_util.start_of_local_day()
     try:
-        found = await entry.runtime_data.capabilities.async_calendar(dom.id, start, start + timedelta(days=msg["days"]))
+        found = await entry.runtime_data.capabilities.async_calendar(dom.id, start, start + timedelta(days=days))
     except Exception as err:  # noqa: BLE001
         LOGGER.warning("Agenda failed: %s", err)
         found = []
-    connection.send_result(msg["id"], {"from": start.isoformat(), "entries": found})
+    connection.send_result(msg["id"], {"from": start.isoformat(), "days": days, "view": view, "entries": found})
