@@ -432,12 +432,12 @@ class AacPanel extends HTMLElement {
 
   _entityGroups(list) {
     const q = (this._entQuery || "").toLowerCase(), groups = {};
-    for (const e of list) if (!q || `${e.name} ${e.entity_id} ${e.area || ""}`.toLowerCase().includes(q)) (groups[e.area || "No room"] ||= []).push(e);
+    for (const e of list) if (!q || `${e.name} ${e.entity_id} ${e.area || ""} ${e.integration || ""} ${e.integration_title || ""}`.toLowerCase().includes(q)) (groups[e.area || "No room"] ||= []).push(e);
     return groups;
   }
 
   _entitySearch() {
-    return `<div class="row"><div><label for="ent-q">Search</label><input id="ent-q" value="${esc(this._entQuery || "")}" placeholder="name, room, entity id"></div></div>`;
+    return `<div class="row"><div><label for="ent-q">Search</label><input id="ent-q" value="${esc(this._entQuery || "")}" placeholder="name, room, entity id, integration"></div></div>`;
   }
 
   async _loadVisible() {

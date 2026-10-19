@@ -134,3 +134,22 @@ async def test_overview_and_visibility_request(hass: HomeAssistant, hass_ws_clie
     settings = mock_entry.runtime_data.store.default_domain
     assert sorted(settings.visible) == ["sensor.steam_friend", "sensor.steam_me"]
     assert level(hass, settings, "sensor.steam_me") == "read"
+
+
+async def test_search_finds_entities_by_integration(hass: HomeAssistant, mock_entry, configured):
+    """Steam's entities are named after people; searching 'steam' must still find them."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.aac.entities import domain_view
+
+    steam = MockConfigEntry(domain="steam_online", title="Astor")
+    steam.add_to_hass(hass)
+    e = er.async_get(hass).async_get_or_create("sensor", "steam_online", "astor", config_entry=steam, suggested_object_id="astor")
+    hass.states.async_set(e.entity_id, "online", {"friendly_name": "Astor"})
+    await setup_aac(hass, mock_entry)
+    settings = mock_entry.runtime_data.store.default_domain
+    await settings.async_set_visible([e.entity_id])
+    found = [x for x in domain_view(hass, settings) if "steam" in f"{x['name']} {x['entity_id']} {x['integration']}".lower()]
+    assert [(x["entity_id"], x["integration"], x["integration_title"]) for x in found] == [("sensor.astor", "steam_online", "Astor")]

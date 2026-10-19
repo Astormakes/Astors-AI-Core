@@ -76,9 +76,13 @@ def info(hass: HomeAssistant, state: State) -> dict[str, Any]:
         device = dr.async_get(hass).async_get(entry.device_id)
         area_id = device.area_id if device else None
     area = area_reg.async_get_area(area_id) if area_id else None
+    config_entry = hass.config_entries.async_get_entry(entry.config_entry_id) if entry and entry.config_entry_id else None
     return {"entity_id": state.entity_id, "name": state.attributes.get("friendly_name", state.entity_id),
             "area": area.name if area else None, "domain": state.domain,
-            "device_class": state.attributes.get("device_class")}
+            "device_class": state.attributes.get("device_class"),
+            # which integration it belongs to: names often do not say (Steam entities are named after people)
+            "integration": entry.platform if entry else None,
+            "integration_title": config_entry.title if config_entry else None}
 
 
 def _sorted(items):

@@ -50,12 +50,14 @@ class _HomeTool(llm.Tool):
 class ListEntitiesTool(_HomeTool):
     name = "list_entities"
     description = (
-        "The entities you may know about: name, room, type and your access (hidden = no read / read / control); "
-        "the state only where you may read. Filter by room, type (light, sensor, …) or a search word."
+        "The entities you may know about: name, room, type, integration and your access (hidden = no read / read / "
+        "control); the state only where you may read. Filter by room, type (light, sensor, …), integration "
+        "(e.g. steam_online, from home_overview) or a search word (it also matches the integration)."
     )
     annotations = llm.ToolAnnotations(read_only=True, open_world=False)
     parameters = probatio.Schema({probatio.Optional("area"): str, probatio.Optional("type"): str,
-                                  probatio.Optional("search"): str, probatio.Optional("only_accessible"): bool})
+                                  probatio.Optional("integration"): str, probatio.Optional("search"): str,
+                                  probatio.Optional("only_accessible"): bool})
 
     async def async_call(self, hass, tool_input, llm_context):
         args = tool_input.tool_args
@@ -67,7 +69,11 @@ class ListEntitiesTool(_HomeTool):
                 continue
             if args.get("type") and e["domain"] != args["type"] and e.get("device_class") != args["type"]:
                 continue
-            if (word := (args.get("search") or "").lower()) and word not in f"{e['name']} {e['entity_id']}".lower():
+            if args.get("integration") and args["integration"].lower() not in (
+                (e.get("integration") or "").lower(), (e.get("integration_title") or "").lower()):
+                continue
+            haystack = f"{e['name']} {e['entity_id']} {e.get('integration') or ''} {e.get('integration_title') or ''}".lower()
+            if (word := (args.get("search") or "").lower()) and word not in haystack:
                 continue
             if e["level"] != "hidden" and (state := hass.states.get(e["entity_id"])):
                 e = {**e, "state": _state_text(state)}
