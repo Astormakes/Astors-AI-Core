@@ -16,7 +16,8 @@ of its items. Only then is it applied, by the handler of its kind, and AAC hears
 
 | Kind | Filed by | Applied as |
 |---|---|---|
-| `entities` | home tool `request_access(entity_ids, level read/control, reason)` | the entities' access level in that domain |
+| `entities` | home tool `request_access(entity_ids, level read/control, reason)` | read/write of those entities |
+| `visibility` | home tool `request_visibility(integrations, reason, with_read?)` | the integrations' entities ticked for that domain (and read, if asked) |
 
 WebSocket: `aac/requests`, `aac/request/decide` (`approve`: true, false or item ids).
 
@@ -31,7 +32,8 @@ WebSocket: `aac/requests`, `aac/request/decide` (`approve`: true, false or item 
 Per domain the effective level is where both meet: invisible · hidden (seen, no read) · read · control. HA's own
 "expose to Assist" setting stays HA's; until the owner chooses, AAC starts from it (migration and defaults read
 HA's exposure settings, not states, which are incomplete during startup). Home tools (LLM API `aac_home`):
-`list_entities` (only visible ones), `get_state`, `control` (locks, alarms, covers, valves, sirens only with the
+`home_overview` (every installed integration with its entity count and how many the domain can see: AAC knows
+what exists without seeing the details), `list_entities` (only visible ones), `get_state`, `control` (locks, alarms, covers, valves, sirens only with the
 owner in the chat), `request_access` (only for visible entities; approval sets read/write). The home snapshot for
 automatic runs uses the same levels. If the master also has HA's own Assist tools, those follow HA's exposure,
 not these lists (the Entities page warns and offers to switch them off).

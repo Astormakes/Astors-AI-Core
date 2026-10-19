@@ -13,7 +13,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - Keep docs tidy: design decisions go into `docs/assistant-framework.md`, status goes here, no duplicate notes
 - Version lives in `custom_components/aac/manifest.json` (`version`). Bump it for every release and tag it (`v0.1.0` …) so HACS shows the version
 
-## Current state (2026-10-19) – v0.22.1
+## Current state (2026-10-19) – v0.22.2
 - HACS-installable custom integration `aac` (`custom_components/aac`, `hacs.json`, min HA 2026.10.0), single instance
 - **Everything is configured in the AAC panel** (spec: `docs/design.md`). Config flow is one click; settings in `.storage/aac.config` (`store.py`), chats in `.storage/aac.chats` (`chats.py`), runs in `.storage/aac.runs` (`runs.py`, last 100). Entry v1 (0.1.0) migrates automatically
 - **HA's own AI is never changed** (user decision): no editing of Assist pipelines; HA AI only as optional tools. Other integrations are only read
@@ -44,7 +44,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - Concept vs. build, the gate tiers and the browser mic: `docs/assistant-framework.md` → "Audio hub v1 and the concept"
 
 - WebSocket API (`websocket.py`): state, master, workers (models), chat(s), runs, heartbeat, triggers, audio, subscribe
-- Tests: 92 mocked, 7 live (incl. the weight-goal story without goal code); both models pass the live suite (`-m live`: answer, tool call, heartbeat ×2, smoke alarm must speak, memory round trip; `AAC_LIVE_EMBED_URL/KEY` for embeddings). Both models (8B server, 35B PC) pass the live suite. Real HA: chat with tool calls works, heartbeat on the 8B silent in ~11 s
+- Tests: 93 mocked, 7 live (incl. the weight-goal story without goal code); both models pass the live suite (`-m live`: answer, tool call, heartbeat ×2, smoke alarm must speak, memory round trip; `AAC_LIVE_EMBED_URL/KEY` for embeddings). Both models (8B server, 35B PC) pass the live suite. Real HA: chat with tool calls works, heartbeat on the 8B silent in ~11 s
 
 ## Testing in the real HA
 - No GitHub/HACS round trip needed: `scripts/deploy_ha.sh` copies the working tree over SSH and restarts HA Core (`AAC_HA_SSH`, `AAC_SSH_KEY`; real values in `docs/dev-environment.md`)
@@ -81,6 +81,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - **Charter**: the draft stays for now (user decision 2026-10-19); the user changes it when something feels off
 - User: check the phone again (safe-area fix); try the heartbeat for a day; GitHub release
 - **Own voices** (plan in `docs/plans.md`): GLaDOS EN/DE + Portal announcer via game lines → imitation model → owner hand-picks → retrain → dataset → Piper. Waiting for Portal 2 to be installed in Steam on the PC. Never in the public repo
+- **AAC knows what exists** (v0.22.2): home tool `home_overview` (integrations with entity counts, visible counts, totals) + request kind `visibility` (`request_visibility`); the 35B had said "no Steam integration" because it could not see those entities and had no way to know integrations. Real test (Test domain): "Yes, Steam ('Astor', 11 entities), hidden from me; if you let me see them I could …"
 - **Chat context survives HA forgetting** (v0.22.1): HA drops a conversation after 5 idle minutes (`chat_session.CONVERSATION_TIMEOUT`), so follow-ups reached the model without history (user's "check again" → "what should I check?"). Runs now carry the chat's history (`Run.history`, not persisted) and the conversation entity puts it back when HA's chat log is empty. `aac/chat/rewind` + panel ✎ Edit / ↻ Rerun (cut the chat at a message and send again)
 - **Calisto P620 + BT600 speaker** (handoff from the homelab session: `docs/handoff-calisto-bt600.md`): needs HID off-hook (`05 01` on the telephony hidraw, interface 1.3) or there is no audio; dongle passed through to the HA VM. Not built yet; plan: device quirk plugin for the satellite, packaged as an HA add-on (handoff option A). Report changes back to the homelab session
 - **PC for games** (user wish): unload the 35B instantly when a game starts. Idea: a small "AAC node" on the PC (section 7) that stops/starts aac-llm/aac-whisper and tells the broker; not built

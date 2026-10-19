@@ -54,7 +54,8 @@ async def test_simple_answer(
     assert payload["messages"][-1] == {"role": "user", "content": "hi"}
     # No HA tools, only AAC's own memory and planning
     assert sorted(t["function"]["name"] for t in payload["tools"]) == [
-        "aac-home__control", "aac-home__get_state", "aac-home__list_entities", "aac-home__request_access",
+        "aac-home__control", "aac-home__get_state", "aac-home__home_overview", "aac-home__list_entities",
+        "aac-home__request_access", "aac-home__request_visibility",
         # no owner in this chat: the deleting list tools are held back
         "aac-lists__add_items", "aac-lists__create_list", "aac-lists__lists",
         "aac-lists__read_list", "aac-lists__update_item",

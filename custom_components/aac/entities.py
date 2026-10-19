@@ -100,3 +100,30 @@ def domain_view(hass: HomeAssistant, settings: DomainSettings) -> list[dict[str,
     seen = visible_ids(hass, settings)
     return _sorted({**info(hass, s), "level": level(hass, settings, s.entity_id)}
                    for s in hass.states.async_all() if s.entity_id in seen)
+
+
+def integrations(hass: HomeAssistant, settings: DomainSettings) -> list[dict[str, Any]]:
+    """Installed integrations with their entity counts and how many this domain can see (names only,
+    no entity details: those stay behind the owner's lists)."""
+    ent_reg = er.async_get(hass)
+    seen = visible_ids(hass, settings)
+    by_entry: dict[str, dict[str, Any]] = {}
+    for reg in ent_reg.entities.values():
+        if reg.disabled_by or not reg.config_entry_id:
+            continue
+        item = by_entry.setdefault(reg.config_entry_id, {"entities": 0, "visible": 0})
+        item["entities"] += 1
+        item["visible"] += reg.entity_id in seen
+    found = []
+    for entry in hass.config_entries.async_entries():
+        if entry.domain == "aac":
+            continue
+        counts = by_entry.get(entry.entry_id, {"entities": 0, "visible": 0})
+        found.append({"id": entry.entry_id, "integration": entry.domain, "title": entry.title, **counts})
+    return sorted(found, key=lambda x: (x["integration"], x["title"]))
+
+
+def entities_of(hass: HomeAssistant, entry_ids: list[str]) -> list[str]:
+    """The (enabled) entities of some integration entries."""
+    ent_reg = er.async_get(hass)
+    return [r.entity_id for r in ent_reg.entities.values() if r.config_entry_id in entry_ids and not r.disabled_by]

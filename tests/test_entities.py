@@ -100,3 +100,37 @@ async def test_migration_from_per_domain_levels(hass: HomeAssistant, hass_storag
     assert store.domains["test"].visible == ["sensor.soc"] and store.domains["assistant"].visible is None
     assert level(hass, store.domains["assistant"], "light.desk") == "control"
     assert level(hass, store.domains["test"], "sensor.soc") == "read"
+
+
+async def test_overview_and_visibility_request(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """AAC knows which integrations exist even when it cannot see their entities, and can ask to see them."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from homeassistant.helpers import entity_registry as er
+
+    steam = MockConfigEntry(domain="steam_online", title="Steam")
+    steam.add_to_hass(hass)
+    reg = er.async_get(hass)
+    for uid in ("me", "friend"):
+        e = reg.async_get_or_create("sensor", "steam_online", uid, config_entry=steam, suggested_object_id=f"steam_{uid}")
+        hass.states.async_set(e.entity_id, "online")
+    await setup_aac(hass, mock_entry)
+    await mock_entry.runtime_data.store.default_domain.async_set_visible([])
+    _queue(
+        aioclient_mock,
+        _call("aac-home__home_overview", {}),
+        _call("aac-home__request_visibility", {"integrations": ["steam_online"], "reason": "To see when you play.", "with_read": True}),
+        _text("There is a Steam integration with 2 entities I cannot see yet; I asked you."),
+    )
+    ws = await hass_ws_client(hass)
+    message = await _chat(ws, "Is there a Steam integration?")
+    overview = next(s for s in message["steps"] if s["type"] == "tool_result")
+    assert '"integration":"steam_online"' in overview["data"].replace(" ", "") and '"visible":0' in overview["data"].replace(" ", "")
+    await ws.send_json_auto_id({"type": "aac/requests"})
+    request = (await ws.receive_json())["result"]["requests"][0]
+    assert request["kind"] == "visibility" and request["items"][0]["label"] == "Steam"
+    await ws.send_json_auto_id({"type": "aac/request/decide", "request_id": request["id"], "approve": True})
+    await ws.receive_json()
+    settings = mock_entry.runtime_data.store.default_domain
+    assert sorted(settings.visible) == ["sensor.steam_friend", "sensor.steam_me"]
+    assert level(hass, settings, "sensor.steam_me") == "read"

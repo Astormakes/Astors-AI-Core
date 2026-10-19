@@ -44,7 +44,7 @@ from .audio_view import AACAudioView
 from .chats import ChatStore
 from .domains import Domain, async_load_domain
 from .capabilities import CalendarProvider, Capabilities, parse_time, plan_occurrences
-from .home_api import AACHomeAPI, apply_entities
+from .home_api import AACHomeAPI, apply_entities, apply_visibility
 from .jobs import JobQueue
 from .requests import Requests
 from .modules import MODULES_DIR, MODULES_URL, LoadedModule, async_load_modules
@@ -142,6 +142,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     entry.runtime_data.jobs = JobQueue(hass, entry)
     entry.runtime_data.requests = Requests(hass, entry)
     entry.runtime_data.requests.register_kind("entities", apply_entities)
+    entry.runtime_data.requests.register_kind("visibility", apply_visibility)
 
     async def plans(domain_id: str, start, end):
         dom = entry.runtime_data.domain(domain_id)

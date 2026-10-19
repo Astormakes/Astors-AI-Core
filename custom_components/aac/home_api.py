@@ -19,7 +19,7 @@ from homeassistant.helpers import llm
 
 from .const import DOMAIN
 from .context import _state_text
-from .entities import SENSITIVE_DOMAINS, async_set_access, domain_view, info, level
+from .entities import SENSITIVE_DOMAINS, async_set_access, domain_view, entities_of, info, integrations, level, visible_ids
 
 if TYPE_CHECKING:
     from . import AACConfigEntry
@@ -28,9 +28,11 @@ if TYPE_CHECKING:
 API_ID = "aac_home"
 API_PROMPT = (
     "You know only the entities the owner lets this domain see, and may read or switch only those allowed. "
-    "If a task needs an entity you cannot see or control, find it with list_entities and ask with "
-    "request_access and a short reason; the owner decides outside the chat, you hear the outcome in "
-    "'From AAC'. Ask only for what the task needs."
+    "home_overview shows every installed integration and how many of its entities you can see, so you can "
+    "tell the user what exists even when it is invisible to you (never claim something is missing just "
+    "because list_entities did not find it). To get more, ask: request_visibility for an integration's "
+    "entities, request_access for reading/switching entities you can see, each with a short reason; the owner "
+    "decides outside the chat and you hear the outcome in 'From AAC'. Ask only for what the task needs."
 )
 
 
@@ -71,6 +73,52 @@ class ListEntitiesTool(_HomeTool):
                 e = {**e, "state": _state_text(state)}
             found.append({k: v for k, v in e.items() if v not in (None, "")})
         return llm.ToolResult(data={"entities": found[:150], "more": max(0, len(found) - 150)})
+
+
+class OverviewTool(_HomeTool):
+    name = "home_overview"
+    description = (
+        "Everything installed in Home Assistant: each integration with its number of entities and how many of "
+        "them you can see, plus totals. Use it before saying something does not exist."
+    )
+    annotations = llm.ToolAnnotations(read_only=True, open_world=False)
+
+    async def async_call(self, hass, tool_input, llm_context):
+        found = integrations(hass, self._domain.settings)
+        return llm.ToolResult(data={
+            "entities_total": len(hass.states.async_entity_ids()),
+            "entities_you_can_see": sum(1 for e in domain_view(hass, self._domain.settings)),
+            "integrations": [{k: v for k, v in i.items()} for i in found],
+        })
+
+
+class RequestVisibilityTool(_HomeTool):
+    name = "request_visibility"
+    description = (
+        "Ask the owner to let you see the entities of integrations (ids from home_overview), with a short reason; "
+        "with_read=true asks to read their states too. The owner decides outside the chat."
+    )
+    annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
+    parameters = probatio.Schema({probatio.Required("integrations"): [str], probatio.Required("reason"): str,
+                                  probatio.Optional("with_read"): bool})
+
+    async def async_call(self, hass, tool_input, llm_context):
+        args = tool_input.tool_args
+        known = {i["id"]: i for i in integrations(hass, self._domain.settings)}
+        by_name = {i["integration"]: i for i in known.values()}
+        items = []
+        for ref in dict.fromkeys(args["integrations"][:20]):
+            item = known.get(ref) or by_name.get(ref)
+            if item and item["visible"] < item["entities"]:
+                items.append({"id": item["id"], "label": item["title"],
+                              "detail": f"{item['integration']} · {item['entities'] - item['visible']} entities you would add"})
+        if not items:
+            return llm.ToolResult(data={"note": "You can already see those (or they do not exist)."})
+        request = await self._entry.runtime_data.requests.async_file(
+            self._domain.id, "visibility", f"Let \"{self._domain.name}\" see {', '.join(i['label'] for i in items)}",
+            args["reason"], items, {"with_read": bool(args.get("with_read"))},
+        )
+        return llm.ToolResult(data={"request": request["id"], "status": "waiting for the owner"})
 
 
 class GetStateTool(_HomeTool):
@@ -160,6 +208,16 @@ class RequestAccessTool(_HomeTool):
         return llm.ToolResult(data={"request": request["id"], "status": "waiting for the owner", "entities": [i["id"] for i in items]})
 
 
+async def apply_visibility(entry: AACConfigEntry, domain_id: str, request: dict[str, Any], approved: list[str]) -> None:
+    """An approved visibility request: tick those integrations' entities for the domain (and read, if asked)."""
+    if dom := entry.runtime_data.domain(domain_id):
+        hass = dom.chats.hass
+        new = entities_of(hass, approved)
+        await dom.settings.async_set_visible([*visible_ids(hass, dom.settings), *new])
+        if request["payload"].get("with_read"):
+            await async_set_access(hass, entry.runtime_data.store, {e: {"read": True} for e in new})
+
+
 async def apply_entities(entry: AACConfigEntry, domain_id: str, request: dict[str, Any], approved: list[str]) -> None:
     """An approved entity request: raise those entities to the requested level."""
     if dom := entry.runtime_data.domain(domain_id):
@@ -175,6 +233,6 @@ class AACHomeAPI(llm.API):
     domain: Domain
 
     async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
-        tools = [ListEntitiesTool, GetStateTool, ControlTool, RequestAccessTool]
+        tools = [OverviewTool, ListEntitiesTool, GetStateTool, ControlTool, RequestAccessTool, RequestVisibilityTool]
         return llm.APIInstance(api=self, api_prompt=API_PROMPT, llm_context=llm_context,
                                tools=[t(self.entry, self.domain) for t in tools])
