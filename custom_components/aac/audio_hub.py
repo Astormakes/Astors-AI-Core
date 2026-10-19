@@ -301,7 +301,7 @@ class AudioHub:
         seconds = len(pcm) / (SAMPLE_RATE * 2)
         line = {"time": (ended - timedelta(seconds=seconds)).isoformat(), "source": source.id, "name": source.name,
                 "kind": "speech", "text": "", "addressed": False, "seconds": round(seconds, 1),
-                "loudness_db": loudness_db(pcm)}
+                "loudness_db": loudness_db(pcm), "highs": highs(pcm)}
         source.transcribing += 1
         try:
             for stage in self.entry.runtime_data.capabilities.active_stages(self.entry.runtime_data.voice_domain.id, "segment"):
@@ -581,3 +581,17 @@ def loudness_db(pcm: bytes) -> float | None:
     samples = array("h", pcm)[::4]
     rms = math.sqrt(sum(v * v for v in samples) / max(1, len(samples)))
     return round(20 * math.log10(rms / 32767), 1) if rms > 0 else None
+
+
+def highs(pcm: bytes) -> float | None:
+    """Share of the energy above 4 kHz, in percent. Speech has a few percent up there; a Bluetooth
+    speaker in narrowband (phone quality, 8 kHz) has almost nothing, which makes speech to text worse."""
+    import numpy as np  # noqa: PLC0415 - HA ships numpy; only needed here
+
+    samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32)[: 4 * SAMPLE_RATE]  # 4 s are enough (~3 ms)
+    if len(samples) < SAMPLE_RATE // 4:
+        return None
+    power = np.abs(np.fft.rfft(samples * np.hanning(len(samples)))) ** 2
+    freqs = np.fft.rfftfreq(len(samples), 1 / SAMPLE_RATE)
+    total = float(power[freqs > 80].sum())
+    return round(100 * float(power[freqs > 4000].sum()) / total, 2) if total > 0 else None

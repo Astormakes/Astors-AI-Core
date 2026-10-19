@@ -150,8 +150,8 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         return float(setting("keep_days") or 7)
 
     async def run(source, pcm: bytes, line: dict[str, Any]) -> dict[str, Any] | None:
-        if line["seconds"] < float(setting("min_seconds") or 1.5):
-            return None
+        if line.get("kind", "speech") != "speech" or line["seconds"] < float(setting("min_seconds") or 1.5):
+            return None  # sounds (whisper's *crunch*) and very short lines get no voice
         found = await ctx.audio.async_senses("voices", "/audio/voiceprint", pcm[-20 * 32000:])
         if not found or not found.get("embedding"):
             return None

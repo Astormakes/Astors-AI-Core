@@ -1821,6 +1821,7 @@ class AacPanel extends HTMLElement {
     const t = new Date(l.time);
     const hms = `${t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}.${String(Math.floor(t.getMilliseconds() / 100))}`;
     const meta = [hms, l.seconds != null ? `${l.seconds} s` : null, l.language, l.loudness_db != null ? `${l.loudness_db} dB` : null,
+      l.highs != null ? (l.highs < 0.3 ? "phone quality (≤ 4 kHz)" : `highs ${l.highs} %`) : null,
       l.confidence != null ? `${Math.round(l.confidence * 100)} % sure` : null,
       l.engine ? `${this._resourceLabel(l.engine)}${l.stt_ms != null ? ` ${l.stt_ms} ms` : ""}` : null].filter(Boolean);
     if (l.speaker) meta.push(`🗣 ${l.speaker.name}${l.speaker.new ? " (new)" : ""}${l.speaker.kind === "media" ? " · video/TV" : ""}${l.speaker.score > 0 ? ` ${Math.round(l.speaker.score * 100)} %` : ""}`);
