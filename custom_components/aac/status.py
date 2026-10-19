@@ -54,6 +54,15 @@ def setup_steps(hass: HomeAssistant, store: AACStore, domain: DomainSettings | N
             "done": bool(store.audio["known"]),
         },
         {
+            "id": "rules",
+            "title": "Tell AAC when it may use your machines",
+            "hint": "Optional rules per model, e.g. \"use my PC for heavy jobs only while I'm at work\". Say it in a chat; "
+                    "AAC writes the rule and you see it under Pools. Without rules every model is used whenever it answers.",
+            "target": "settings/pools",
+            "optional": True,
+            "done": any(t.get("rule") for t in store.data["traits"].values()),
+        },
+        {
             "id": "heartbeat",
             "title": "Let AAC think on its own",
             "hint": "A heartbeat wakes the master now and then; it only speaks up when it matters.",

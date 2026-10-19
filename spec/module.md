@@ -27,6 +27,39 @@ shareable with a friend, and creatable by AAC itself at runtime.
 }
 ```
 
+## Setup steps (planned; the core's own steps already follow this shape)
+
+A module that needs something from the owner declares it, instead of hiding it in code.
+The steps show up in SETUP **per domain**: a domain that uses a module that is not set up
+yet makes SETUP appear again there, until the steps are done or (optional ones) skipped.
+
+```json
+"settings": {
+  "list": {"type": "entity", "domain": "todo", "title": "Shopping list"},
+  "stores": {"type": "text", "title": "Stores you shop at", "default": ""}
+},
+"setup": [
+  {"id": "list", "title": "Choose the shopping list", "optional": false,
+   "hint": "Which HA to-do list AAC keeps your shopping in.",
+   "done_when": {"setting": "list"},
+   "how": ["panel", "chat"]},
+  {"id": "stores", "title": "Tell AAC where you shop", "optional": true,
+   "hint": "Lets it sort the list by store.",
+   "done_when": {"setting": "stores"},
+   "how": ["chat"]}
+]
+```
+
+| Field | Meaning |
+|---|---|
+| `settings` | the module's own settings, **per domain**, with a type (`entity`, `text`, `number`, `bool`, `model_role`, `time`); the panel builds the form from this |
+| `setup[].done_when` | when the step is done, checked by the core: `{"setting": key}` (set and not empty), `{"entity_exists": id}`, `{"role": "stt"}` (a pool role has an entry), `{"rule": true}` (an availability rule exists) |
+| `setup[].how` | `panel` = a form from `settings`; `chat` = AAC asks and fills it in with the generic setup tool `module_setting(module, key, value)` (owner present only, same rules as the other setup tools) |
+| `optional` | optional steps can be skipped per domain |
+
+The core is a module like any other: its steps (connect a model, master, memory, ears and voice,
+rules for the machines, heartbeat) are declared the same way, so SETUP has one code path.
+
 ## Two kinds
 
 | kind | Contains | Risk | May AAC activate it alone? |

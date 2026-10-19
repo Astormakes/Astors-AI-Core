@@ -13,7 +13,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - Keep docs tidy: design decisions go into `docs/assistant-framework.md`, status goes here, no duplicate notes
 - Version lives in `custom_components/aac/manifest.json` (`version`). Bump it for every release and tag it (`v0.1.0` …) so HACS shows the version
 
-## Current state (2026-10-19) – v0.16.0
+## Current state (2026-10-19) – v0.16.1
 - HACS-installable custom integration `aac` (`custom_components/aac`, `hacs.json`, min HA 2026.10.0), single instance
 - **Everything is configured in the AAC panel** (spec: `docs/design.md`). Config flow is one click; settings in `.storage/aac.config` (`store.py`), chats in `.storage/aac.chats` (`chats.py`), runs in `.storage/aac.runs` (`runs.py`, last 100). Entry v1 (0.1.0) migrates automatically
 - **HA's own AI is never changed** (user decision): no editing of Assist pipelines; HA AI only as optional tools. Other integrations are only read
@@ -81,6 +81,8 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - **Charter**: the draft stays for now (user decision 2026-10-19); the user changes it when something feels off
 - User: check the phone again (safe-area fix); try the heartbeat for a day; GitHub release
 - **Own voices** (plan in `docs/plans.md`): GLaDOS EN/DE + Portal announcer via game lines → imitation model → owner hand-picks → retrain → dataset → Piper. Waiting for Portal 2 to be installed in Steam on the PC. Never in the public repo
+- **Broker queue next** (user question 2026-10-19: what if all models are busy or offline?): today no queue; busy = llama-server's own slots, all offline = the request fails (chat error, auto run "failed"). Plan: priorities (owner chat/voice > triggers > background), background jobs wait for an allowed model until their deadline instead of failing, in-flight count per model, queued jobs visible in the panel
+- **Module setup steps**: contract written (`spec/module.md` → Setup steps: per-domain `settings` + `setup[]` with `done_when`/`how`, generic `module_setting` tool); the core's own steps should move to the same declaration when modules are built. New optional core step "rules" (v0.16.1) tells the owner that availability rules exist
 - **Audio next** (open questions to the user: own STT provider? HTTPS for the browser mic?): utterance grouper + arbitration before STT, echo rule per area, listening modes per source, gate tiers (pause decision → active voice session), browser mic button, HA app version of the satellite for the Plantronics on the HA host (HA OS audio plugin; USB works there, Bluetooth audio in HA OS is doubtful)
 - Extractor stores setup instructions ("quiet from 23:00") as memories about the user: noise, skip runs that changed settings or let the curator clean it
 - Audio hub: first real source (probably the browser mic or a Wyoming/ESPHome satellite streaming continuously), ring buffer + VAD
