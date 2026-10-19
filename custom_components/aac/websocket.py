@@ -27,6 +27,7 @@ from .memory import KINDS, SOURCES, summarize
 from .runs import SIGNAL_UPDATE
 from .status import aac_agent_entity_id, setup_steps
 from .pools import ROLES, async_set_role
+from .skins import list_skins, user_dir
 from .store import AACStore
 from .models import async_list_models, async_overview
 
@@ -62,6 +63,8 @@ def async_register(hass: HomeAssistant) -> None:
         ws_memory_delete,
         ws_memory_settings,
         ws_pools,
+        ws_skins,
+        ws_skin_set,
         ws_pool_set,
         ws_pool_tags,
         ws_pool_measure,
@@ -99,6 +102,7 @@ def _state(hass: HomeAssistant, store: AACStore, entry_id: str) -> dict[str, Any
         "setup": setup_steps(hass, store),
         "heartbeat": store.heartbeat,
         "memory": store.memory,
+        "ui": store.data["ui"],
         "pools": entry.runtime_data.broker.status() if entry else None,
         "charter": store.charter,
         "autonomy": store.autonomy,
@@ -588,6 +592,34 @@ async def ws_memory_settings(hass: HomeAssistant, connection, msg) -> None:
     store = entry.runtime_data.store
     await store.async_update_memory({k: v for k, v in msg.items() if k not in ("id", "type")})
     connection.send_result(msg["id"], _state(hass, store, entry.entry_id))
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/skins"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_skins(hass: HomeAssistant, connection, msg) -> None:
+    """The skins (built-in + own) and the chosen one."""
+    if entry := _entry(hass, connection, msg):
+        skins = await hass.async_add_executor_job(list_skins, hass)
+        connection.send_result(msg["id"], {"skins": skins, "skin": entry.runtime_data.store.data["ui"]["skin"],
+                                           "folder": str(user_dir(hass))})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/skin/set", vol.Required("skin"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_skin_set(hass: HomeAssistant, connection, msg) -> None:
+    """Choose the panel's skin."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    skins = await hass.async_add_executor_job(list_skins, hass)
+    if msg["skin"] not in {s["id"] for s in skins}:
+        connection.send_error(msg["id"], "not_found", "No such skin")
+        return
+    store = entry.runtime_data.store
+    store.data["ui"]["skin"] = msg["skin"]
+    await store.async_save()
+    connection.send_result(msg["id"], {"skins": skins, "skin": msg["skin"], "folder": str(user_dir(hass))})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "aac/pools"})

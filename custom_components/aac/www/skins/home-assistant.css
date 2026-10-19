@@ -1,0 +1,112 @@
+/*
+name: Home Assistant
+description: Blends into Home Assistant: your HA theme's colors (light, dark or custom), rounded buttons, calm grey zones, no glow.
+author: AAC
+*/
+
+/* HA hands its theme variables into the panel; the fallbacks are HA's default dark theme */
+:host {
+  --bg: var(--primary-background-color, #111111);
+  --bg2: var(--sidebar-background-color, var(--card-background-color, #1c1c1c));
+  --card: var(--card-background-color, var(--ha-card-background, #1c1c1c));
+  --field: var(--secondary-background-color, #282828);
+  --hover: var(--secondary-background-color, #282828);
+  --soft: var(--secondary-background-color, #282828);
+  --text: var(--primary-text-color, #e1e1e1);
+  --dim: var(--secondary-text-color, #9b9b9b);
+  --line: var(--divider-color, rgba(225, 225, 225, .12));
+  --accent-bg: var(--primary-color, #03a9f4);
+  --accent-fg: var(--text-primary-color, #ffffff);
+  --cyan: var(--primary-text-color, #e1e1e1);
+  --magenta: var(--primary-color, #03a9f4);
+  --green: var(--success-color, #43a047);
+  --amber: var(--warning-color, #ffa600);
+  --red: var(--error-color, #db4437);
+  --radius: var(--ha-card-border-radius, 12px);
+  --glow: none;
+  --font: var(--ha-font-family-body, var(--mdc-typography-font-family, Roboto, "Noto Sans", ui-sans-serif, sans-serif));
+  color-scheme: light dark;
+}
+
+/* no neon: glow, scanlines, corner marks, shouting labels */
+.root::after, .card::before, .card::after { display: none; }
+.ico { filter: none; }
+*, *::before { text-shadow: none !important; }
+.root * { letter-spacing: normal !important; }
+nav { border-right: 0; box-shadow: none; }
+.brand { border-bottom: 0; }
+.brand .name { color: var(--text); font-weight: 700; }
+.seg-title { color: var(--dim); font-size: .78em; font-weight: 600; text-transform: uppercase; padding-top: .9em; }
+.seg-title .ico { width: 1.1em; height: 1.1em; }
+.seg-line { display: none; }
+.tab { color: var(--text); border-left: 0; margin: .1em .6em; padding-left: 2.4em; border-radius: .6em; }
+.tab.deep { padding-left: 3.4em; }
+.tab.active { color: var(--accent-bg); background: color-mix(in srgb, var(--accent-bg) 12%, transparent); }
+.tab.soon { color: var(--dim); }
+.sub { padding-left: 2.6em; text-transform: uppercase; font-size: .7em; }
+.empty { padding-left: 3em; }
+.dot.ok, .dot.bad, .dot.open, .dot.run { box-shadow: none; }
+.mark.done, .mark.open { text-shadow: none; }
+.count { color: var(--dim); }
+.unread { border: 0; background: var(--accent-bg); color: var(--accent-fg); border-radius: 1em; }
+
+header { border-bottom: 1px solid var(--line); }
+header h1 { color: var(--text); font-weight: 600; text-shadow: none; }
+.content { background: var(--bg); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--ha-card-box-shadow, none); }
+.card h2 { color: var(--text); font-weight: 600; font-size: 1em; }
+.card p, .hint { color: var(--dim); }
+code { color: var(--text); background: var(--soft); padding: .05em .35em; border-radius: .35em; }
+label { color: var(--dim); text-transform: none; font-size: .85em; }
+input, select, textarea { background: var(--field); border: 1px solid var(--line); border-radius: .75em; color: var(--text); }
+input:focus, select:focus, textarea:focus { border-color: var(--dim); box-shadow: none; }
+[tabindex]:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--dim); outline-offset: 2px; box-shadow: none;
+}
+.check input { accent-color: var(--accent-bg); }
+.tline.to-aac { border-left-color: var(--accent-bg); }
+.btn { background: var(--soft); color: var(--text); border: 0; border-radius: 2em; text-transform: none; box-shadow: none; font-weight: 500; }
+.btn.primary { background: var(--accent-bg); color: var(--accent-fg); }
+.btn.danger { background: transparent; color: var(--red); border: 1px solid var(--red); }
+button.icon-btn { color: var(--dim); border-radius: .6em; }
+button.icon-btn.on { color: var(--text); }
+.tag { border: 0; border-radius: 1em; background: var(--soft); color: var(--dim); padding: .15em .6em; }
+.tag.aac { color: var(--text); }
+.tag.plan { color: var(--amber); }
+.tag.ok { color: var(--green); }
+.status { border: 0; border-radius: 1em; background: var(--soft); }
+.msg.err, .msg.ok { text-shadow: none; }
+.step, .src { border-bottom: 1px solid var(--line); }
+.role { border-top: 1px solid var(--line); }
+.role h3 { color: var(--text); }
+.tline { border-left: 2px solid var(--line); }
+.tline.to-aac { border-left-color: var(--text); }
+pre.code { background: var(--soft); border: 0; border-radius: .75em; }
+.timeline .st { border-left: 2px solid var(--line); }
+.steps .st b, .timeline .st b { color: var(--text); }
+.stage .node { border-color: var(--amber); box-shadow: none; border-radius: 50%; transform: none; }
+.stage.ok .node { border-color: var(--green); }
+.stage .wire { background: var(--line); box-shadow: none; }
+.thin-scroll { scrollbar-color: var(--line) transparent; }
+.thin-scroll::-webkit-scrollbar-track { background: transparent; }
+.thin-scroll::-webkit-scrollbar-thumb { background: var(--line); box-shadow: none; }
+
+/* chat: grey bubble for you, plain text for AAC */
+.bubble { border-radius: 1.2em; }
+.bubble.user { background: var(--soft); border: 0; box-shadow: none; }
+.bubble.aac { border: 0; box-shadow: none; padding-left: 0; }
+.composer { border-top: 0; }
+.composer textarea { border-radius: 1.5em; padding: .8em 1.1em; }
+.welcome .big { color: var(--text); font-weight: 600; }
+.cursor { background: var(--text); box-shadow: none; }
+
+@media (hover: hover) {
+  button.icon-btn:hover { border-color: transparent; background: var(--hover); box-shadow: none; }
+  .tab:hover, .tab.active:hover { background: var(--hover); }
+  .btn:hover:not(:disabled) { background: var(--hover); box-shadow: none; }
+  .btn.primary:hover:not(:disabled) { background: var(--accent-bg); opacity: .85; }
+  .step:hover .t { color: var(--text); text-decoration: underline; }
+}
+@media (max-width: 900px) {
+  .root.nav-open nav { box-shadow: 0 0 2em rgba(0, 0, 0, .4); }
+}

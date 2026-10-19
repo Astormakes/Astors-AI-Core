@@ -360,6 +360,32 @@ class AacPanel extends HTMLElement {
     }
     this._render();
   }
+  // ---------------------------------------------------------------- skins
+  _syncSkin() {
+    if (this._skinCss === undefined) { // first render: last skin from this browser, so there is no neon flash
+      try { const c = JSON.parse(localStorage.getItem("aac-skin") || "null"); this._skinId = c?.id; this._skinCss = c?.css || ""; }
+      catch (e) { this._skinCss = ""; }
+    }
+    const want = this._state?.ui?.skin;
+    if (!want || want === this._skinId || this._skinLoading === want) return;
+    this._skinLoading = want;
+    this._loadSkin(want);
+  }
+
+  async _loadSkin(id) {
+    let css = "";
+    try {
+      if (id !== "neon") {
+        this._skins = await this._ws("aac/skins");
+        const skin = this._skins.skins.find((x) => x.id === id);
+        if (skin?.url) css = await (await fetch(`${skin.url}?v=${Date.now()}`)).text();
+      }
+    } catch (e) { css = this._skinCss || ""; }
+    this._skinId = id; this._skinCss = css; this._skinLoading = null;
+    try { localStorage.setItem("aac-skin", JSON.stringify({ id, css })); } catch (e) { /* private mode */ }
+    this._render();
+  }
+
   async _loadState() {
     try { this._state = await this._ws("aac/state"); } catch (e) { this._state = { error: e.message || String(e) }; }
     this._render();
@@ -446,6 +472,7 @@ class AacPanel extends HTMLElement {
     }
     if (view.startsWith("settings/audio")) this._loadAudio();
     if (view === "settings/memory") this._loadMemory();
+    if (view === "settings/appearance") this._ws("aac/skins").then((r) => { this._skins = r; this._render(); }).catch(() => {});
     if (view.startsWith("chat/") && view !== "chat/new") { this._openChat(view.slice(5)); return; }
     if (view === "chat/new") this._chat = null;
     if (view.startsWith("run/")) this._openRun(view.slice(4));
@@ -475,7 +502,8 @@ class AacPanel extends HTMLElement {
     const logAtBottom = !log || !sameView || log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     const logScroll = log?.scrollTop || 0;
 
-    sr.innerHTML = `<style>${STYLE}</style>
+    this._syncSkin();
+    sr.innerHTML = `<style>${STYLE}</style><style>${this._skinCss || ""}</style>
       <div class="root ${this._navOpen ? "nav-open" : ""}">
         ${this._renderNav()}
         <div class="backdrop" id="backdrop"></div>
@@ -557,6 +585,7 @@ class AacPanel extends HTMLElement {
         <div class="seg">
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
           ${this._tab("settings/charter", "Charter")}
+          ${this._tab("settings/appearance", "Appearance")}
           ${this._tab("settings/master", "Master agent")}
           ${this._tab("settings/triggers", "Triggers")}
           ${this._tab("settings/pools", "Pools", this._stepOpen("master") || this._stepOpen("memory") ? '<span class="dot open"></span>' : "")}
@@ -590,6 +619,7 @@ class AacPanel extends HTMLElement {
     if (v.startsWith("model/")) return this._renderModel(v.slice(6));
     if (v === "settings/master") return this._renderMaster();
     if (v === "settings/pools") return this._renderPools();
+    if (v === "settings/appearance") return this._renderAppearance();
     if (v === "settings/charter") return this._renderCharter();
     if (v === "settings/triggers") return this._renderTriggers();
     if (v === "trigger/new" || v.startsWith("trigger/edit/")) return this._renderTriggerForm();
@@ -872,6 +902,24 @@ class AacPanel extends HTMLElement {
         <textarea id="ch-text" class="thin-scroll" style="min-height:20em">${esc(st.charter)}</textarea>
         <div class="actions"><button class="btn primary" id="ch-save">Save</button></div>
         ${this._flashHtml()}
+      </div>`);
+  }
+
+  // ---------------------------------------------------------------- settings: appearance
+  _renderAppearance() {
+    const sk = this._skins;
+    if (!sk) return this._page("APPEARANCE", "", '<div class="card"><p>Loading…</p></div>');
+    const current = this._state?.ui?.skin || sk.skin;
+    return this._page("APPEARANCE", "skin", `
+      <div class="cards">${sk.skins.map((x) => `
+        <div class="card"><h2>${esc(x.name)} ${x.id === current ? '<span class="tag ok">IN USE</span>' : ""} <span class="tag">${esc(x.source)}</span></h2>
+          <p>${esc(x.description)}</p>
+          ${x.author ? `<p class="hint">by ${esc(x.author)}</p>` : ""}
+          <div class="actions">${x.id === current ? "" : `<button class="btn primary" data-skin="${esc(x.id)}">Use</button>`}</div>
+        </div>`).join("")}
+      </div>
+      <div class="card"><h2>OWN SKINS</h2>
+        <p>A skin is one CSS file with a short header (name, description, author). Put it into <code>${esc(sk.folder)}</code> and it shows up here; a file with the same name as a built-in skin replaces it. Downloading skins from inside AAC comes later.</p>
       </div>`);
   }
 
@@ -1200,6 +1248,11 @@ class AacPanel extends HTMLElement {
     poolMove("data-pool-up", (a, i) => a.splice(i - 1, 2, a[i], a[i - 1]));
     poolMove("data-pool-down", (a, i) => a.splice(i, 2, a[i + 1], a[i]));
     poolMove("data-pool-del", (a, i) => a.splice(i, 1));
+    sr.querySelectorAll("[data-skin]").forEach((el) => el.addEventListener("click", async () => {
+      this._skins = await this._ws("aac/skin/set", { skin: el.dataset.skin });
+      if (this._state) this._state.ui = { ...(this._state.ui || {}), skin: el.dataset.skin };
+      this._render();
+    }));
     sr.querySelectorAll("[data-pool-tags]").forEach((el) => el.addEventListener("click", async () => {
       const id = el.dataset.poolTags;
       const item = (this._state?.pools?.roles?.master?.items || []).find((x) => x.id === id);

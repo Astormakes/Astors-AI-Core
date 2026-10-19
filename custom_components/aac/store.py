@@ -96,6 +96,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Per resource: measured speed (tokens/s, moving average), size (billions of parameters),
     # the owner's own tags (e.g. "efficient"): {resource: {speed, samples, params_b, tags}}
     "traits": {},
+    # Panel look: a skin id (neon = the original; others are CSS files, see skins.py)
+    "ui": {"skin": "neon"},
 }
 
 MASTER_KEYS = set(DEFAULT_CONFIG["master"])
@@ -142,6 +144,7 @@ class AACStore:
         data["memory"].update(stored.get("memory", {}))
         data["audio"].update(stored.get("audio", {}))
         data["traits"] = dict(stored.get("traits", {}))
+        data["ui"].update(stored.get("ui", {}))
         data["charter"] = stored.get("charter", "")
         data["autonomy"].update(stored.get("autonomy", {}))
         # Up to 0.11 every role had one model: master.model, memory.embed_model, audio.stt/tts

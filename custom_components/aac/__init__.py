@@ -42,6 +42,7 @@ from .audio_hub import AudioHub
 from .audio_view import AACAudioView
 from .chats import ChatStore
 from .pools import Broker
+from .skins import USER_URL as USER_SKINS_URL, user_dir
 from .memory import MemoryStore, memory_path
 from .memory_api import AACMemoryAPI
 from .schedule_api import AACScheduleAPI
@@ -79,11 +80,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the panel's WebSocket commands and static files."""
     websocket.async_register(hass)
     hass.http.register_view(AACAudioView())
+    skins_dir = user_dir(hass)
+    await hass.async_add_executor_job(lambda: skins_dir.mkdir(parents=True, exist_ok=True))
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
                 STATIC_URL, str(Path(__file__).parent / "www"), cache_headers=False
-            )
+            ),
+            StaticPathConfig(USER_SKINS_URL, str(skins_dir), cache_headers=False),
         ]
     )
     return True
