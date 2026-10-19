@@ -23,7 +23,7 @@ from .const import (
 from .provider import ProviderAuthError, ProviderError
 from .audio import audio_overview
 from .master import async_run_master
-from .memory import KINDS, SOURCES
+from .memory import KINDS, SOURCES, summarize
 from .runs import SIGNAL_UPDATE
 from .status import aac_agent_entity_id, setup_steps
 from .store import CONF_MASTER_MODEL, AACStore
@@ -60,6 +60,9 @@ def async_register(hass: HomeAssistant) -> None:
         ws_memory_settings,
         ws_memory_reembed,
         ws_charter,
+        ws_autonomy,
+        ws_trigger_approve,
+        ws_facts,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -90,6 +93,7 @@ def _state(hass: HomeAssistant, store: AACStore, entry_id: str) -> dict[str, Any
         "heartbeat": store.heartbeat,
         "memory": store.memory,
         "charter": store.charter,
+        "autonomy": store.autonomy,
         "charter_is_default": not store.data["charter"],
         "triggers": store.triggers,
         "llm_apis": [{"id": api.id, "name": api.name} for api in llm.async_get_apis(hass)],
@@ -562,3 +566,53 @@ async def ws_charter(hass: HomeAssistant, connection, msg) -> None:
         return
     await entry.runtime_data.store.async_set_charter(msg["text"])
     connection.send_result(msg["id"], _state(hass, entry.runtime_data.store, entry.entry_id))
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "aac/autonomy", vol.Required("schedule"): vol.In(["off", "ask", "allowed"])}
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_autonomy(hass: HomeAssistant, connection, msg) -> None:
+    """What AAC may do on its own. Owner-only (agents have no tool for this)."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    await entry.runtime_data.store.async_set_autonomy({"schedule": msg["schedule"]})
+    connection.send_result(msg["id"], _state(hass, entry.runtime_data.store, entry.entry_id))
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/trigger/approve", vol.Required("trigger_id"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_trigger_approve(hass: HomeAssistant, connection, msg) -> None:
+    """Approve a plan AAC proposed (reject = aac/trigger/delete)."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    store = entry.runtime_data.store
+    trig = next((t for t in store.triggers if t["id"] == msg["trigger_id"]), None)
+    if trig is None:
+        connection.send_error(msg["id"], "not_found", "Trigger not found")
+        return
+    await store.async_save_trigger({**trig, "enabled": True, "proposed": False})
+    entry.runtime_data.triggers.async_start()
+    connection.send_result(msg["id"], _state(hass, store, entry.entry_id))
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "aac/facts", vol.Optional("subject"): str, vol.Optional("attribute"): str}
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_facts(hass: HomeAssistant, connection, msg) -> None:
+    """Structured facts: the overview, or one series with its values."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    memory = entry.runtime_data.memory
+    if msg.get("subject") and msg.get("attribute"):
+        series = await memory.async_facts(msg["subject"], msg["attribute"])
+        connection.send_result(msg["id"], {"series": series, "summary": summarize(series)})
+    else:
+        keys = await memory.async_fact_keys()
+        for key in keys:
+            key["summary"] = summarize(await memory.async_facts(key["subject"], key["attribute"]))
+        connection.send_result(msg["id"], {"keys": keys})

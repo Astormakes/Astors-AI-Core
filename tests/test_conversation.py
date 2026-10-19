@@ -52,8 +52,11 @@ async def test_simple_answer(
     assert payload["messages"][0]["role"] == "system"
     assert "You are a test." in payload["messages"][0]["content"]
     assert payload["messages"][-1] == {"role": "user", "content": "hi"}
-    # No HA tools, only AAC's own memory
-    assert sorted(t["function"]["name"] for t in payload["tools"]) == ["forget", "recall", "remember"]
+    # No HA tools, only AAC's own memory and planning
+    assert sorted(t["function"]["name"] for t in payload["tools"]) == [
+        "aac-memory__forget", "aac-memory__lookup_facts", "aac-memory__recall", "aac-memory__remember",
+        "aac-planning__cancel_schedule", "aac-planning__list_schedules", "aac-planning__schedule",
+    ]
 
 
 async def test_tool_call_round_trip(

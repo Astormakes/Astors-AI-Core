@@ -79,6 +79,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Triggers in the contract format (spec/trigger.md):
     # {id, name, enabled, when: {type, ...}, do: {template, instruction}, cooldown, quiet_hours}
     "triggers": [],
+    # What AAC may do on its own (owner-only). schedule: "off" | "ask" | "allowed"
+    "autonomy": {"schedule": "allowed"},
     # The owner's values for every agent; "" = the built-in draft
     "charter": "",
     # Long-term memory; embed_model = a model id from Models (None: keywords only)
@@ -100,6 +102,8 @@ def _trigger_v1(trig: dict[str, Any]) -> dict[str, Any]:
         "do": {"template": "event-reaction", "instruction": trig.get("instruction", "")},
         "cooldown": trig.get("cooldown", 300),
         "quiet_hours": None,
+        "created_by": "owner",
+        "proposed": False,
     }
 
 
@@ -126,6 +130,7 @@ class AACStore:
         data["triggers"] = [_trigger_v1(t) for t in stored.get("triggers", [])]
         data["memory"].update(stored.get("memory", {}))
         data["charter"] = stored.get("charter", "")
+        data["autonomy"].update(stored.get("autonomy", {}))
         self.data = data
 
     async def async_save(self) -> None:
@@ -198,12 +203,24 @@ class AACStore:
             self.triggers.append(existing)
         for key in ("name", "enabled", "when", "do", "cooldown", "quiet_hours"):
             existing[key] = trigger.get(key)
+        existing["created_by"] = trigger.get("created_by", existing.get("created_by", "owner"))
+        existing["proposed"] = bool(trigger.get("proposed", False))
         await self.async_save()
         return existing
 
     async def async_delete_trigger(self, trigger_id: str) -> None:
         """Remove an event trigger."""
         self.data["triggers"] = [t for t in self.triggers if t["id"] != trigger_id]
+        await self.async_save()
+
+    @property
+    def autonomy(self) -> dict[str, Any]:
+        """What AAC may do on its own."""
+        return self.data["autonomy"]
+
+    async def async_set_autonomy(self, changes: dict[str, Any]) -> None:
+        """Owner-only."""
+        self.autonomy.update({k: v for k, v in changes.items() if k in self.autonomy})
         await self.async_save()
 
     @property

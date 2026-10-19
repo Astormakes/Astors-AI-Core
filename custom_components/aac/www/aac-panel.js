@@ -325,6 +325,7 @@ class AacPanel extends HTMLElement {
       if (this._run && this._run.id === run.id) this._run = run;
       this._render();
     } else if (ev.what === "chat" || ev.what === "chats") {
+      if (ev.chat_id === "aac") this._loadState(); // AAC may have planned something (Triggers)
       clearTimeout(this._chatTimer);
       this._chatTimer = setTimeout(async () => {
         await this._loadChats();
@@ -365,6 +366,7 @@ class AacPanel extends HTMLElement {
     this._render();
   }
   async _loadMemory() {
+    try { this._facts = await this._ws("aac/facts"); } catch (e) { this._facts = { keys: [] }; }
     try {
       this._memory = await this._ws("aac/memory/list", this._memQuery ? { query: this._memQuery } : { unconfirmed: !!this._memOpenOnly });
     } catch (e) { this._memory = { memories: [], stats: {}, error: e.message }; }
@@ -687,12 +689,24 @@ class AacPanel extends HTMLElement {
           <div class="actions"><button class="btn primary" id="hb-save">Save</button><button class="btn" id="hb-run">Run once now</button></div>
           ${this._flashHtml()}
         </div>
+        <div class="card"><h2>AAC'S OWN PLANS</h2>
+          <p>AAC may set itself reminders and check-ins (e.g. following up on something you want to achieve). It can never change your triggers, and every plan it makes is posted in "From AAC".</p>
+          <label for="aut-schedule">AAC may plan on its own</label>
+          <select id="aut-schedule">
+            ${[["allowed", "Yes, and tell me"], ["ask", "Only with my approval"], ["off", "No"]].map(([v, l]) => `<option value="${v}" ${st.autonomy?.schedule === v ? "selected" : ""}>${l}</option>`).join("")}
+          </select>
+        </div>
         <div class="card"><h2>TRIGGERS</h2>
           <p>Wake the master when something changes in Home Assistant, or at a time (reminders, routines), with your instruction.</p>
           ${triggers.length ? triggers.map((t) => `
             <div class="wrow">
-              <span><span class="dot ${t.enabled ? "ok" : ""}"></span> ${esc(t.name || t.when.entity_id || t.when.at)} <span class="hint">· ${esc(this._whenText(t.when))}</span></span>
-              <span class="actions"><button class="btn" data-go="trigger/edit/${esc(t.id)}">Edit</button></span>
+              <span><span class="dot ${t.proposed ? "open" : t.enabled ? "ok" : ""}"></span> ${esc(t.name || t.when.entity_id || t.when.at)}
+                ${t.created_by === "agent" ? '<span class="tag aac">AAC</span>' : ""}${t.proposed ? ' <span class="tag plan">PROPOSED</span>' : ""}
+                <span class="hint">· ${esc(this._whenText(t.when))}</span>
+                ${t.created_by === "agent" ? `<div class="hint" style="margin:.2em 0 0 1.1em">${esc(t.do?.instruction || "")}</div>` : ""}</span>
+              <span class="actions">
+                ${t.proposed ? `<button class="btn primary" data-approve="${esc(t.id)}">Approve</button><button class="btn danger" data-reject="${esc(t.id)}">Reject</button>` : `<button class="btn" data-go="trigger/edit/${esc(t.id)}">Edit</button>`}
+              </span>
             </div>`).join("") : '<p class="hint">No triggers yet.</p>'}
           <div class="actions"><button class="btn primary" data-go="trigger/new">${icon("plus")} New trigger</button></div>
         </div>
@@ -701,7 +715,7 @@ class AacPanel extends HTMLElement {
 
   _whenText(when) {
     if (when.type === "time") {
-      const days = (when.weekdays || []).length ? when.weekdays.map((d) => WEEKDAYS[d]).join(" ") : "every day";
+      const days = when.date ? `once on ${when.date}` : (when.weekdays || []).length ? when.weekdays.map((d) => WEEKDAYS[d]).join(" ") : "every day";
       return `${days} at ${when.at}`;
     }
     return `${when.entity_id}${when.to ? ` → ${when.to}` : " changes"}`;
@@ -909,9 +923,27 @@ class AacPanel extends HTMLElement {
           <p>Tell AAC something directly. "agent believes" entries are AAC's own conclusions; they count as facts only once you confirm them.</p>
           <label for="mem-text">Text</label><textarea id="mem-text" class="thin-scroll" style="min-height:5em" placeholder="e.g. Oat milk from brand X was good."></textarea>
           <label for="mem-kind">Kind</label>
-          <select id="mem-kind">${["note", "fact", "preference", "event"].map((k) => `<option>${k}</option>`).join("")}</select>
+          <select id="mem-kind">${["note", "fact", "preference", "event", "plan"].map((k) => `<option>${k}</option>`).join("")}</select>
+          <p class="hint" style="margin-top:.5em">"plan" = something you want to achieve or do; AAC keeps it in mind when it looks around on its own.</p>
           <div class="actions"><button class="btn primary" id="mem-add">Remember</button></div>
         </div>
+      </div>
+      <div class="card"><h2>FACTS</h2>
+        <p>Things with a value (measurements, places, ratings), stored with fields so they can be compared exactly. Each one is also a text memory below.</p>
+        ${!this._facts ? '<p class="hint">Loading…</p>' : !this._facts.keys.length ? '<p class="hint">No facts yet.</p>' :
+          this._facts.keys.map((k) => {
+            const sm = k.summary || {};
+            const open = this._factOpen === `${k.subject}|${k.attribute}`;
+            const val = sm.change !== undefined ? `${sm.first} → ${sm.latest}${sm.unit ? " " + sm.unit : ""} (${sm.change > 0 ? "+" : ""}${sm.change})` : `${sm.latest}${sm.unit ? " " + sm.unit : ""}`;
+            return `<div class="src" style="cursor:pointer" data-fact="${esc(k.subject)}|${esc(k.attribute)}" tabindex="0" role="button">
+              <span class="dot ok"></span>
+              <div style="flex:1;min-width:0">
+                <div class="n">${esc(k.subject)} · ${esc(k.attribute)}: <b>${esc(val)}</b></div>
+                <div class="m">${esc(k.count)} value(s) · last ${esc(fmtTime(k.last))}</div>
+                ${open && this._factSeries ? `<div class="m" style="margin-top:.4em">${this._factSeries.map((f) => `${esc(f.time.slice(0, 10))}: ${esc(f.value)}${f.unit ? " " + esc(f.unit) : ""}`).join(" · ")}</div>` : ""}
+              </div>
+            </div>`;
+          }).join("")}
       </div>
       <div class="card"><h2>BROWSE</h2>
         <div class="row">
@@ -1048,6 +1080,18 @@ class AacPanel extends HTMLElement {
     sr.querySelector("#hb-save")?.addEventListener("click", () => this._saveHeartbeat());
     sr.querySelector("#hb-run")?.addEventListener("click", () => this._runHeartbeat());
     sr.querySelector("#t-save")?.addEventListener("click", () => this._saveTrigger());
+    sr.querySelector("#aut-schedule")?.addEventListener("change", async (e) => {
+      this._state = await this._ws("aac/autonomy", { schedule: e.target.value });
+      this._render();
+    });
+    sr.querySelectorAll("[data-approve]").forEach((el) => el.addEventListener("click", async () => {
+      this._state = await this._ws("aac/trigger/approve", { trigger_id: el.dataset.approve });
+      this._render();
+    }));
+    sr.querySelectorAll("[data-reject]").forEach((el) => el.addEventListener("click", async () => {
+      await this._ws("aac/trigger/delete", { trigger_id: el.dataset.reject });
+      await this._loadState();
+    }));
     sr.querySelector("#t-type")?.addEventListener("change", (e) => { this._readTriggerForm(); this._form.type = e.target.value; this._renderedView = null; this._render(); });
     sr.querySelector("#t-quiet")?.addEventListener("change", (e) => { this._readTriggerForm(); this._form.quiet = e.target.checked ? { start: "22:00", end: "08:00" } : null; this._renderedView = null; this._render(); });
     sr.querySelector("#t-delete")?.addEventListener("click", () => this._deleteTrigger());
@@ -1078,6 +1122,13 @@ class AacPanel extends HTMLElement {
       this._memQuery = "";
       await this._loadMemory();
     });
+    sr.querySelectorAll("[data-fact]").forEach((el) => el.addEventListener("click", async () => {
+      const [subject, attribute] = el.dataset.fact.split("|");
+      if (this._factOpen === el.dataset.fact) { this._factOpen = null; return this._render(); }
+      this._factOpen = el.dataset.fact;
+      this._factSeries = (await this._ws("aac/facts", { subject, attribute })).series;
+      this._render();
+    }));
     sr.querySelectorAll("[data-mem-confirm]").forEach((el) => el.addEventListener("click", async () => {
       await this._ws("aac/memory/save", { memory_id: el.dataset.memConfirm, confirmed: true });
       await this._loadMemory();

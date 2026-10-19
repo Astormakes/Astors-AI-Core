@@ -43,6 +43,16 @@ def isolated_memory_db(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def no_memory_extractor(request):
+    """The extractor adds a model call per message; tests opt in with @pytest.mark.extractor."""
+    if request.node.get_closest_marker("extractor"):
+        yield
+        return
+    with patch("custom_components.aac.conversation.async_extract", new=AsyncMock(return_value=[])):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def mock_panel(hass: HomeAssistant) -> Generator[dict[str, MagicMock]]:
     """The real frontend needs half of HA; pretend it is loaded."""
     hass.config.components.update({"frontend", "panel_custom"})

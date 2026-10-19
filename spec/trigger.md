@@ -13,15 +13,21 @@ change, time. Stored in the format below since v0.6.0.
   "when": {"type": "state", "entity_id": "binary_sensor.front_door", "to": "on"},
   "do": {"template": "event-reaction", "instruction": "If nobody is home, tell me."},
   "cooldown": 300,
-  "quiet_hours": null
+  "quiet_hours": null,
+  "created_by": "owner",
+  "proposed": false
 }
 ```
+
+- `created_by`: `owner` or `agent` (AAC planned it itself). Agents can only change or
+  delete their own triggers, never the owner's.
+- `proposed`: an agent's plan waiting for the owner's approval (autonomy `ask`); disabled until approved.
 
 | `when.type` | Fields | Status |
 |---|---|---|
 | `heartbeat` | `interval` (minutes) | built (one global heartbeat) |
 | `state` | `entity_id`, optional `to` (fires only when it becomes this state) | built |
-| `time` | `at` ("07:30", local), optional `weekdays` (0 = Monday … 6 = Sunday; empty = every day) | built |
+| `time` | `at` ("07:30", local), optional `weekdays` (0 = Monday … 6 = Sunday; empty = every day) or `date` ("2026-10-24": once, removed after firing) | built |
 | `event` | `event_type` (an [Event](event.md) type), optional `match` (field → value) | planned |
 
 `do` says what happens:
@@ -41,6 +47,14 @@ Common rules:
   it, and may stay silent only for "check whether …" instructions. `state` triggers
   get the plain "say nothing unless it matters" rule. (Tested: with the plain rule the
   8B answered "Nothing." to a reminder.)
+
+## Agents planning for themselves (built)
+
+The master has `schedule` / `list_schedules` / `cancel_schedule` (LLM API `aac_schedule`).
+The owner's autonomy setting decides: `off` (tools not offered) · `ask` (proposal, the
+owner approves in the panel) · `allowed` (active at once). Every plan or cancellation is
+posted to "From AAC". At most 20 own plans. Day names and groups are accepted
+(`["weekdays"]`, `["mon","fri"]`, `"Mo-Fr"`), because small models get numbers wrong.
 
 ## What is stored
 

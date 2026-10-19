@@ -118,7 +118,7 @@ async def test_heartbeat_schedule(hass: HomeAssistant, hass_ws_client, aioclient
         state = (await ws.receive_json())["result"]
         assert {s["id"]: s for s in state["setup"]}["heartbeat"]["done"]
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=6))
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
     runs = mock_entry.runtime_data.runs.runs
     assert [r.trigger for r in runs] == ["heartbeat"]
 

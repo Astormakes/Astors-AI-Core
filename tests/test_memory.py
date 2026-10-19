@@ -2,6 +2,8 @@
 
 import math
 
+import pytest
+
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
 
 from custom_components.aac.memory import MemoryStore, fuse
@@ -78,11 +80,11 @@ async def test_master_uses_memory_tools(
     await setup_aac(hass, mock_entry)
     replies = [
         {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
-            {"id": "r1", "type": "function", "function": {"name": "remember",
+            {"id": "r1", "type": "function", "function": {"name": "aac-memory__remember",
              "arguments": '{"text": "Soy milk was crap.", "kind": "preference"}'}}]}}]},
         {"choices": [{"message": {"role": "assistant", "content": "Noted."}}]},
         {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
-            {"id": "r2", "type": "function", "function": {"name": "recall", "arguments": '{"query": "soy milk"}'}}]}}]},
+            {"id": "r2", "type": "function", "function": {"name": "aac-memory__recall", "arguments": '{"query": "soy milk"}'}}]}}]},
         {"choices": [{"message": {"role": "assistant", "content": "You said soy milk was crap."}}]},
     ]
     payloads = []
@@ -184,3 +186,133 @@ def test_keyword_terms_skip_filler():
 
     assert _fts_query("Which plant-based milk should I buy again?") == '"plant"* OR "based"* OR "milk"* OR "buy"*'
     assert _fts_query("Was ist das?") == ""
+
+
+@pytest.mark.extractor
+async def test_extractor_keeps_what_matters(
+    hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured
+):
+    """After a message, a background call stores lasting things, skipping duplicates."""
+    await setup_aac(hass, mock_entry)
+    await mock_entry.runtime_data.memory.async_remember("Wants to lose 4 kg by spring.", "plan")
+    payloads = []
+    replies = [
+        {"choices": [{"message": {"role": "assistant", "content": "Nice, 0.8 kg down!"}}]},
+        {"choices": [{"message": {"role": "assistant", "content":
+            '{"items": [{"text": "Weight 81.6 kg", "kind": "event", "subject": "user", "attribute": "weight", "value": "81.6", "unit": "kg"},'
+            ' {"text": "Wants to lose 4 kg by spring.", "kind": "plan", "subject": "", "attribute": "", "value": "", "unit": ""}]}'}}]},
+    ]
+
+    async def side_effect(method, url, data):
+        payloads.append(data)
+        return AiohttpClientMockResponse(method, url, json=replies.pop(0))
+
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=side_effect)
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "Weighed myself: 81.6 kg."})
+    await ws.receive_json()
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    extract_call = payloads[1]
+    assert extract_call["response_format"]["json_schema"]["name"] == "memories"
+    assert "Weighed myself: 81.6 kg." in extract_call["messages"][0]["content"]
+    texts = [m.text for m in await mock_entry.runtime_data.memory.async_list()]
+    assert "Weight 81.6 kg" in texts
+    assert texts.count("Wants to lose 4 kg by spring.") == 1  # no duplicate
+    facts = await mock_entry.runtime_data.memory.async_facts("user", "weight")
+    assert [f["value"] for f in facts] == [81.6]
+
+
+@pytest.mark.extractor
+async def test_extractor_not_for_automatic_runs(
+    hass: HomeAssistant, aioclient_mock, mock_entry, configured
+):
+    """Heartbeats and triggers do not write memories (nobody said anything)."""
+    await setup_aac(hass, mock_entry)
+    payloads = []
+
+    async def side_effect(method, url, data):
+        payloads.append(data)
+        return AiohttpClientMockResponse(method, url, json={"choices": [{"message": {"role": "assistant", "content": '{"speak": false, "message": ""}'}}]})
+
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=side_effect)
+    await mock_entry.runtime_data.triggers.async_heartbeat(force=True)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(payloads) == 1
+
+
+
+async def test_structured_facts(hass: HomeAssistant, tmp_path):
+    """Facts with fields next to the text; series summaries; forget removes both."""
+    from custom_components.aac.memory import summarize, summary_text
+
+    memory = MemoryStore(hass, tmp_path / "m.db", fake_embed)
+    await memory.async_open()
+    first = await memory.async_remember("Weight 82.4 kg", "event", fact={"subject": "User", "attribute": "Weight", "value": 82.4, "unit": "kg"})
+    await memory.async_remember("Weight 81.6 kg", "event", fact={"subject": "user", "attribute": "weight", "value": 81.6, "unit": "kg"})
+    await memory.async_remember("Drill is on basement shelf 2", "fact", fact={"subject": "drill", "attribute": "location", "value": "basement shelf 2"})
+
+    await memory.async_remember("Goal 78 kg", "plan", fact={"subject": "user", "attribute": "weight_goal", "value": 78, "unit": "kg"})
+    assert (await memory.async_facts("user", "Weight-Goal"))[0]["value"] == 78
+    series = await memory.async_facts("USER", "weight")
+    assert [f["value"] for f in series] == [82.4, 81.6]
+    text = summary_text(summarize(series))
+    assert text.startswith("user · weight: 82.4 → 81.6 kg (change -0.8")
+    assert summarize(await memory.async_facts("drill"))["latest"] == "basement shelf 2"
+    assert {k["attribute"] for k in await memory.async_fact_keys()} == {"weight", "location", "weight goal"}
+
+    assert await memory.async_series_for([first]) == [text]
+    await memory.async_delete(first.id)
+    assert [f["value"] for f in await memory.async_facts("user", "weight")] == [81.6]
+    await memory.async_close()
+
+
+async def test_remember_and_lookup_tools(
+    hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured
+):
+    """The master stores a structured fact and looks the series up; the context gets the summary."""
+    await setup_aac(hass, mock_entry)
+    memory = mock_entry.runtime_data.memory
+    await memory.async_remember("Weight 82.4 kg", "event", fact={"subject": "user", "attribute": "weight", "value": 82.4, "unit": "kg"})
+    payloads = []
+    replies = [
+        {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "a", "type": "function", "function": {"name": "aac-memory__remember", "arguments":
+             '{"text": "Weight 81.6 kg", "kind": "event", "subject": "user", "attribute": "weight", "value": "81,6", "unit": "kg"}'}}]}}]},
+        {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "b", "type": "function", "function": {"name": "aac-memory__lookup_facts", "arguments": '{"subject": "user", "attribute": "weight"}'}}]}}]},
+        {"choices": [{"message": {"role": "assistant", "content": "Down 0.8 kg."}}]},
+    ]
+
+    async def side_effect(method, url, data):
+        payloads.append(data)
+        return AiohttpClientMockResponse(method, url, json=replies.pop(0))
+
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=side_effect)
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "Weight today: 81.6 kg. How am I doing?"})
+    message = (await ws.receive_json())["result"]["message"]
+    lookup = [s for s in message["steps"] if s["type"] == "tool_result"][1]
+    assert "82.4 → 81.6 kg (change -0.8" in lookup["data"]
+    # The first call already had the existing weight series in the user message
+    assert "Exact values" in payloads[0]["messages"][-1]["content"]
+
+    await ws.send_json_auto_id({"type": "aac/facts"})
+    keys = (await ws.receive_json())["result"]["keys"]
+    assert keys[0]["summary"]["change"] == -0.8
+
+
+
+async def test_new_measurement_is_not_a_duplicate(hass: HomeAssistant, tmp_path):
+    """Near-identical sentences with different numbers are different memories."""
+
+    async def same_vector(texts):  # an embedding that cannot see numbers at all
+        return [[1.0, 0.0, 0.0] for _ in texts], "flat"
+
+    memory = MemoryStore(hass, tmp_path / "m.db", same_vector)
+    await memory.async_open()
+    await memory.async_remember("User weighs 82.4 kg.", "event")
+    assert not await memory.async_is_known("User weighs 81.6 kg.")
+    assert await memory.async_is_known("User weighs 82,4 kg!")  # same number, same thing
+    assert await memory.async_is_known("user weighs 82.4 kg")
+    await memory.async_close()

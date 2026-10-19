@@ -64,6 +64,18 @@ class TriggerEngine:
     def _store(self):
         return self.entry.runtime_data.store
 
+    async def _async_open_loops(self) -> str:
+        """Open plans (memory kind 'plan') and AAC's own schedules, for automatic runs."""
+        lines = []
+        if (memory := self.entry.runtime_data.memory) and self._store.memory["enabled"]:
+            lines += [f"- plan: {m.text} (since {m.created[:10]})" for m in await memory.async_plans()]
+        lines += [
+            f"- your own scheduled check-in: {t['name']} ({t['when'].get('date') or 'repeating'} at {t['when'].get('at')})"
+            for t in self._store.triggers
+            if t.get("created_by") == "agent" and t.get("enabled") and t["when"]["type"] == "time"
+        ]
+        return ("\n\nOpen loops (what the user wants to achieve, your own plans):\n" + "\n".join(lines)) if lines else ""
+
     @callback
     def async_start(self) -> None:
         """(Re)subscribe according to the current settings."""
@@ -125,7 +137,8 @@ class TriggerEngine:
             "Heartbeat: a scheduled check-in, nobody asked you anything.\n"
             f"Local time: {now.strftime('%A %Y-%m-%d %H:%M')}.\n"
             "Current state of the home (area | name | state):\n"
-            f"{home_snapshot(self.hass)}\n\n"
+            f"{home_snapshot(self.hass)}"
+            f"{await self._async_open_loops()}\n\n"
             f"{hb['instructions']}"
         )
         return await self._async_auto_run(
@@ -151,11 +164,16 @@ class TriggerEngine:
         return True
 
     def _fire(self, trig: dict, title: str, text: str) -> None:
+        self.hass.async_create_background_task(
+            self._async_fire(trig, title, text), f"aac trigger {trig['id']}"
+        )
+
+    async def _async_fire(self, trig: dict, title: str, text: str) -> None:
         instruction = (trig.get("do") or {}).get("instruction") or "tell me if it matters"
         if trig["when"]["type"] == "time":
             # A scheduled trigger usually *is* the message (a reminder); silence only
             # makes sense for "check whether ..." instructions
-            intro = "A scheduled time the user set up has come; nobody asked you anything else."
+            intro = "A scheduled time has come; nobody asked you anything else."
             rule = (
                 "Follow the instruction now. If it asks you to remind or tell the user something, "
                 f"write that message. Only if it asks you to check something and all is fine, answer exactly {SILENT}."
@@ -163,17 +181,17 @@ class TriggerEngine:
         else:
             intro = "An event woke you; nobody asked you anything."
             rule = SILENCE_RULE
+        who = "your own earlier instruction" if trig.get("created_by") == "agent" else "the user's instruction"
         prompt = (
             f"{intro}\n"
+            f"Local time: {dt_util.now().strftime('%A %Y-%m-%d %H:%M')}.\n"
             "Current state of the home (area | name | state):\n"
-            f"{home_snapshot(self.hass)}\n\n"
-            f"The user's instruction: {instruction}\n"
+            f"{home_snapshot(self.hass)}"
+            f"{await self._async_open_loops()}\n\n"
+            f"Instruction ({who}): {instruction}\n"
             f"{rule}"
         )
-        self.hass.async_create_background_task(
-            self._async_auto_run(f"event: {trig['id']}", trig.get("name") or title, text, prompt),
-            f"aac trigger {trig['id']}",
-        )
+        await self._async_auto_run(f"event: {trig['id']}", trig.get("name") or title, text, prompt)
 
     @callback
     def _async_state_changed(self, event: Event[EventStateChangedData]) -> None:
@@ -202,11 +220,17 @@ class TriggerEngine:
             trig = next((t for t in self._store.triggers if t["id"] == trigger_id), None)
             if trig is None or not trig.get("enabled"):
                 return
+            local = dt_util.as_local(now)
             weekdays = trig["when"].get("weekdays")  # 0 = Monday … 6 = Sunday; empty = every day
-            if weekdays and dt_util.as_local(now).weekday() not in weekdays:
+            if weekdays and local.weekday() not in weekdays:
+                return
+            once = trig["when"].get("date")  # one-off: only on this date, then removed
+            if once and local.date().isoformat() != once:
                 return
             if not self._may_fire(trig):
                 return
+            if once:
+                self.hass.async_create_task(self._async_remove(trig["id"]))
             self._fire(
                 trig,
                 trig.get("name") or "Scheduled",
@@ -214,6 +238,10 @@ class TriggerEngine:
             )
 
         return fired
+
+    async def _async_remove(self, trigger_id: str) -> None:
+        await self._store.async_delete_trigger(trigger_id)
+        self.async_start()
 
     async def _async_auto_run(
         self, trigger: str, title: str, text: str, prompt: str, allow_tools: bool = True

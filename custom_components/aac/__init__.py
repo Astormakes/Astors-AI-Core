@@ -41,6 +41,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .chats import ChatStore
 from .memory import MemoryStore, memory_path
 from .memory_api import AACMemoryAPI
+from .schedule_api import AACScheduleAPI
 from .models import resolve_model
 from .provider import OpenAICompatProvider
 from .runs import RunRegistry
@@ -105,7 +106,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     memory = MemoryStore(hass, memory_path(hass), embed)
     await memory.async_open()
     entry.runtime_data.memory = memory
-    entry.async_on_unload(llm.async_register_api(hass, AACMemoryAPI(hass=hass, id="aac_memory", name="AAC memory", memory=memory)))
+    entry.async_on_unload(
+        llm.async_register_api(
+            hass, AACMemoryAPI(hass=hass, id="aac_memory", name="AAC memory", memory=memory)
+        )
+    )
+    entry.async_on_unload(
+        llm.async_register_api(
+            hass, AACScheduleAPI(hass=hass, id="aac_schedule", name="AAC planning", entry=entry)
+        )
+    )
 
     await panel_custom.async_register_panel(
         hass,

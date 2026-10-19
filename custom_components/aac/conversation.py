@@ -31,7 +31,9 @@ from .const import (
     MAX_TOOL_ITERATIONS_AUTO,
 )
 from .provider import OpenAICompatProvider, ProviderError
+from .extractor import async_extract
 from .memory_api import API_ID as MEMORY_API_ID
+from .schedule_api import API_ID as SCHEDULE_API_ID
 from .runs import current_run
 from .store import CONF_MASTER_MODEL
 from .models import resolve_model
@@ -255,6 +257,8 @@ class AACConversationEntity(
             api_ids = list(options.get(CONF_LLM_HASS_API) or [])
             if store.memory["enabled"]:
                 api_ids.append(MEMORY_API_ID)  # the master always has its own memory
+            if store.autonomy.get("schedule", "allowed") != "off":
+                api_ids.append(SCHEDULE_API_ID)  # and may plan for itself
         try:
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),
@@ -277,6 +281,8 @@ class AACConversationEntity(
                     f"- {m.text} ({m.source}{'' if m.confirmed else ', unconfirmed'}, {m.created[:10]})"
                     for m in found
                 )
+                if series := await self.entry.runtime_data.memory.async_series_for(found):
+                    memory_hint += "\nExact values (structured facts):\n" + "\n".join(f"- {line}" for line in series)
                 if run:
                     run.context = f"{run.context}\n\n{memory_hint}".strip()
 
@@ -370,5 +376,21 @@ class AACConversationEntity(
                     conversation.AssistantContent(agent_id=self.entity_id, content=decided)
                 ):
                     pass
+
+        # Memory write path: keep what was worth keeping, in the background
+        memory = self.entry.runtime_data.memory
+        if store.memory["enabled"] and memory and user_input.text and (not run or run.kind == "chat"):
+            stored_now = [
+                str(call.tool_args.get("text", ""))
+                for c in chat_log.content[first_new:]
+                if isinstance(c, conversation.AssistantContent) and c.tool_calls
+                for call in c.tool_calls
+                if call.tool_name.endswith("remember")
+            ]
+            self.entry.async_create_background_task(
+                self.hass,
+                async_extract(memory, provider, endpoint.model, user_input.text, stored_now),
+                "aac memory extract",
+            )
 
         return conversation.async_get_result_from_chat_log(user_input, chat_log)

@@ -15,7 +15,7 @@ some of it exists, **planned** = spec only, nothing in the code yet.
 | [Trigger](trigger.md) | what wakes an agent (heartbeat, HA state change, …) | partial |
 | [Context recipe](context-recipe.md) | what an agent gets to see before it starts | partial |
 | [Agent template](agent-template.md) | a reusable kind of agent: prompt, tools, model, output | partial |
-| [Memory](memory.md) | storing and finding things, item format | built (v1) |
+| [Memory](memory.md) | text memories + structured facts, search, write path | built (v1) |
 | [Model provider](model-provider.md) | talking to models; broker requests | partial |
 | [Event](event.md) | everything that happens, on one bus | partial |
 | [Module manifest](module.md) | a bundle of the above, installable and shareable | planned |

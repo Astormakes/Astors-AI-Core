@@ -22,7 +22,7 @@ async def test_state_fresh(hass: HomeAssistant, hass_ws_client, mock_entry):
     msg = await ws.receive_json()
     assert msg["success"]
     state = msg["result"]
-    assert state["version"] == "0.7.0"
+    assert state["version"] == "0.8.0"
     assert state["agent_entity_id"] == "conversation.aac"
     steps = {s["id"]: s for s in state["setup"]}
     assert not steps["models"]["done"]
