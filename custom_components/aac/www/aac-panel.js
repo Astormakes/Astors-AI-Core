@@ -1767,7 +1767,8 @@ class AacPanel extends HTMLElement {
         <div class="body"><div class="name">${esc(s.name)} ${s.state === "built" ? "" : '<span class="tag plan">PLANNED</span>'}</div><div class="desc">${esc(s.desc)}</div></div>
       </div>`).join("");
     const set = a.settings || {}, eng = a.engines || {};
-    const lines = (a.transcript || []).map((l) => this._bufferLine(l)).join("");
+    const lines = (a.transcript || []).slice().sort((x, y) => (x.time < y.time ? -1 : x.time > y.time ? 1 : 0))
+      .map((l) => this._bufferLine(l)).join("");
     return this._page("AUDIO PIPELINE", `${(a.connected || []).length} connected · separate from HA's Assist`, `
       ${this._liveTimer ? "" : (setTimeout(() => this._liveTimer || this._liveTick(), 0), "")}<div class="card"><h2>LIVE</h2><p class="hint">What each microphone hears right now: the last 10 seconds of loudness; the bright part is what the speech detector cut out as speech, which then goes to speech to text.</p>
         <div id="audio-live">${this._liveHtml2()}</div>
@@ -1786,6 +1787,9 @@ class AacPanel extends HTMLElement {
           <label for="au-names">AAC's names (comma separated)</label><input id="au-names" value="${esc((set.names || []).join(", "))}">
           <label for="au-lang">Language (empty = detect per sentence)</label><input id="au-lang" value="${esc(set.language || "")}" placeholder="en, de, …">
           <p class="hint" style="margin-top:.3em">AAC always hears and transcribes; what it does with it is up to the hearing modules (SETTINGS → Modules: Wake word, …). ${(a.hearing || []).length ? `On now: ${esc(a.hearing.join(", "))}.` : "None is on: AAC only listens."}</p>
+          <label for="au-pause">Pause that ends a line (ms)</label>
+          <input id="au-pause" type="number" min="200" max="3000" step="100" value="${esc(set.pause_ms ?? 800)}" inputmode="numeric">
+          <p class="hint" style="margin-top:.2em">Shorter = shorter lines (snappier, but the recognizer gets less context); longer = whole thoughts. Watch the LIVE meter while you try.</p>
           <label for="au-volume">AAC's voice volume: <span id="au-volume-val">${esc(set.volume ?? 40)}</span> %</label>
           <input id="au-volume" type="range" min="0" max="100" step="5" value="${esc(set.volume ?? 40)}" style="width:100%">
           <p class="hint" style="margin-top:.2em">0 = AAC never speaks aloud (answers still appear in the Voice chat). The speaker's own buttons still work on top.</p>
@@ -1824,7 +1828,7 @@ class AacPanel extends HTMLElement {
       l.highs != null ? (l.highs < 0.3 ? "phone quality (≤ 4 kHz)" : `highs ${l.highs} %`) : null,
       l.confidence != null ? `${Math.round(l.confidence * 100)} % sure` : null,
       l.engine ? `${this._resourceLabel(l.engine)}${l.stt_ms != null ? ` ${l.stt_ms} ms` : ""}` : null].filter(Boolean);
-    if (l.speaker) meta.push(`🗣 ${l.speaker.name}${l.speaker.new ? " (new)" : ""}${l.speaker.kind === "media" ? " · video/TV" : ""}${l.speaker.score > 0 ? ` ${Math.round(l.speaker.score * 100)} %` : ""}`);
+    if (l.speaker) meta.push(`🗣 ${l.speaker.sure === false ? "probably " : ""}${l.speaker.name}${l.speaker.new ? " (new)" : ""}${l.speaker.kind === "media" ? " · video/TV" : ""}${l.speaker.score > 0 ? ` ${Math.round(l.speaker.score * 100)} %` : ""}`);
     if (l.mood) meta.push(`mood: ${typeof l.mood === "object" ? l.mood.label : l.mood}`);
     if (l.sounds?.length) meta.push(`♪ ${l.sounds.slice(0, 3).map(([n, p]) => `${n} ${Math.round(p * 100)} %`).join(", ")}`);
     const mark = l.addressed ? '<b class="to">→ AAC</b>' : l.gate ? `<b class="no">${esc(l.gate)}</b>` : "";
@@ -2291,6 +2295,7 @@ class AacPanel extends HTMLElement {
       this._audio = await this._ws("aac/audio/settings", {
         names: sr.querySelector("#au-names").value.split(",").map((n) => n.trim()).filter(Boolean),
         volume: Number(sr.querySelector("#au-volume").value),
+        pause_ms: Number(sr.querySelector("#au-pause").value) || 800,
         language: sr.querySelector("#au-lang").value.trim() || null,
       });
       this._flash = { ok: true, text: "Saved." };

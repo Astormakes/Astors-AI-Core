@@ -22,6 +22,7 @@ from ...const import DOMAIN
 from .. import ModuleContext
 
 KINDS = ["unknown", "person", "media"]
+NEW_VOICE_SECONDS = 2.5  # shorter lines never start a new voice (their prints are too noisy)
 
 
 class Voices:
@@ -44,13 +45,18 @@ class Voices:
         self.voices = [v for v in self.voices if v["named"] or v["last"] >= cutoff]
         self._store.async_delay_save(lambda: {"voices": self.voices, "next": self.next}, 10)
 
-    def match(self, embedding: list[float], threshold: float) -> tuple[dict[str, Any], float, bool]:
-        """The known voice closest to a print (cosine; prints are normalized), or a new one."""
-        best, score = None, -1.0
-        for voice in self.voices:
-            s = sum(a * b for a, b in zip(voice["print"], embedding, strict=False))
-            if s > score:
-                best, score = voice, s
+    def match(self, embedding: list[float], threshold: float, new_below: float | None = None,
+              may_add: bool = True) -> tuple[dict[str, Any] | None, float, bool]:
+        """The known voice closest to a print (cosine; prints are normalized), or a new one.
+        ≥ threshold: that voice (it learns the line); new_below … threshold: probably that voice (no learning);
+        below new_below: a new voice when may_add (a long enough line), else None."""
+        new_below = threshold if new_below is None else new_below
+        scored = sorted(((sum(a * b for a, b in zip(v["print"], embedding, strict=False)), v) for v in self.voices),
+                        key=lambda x: x[0], reverse=True)
+        score, best = scored[0] if scored else (-1.0, None)
+        if len(scored) > 1 and scored[1][0] >= threshold:
+            # this line fits two voices: they are one (the same person was split earlier, e.g. on noisy lines)
+            best = self.merge(best, scored[1][1])
         now = dt_util.utcnow().isoformat()
         if best is not None and score >= threshold:
             if score >= threshold + 0.05:  # sure enough: let the print learn this line (running mean)
@@ -60,11 +66,29 @@ class Voices:
                 best["print"], best["n"] = [round(x / norm, 5) for x in mixed], best["n"] + 1
             best["last"], best["heard"] = now, best.get("heard", 0) + 1
             return best, score, False
+        if best is not None and score >= new_below:
+            return best, score, False  # probably this voice; too unsure to learn from
+        if not may_add:
+            return None, score, False
         voice = {"id": f"v{self.next}", "name": f"voice #{self.next}", "kind": "unknown", "note": "",
                  "named": False, "print": embedding, "n": 1, "first": now, "last": now, "heard": 1}
         self.next += 1
         self.voices.append(voice)
         return voice, score, True
+
+    def merge(self, a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+        """Join two voices; a named one keeps its name (two named ones are left alone)."""
+        if a["named"] and b["named"]:
+            return a
+        keep, gone = (b, a) if b["named"] and not a["named"] else (a, b)
+        n1, n2 = keep["n"], gone["n"]
+        mixed = [(x * n1 + y * n2) / (n1 + n2) for x, y in zip(keep["print"], gone["print"], strict=False)]
+        norm = sum(x * x for x in mixed) ** 0.5 or 1
+        keep.update(print=[round(x / norm, 5) for x in mixed], n=n1 + n2, heard=keep.get("heard", 0) + gone.get("heard", 0),
+                    first=min(keep["first"], gone["first"]), last=max(keep["last"], gone["last"]))
+        keep.setdefault("merged", []).append(gone["name"])
+        self.voices.remove(gone)
+        return keep
 
     def get(self, ref: str) -> dict[str, Any] | None:
         """By id or name."""
@@ -124,6 +148,23 @@ class ForgetVoiceTool(_VoiceTool):
         return llm.ToolResult(data={"forgotten": voice["name"]})
 
 
+class MergeVoicesTool(_VoiceTool):
+    name = "merge_voices"
+    description = "Two voices are the same person (e.g. the owner says so): join them into the first one."
+    annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
+    parameters = probatio.Schema({probatio.Required("voice"): str, probatio.Required("same_as"): str})
+
+    async def async_call(self, hass, tool_input, llm_context):
+        a, b = self.voices.get(tool_input.tool_args["voice"]), self.voices.get(tool_input.tool_args["same_as"])
+        if a is None or b is None or a is b:
+            return llm.ToolResult(data={"error": "Give two different voices from list_voices."}, error=True)
+        if a["named"] and b["named"]:
+            return llm.ToolResult(data={"error": "Both have names; forget the wrong one instead."}, error=True)
+        keep = self.voices.merge(a, b)
+        self.voices.save(self.keep())
+        return llm.ToolResult(data={"voice": public(keep)})
+
+
 @dataclass(kw_only=True)
 class VoicesAPI(llm.API):
     """The voice tools."""
@@ -132,7 +173,7 @@ class VoicesAPI(llm.API):
     keep: Any
 
     async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
-        tools = [ListVoicesTool, NameVoiceTool, ForgetVoiceTool]
+        tools = [ListVoicesTool, NameVoiceTool, MergeVoicesTool, ForgetVoiceTool]
         return llm.APIInstance(api=self, api_prompt="", llm_context=llm_context,
                                tools=[t(self.voices, self.keep) for t in tools])
 
@@ -155,10 +196,14 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         found = await ctx.audio.async_senses("voices", "/audio/voiceprint", pcm[-20 * 32000:])
         if not found or not found.get("embedding"):
             return None
-        voice, score, new = voices.match(found["embedding"], float(setting("match") or 80) / 100)
+        sure = float(setting("match") or 80) / 100
+        voice, score, new = voices.match(found["embedding"], sure, float(setting("new_below") or 65) / 100,
+                                         may_add=line["seconds"] >= NEW_VOICE_SECONDS)
         voices.save(keep())
+        if voice is None:
+            return None
         return {"speaker": {"id": voice["id"], "name": voice["name"], "kind": voice["kind"], "note": voice["note"],
-                            "score": round(score, 2), "new": new}}
+                            "score": round(score, 2), "new": new, "sure": new or score >= sure}}
 
     ctx.add_stage(Stage(id="voices", title="Voices", kind="segment", run=run, order=20))
     ctx.add_llm_api(lambda dom, api_id, name: VoicesAPI(hass=ctx.hass, id=api_id, name=name, voices=voices, keep=keep))

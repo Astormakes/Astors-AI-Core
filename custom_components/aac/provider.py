@@ -215,12 +215,14 @@ class OpenAICompatProvider:
         return [m["id"] for m in data.get("data", []) if "id" in m]
 
     async def transcribe(
-        self, model: str, wav: bytes, language: str | None = None
+        self, model: str, wav: bytes, language: str | None = None, prompt: str | None = None
     ) -> dict[str, Any]:
         """Speech to text (OpenAI /audio/transcriptions, verbose_json when the server has it).
 
-        Returns {"text", "language", "confidence" (0..1 or None), "words" ([{word, start, end}])}.
+        Returns {"text", "language", "confidence" (0..1 or None), "words" ([{word, start, end}]),
+        "segments" ([{text, start, end}]: the model's sentences with times, when the server gives them)}.
         Without a language the server detects it (multilingual models: German and English alike).
+        prompt = what was said just before (context: keeps short pieces in the right language and topic).
         """
         def form(verbose: bool) -> aiohttp.FormData:
             fd = aiohttp.FormData()
@@ -232,6 +234,8 @@ class OpenAICompatProvider:
                 fd.add_field("timestamp_granularities[]", "segment")
             if language:
                 fd.add_field("language", language)
+            if prompt:
+                fd.add_field("prompt", prompt[-500:])
             return fd
 
         try:
@@ -256,6 +260,11 @@ class OpenAICompatProvider:
             "words": [
                 {"word": w.get("word", ""), "start": w.get("start"), "end": w.get("end")}
                 for w in data.get("words") or [] if isinstance(w, dict)
+            ],
+            "segments": [
+                {"text": str(s.get("text", "")).strip(), "start": s.get("start"), "end": s.get("end")}
+                for s in segments if isinstance(s, dict) and isinstance(s.get("start"), (int, float))
+                and isinstance(s.get("end"), (int, float))
             ],
         }
 

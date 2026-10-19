@@ -313,6 +313,7 @@ def ws_audio(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("language"): vol.Any(str, None),
         vol.Optional("names"): [vol.All(str, vol.Length(min=1))],
         vol.Optional("volume"): vol.All(vol.Coerce(int), vol.Range(0, 100)),
+        vol.Optional("pause_ms"): vol.All(vol.Coerce(int), vol.Range(200, 3000)),
     }
 )
 @websocket_api.require_admin
@@ -323,6 +324,7 @@ async def ws_audio_settings(hass: HomeAssistant, connection, msg) -> None:
         return
     data = entry.runtime_data
     await data.store.async_update_audio({k: v for k, v in msg.items() if k not in ("id", "type", "domain")})
+    data.audio.apply_settings()
     connection.send_result(msg["id"], audio_overview(hass, data.audio, data.store.audio))
 
 

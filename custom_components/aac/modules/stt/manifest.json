@@ -15,6 +15,18 @@
       "default": true,
       "help": "Transcribes the open sentence again every ~1.2 s (only with a model server; HA's own engines are too slow for this)."
     },
+    "split": {
+      "type": "bool",
+      "title": "One line per sentence",
+      "default": true,
+      "help": "Long pieces are recognized whole (context), then split into the model's sentences; each sentence gets its own voice and sounds."
+    },
+    "context": {
+      "type": "bool",
+      "title": "Give the recognizer the previous line",
+      "default": true,
+      "help": "What was said just before keeps short pieces in the right language and topic."
+    },
     "filter": {
       "type": "bool",
       "title": "Drop typical made-up lines",

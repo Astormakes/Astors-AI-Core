@@ -42,7 +42,7 @@ async def test_satellite_round_trip(hass: HomeAssistant, hass_client, aioclient_
     client = await hass_client()
     with (
         patch("custom_components.aac.audio_hub.make_vad", return_value=EnergyVad()),
-        patch.object(hub, "async_stt", AsyncMock(side_effect=lambda pcm: {"text": next(heard)})),
+        patch.object(hub, "async_stt", AsyncMock(side_effect=lambda pcm, prompt=None: {"text": next(heard)})),
         patch.object(hub, "async_tts", AsyncMock(return_value=b"RIFFwave")),
     ):
         ws = await client.ws_connect("/api/aac/audio")
@@ -152,7 +152,8 @@ async def test_stt_falls_back_to_plain_json(hass: HomeAssistant, aioclient_mock,
     aioclient_mock.post("http://llm.test/v1/audio/transcriptions", side_effect=side_effect)
     await mock_entry.runtime_data.store.async_set_pool("stt", ["m_test0001"])
     heard = await mock_entry.runtime_data.audio.async_stt(SILENCE * 100)
-    assert heard == {"text": "lights off", "language": None, "confidence": None, "words": [], "engine": "m_test0001"}
+    assert heard == {"text": "lights off", "language": None, "confidence": None, "words": [], "segments": [],
+                     "engine": "m_test0001"}
 
 
 async def test_server_without_model_list(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
@@ -297,7 +298,7 @@ async def test_follow_up_without_the_name(hass: HomeAssistant, hass_client, aioc
     speech = _audio((SILENCE, 0.3), (LOUD, 0.8), (SILENCE, 1))
     with (
         patch("custom_components.aac.audio_hub.make_vad", return_value=EnergyVad()),
-        patch.object(hub, "async_stt", AsyncMock(side_effect=lambda pcm: {"text": next(heard)})),
+        patch.object(hub, "async_stt", AsyncMock(side_effect=lambda pcm, prompt=None: {"text": next(heard)})),
         patch.object(hub, "async_tts", AsyncMock(return_value=b"RIFFwave")),
     ):
         ws = await client.ws_connect("/api/aac/audio")
@@ -392,3 +393,82 @@ async def test_sounds_and_voices(hass: HomeAssistant, hass_client, mock_entry, c
     a, _, new = voices.match([1.0, 0.0], 0.8)
     b, score, again = voices.match([0.6, 0.8], 0.8)
     assert new and again and a is not b and score < 0.8
+
+
+def test_sentences_split_a_long_piece():
+    """Whisper's sentences become parts without gaps; very short ones join a neighbour."""
+    from custom_components.aac.modules.stt import sentences
+
+    segs = [{"text": "Alright, so we're into the next day.", "start": 0.4, "end": 3.0},
+            {"text": "Yes.", "start": 3.2, "end": 3.6},
+            {"text": "I had to cut a hole in the fabric.", "start": 4.0, "end": 7.5}]
+    parts = sentences(segs, 8.3)
+    assert [p["text"] for p in parts] == ["Alright, so we're into the next day. Yes.", "I had to cut a hole in the fabric."]
+    assert parts[0]["start"] == 0 and parts[-1]["end"] == 8.3 and parts[0]["end"] == parts[1]["start"] == 3.8
+    assert sentences(segs[:1], 3.0) is None
+
+
+async def test_a_split_segment_gets_a_voice_per_sentence(hass: HomeAssistant, hass_client, mock_entry, configured):
+    """Speech to text splits a long piece: each sentence is its own line with its own voice; the next piece
+    is recognized with the last line as context."""
+    await setup_aac(hass, mock_entry)
+    hub = mock_entry.runtime_data.audio
+    prints = iter([[1.0, 0.0], [0.0, 1.0]])
+    prompts: list = []
+
+    async def stt(pcm, prompt=None):
+        prompts.append(prompt)
+        return {"text": "First sentence here. Second one there.", "segments": [
+            {"text": "First sentence here.", "start": 0.0, "end": 3.0}, {"text": "Second one there.", "start": 3.0, "end": 6.0}]}
+
+    async def senses(role, path, pcm):
+        return {"embedding": next(prints)} if role == "voices" else None
+
+    client = await hass_client()
+    with (
+        patch("custom_components.aac.audio_hub.make_vad", return_value=EnergyVad()),
+        patch.object(hub, "async_stt", side_effect=stt),
+        patch.object(hub, "async_senses", side_effect=senses),
+    ):
+        ws = await client.ws_connect("/api/aac/audio")
+        await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "rate": 16000})
+        await ws.receive_json()
+        await ws.send_bytes(_audio((SILENCE, 0.3), (LOUD, 6.0), (SILENCE, 1)))
+        for _ in range(200):
+            if len([x for x in hub.transcript if x["kind"] == "speech"]) == 2:
+                break
+            await asyncio.sleep(0.01)
+        await ws.close()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    speech = [x for x in hub.transcript if x["kind"] == "speech"]
+    assert [x["text"] for x in speech] == ["First sentence here.", "Second one there."]
+    assert [x["speaker"]["name"] for x in speech] == ["voice #1", "voice #2"]
+    assert speech[0]["time"] < speech[1]["time"] and speech[0]["seconds"] > 1
+    assert prompts[0] is None
+
+
+def test_voices_that_sound_the_same_are_merged():
+    """A line that fits two unnamed voices joins them; a named voice keeps its name."""
+    from custom_components.aac.modules.voices import Voices
+
+    voices = Voices.__new__(Voices)
+    voices.voices, voices.next = [], 1
+    a, _, _ = voices.match([1.0, 0.0], 0.8)
+    b, _, _ = voices.match([0.0, 1.0], 0.8)
+    b.update(name="Astor", named=True, kind="person")
+    found, _, new = voices.match([0.7071, 0.7071 + 0.0001], 0.7)
+    assert not new and found is b and len(voices.voices) == 1 and found["merged"] == ["voice #1"]
+
+
+def test_unsure_lines_do_not_start_voices():
+    """65–80 %: probably the closest voice (it does not learn); short lines never start a new voice."""
+    from custom_components.aac.modules.voices import Voices
+
+    voices = Voices.__new__(Voices)
+    voices.voices, voices.next = [], 1
+    a, _, _ = voices.match([1.0, 0.0], 0.8, 0.65)
+    before = list(a["print"])
+    b, score, new = voices.match([0.7, 0.714], 0.8, 0.65)
+    assert b is a and not new and 0.65 <= score < 0.8 and a["print"] == before
+    c, _, _ = voices.match([0.0, 1.0], 0.8, 0.65, may_add=False)
+    assert c is None and len(voices.voices) == 1

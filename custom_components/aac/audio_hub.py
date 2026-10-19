@@ -16,7 +16,7 @@ from array import array
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 import io
 import math
 import re
@@ -118,6 +118,7 @@ class Segmenter:
         self._run = 0  # consecutive speech frames before a segment
         self._silence = 0
         self._speech = 0
+        self.end_silence = END_SILENCE_FRAMES  # the pause that ends a segment (owner setting pause_ms)
         # The live view: per 100 ms (loudness 0–100, share of speech frames, inside a segment)
         self.meter: deque[tuple[int, float, bool]] = deque(maxlen=METER_POINTS)
         self._acc = [0, 0, 0]  # peak loudness, speech frames, frames
@@ -171,7 +172,7 @@ class Segmenter:
                 self._silence = 0
             else:
                 self._silence += 1
-            if self._silence >= END_SILENCE_FRAMES or len(self._segment) >= MAX_SEGMENT_FRAMES:
+            if self._silence >= self.end_silence or len(self._segment) >= MAX_SEGMENT_FRAMES:
                 if self._speech >= MIN_SPEECH_FRAMES:
                     done.append(b"".join(self._segment))
                 self._segment, self._run = None, 0
@@ -227,12 +228,19 @@ class AudioHub:
     def connect(self, source_id: str, name: str, area: str | None, send: Callable[[Any], Awaitable[None]]) -> Source:
         """A source came online (a reconnect replaces the old one)."""
         source = Source(source_id, name, area, send, Segmenter(make_vad()))
+        self.apply_settings(source)
         self.sources[source_id] = source
         self.entry.async_create_background_task(
             self.hass, self.entry.runtime_data.store.async_add_known_source(source_id, name), "aac audio known"
         )
         async_notify(self.hass, "audio")
         return source
+
+    def apply_settings(self, source: Source | None = None) -> None:
+        """Owner settings that live in the sources (the pause that ends a line)."""
+        frames = max(20, min(300, int(self.entry.runtime_data.store.audio.get("pause_ms", 800)) // 10))
+        for s in [source] if source else self.sources.values():
+            s.segmenter.end_silence = frames
 
     @callback
     def disconnect(self, source: Source) -> None:
@@ -296,26 +304,53 @@ class AudioHub:
             source.partial_busy = False
 
     async def _async_segment(self, source: Source, pcm: bytes) -> None:
-        """A speech segment: measured here, then each segment stage adds what it finds (text, speaker, mood, …)."""
+        """A speech segment: measured here, then each segment stage adds what it finds (text, speaker, mood, …).
+        A stage may split it into parts (speech to text: the model's sentences); the later stages then work
+        on each part, so every sentence gets its own voice and sounds."""
         ended = dt_util.utcnow()
         seconds = len(pcm) / (SAMPLE_RATE * 2)
-        line = {"time": (ended - timedelta(seconds=seconds)).isoformat(), "source": source.id, "name": source.name,
-                "kind": "speech", "text": "", "addressed": False, "seconds": round(seconds, 1),
-                "loudness_db": loudness_db(pcm), "highs": highs(pcm)}
+        start = ended - timedelta(seconds=seconds)
+        stages = self.entry.runtime_data.capabilities.active_stages(self.entry.runtime_data.voice_domain.id, "segment")
         source.transcribing += 1
         try:
-            for stage in self.entry.runtime_data.capabilities.active_stages(self.entry.runtime_data.voice_domain.id, "segment"):
-                try:
-                    found = await stage.run(source, pcm, line)
-                except Exception:  # noqa: BLE001 - one broken stage must not stop hearing
-                    LOGGER.exception("AAC audio: stage %s failed", stage.id)
-                    continue
-                if found and found.get("drop"):
-                    return
-                line.update(found or {})
+            lines = await self._async_stages(source, pcm, self._segment_line(source, pcm, start), stages)
         finally:
             source.transcribing -= 1
-        self._add_line(source, line)
+        for line in lines:
+            self._add_line(source, line)
+
+    def _segment_line(self, source: Source, pcm: bytes, start) -> dict[str, Any]:
+        return {"time": start.isoformat(), "source": source.id, "name": source.name, "kind": "speech", "text": "",
+                "addressed": False, "seconds": round(len(pcm) / (SAMPLE_RATE * 2), 1),
+                "loudness_db": loudness_db(pcm), "highs": highs(pcm)}
+
+    async def _async_stages(self, source: Source, pcm: bytes, line: dict[str, Any], stages: list) -> list[dict[str, Any]]:
+        for i, stage in enumerate(stages):
+            try:
+                found = await stage.run(source, pcm, line)
+            except Exception:  # noqa: BLE001 - one broken stage must not stop hearing
+                LOGGER.exception("AAC audio: stage %s failed", stage.id)
+                continue
+            if not found:
+                continue
+            if found.get("drop"):
+                return []
+            if parts := found.get("split"):
+                start = datetime.fromisoformat(line["time"])
+                lines = []
+                for part in parts:
+                    a = max(0, int(part["start"] * SAMPLE_RATE)) * 2
+                    b = min(len(pcm), int(part["end"] * SAMPLE_RATE) * 2)
+                    if b - a < FRAME_BYTES:
+                        continue
+                    piece = pcm[a:b]
+                    sub = {**self._segment_line(source, piece, start + timedelta(seconds=part["start"])),
+                           **{k: v for k, v in found.items() if k != "split"},
+                           **{k: v for k, v in part.items() if k not in ("start", "end")}}
+                    lines += await self._async_stages(source, piece, sub, stages[i + 1:])
+                return lines
+            line.update(found)
+        return [line]
 
     async def _async_window(self, source: Source, stage, pcm: bytes) -> None:
         """A window of all audio for a window stage (sound captions): its findings become lines of their own."""
@@ -372,7 +407,7 @@ class AudioHub:
                 return lang
         return supported[0] if supported else wanted
 
-    async def async_stt(self, pcm: bytes) -> dict[str, Any] | None:
+    async def async_stt(self, pcm: bytes, prompt: str | None = None) -> dict[str, Any] | None:
         """Speech to text through the voice pool: models (any OpenAI-compatible server) or HA engines,
         in the owner's order; a machine that does not answer is skipped, HA's local engine is last.
 
@@ -383,7 +418,7 @@ class AudioHub:
             tried.add(resource)
             if is_entity(resource):
                 return await self._async_stt_entity(resource, pcm)
-            heard = await self._async_stt_model(resource, pcm)
+            heard = await self._async_stt_model(resource, pcm, prompt)
             if heard is not None or broker.usable(resource):
                 return heard  # answered (or failed on this segment only)
         if (fallback := self.ha_engine("stt")) is None:
@@ -417,7 +452,7 @@ class AudioHub:
         return {"text": result.text or "", "language": metadata.language, "confidence": None, "words": [],
                 "engine": entity_id}
 
-    async def _async_stt_model(self, model_id: str, pcm: bytes) -> dict[str, Any] | None:
+    async def _async_stt_model(self, model_id: str, pcm: bytes, prompt: str | None = None) -> dict[str, Any] | None:
         broker = self.entry.runtime_data.broker
         if (endpoint := resolve_model(self.hass, self.entry.runtime_data.store, model_id)) is None:
             return None
@@ -427,7 +462,7 @@ class AudioHub:
         try:
             # No language = the model detects it per sentence (German and English alike)
             heard = await provider.transcribe(
-                endpoint.model, pcm_to_wav(pcm), self.entry.runtime_data.store.audio["language"] or None
+                endpoint.model, pcm_to_wav(pcm), self.entry.runtime_data.store.audio["language"] or None, prompt
             )
         except ProviderConnectionError as err:
             # The machine may simply be off (e.g. a desktop PC): the broker skips it for a minute
