@@ -1,0 +1,25 @@
+{
+  "id": "stt",
+  "name": "Speech to text",
+  "version": "0.1.0",
+  "contract": 1,
+  "kind": "code",
+  "description": "Turns speech in the room into text for the buffer, with the engine of the voice pool (a model server such as whisper, or an HA engine). While someone talks, the words appear live.",
+  "instructions": "",
+  "provides": {"capabilities": {"audio_stage": {"segment": true}}},
+  "uses": {"capabilities": ["audio_stage"]},
+  "settings": {
+    "live": {
+      "type": "bool",
+      "title": "Show words while someone is still talking",
+      "default": true,
+      "help": "Transcribes the open sentence again every ~1.2 s (only with a model server; HA's own engines are too slow for this)."
+    },
+    "filter": {
+      "type": "bool",
+      "title": "Drop typical made-up lines",
+      "default": true,
+      "help": "Whisper invents lines like \"Thank you for watching\" on noise and silence."
+    }
+  }
+}

@@ -9,12 +9,26 @@ modules decide what to do with it. Owner decision 2026-10-19.
   answering through the master (`async_answer`).
 - Every new transcript line is handed to each **hearing module that is on in the voice domain**.
 
+## Audio stages (modules that fill the buffer)
+```python
+ctx.add_stage(Stage(id="stt", title="Speech to text", kind="segment", run=run, partial=partial, order=10))
+```
+- **segment** stages run on every speech segment, in `order`: `run(source, pcm, line)` returns fields for the
+  line (`text`, `language`, `speaker`, `mood`, …), `{"drop": True}` to throw it away, or None.
+  `partial(source, pcm)` gives the text so far while someone still talks (live view).
+- **window** stages run on all audio (speech or not) every `window` seconds: `run(source, pcm)` returns lines
+  of their own, kind `sound`, e.g. `[{"text": "[beeping]", "labels": [["Beep", 0.8]]}]`.
+- Only stages whose module is on in the voice domain run. Without any, a segment is still a speech line
+  without text (length and loudness are measured by the core).
+
 ## A heard line
 ```json
-{"time": "2026-10-19T18:06:01+00:00", "source": "ha_app", "name": "Home Assistant", "text": "…",
- "language": "en", "confidence": null, "engine": "m_…", "addressed": false}
+{"time": "2026-10-19T18:06:01+00:00", "source": "ha_app", "name": "Home Assistant", "kind": "speech",
+ "text": "…", "seconds": 3.4, "loudness_db": -36.5, "addressed": false,
+ "language": "en", "confidence": 0.94, "engine": "m_…", "stt_ms": 125, "words": [], "speaker": …, "mood": …}
 ```
-Only `time`, `source` and `text` are sure. Listeners may mark a line: `addressed: true` (it was meant for
+Sure: `time`, `source`, `kind` (speech / sound), `seconds`, `loudness_db`; `text` from speech to text
+(empty without it) or the sound stage. Listeners may mark a line: `addressed: true` (it was meant for
 AAC), `gate: "…"` / `note: "…"` (shown in the transcript). Planned: optional annotations from stage
 modules (speaker, loudness, mood, media vs. live, room/position) — all optional, like calendar fields.
 
@@ -25,13 +39,15 @@ ctx.add_hearing(Hearing(id="wakeword", title="Wake word", heard=heard))
 async def heard(source, line, earlier):  # earlier: the source's previous lines, oldest first
     ...
 ```
-Helpers on `ctx.audio`: `mentions(text)` (one of AAC's names), `async_attention(text, earlier_texts)`
-(quick "is someone talking TO AAC?" on the fast tier), `async_answer(source, text, before)`,
+Helpers on `ctx.audio`: `mentions(text)` (one of AAC's names), `async_stt(pcm)` (the voice pool's speech
+engines), `async_answer(source, text, before)`,
 `async_say(source, text)`, `changed()` (the panel shows a marked line).
 
 A manifest may say `"enabled_by_default": false`: the owner switches it on per domain.
 
 ## Built-in modules
+- **Speech to text** (`stt`, on by default): segment stage, the voice pool's engine; live words (model server
+  only), drops whisper's made-up lines. Settings: live, filter.
 - **Wake word** (`wakeword`, off by default): a name or a follow-up → attention check → the master
   answers by voice, with the lines of the last `look_back` seconds. Settings: follow_up, attention, look_back.
 - **Companion** (planned): follows the room and speaks up on its own (decision tiers, interjection gate).

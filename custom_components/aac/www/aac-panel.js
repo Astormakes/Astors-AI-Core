@@ -336,6 +336,8 @@ textarea { min-height: 10em; resize: vertical; }
 .buffer .bl { border-left: 2px solid var(--line); padding: .15em 0 .15em .7em; margin: .35em 0; }
 .buffer .bl.to-aac { border-left-color: var(--magenta); }
 .buffer .bl.live { border-left-color: var(--cyan); opacity: .85; }
+.buffer .bl.sound { border-left-color: var(--amber); }
+.buffer .bl.sound .bt { color: var(--amber); }
 .buffer .bl.live .bt { font-style: italic; }
 .buffer .bm { font-size: .82em; color: var(--dim); }
 .buffer .bm b { font-weight: normal; margin-left: .4em; }
@@ -1820,8 +1822,10 @@ class AacPanel extends HTMLElement {
     const meta = [hms, l.seconds != null ? `${l.seconds} s` : null, l.language, l.loudness_db != null ? `${l.loudness_db} dB` : null,
       l.confidence != null ? `${Math.round(l.confidence * 100)} % sure` : null,
       l.engine ? `${this._resourceLabel(l.engine)}${l.stt_ms != null ? ` ${l.stt_ms} ms` : ""}` : null].filter(Boolean);
+    for (const k of ["speaker", "mood"]) if (l[k]) meta.push(`${k}: ${typeof l[k] === "object" ? l[k].name || l[k].label : l[k]}`);
     const mark = l.addressed ? '<b class="to">→ AAC</b>' : l.gate ? `<b class="no">${esc(l.gate)}</b>` : "";
-    return `<div class="bl ${l.addressed ? "to-aac" : ""}"><div class="bm">${esc(meta.join(" · "))} ${mark}</div><div class="bt">${esc(l.text)}</div></div>`;
+    const text = l.kind === "sound" ? `<i>${esc(l.text)}</i>` : l.text ? esc(l.text) : '<i class="dim">[speech, not transcribed]</i>';
+    return `<div class="bl ${l.addressed ? "to-aac" : ""} ${l.kind === "sound" ? "sound" : ""}"><div class="bm">${esc(meta.join(" · "))} ${mark}</div><div class="bt">${text}</div></div>`;
   }
 
   _partialHtml() {

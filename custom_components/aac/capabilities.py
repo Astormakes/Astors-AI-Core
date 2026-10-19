@@ -42,6 +42,27 @@ HearingListener = Callable[[Any, dict[str, Any], list[dict[str, Any]]], Awaitabl
 
 
 @dataclass
+class Stage:
+    """A module that works on the audio and adds what it finds to the buffer.
+
+    kind "segment": run(source, pcm, line) for every speech segment, in `order`; returns fields for the line
+        (text, language, speaker, mood, …), {"drop": True} to throw the segment away, or None.
+        partial(source, pcm) → the text so far while someone still talks (optional, for the live view).
+    kind "window": run(source, pcm) every `window` seconds of all audio (speech or not); returns lines of
+        their own, e.g. [{"text": "[beeping]", "labels": [...]}] (sound captions).
+    """
+
+    id: str
+    title: str
+    kind: str
+    run: Callable[..., Awaitable[Any]]
+    order: int = 50
+    partial: Callable[[Any, bytes], Awaitable[str | None]] | None = None
+    window: float = 1.0
+    module: str | None = None
+
+
+@dataclass
 class Hearing:
     """A module that listens to what AAC's microphones hear (wake word, companion, …)."""
 
@@ -71,6 +92,7 @@ class Capabilities:
         """Initialize."""
         self.calendar: dict[str, CalendarProvider] = {}
         self.hearing: dict[str, Hearing] = {}
+        self.stages: dict[str, Stage] = {}
         # Choices for module settings that change at runtime: name → fn(domain_id) → [(value, label)]
         self.options: dict[str, Callable[[str], list[tuple[str, str]]]] = {}
         # Where new calendar entries go: fn(domain_id) → provider id (None = the first writer)
@@ -86,6 +108,21 @@ class Capabilities:
             self.hearing.pop(listener.id, None)
 
         return remove
+
+    def add_stage(self, stage: Stage) -> Callable[[], None]:
+        """Register an audio stage; returns the function that removes it again."""
+        self.stages[stage.id] = stage
+
+        def remove() -> None:
+            self.stages.pop(stage.id, None)
+
+        return remove
+
+    def active_stages(self, domain_id: str, kind: str) -> list[Stage]:
+        """The stages of a kind whose module is on in that domain (the voice domain), in order."""
+        found = [s for s in self.stages.values() if s.kind == kind
+                 and (not s.module or self.module_enabled(domain_id, s.module))]
+        return sorted(found, key=lambda s: s.order)
 
     def listeners(self, domain_id: str) -> list[Hearing]:
         """The listeners whose module is on in that domain (the voice domain)."""

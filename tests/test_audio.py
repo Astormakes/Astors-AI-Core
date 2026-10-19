@@ -240,3 +240,45 @@ def test_volume_scales_the_voice():
     streamed[4:8] = streamed[40:44] = b"\xff\xff\xff\xff"
     with wave.open(io.BytesIO(scale_wav(bytes(streamed), 0.5))) as r:
         assert struct.unpack("<3h", r.readframes(3)) == (500, -1000, 16383)
+
+
+async def test_stages_fill_the_buffer(hass: HomeAssistant, hass_client, mock_entry, configured):
+    """Segment stages add to a speech line in order; a window stage adds sound lines of its own;
+    without the speech to text module a segment is still a (textless) speech line."""
+    from custom_components.aac.capabilities import Stage
+
+    await setup_aac(hass, mock_entry)
+    hub, caps = mock_entry.runtime_data.audio, mock_entry.runtime_data.capabilities
+    seen: list[str] = []
+
+    async def mood(source, pcm, line):
+        seen.append(line["text"])  # runs after speech to text (order)
+        return {"mood": "calm"}
+
+    async def sounds(source, pcm):
+        return [{"text": "[beeping]", "labels": [["Beep", 0.8]]}]
+
+    caps.add_stage(Stage(id="mood", title="Mood", kind="segment", run=mood, order=30))
+    caps.add_stage(Stage(id="sounds", title="Sounds", kind="window", run=sounds, window=1.0))
+    client = await hass_client()
+    with (
+        patch("custom_components.aac.audio_hub.make_vad", return_value=EnergyVad()),
+        patch.object(hub, "async_stt", AsyncMock(return_value={"text": "hello there", "engine": "x"})),
+    ):
+        ws = await client.ws_connect("/api/aac/audio")
+        await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "rate": 16000})
+        await ws.receive_json()
+        await ws.send_bytes(_audio((SILENCE, 0.3), (LOUD, 0.8), (SILENCE, 1)))
+        for _ in range(200):  # the socket hands the audio on in its own time
+            if any(x["kind"] == "speech" for x in hub.transcript):
+                break
+            await asyncio.sleep(0.01)
+        await async_set_access(mock_entry, "stt", "assistant", {"enabled": False})
+        await ws.send_bytes(_audio((SILENCE, 0.3), (LOUD, 0.8), (SILENCE, 1)))
+        await hass.async_block_till_done(wait_background_tasks=True)
+        await ws.close()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    speech = [x for x in hub.transcript if x["kind"] == "speech"]
+    assert [(x["text"], x.get("mood")) for x in speech] == [("hello there", "calm"), ("", "calm")]
+    assert seen == ["hello there", ""] and speech[0]["seconds"] > 0.5 and speech[0]["loudness_db"] < 0
+    assert any(x["kind"] == "sound" and x["text"] == "[beeping]" for x in hub.transcript)

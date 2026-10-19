@@ -18,7 +18,6 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 import io
-import json
 import math
 import re
 import sys
@@ -56,24 +55,14 @@ TRANSCRIPT_LINES = 200
 # Integrations whose speech engines run locally (preferred when nothing is chosen)
 LOCAL_ENGINES = {"wyoming", "piper", "whisper", "faster_whisper"}
 
-# The attention check: how many earlier lines it sees, and its answer format
-GATE_CONTEXT = 6
 # How many earlier lines of the same source a listener gets with each new one
 EARLIER_LINES = 20
-GATE_FORMAT = {"type": "json_schema", "json_schema": {"name": "attention", "schema": {
-    "type": "object", "properties": {"to_assistant": {"type": "boolean"}}, "required": ["to_assistant"]}}}
 VOICE_FAILED = "Sorry, that did not work. The details are in the AAC panel."
 VOICE_PROMPT = (
     "This message came in by voice from the microphone '{name}'{area}. Your answer is spoken "
     "aloud: one or two short sentences, plain words, no lists or markdown."
 )
 
-# Whisper invents these on noise and silence
-_HALLUCINATIONS = re.compile(
-    r"^\W*(thank you( for watching)?|thanks for watching|bye|you|untertitel.*|vielen dank\W*|"
-    r"subtitles by.*|\[.*\]|\(.*\))\W*$",
-    re.IGNORECASE,
-)
 
 
 def pcm_to_wav(pcm: bytes) -> bytes:
@@ -211,6 +200,7 @@ class Source:
     partial: str = ""  # what the open segment said so far (live transcript)
     partial_at: int = 0  # segment frames when the last partial was started
     partial_busy: bool = False
+    windows: dict[str, bytearray] = field(default_factory=dict)  # audio collected per window stage
 
     def summary(self) -> dict[str, Any]:
         """For the panel."""
@@ -254,10 +244,18 @@ class AudioHub:
             return  # AAC is speaking there; don't listen to itself
         source.ring.append(chunk)
         seg = source.segmenter
-        if (seg.active and not source.partial_busy and seg.frames - source.partial_at >= PARTIAL_EVERY
-                and self._partials_ok()):
-            source.partial_busy, source.partial_at = True, seg.frames
-            self.entry.async_create_background_task(self.hass, self._async_partial(source), f"aac partial {source.id}")
+        stages = self.entry.runtime_data.capabilities
+        domain_id = self.entry.runtime_data.voice_domain.id
+        if seg.active and not source.partial_busy and seg.frames - source.partial_at >= PARTIAL_EVERY:
+            if live := next((st for st in stages.active_stages(domain_id, "segment") if st.partial), None):
+                source.partial_busy, source.partial_at = True, seg.frames
+                self.entry.async_create_background_task(self.hass, self._async_partial(source, live), f"aac partial {source.id}")
+        for stage in stages.active_stages(domain_id, "window"):  # e.g. sound captions, on all audio
+            buf = source.windows.setdefault(stage.id, bytearray())
+            buf += chunk
+            if len(buf) >= int(stage.window * SAMPLE_RATE * 2):
+                pcm, source.windows[stage.id] = bytes(buf), bytearray()
+                self.entry.async_create_background_task(self.hass, self._async_window(source, stage, pcm), f"aac {stage.id}")
         for segment in seg.feed(chunk):
             source.partial, source.partial_at = "", 0
             source.heard += 1
@@ -279,46 +277,61 @@ class AudioHub:
         said = f" {_norm(text)} "
         return any(f" {_norm(name)} " in said for name in self.entry.runtime_data.store.audio["names"] if _norm(name))
 
-    def _partials_ok(self) -> bool:
-        """Live partial transcripts only on a model server (a GPU whisper); HA's CPU engines are too slow."""
-        resource = self.entry.runtime_data.broker.pick("stt")
-        return resource is not None and not is_entity(resource)
-
-    async def _async_partial(self, source: Source) -> None:
-        """The open segment so far, transcribed (only for the live view; the final line comes at its end)."""
+    async def _async_partial(self, source: Source, stage) -> None:
+        """The open segment so far, by a stage that can (speech to text): only for the live view."""
         try:
             if len(pcm := source.segmenter.so_far()) >= PARTIAL_EVERY * FRAME_BYTES:
-                heard = await self.async_stt(pcm)
-                if source.segmenter.active and (text := (heard or {}).get("text", "").strip()):
+                text = await stage.partial(source, pcm)
+                if source.segmenter.active and text:
                     source.partial = text
+        except Exception:  # noqa: BLE001 - the live view must not break hearing
+            LOGGER.exception("AAC audio: partial of %s failed", stage.id)
         finally:
             source.partial_busy = False
 
     async def _async_segment(self, source: Source, pcm: bytes) -> None:
+        """A speech segment: measured here, then each segment stage adds what it finds (text, speaker, mood, …)."""
         ended = dt_util.utcnow()
+        seconds = len(pcm) / (SAMPLE_RATE * 2)
+        line = {"time": (ended - timedelta(seconds=seconds)).isoformat(), "source": source.id, "name": source.name,
+                "kind": "speech", "text": "", "addressed": False, "seconds": round(seconds, 1),
+                "loudness_db": loudness_db(pcm)}
         source.transcribing += 1
-        started = time.monotonic()
         try:
-            heard = await self.async_stt(pcm)
+            for stage in self.entry.runtime_data.capabilities.active_stages(self.entry.runtime_data.voice_domain.id, "segment"):
+                try:
+                    found = await stage.run(source, pcm, line)
+                except Exception:  # noqa: BLE001 - one broken stage must not stop hearing
+                    LOGGER.exception("AAC audio: stage %s failed", stage.id)
+                    continue
+                if found and found.get("drop"):
+                    return
+                line.update(found or {})
         finally:
             source.transcribing -= 1
-        text = (heard or {}).get("text", "").strip()
-        if not text or _HALLUCINATIONS.match(text):
+        self._add_line(source, line)
+
+    async def _async_window(self, source: Source, stage, pcm: bytes) -> None:
+        """A window of all audio for a window stage (sound captions): its findings become lines of their own."""
+        if source.playing:
+            return  # AAC's own voice
+        try:
+            found = await stage.run(source, pcm) or []
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("AAC audio: stage %s failed", stage.id)
             return
         seconds = len(pcm) / (SAMPLE_RATE * 2)
-        samples = array("h", pcm)
-        rms = math.sqrt(sum(v * v for v in samples[::4]) / max(1, len(samples[::4])))
-        line = {"time": (ended - timedelta(seconds=seconds)).isoformat(), "source": source.id, "name": source.name,
-                "text": text, "addressed": False,
-                "language": heard.get("language"), "confidence": heard.get("confidence"),
-                "engine": heard.get("engine"),
-                # details for the live buffer (and later the companion): how long, how loud, how fast recognized
-                "seconds": round(seconds, 1), "loudness_db": round(20 * math.log10(rms / 32767), 1) if rms > 0 else None,
-                "stt_ms": int((time.monotonic() - started) * 1000), "words": heard.get("words") or []}
+        start = (dt_util.utcnow() - timedelta(seconds=seconds)).isoformat()
+        for item in found:
+            self._add_line(source, {"time": start, "source": source.id, "name": source.name, "kind": "sound",
+                                    "addressed": False, "seconds": round(seconds, 1), "loudness_db": loudness_db(pcm),
+                                    "stage": stage.id, **item})
+
+    def _add_line(self, source: Source, line: dict[str, Any]) -> None:
+        """Into the buffer, and to the hearing modules (the core only hears; they decide what to do)."""
         earlier = [x for x in self.transcript if x["source"] == source.id][-EARLIER_LINES:]
         self.transcript.append(line)
         async_notify(self.hass, "audio")
-        # The core only hears; what to do with it is up to the modules (wake word, companion, …)
         for listener in self.entry.runtime_data.capabilities.listeners(self.entry.runtime_data.voice_domain.id):
             self.entry.async_create_background_task(
                 self.hass, self._async_tell(listener, source, line, earlier), f"aac hearing {listener.id}"
@@ -329,33 +342,6 @@ class AudioHub:
             await listener.heard(source, line, earlier)
         except Exception:  # noqa: BLE001 - one broken listener must not stop hearing
             LOGGER.exception("AAC audio: listener %s failed", listener.id)
-
-    async def async_attention(self, text: str, earlier: list[str]) -> bool:
-        """Is someone talking to AAC, or is the name just part of other speech (TV, a video, a talk)?"""
-        broker = self.entry.runtime_data.broker
-        if (picked := broker.endpoint_for("fast")) is None:
-            return True  # nothing to judge with: the name decides
-        model_id, endpoint = picked
-        provider = OpenAICompatProvider(
-            async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key, timeout=20, connect_timeout=3
-        )
-        names = ", ".join(self.entry.runtime_data.store.audio["names"])
-        heard = "\n".join(f"- {t}" for t in earlier) or "- (nothing)"
-        prompt = (f"You are the attention of a home assistant called {names}. A microphone in the room heard "
-                  f"these lines before:\n{heard}\nNow it heard: \"{text}\"\n"
-                  "Is a person speaking TO the assistant now (a request, a question, a greeting to it)? Or is the "
-                  "name only part of other speech: a video, TV, music, people talking about something else? "
-                  'Answer only with JSON: {"to_assistant": true or false}')
-        try:
-            reply = await provider.chat(endpoint.model, [{"role": "user", "content": prompt}], None,
-                                        temperature=0, max_tokens=20, response_format=GATE_FORMAT,
-                                        chat_template_kwargs={"enable_thinking": False})
-            answer = json.loads(reply.get("content") or "{}")
-        except (ProviderError, ValueError) as err:
-            LOGGER.info("AAC audio: attention check failed (%s), the name decides", err)
-            return True
-        broker.mark_up(model_id)
-        return bool(answer.get("to_assistant", True))
 
     def engine(self, kind: str) -> str | None:
         """What would serve STT/TTS now: the first usable resource of the pool role, else local first."""
@@ -562,3 +548,10 @@ def scale_wav(audio: bytes, gain: float) -> bytes:
         dst.setframerate(params.framerate)
         dst.writeframes(samples.tobytes())
     return out.getvalue()
+
+
+def loudness_db(pcm: bytes) -> float | None:
+    """How loud a piece of audio is (dBFS: 0 = full scale, about -90 = silence)."""
+    samples = array("h", pcm)[::4]
+    rms = math.sqrt(sum(v * v for v in samples) / max(1, len(samples)))
+    return round(20 * math.log10(rms / 32767), 1) if rms > 0 else None

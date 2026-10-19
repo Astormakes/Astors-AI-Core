@@ -22,7 +22,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm
 from homeassistant.helpers.storage import Store
 
-from ..capabilities import CalendarProvider, Hearing
+from ..capabilities import CalendarProvider, Hearing, Stage
 from ..const import DOMAIN, LOGGER
 
 if TYPE_CHECKING:
@@ -103,6 +103,11 @@ class ModuleContext:
         """Hear what AAC's microphones hear (only while the module is on in the voice domain)."""
         listener.module = self.module.id
         self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_hearing(listener))
+
+    def add_stage(self, stage: Stage) -> None:
+        """Work on the audio and add to the buffer (only while the module is on in the voice domain)."""
+        stage.module = self.module.id
+        self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_stage(stage))
 
     @property
     def audio(self):
