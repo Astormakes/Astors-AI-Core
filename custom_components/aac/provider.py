@@ -9,6 +9,7 @@ the same small interface (list_models, chat, embed, transcribe).
 from __future__ import annotations
 
 import math
+import time
 from typing import Any
 
 import aiohttp
@@ -70,6 +71,11 @@ class OpenAICompatProvider:
             raise ProviderConnectionError(str(err) or type(err).__name__) from err
         except aiohttp.ClientError as err:
             raise ProviderError(str(err)) from err
+
+    async def models_meta(self) -> dict[str, dict[str, Any]]:
+        """Model id → metadata the server gives (llama.cpp: n_params, size, n_ctx_train, …)."""
+        data = await self._request("GET", "/models", timeout=aiohttp.ClientTimeout(total=10))
+        return {m["id"]: m.get("meta") or {} for m in data.get("data", []) if "id" in m}
 
     async def list_models(self) -> list[str]:
         """Return the model IDs the server offers."""
@@ -143,8 +149,15 @@ class OpenAICompatProvider:
         payload: dict[str, Any] = {"model": model, "messages": messages, **params}
         if tools:
             payload["tools"] = tools
+        started = time.monotonic()
         data = await self._request("POST", "/chat/completions", json=payload)
         try:
-            return data["choices"][0]["message"]
+            message = data["choices"][0]["message"]
         except (KeyError, IndexError, TypeError) as err:
             raise ProviderError(f"Unexpected response: {data}") from err
+        # Speed for the broker: llama.cpp reports generation speed exactly, else tokens / time
+        tokens = (data.get("usage") or {}).get("completion_tokens")
+        speed = (data.get("timings") or {}).get("predicted_per_second")
+        if speed is None and tokens:
+            speed = tokens / max(time.monotonic() - started, 0.001)
+        return {**message, "_stats": {"completion_tokens": tokens, "tokens_per_second": speed}}

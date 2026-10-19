@@ -707,6 +707,7 @@ class AacPanel extends HTMLElement {
             <div><label for="hb-qs">Quiet from</label><input id="hb-qs" type="time" value="${esc(hb.quiet_start)}"></div>
             <div><label for="hb-qe">Quiet until</label><input id="hb-qe" type="time" value="${esc(hb.quiet_end)}"></div>
           </div>
+          <label for="hb-tier">Model (pool request)</label><select id="hb-tier">${this._tierOptions(hb.tier || "fast")}</select>
           <label class="check"><input type="checkbox" id="hb-tools" ${hb.tools ? "checked" : ""}>Allow tools (slower; it already gets a snapshot of the home, and small models tend to tour every room with tools)</label>
           <label for="hb-instr">Instructions</label><textarea id="hb-instr" class="thin-scroll">${esc(hb.instructions)}</textarea>
           <div class="actions"><button class="btn primary" id="hb-save">Save</button><button class="btn" id="hb-run">Run once now</button></div>
@@ -896,6 +897,17 @@ class AacPanel extends HTMLElement {
     return `<div class="src" style="margin:.2em 0 .6em"><div style="flex:1">${state}</div><button class="btn" data-go="settings/pools">Pools</button></div>`;
   }
 
+  _tierOptions(chosen) {
+    const p = this._state?.pools;
+    const tiers = { ...(p?.tiers || { master: "", fast: "", smart: "", small: "" }) };
+    for (const it of p?.roles?.master?.items || []) for (const t of it.traits?.tags || []) tiers[t] ||= "own tag";
+    if (chosen && !(chosen in tiers)) tiers[chosen] = "";
+    return Object.keys(tiers).map((t) => {
+      const who = p?.by_tier?.[t] ? ` → now ${this._resourceLabel(p.by_tier[t])}` : "";
+      return `<option value="${esc(t)}" ${t === chosen ? "selected" : ""}>${esc(t)}${esc(who)}</option>`;
+    }).join("");
+  }
+
   _roleOptions(role) {
     const take = this._state?.pools?.roles?.[role]?.takes;
     const have = new Set(this._poolItems(role));
@@ -923,10 +935,12 @@ class AacPanel extends HTMLElement {
         <div class="src">
           <span class="dot ${it.state === "ok" ? "ok" : it.state === "down" ? "bad" : "open"}"></span>
           <div style="flex:1;min-width:0"><div class="n">${i + 1}. ${esc(this._resourceLabel(it.id))} ${it.active ? '<span class="tag ok">IN USE</span>' : ""}</div>
-            <div class="m">${esc(stateText[it.state] || it.state)}${it.error ? ` · ${esc(it.error)}` : ""}</div></div>
+            <div class="m">${esc(stateText[it.state] || it.state)}${it.error ? ` · ${esc(it.error)}` : ""}${it.traits ? ` · ${it.traits.speed ? `${esc(it.traits.speed)} tok/s` : "speed unknown"}${it.traits.params_b ? ` · ${esc(it.traits.params_b)}B` : ""}` : ""}</div>
+            ${it.tags?.length ? `<div class="m">${it.tags.map((t) => `<span class="tag ${["fast", "smart", "small"].includes(t) ? "aac" : "ok"}">${esc(t.toUpperCase())}</span>`).join(" ")}</div>` : ""}</div>
           <span class="actions" style="margin:0">
             ${i > 0 ? `<button class="icon-btn" data-pool-up="${esc(id)}|${i}" title="Up">↑</button>` : ""}
             ${i < r.items.length - 1 ? `<button class="icon-btn" data-pool-down="${esc(id)}|${i}" title="Down">↓</button>` : ""}
+            ${it.traits ? `<button class="btn" data-pool-tags="${esc(it.id)}" title="Your own tags, e.g. efficient">Tags</button>` : ""}
             <button class="icon-btn" data-pool-del="${esc(id)}|${i}" title="Remove">${icon("trash")}</button>
           </span>
         </div>`).join("");
@@ -938,7 +952,11 @@ class AacPanel extends HTMLElement {
     };
     const pool = (name) => {
       const roles = Object.keys(p.roles).filter((r) => p.roles[r].pool === name);
-      return `<div class="card"><h2>${esc(name.toUpperCase())}</h2><p>${esc(p.pools[name])}</p>${roles.map(role).join("") || '<p class="hint">Nothing here yet.</p>'}</div>`;
+      const extra = name !== "thinking" ? "" : `<div class="role"><h3>Requests</h3>
+        <p class="hint">Events and agents can ask for a kind of model instead of a fixed one, chosen among the master's models that answer right now. fast = measured speed, smart = biggest, small = smallest, plus your own tags (e.g. efficient for energy-saving hardware).</p>
+        <div class="kv">${Object.entries(p.by_tier || {}).map(([t, r]) => `<span class="k">${esc(t)}</span><span class="v">${r ? esc(this._resourceLabel(r)) : "—"}</span>`).join("")}</div>
+        <div class="actions"><button class="btn" id="pool-measure">Measure speed</button></div></div>`;
+      return `<div class="card"><h2>${esc(name.toUpperCase())}</h2><p>${esc(p.pools[name])}</p>${roles.map(role).join("") || '<p class="hint">Nothing here yet.</p>'}${extra}</div>`;
     };
     return this._page("POOLS", "the home's models and engines, shared by everything", `
       <div class="card"><p>Each role uses the first entry that answers. Put a fast machine that is not always on (a PC) first and an always-on one after it: when the first does not answer, the next takes over and the first is tried again a minute later. Models themselves are added under Models.</p>
@@ -1182,6 +1200,22 @@ class AacPanel extends HTMLElement {
     poolMove("data-pool-up", (a, i) => a.splice(i - 1, 2, a[i], a[i - 1]));
     poolMove("data-pool-down", (a, i) => a.splice(i, 2, a[i + 1], a[i]));
     poolMove("data-pool-del", (a, i) => a.splice(i, 1));
+    sr.querySelectorAll("[data-pool-tags]").forEach((el) => el.addEventListener("click", async () => {
+      const id = el.dataset.poolTags;
+      const item = (this._state?.pools?.roles?.master?.items || []).find((x) => x.id === id);
+      const now = (item?.traits?.tags || []).join(", ");
+      const text = prompt("Your own tags for this model, comma separated (e.g. efficient):", now);
+      if (text === null) return;
+      const pools = await this._ws("aac/pool/tags", { resource: id, tags: text.split(",").map((t) => t.trim()).filter(Boolean) });
+      if (this._state) this._state.pools = pools;
+      this._render();
+    }));
+    sr.querySelector("#pool-measure")?.addEventListener("click", async (e) => {
+      e.target.disabled = true; e.target.textContent = "Measuring…";
+      try { const pools = await this._ws("aac/pool/measure"); if (this._state) this._state.pools = pools; }
+      catch (err) { this._flash = { ok: false, text: err.message || String(err) }; }
+      this._render();
+    });
     sr.querySelectorAll("[data-pool-add]").forEach((el) => el.addEventListener("click", async () => {
       const role = el.dataset.poolAdd;
       const pick = sr.querySelector(`[data-pool-pick="${CSS.escape(role)}"]`)?.value;
@@ -1417,6 +1451,7 @@ class AacPanel extends HTMLElement {
         quiet_end: sr.querySelector("#hb-qe").value || "00:00",
         instructions: sr.querySelector("#hb-instr").value,
         tools: sr.querySelector("#hb-tools").checked,
+        tier: sr.querySelector("#hb-tier").value,
       });
       this._flash = { ok: true, text: "Saved." };
     } catch (e) {

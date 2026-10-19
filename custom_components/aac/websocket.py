@@ -63,6 +63,8 @@ def async_register(hass: HomeAssistant) -> None:
         ws_memory_settings,
         ws_pools,
         ws_pool_set,
+        ws_pool_tags,
+        ws_pool_measure,
         ws_memory_reembed,
         ws_charter,
         ws_autonomy,
@@ -143,7 +145,10 @@ async def ws_master_update(hass: HomeAssistant, connection, msg) -> None:
 async def ws_models(hass: HomeAssistant, connection, msg) -> None:
     """Manual + auto models with live state."""
     if loaded := _loaded(hass, connection, msg):
-        connection.send_result(msg["id"], await async_overview(hass, loaded[0]))
+        overview = await async_overview(hass, loaded[0])
+        if entry := _entry(hass, connection, msg):
+            entry.runtime_data.broker.learn_from_overview(overview)  # real sizes for "smart"
+        connection.send_result(msg["id"], overview)
 
 
 @websocket_api.websocket_command(
@@ -399,6 +404,7 @@ def ws_run_get(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("quiet_end"): vol.Match(r"^\d{1,2}:\d{2}$"),
         vol.Optional("instructions"): vol.All(str, vol.Length(min=1)),
         vol.Optional("tools"): bool,
+        vol.Optional("tier"): vol.All(str, vol.Length(min=1)),
     }
 )
 @websocket_api.require_admin
@@ -450,6 +456,7 @@ _WHEN = vol.Any(
         vol.Required("name"): str,
         vol.Required("when"): _WHEN,
         vol.Optional("instruction", default=""): str,
+        vol.Optional("tier", default="master"): vol.All(str, vol.Length(min=1)),
         vol.Optional("cooldown", default=300): vol.All(vol.Coerce(int), vol.Range(0, 86400)),
         vol.Optional("quiet_hours", default=None): vol.Any(None, {vol.Required("start"): _TIME, vol.Required("end"): _TIME}),
         vol.Optional("enabled", default=True): bool,
@@ -465,7 +472,7 @@ async def ws_trigger_save(hass: HomeAssistant, connection, msg) -> None:
         "name": msg["name"],
         "enabled": msg["enabled"],
         "when": msg["when"],
-        "do": {"template": "event-reaction", "instruction": msg["instruction"]},
+        "do": {"template": "event-reaction", "instruction": msg["instruction"], "tier": msg["tier"]},
         "cooldown": msg["cooldown"],
         "quiet_hours": msg["quiet_hours"],
     }
@@ -590,6 +597,32 @@ def ws_pools(hass: HomeAssistant, connection, msg) -> None:
     """Pools: per role the ordered list with live state."""
     if entry := _entry(hass, connection, msg):
         connection.send_result(msg["id"], entry.runtime_data.broker.status())
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "aac/pool/tags", vol.Required("resource"): str, vol.Required("tags"): [str]}
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_pool_tags(hass: HomeAssistant, connection, msg) -> None:
+    """The owner's own tags for a model (e.g. efficient)."""
+    if entry := _entry(hass, connection, msg):
+        await entry.runtime_data.broker.async_set_tags(msg["resource"], msg["tags"])
+        connection.send_result(msg["id"], entry.runtime_data.broker.status())
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/pool/measure"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_pool_measure(hass: HomeAssistant, connection, msg) -> None:
+    """Measure the speed of every reachable model of the master role."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    broker = entry.runtime_data.broker
+    for resource in broker.candidates("master"):
+        if broker.usable(resource):
+            await broker.async_measure(resource)
+    connection.send_result(msg["id"], broker.status())
 
 
 @websocket_api.websocket_command(

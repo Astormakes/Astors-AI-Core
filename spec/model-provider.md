@@ -63,6 +63,31 @@ same message; speech: per segment, HA's local engine last). WebSocket `aac/pools
 `aac/pool/set`; setup tool `use_model(role, id, position first|last, remove)`. Old single
 choices (≤ 0.11) migrate into the first entry.
 
+### Traits and requests (built, v0.13.0)
+
+Per resource (`store.traits`): measured speed (tokens/s; llama.cpp `timings.predicted_per_second`,
+else completion tokens / time; moving average, newest 30 %), size in billions of parameters
+(llama.cpp `/v1/models` meta `n_params`, else parsed from the name: "35B-A3B" → 35), and the
+owner's own tags (e.g. `efficient` for energy-saving hardware).
+
+A run asks for a **tier** instead of a fixed model (`run.tier`, recorded with `run.model`):
+
+| Tier | Picks, among the master role's models that answer right now |
+|---|---|
+| `master` | the owner's order |
+| `fast` | the highest measured speed |
+| `smart` | the most parameters |
+| `small` | the fewest parameters (only when sizes differ) |
+| any own tag | the first model with that tag |
+
+Unknown tier or nothing fits → the master's first reachable model. The heartbeat asks for
+`fast` by default (setting), event triggers for `master` (`do.tier`). Planned users: the voice
+gate (a fast model decides whether the smart one is needed), research and curator (`smart`).
+`aac/pool/measure` and the setup tool `measure_models` run one short generation per model;
+`aac/pool/tags` / `tag_model` set own tags.
+
+Measured on the real setup: Qwen3-8B on 2× K2200 6.1 tok/s, Qwen3.6-35B on the RTX 5070 Ti 86 tok/s.
+
 ## Broker request (planned)
 
 Agents never grab hardware; they ask the broker:

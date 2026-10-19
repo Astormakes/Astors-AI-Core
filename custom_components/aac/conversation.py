@@ -244,7 +244,9 @@ class AACConversationEntity(
         store = self.entry.runtime_data.store
         broker = self.entry.runtime_data.broker
         options = store.master
-        picked = broker.endpoint("master")
+        run = current_run.get()
+        tier = run.tier if run else "master"
+        picked = broker.endpoint_for(tier)
         if picked is None:
             response = intent.IntentResponse(language=user_input.language)
             response.async_set_error(
@@ -256,7 +258,6 @@ class AACConversationEntity(
             )
         model_id, endpoint = picked
         provider = self._provider(endpoint)
-        run = current_run.get()
         api_ids: list[str] | None = None
         if not run or run.allow_tools:
             api_ids = list(options.get(CONF_LLM_HASS_API) or [])
@@ -340,7 +341,7 @@ class AACConversationEntity(
                 except ProviderConnectionError as err:
                     # Its machine did not answer (e.g. a PC that is off): next in the pool
                     broker.mark_down(model_id, str(err))
-                    if (picked := broker.endpoint("master")) is None:
+                    if (picked := broker.endpoint_for(tier)) is None:
                         raise HomeAssistantError(f"No master model reachable: {err}") from err
                     LOGGER.info("Master model %s unreachable, using %s", model_id, picked[0])
                     if run:
@@ -352,6 +353,9 @@ class AACConversationEntity(
                     LOGGER.error("Model request failed: %s", err)
                     raise HomeAssistantError(f"Model request failed: {err}") from err
                 broker.mark_up(model_id)
+                broker.record_speed(model_id, (reply.get("_stats") or {}).get("tokens_per_second"))
+                if run:
+                    run.model = model_id
                 break
 
             async for _tool_result in chat_log.async_add_assistant_content(

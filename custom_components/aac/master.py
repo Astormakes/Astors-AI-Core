@@ -48,6 +48,7 @@ async def async_run_master(
     extra_system_prompt: str | None = None,
     user_id: str | None = None,
     allow_tools: bool = True,
+    tier: str = "master",
 ) -> tuple[Run, conversation.ConversationResult | None]:
     """Run the master once and record it as a run (steps come from the agent)."""
     runs = entry.runtime_data.runs
@@ -59,6 +60,7 @@ async def async_run_master(
         chat_id=chat_id,
         context=extra_system_prompt or "",
         allow_tools=allow_tools,
+        tier=tier,
     )
     token = current_run.set(run)
     try:

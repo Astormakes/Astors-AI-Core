@@ -45,6 +45,8 @@ class Run:
     chat_id: str | None = None
     # False = the model only gets its context, no tools (looking, not acting)
     allow_tools: bool = True
+    model: str | None = None  # the model that answered (resource id)
+    tier: str = "master"  # pool request: master (the owner's order), fast, smart, small or an own tag
     steps: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:

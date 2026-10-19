@@ -74,6 +74,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "instructions": "",
         # Small models explore every room with tools; the snapshot is usually enough
         "tools": False,
+        # Which model checks in: a pool tier (master / fast / smart / small / an own tag)
+        "tier": "fast",
     },
     # Triggers in the contract format (spec/trigger.md):
     # {id, name, enabled, when: {type, ...}, do: {template, instruction}, cooldown, quiet_hours}
@@ -91,6 +93,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Pools (thinking / voice / vision, above domains): role → ordered list of model ids
     # or HA engine entity ids; the broker uses the first reachable one (pools.py)
     "pools": {"master": [], "memory": [], "stt": [], "tts": []},
+    # Per resource: measured speed (tokens/s, moving average), size (billions of parameters),
+    # the owner's own tags (e.g. "efficient"): {resource: {speed, samples, params_b, tags}}
+    "traits": {},
 }
 
 MASTER_KEYS = set(DEFAULT_CONFIG["master"])
@@ -136,6 +141,7 @@ class AACStore:
         data["triggers"] = [_trigger_v1(t) for t in stored.get("triggers", [])]
         data["memory"].update(stored.get("memory", {}))
         data["audio"].update(stored.get("audio", {}))
+        data["traits"] = dict(stored.get("traits", {}))
         data["charter"] = stored.get("charter", "")
         data["autonomy"].update(stored.get("autonomy", {}))
         # Up to 0.11 every role had one model: master.model, memory.embed_model, audio.stt/tts

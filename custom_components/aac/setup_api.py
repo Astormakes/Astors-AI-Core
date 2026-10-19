@@ -99,6 +99,7 @@ class SetupStatusTool(_SetupTool):
                            "in_use_now": data.broker.status()["roles"][role]["active"]}
                     for name, role in _ROLE_NAMES.items()
                 },
+                "requests_now": data.broker.status()["by_tier"],
                 "heartbeat": {k: hb[k] for k in ("enabled", "interval", "quiet_start", "quiet_end")},
                 "triggers": len(store.triggers),
                 "audio": {
@@ -219,6 +220,40 @@ class UseModelTool(_SetupTool):
                                     "in_use_now": status["active"]})
 
 
+class TagModelTool(_SetupTool):
+    """The owner's own tags for a model."""
+
+    name = "tag_model"
+    title = "Tag model"
+    description = (
+        "Give a master model the owner's own tags, e.g. 'efficient' for energy-saving hardware. Events and "
+        "agents can then request a model by tag. fast/smart/small are worked out automatically."
+    )
+    annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
+    parameters = probatio.Schema({probatio.Required("model_id"): str, probatio.Required("tags"): [str]})
+
+    async def _async_run(self, hass, args):
+        broker = self._entry.runtime_data.broker
+        if args["model_id"] not in broker.candidates("master"):
+            return llm.ToolResult(data={"error": "Tags are for models in the master pool."}, error=True)
+        await broker.async_set_tags(args["model_id"], args["tags"])
+        return llm.ToolResult(data={"traits": broker.traits(args["model_id"]), "by_tier": broker.status()["by_tier"]})
+
+
+class MeasureModelsTool(_SetupTool):
+    """Measure speeds."""
+
+    name = "measure_models"
+    title = "Measure models"
+    description = "Measure the speed (tokens per second) of every reachable master model, so 'fast' requests pick the right one."
+    annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=True)
+
+    async def _async_run(self, hass, args):
+        broker = self._entry.runtime_data.broker
+        speeds = {r: await broker.async_measure(r) for r in broker.candidates("master") if broker.usable(r)}
+        return llm.ToolResult(data={"tokens_per_second": speeds, "by_tier": broker.status()["by_tier"]})
+
+
 class HeartbeatTool(_SetupTool):
     """Heartbeat settings."""
 
@@ -330,7 +365,7 @@ class AACSetupAPI(llm.API):
 
     async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
         """Tools + prompt."""
-        tools = [SetupStatusTool, ListModelsTool, AddModelTool, UseModelTool, HeartbeatTool, AudioTool, SpeakTestTool, SkipStepTool]
+        tools = [SetupStatusTool, ListModelsTool, AddModelTool, UseModelTool, TagModelTool, MeasureModelsTool, HeartbeatTool, AudioTool, SpeakTestTool, SkipStepTool]
         return llm.APIInstance(
             api=self,
             api_prompt=API_PROMPT,

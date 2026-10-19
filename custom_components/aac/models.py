@@ -116,14 +116,17 @@ async def async_list_models(
 
 
 async def _probe(hass: HomeAssistant, server: Server) -> dict[str, Any]:
+    provider = OpenAICompatProvider(async_get_clientsession(hass), server.base_url, server.api_key)
     try:
-        models = await async_list_models(hass, server.base_url, server.api_key)
+        async with asyncio.timeout(5):
+            meta = await provider.models_meta()
+        models = list(meta)
     except ProviderNotFoundError:
         # Reachable, but cannot list its models (e.g. whisper.cpp): manual models count as online
         return {"online": True, "models": [], "error": None, "unlisted": True}
     except (ProviderError, TimeoutError) as err:
         return {"online": False, "models": [], "error": str(err) or "timeout"}
-    return {"online": True, "models": models, "error": None}
+    return {"online": True, "models": models, "error": None, "meta": meta}
 
 
 async def async_overview(hass: HomeAssistant, store: AACStore) -> dict[str, Any]:
@@ -146,6 +149,7 @@ async def async_overview(hass: HomeAssistant, store: AACStore) -> dict[str, Any]
                 "model": cfg[CONF_MODEL],
                 "has_key": bool(cfg.get(CONF_API_KEY)),
                 "online": probe["online"] and (cfg[CONF_MODEL] in probe["models"] or probe.get("unlisted", False)),
+                "n_params": (probe.get("meta") or {}).get(cfg[CONF_MODEL], {}).get("n_params"),
                 "error": probe["error"],
             }
         )
@@ -160,7 +164,8 @@ async def async_overview(hass: HomeAssistant, store: AACStore) -> dict[str, Any]
                 "online": probe["online"],
                 "error": probe["error"],
                 "models": [
-                    {"id": f"auto|{server.source}|{model}", "model": model}
+                    {"id": f"auto|{server.source}|{model}", "model": model,
+                     "n_params": (probe.get("meta") or {}).get(model, {}).get("n_params")}
                     for model in probe["models"]
                     if (server.base_url, model) not in taken
                 ],

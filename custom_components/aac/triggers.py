@@ -146,6 +146,7 @@ class TriggerEngine:
             "Check-in: anything I should know right now?",
             prompt,
             allow_tools=bool(hb["tools"]),
+            tier=hb.get("tier") or "fast",
         )
 
     def _may_fire(self, trig: dict) -> bool:
@@ -190,7 +191,10 @@ class TriggerEngine:
             f"Instruction ({who}): {instruction}\n"
             f"{rule}"
         )
-        await self._async_auto_run(f"event: {trig['id']}", trig.get("name") or title, text, prompt)
+        await self._async_auto_run(
+            f"event: {trig['id']}", trig.get("name") or title, text, prompt,
+            tier=(trig.get("do") or {}).get("tier") or "master",
+        )
 
     @callback
     def _async_state_changed(self, event: Event[EventStateChangedData]) -> None:
@@ -243,7 +247,7 @@ class TriggerEngine:
         self.async_start()
 
     async def _async_auto_run(
-        self, trigger: str, title: str, text: str, prompt: str, allow_tools: bool = True
+        self, trigger: str, title: str, text: str, prompt: str, allow_tools: bool = True, tier: str = "master"
     ) -> str:
         run, result = await async_run_master(
             self.hass,
@@ -254,6 +258,7 @@ class TriggerEngine:
             title=title,
             extra_system_prompt=prompt,
             allow_tools=allow_tools,
+            tier=tier,
         )
         if result is not None and run.status == "done" and run.result:
             run.chat_id = AAC_CHAT_ID
