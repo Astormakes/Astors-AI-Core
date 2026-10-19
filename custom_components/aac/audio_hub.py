@@ -30,7 +30,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import LOGGER
 from .models import resolve_model
-from .provider import OpenAICompatProvider, ProviderError
+from .provider import OpenAICompatProvider, ProviderConnectionError, ProviderError
 from .runs import async_notify
 
 if TYPE_CHECKING:
@@ -45,6 +45,7 @@ END_SILENCE_FRAMES = 80  # 800 ms of silence closes it
 MAX_SEGMENT_FRAMES = 2000  # 20 s
 MIN_SPEECH_FRAMES = 30  # shorter blips are dropped
 TRANSCRIPT_LINES = 200
+STT_RETRY_SECONDS = 60  # after a speech model was unreachable
 # Integrations whose speech engines run locally (preferred when nothing is chosen)
 LOCAL_ENGINES = {"wyoming", "piper", "whisper", "faster_whisper"}
 
@@ -179,6 +180,8 @@ class AudioHub:
         self.entry = entry
         self.sources: dict[str, Source] = {}
         self.transcript: deque[dict[str, Any]] = deque(maxlen=TRANSCRIPT_LINES)
+        self.stt_fallback: dict[str, Any] | None = None  # set while the chosen speech model is unreachable
+        self._stt_retry_at = 0.0
 
     # ------------------------------------------------------------ sources
     @callback
@@ -235,16 +238,19 @@ class AudioHub:
             return
         line = {"time": dt_util.utcnow().isoformat(), "source": source.id, "name": source.name,
                 "text": text, "addressed": self.addressed(source, text),
-                "language": heard.get("language"), "confidence": heard.get("confidence")}
+                "language": heard.get("language"), "confidence": heard.get("confidence"),
+                "engine": heard.get("engine")}
         self.transcript.append(line)
         async_notify(self.hass, "audio")
         if line["addressed"]:
             await self.async_answer(source, text)
 
     def engine(self, kind: str) -> str | None:
-        """The chosen STT/TTS engine, else HA's default (None if HA has none)."""
-        if chosen := self.entry.runtime_data.store.audio[kind]:
-            return chosen
+        """The chosen STT/TTS engine, else the local-first HA engine."""
+        return self.entry.runtime_data.store.audio[kind] or self.ha_engine(kind)
+
+    def ha_engine(self, kind: str) -> str | None:
+        """An HA engine, local first, else HA's default (None if HA has none)."""
         # Local first: HA's default may be a cloud service (e.g. Google Translate)
         ent_reg = er.async_get(self.hass)
         for entity_id in sorted(self.hass.states.async_entity_ids(kind)):
@@ -257,6 +263,8 @@ class AudioHub:
 
     def _stt_entity(self) -> stt.SpeechToTextEntity | None:
         entity_id = self.engine("stt")
+        if not entity_id or not entity_id.startswith("stt."):
+            entity_id = self.ha_engine("stt")  # fallback for a speech model that is not reachable
         return stt.async_get_speech_to_text_entity(self.hass, entity_id) if entity_id else None
 
     def _language(self, supported: list[str]) -> str:
@@ -271,8 +279,14 @@ class AudioHub:
 
         Returns {"text", "language", "confidence", "words"} (HA engines give only the text)."""
         engine = self.engine("stt")
-        if engine and not engine.startswith("stt."):
-            return await self._async_stt_model(engine, pcm)
+        if engine and not engine.startswith("stt.") and time.monotonic() >= self._stt_retry_at:
+            if (heard := await self._async_stt_model(engine, pcm)) is not None:
+                if self.stt_fallback is not None:
+                    self.stt_fallback = None
+                    async_notify(self.hass, "audio")
+                return heard | {"engine": engine}
+            if self.stt_fallback is None:
+                return None  # the server answered but failed: no fallback for one bad segment
         if (entity := self._stt_entity()) is None:
             LOGGER.warning("AAC audio: no speech-to-text engine")
             return None
@@ -296,19 +310,30 @@ class AudioHub:
             return None
         if result.result != stt.SpeechResultState.SUCCESS:
             return None
-        return {"text": result.text or "", "language": metadata.language, "confidence": None, "words": []}
+        return {"text": result.text or "", "language": metadata.language, "confidence": None, "words": [],
+                "engine": entity.entity_id}
 
     async def _async_stt_model(self, model_id: str, pcm: bytes) -> dict[str, Any] | None:
         store = self.entry.runtime_data.store
         if (endpoint := resolve_model(self.hass, store, model_id)) is None:
             LOGGER.warning("AAC audio: speech model %s is gone", model_id)
+            self.stt_fallback = {"model": model_id, "since": dt_util.utcnow().isoformat(), "error": "model not found"}
             return None
         provider = OpenAICompatProvider(
-            async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key, timeout=60
+            async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key, timeout=60, connect_timeout=3
         )
         try:
             # No language = the model detects it per sentence (German and English alike)
             return await provider.transcribe(endpoint.model, pcm_to_wav(pcm), store.audio["language"] or None)
+        except ProviderConnectionError as err:
+            # The machine may simply be off (e.g. a desktop PC): use HA's engine meanwhile,
+            # try the model again in a minute
+            if self.stt_fallback is None:
+                LOGGER.info("AAC audio: speech model unreachable (%s), using HA's engine meanwhile", err)
+            self.stt_fallback = {"model": model_id, "since": dt_util.utcnow().isoformat(), "error": str(err)}
+            self._stt_retry_at = time.monotonic() + STT_RETRY_SECONDS
+            async_notify(self.hass, "audio")
+            return None
         except ProviderError as err:
             LOGGER.warning("AAC audio: speech-to-text failed: %s", err)
             return None
@@ -374,5 +399,6 @@ class AudioHub:
             "connected": [s.summary() for s in self.sources.values()],
             "transcript": list(self.transcript)[-30:],
             "stt": self.engine("stt"),
+            "stt_fallback": self.stt_fallback and {**self.stt_fallback, "using": self.ha_engine("stt")},
             "tts": self.engine("tts"),
         }

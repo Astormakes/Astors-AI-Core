@@ -99,6 +99,7 @@ class SetupStatusTool(_SetupTool):
                     "connected_sources": [{"id": c["id"], "name": c["name"], "area": c["area"]} for c in audio["connected"]],
                     "sources_seen_before": [k["name"] for k in store.audio["known"]],
                     "speech_to_text": audio["engines"]["stt"],
+                    "speech_to_text_fallback": audio["engines"]["stt_fallback"],
                     "stt_options": audio["engines"]["stt_options"] + ["or any speech model from list_models (multilingual whisper detects the language)"],
                     "text_to_speech": audio["engines"]["tts"], "tts_options": audio["engines"]["tts_options"],
                     "names_that_wake_you": store.audio["names"],

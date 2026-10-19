@@ -39,12 +39,13 @@ class OpenAICompatProvider:
         base_url: str,
         api_key: str | None = None,
         timeout: float = 300,
+        connect_timeout: float | None = None,
     ) -> None:
-        """Initialize the provider."""
+        """Initialize the provider (connect_timeout: give up early on a machine that is off)."""
         self._session = session
         self._base_url = base_url.rstrip("/")
         self._headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        self._timeout = aiohttp.ClientTimeout(total=timeout)
+        self._timeout = aiohttp.ClientTimeout(total=timeout, sock_connect=connect_timeout)
 
     async def _request(
         self, method: str, path: str, json: dict[str, Any] | None = None, timeout=None, data=None

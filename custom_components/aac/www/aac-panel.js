@@ -984,7 +984,7 @@ class AacPanel extends HTMLElement {
     const opt = (list, chosen, current) => `<option value="" ${chosen ? "" : "selected"}>Local first (now: ${esc(current || "none")})</option>` +
       (list || []).map((e) => `<option value="${esc(e)}" ${chosen === e ? "selected" : ""}>${esc(e)}</option>`).join("");
     const lines = (a.transcript || []).slice().reverse().map((l) => `
-      <div class="tline ${l.addressed ? "to-aac" : ""}"><span class="m">${esc(new Date(l.time).toLocaleTimeString())} · ${esc(l.name)}${l.addressed ? " → AAC" : ""}</span><div>${esc(l.text)}</div></div>`).join("");
+      <div class="tline ${l.addressed ? "to-aac" : ""}"><span class="m">${esc(new Date(l.time).toLocaleTimeString())} · ${esc(l.name)}${l.language ? ` · ${esc(l.language)}` : ""}${l.addressed ? " → AAC" : ""}</span><div>${esc(l.text)}</div></div>`).join("");
     return this._page("AUDIO PIPELINE", `${(a.connected || []).length} connected · separate from HA's Assist`, `
       <div class="split">
         <div class="card"><h2>${icon("mic")} CONNECTED</h2>
@@ -1003,6 +1003,7 @@ class AacPanel extends HTMLElement {
             <div><label for="au-follow">Follow-up without name (s)</label><input id="au-follow" type="number" min="0" max="120" value="${esc(set.follow_up ?? 10)}" inputmode="numeric"></div>
             <div><label for="au-lang">Language (empty = HA's)</label><input id="au-lang" value="${esc(set.language || "")}" placeholder="en, de, …"></div>
           </div>
+          ${eng.stt_fallback ? `<div class="msg err">The speech model is not reachable (machine off?) since ${esc(new Date(eng.stt_fallback.since).toLocaleTimeString())}. Using ${esc(eng.stt_fallback.using || "nothing")} meanwhile; AAC tries again every minute.</div>` : ""}
           <label for="au-stt">Speech to text</label><select id="au-stt">${opt(eng.stt_options, set.stt, eng.stt)}${this._speechModelOptions(set.stt)}</select>
           <label for="au-tts">Voice (text to speech)</label><select id="au-tts">${opt(eng.tts_options, set.tts, eng.tts)}</select>
           <p class="hint">Speech to text: any speech model from Models (e.g. a multilingual whisper on an OpenAI-compatible server; without a language it detects German, English, … per sentence), or one of HA's engines. HA's own voice assistants stay as they are. "Local first" prefers engines running in your home over cloud ones.</p>

@@ -35,5 +35,8 @@ Rules:
 - Memory is per domain; sharing is explicit (`shares_memory_with`).
 - Domains are versioned (`version` + history): snapshot, compare, restore.
 - Never in a package: API keys, tokens, HA URLs. Those are filled in on import.
+- **Pools stand above domains** (see [model-provider.md](model-provider.md)): machines and models
+  belong to the home, not to a domain. A domain names the capabilities it needs (`{"tier": "master"}`,
+  "speech to text, multilingual"), never a machine; on import the broker maps them to the local pools.
 
 Today there is exactly one implicit domain (the AAC config entry).

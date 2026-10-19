@@ -41,6 +41,25 @@ as online and its model name is typed by hand), `ProviderError` (anything else).
 
 The API key is never sent to the panel (`has_key` instead).
 
+## Pools (partial)
+
+The home's compute, shared by all domains (pools stand above domains). Three pools
+(owner, 2026-10-19), each an ordered list of resources = a model or engine on a machine:
+
+| Pool | Capabilities |
+|---|---|
+| **thinking** | chat tiers (master, fast, big), embeddings |
+| **voice** | speech to text, text to speech, later speaker ID and wake word |
+| **vision** | detectors, vision LLM |
+
+Per resource: capability, machine, privacy tier, availability (`always` for a server,
+`sometimes` for a desktop PC), priority. The broker picks the best reachable resource
+that fits the request, falls back down the list, and makes a fallback visible.
+
+Built so far: one choice per role plus an automatic fallback for speech to text (the chosen
+model; when its machine is unreachable, HA's local engine; retried every minute; shown in the
+panel and to the setup tools). Planned: ordered lists per capability instead of single role ids.
+
 ## Broker request (planned)
 
 Agents never grab hardware; they ask the broker:

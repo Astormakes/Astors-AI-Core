@@ -125,7 +125,7 @@ async def test_stt_falls_back_to_plain_json(hass: HomeAssistant, aioclient_mock,
     aioclient_mock.post("http://llm.test/v1/audio/transcriptions", side_effect=side_effect)
     await mock_entry.runtime_data.store.async_update_audio({"stt": "m_test0001"})
     heard = await mock_entry.runtime_data.audio.async_stt(SILENCE * 100)
-    assert heard == {"text": "lights off", "language": None, "confidence": None, "words": []}
+    assert heard == {"text": "lights off", "language": None, "confidence": None, "words": [], "engine": "m_test0001"}
 
 
 async def test_server_without_model_list(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
@@ -142,3 +142,33 @@ async def test_server_without_model_list(hass: HomeAssistant, hass_ws_client, ai
     await ws.send_json_auto_id({"type": "aac/models"})
     manual = {m["name"]: m for m in (await ws.receive_json())["result"]["manual"]}
     assert manual["Whisper"]["online"]
+
+
+async def test_stt_falls_back_when_machine_is_off(hass: HomeAssistant, aioclient_mock, mock_entry, configured):
+    """An unreachable speech model (PC off) → HA's engine meanwhile, retried after a minute."""
+    import aiohttp
+
+    from homeassistant.components import stt
+
+    await setup_aac(hass, mock_entry)
+    aioclient_mock.post("http://llm.test/v1/audio/transcriptions", exc=aiohttp.ClientConnectionError("off"))
+    hub = mock_entry.runtime_data.audio
+    await mock_entry.runtime_data.store.async_update_audio({"stt": "m_test0001"})
+
+    class FakeEntity:
+        entity_id = "stt.local"
+        supported_languages = ["en"]
+
+        async def internal_async_process_audio_stream(self, metadata, stream):
+            return stt.SpeechResult("lights off", stt.SpeechResultState.SUCCESS)
+
+    with (
+        patch.object(hub, "ha_engine", return_value="stt.local"),
+        patch("custom_components.aac.audio_hub.stt.async_get_speech_to_text_entity", return_value=FakeEntity()),
+    ):
+        heard = await hub.async_stt(SILENCE * 100)
+        assert heard["text"] == "lights off" and heard["engine"] == "stt.local"
+        assert hub.overview()["stt_fallback"]["using"] == "stt.local"
+        calls = aioclient_mock.call_count
+        await hub.async_stt(SILENCE * 100)
+        assert aioclient_mock.call_count == calls  # no retry within the minute
