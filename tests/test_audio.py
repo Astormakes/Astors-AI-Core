@@ -587,3 +587,16 @@ async def test_companion_steps_back_for_the_wake_word(hass: HomeAssistant, mock_
         await companion.heard(source, {"kind": "speech", "text": "what time is it", "time": "2026-10-19T20:00:00+00:00",
                                        "source": "pc"}, [])
     answer.assert_not_called()
+
+
+def test_only_the_same_voice_goes_along():
+    """The master gets what the person talking to AAC said just before, not the video next to them."""
+    from custom_components.aac.modules.companion import same_voice
+
+    me, video = {"id": "v5", "name": "Astor"}, {"id": "v18", "name": "voice #18"}
+    lines = [{"kind": "speech", "text": "Matthias built a sensor.", "speaker": video, "time": "2026-10-19T21:57:40+00:00"},
+             {"kind": "speech", "text": "Hm.", "speaker": me, "time": "2026-10-19T21:57:50+00:00"},
+             {"kind": "aac", "text": "Okay.", "time": "2026-10-19T21:57:52+00:00"}]
+    line = {"kind": "speech", "text": "That was for you.", "speaker": me, "time": "2026-10-19T21:57:59+00:00"}
+    assert same_voice(lines, line) == ["Hm."]
+    assert same_voice(lines, {**line, "speaker": None}) == []

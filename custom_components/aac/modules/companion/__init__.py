@@ -40,6 +40,20 @@ RULES = {
 }
 
 
+SAME_VOICE_SECONDS = 60  # what the same person said this shortly before goes along with the request
+
+
+def same_voice(lines: list[dict[str, Any]], line: dict[str, Any], seconds: float = SAME_VOICE_SECONDS) -> list[str]:
+    """What the person talking to AAC said just before (their voice only: not a video or other people;
+    the master got the whole room once and mixed a video's talk into its answer)."""
+    voice = (line.get("speaker") or {}).get("id")
+    if not voice:
+        return []
+    since = datetime.fromisoformat(line["time"]) - timedelta(seconds=seconds)
+    return [x["text"] for x in lines if x.get("kind") == "speech" and (x.get("speaker") or {}).get("id") == voice
+            and datetime.fromisoformat(x["time"]) >= since][-4:]
+
+
 def room_line(line: dict[str, Any], start: datetime) -> str:
     """One buffer line for the decision: time offset, who, text."""
     t = (datetime.fromisoformat(line["time"]) - start).total_seconds()
@@ -96,7 +110,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
             return None
         broker.mark_up(model_id)
         return {"respond": bool(answer.get("respond")), "why": str(answer.get("why", ""))[:120],
-                "room": [x["text"] for x in recent[:-1] if x.get("kind") != "aac"][-6:]}
+                "before": same_voice(recent[:-1], line)}
 
     async def heard(source, line: dict[str, Any], earlier: list[dict[str, Any]]) -> None:
         if line.get("kind", "speech") != "speech" or not line.get("text") or wakeword_on():
@@ -116,7 +130,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
                         line["addressed"] = True
                     ctx.audio.changed()
                     if found["respond"]:
-                        await ctx.audio.async_answer(source, line["text"], found["room"], line.get("speaker"))
+                        await ctx.audio.async_answer(source, line["text"], found["before"], line.get("speaker"))
                 if (nxt := waiting.pop(source.id, None)) is None:
                     break
                 source, line = nxt

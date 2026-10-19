@@ -104,8 +104,11 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         hub.changed()
         seconds = float(ctx.setting(domain_id, "look_back") or 0)
         since = datetime.fromisoformat(line["time"]) - timedelta(seconds=seconds)
+        voice = (line.get("speaker") or {}).get("id")
         before = [x["text"] for x in earlier if seconds and x.get("text") and x not in together
-                  and datetime.fromisoformat(x["time"]) >= since]
+                  and datetime.fromisoformat(x["time"]) >= since and x.get("kind") == "speech"
+                  # with voices known: only the same person (not a video or others in the room)
+                  and (not voice or (x.get("speaker") or {}).get("id") == voice)]
         await hub.async_answer(source, text, before, line.get("speaker"))
 
     ctx.add_hearing(Hearing(id="wakeword", title="Wake word", heard=heard))

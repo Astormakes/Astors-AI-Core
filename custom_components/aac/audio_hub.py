@@ -552,7 +552,7 @@ class AudioHub:
         where = f"spoken at the microphone '{source.name}'{f' by {who}' if who else ''}"
         said = f"[{where}; your answer is spoken aloud there] {text}"
         if before:  # the room's last lines go with it, so "…, remind me of that, computer" works
-            said = ("Said just before in the room:\n" + "\n".join(f"- {b}" for b in before)
+            said = ("The same person said just before:\n" + "\n".join(f"- {b}" for b in before)
                     + f"\n\nNow to you, {where} (your answer is spoken aloud there): {text}")
         run, result = await async_run_master(
             self.hass, self.entry, said,
