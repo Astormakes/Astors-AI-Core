@@ -974,20 +974,21 @@ class AacPanel extends HTMLElement {
   // What AAC did on the way (thinking text, tool calls): one folded block above the answer, click to open
   _stepRow(s) {
     const cut = (t) => (t = String(t ?? "").trim()).length > 600 ? `${t.slice(0, 600)} …` : t;
-    return s.type === "text" ? `<div class="row">💭 ${esc(cut(s.text))}</div>`
+    return s.type === "text" ? `<div class="row">${/^Context full/.test(s.text) ? "⚠" : "💭"} ${esc(cut(s.text))}</div>`
       : s.type === "tool_call" ? `<div class="row"><b>→ ${esc(s.tool.split("__").pop())}</b> ${esc(cut(JSON.stringify(s.args)))}</div>`
       : `<div class="row ${s.error ? "err" : ""}"><b>← ${esc(s.tool.split("__").pop())}</b> ${esc(cut(s.data))}</div>`;
   }
 
-  _workHead(n, tools) {
-    return `<div class="work-head" role="button" tabindex="0">⚙ ${n} step${n === 1 ? "" : "s"}${tools.length ? ` · ${esc([...new Set(tools)].join(", "))}` : ""}</div>`;
+  _workHead(n, tools, full = false) {
+    return `<div class="work-head" role="button" tabindex="0">⚙ ${n} step${n === 1 ? "" : "s"}${tools.length ? ` · ${esc([...new Set(tools)].join(", "))}` : ""}${full ? ' · <span style="color:var(--amber)">⚠ context full, older messages left out</span>' : ""}</div>`;
   }
 
   _stepsHtml(steps, key) {
     if (!steps || !steps.length) return "";
     const tools = steps.filter((s) => s.type === "tool_call").map((s) => s.tool.split("__").pop());
     const n = steps.filter((s) => s.type !== "tool_result").length;
-    return `<div class="work ${this._openWork?.has(key) ? "open" : ""}" data-work="${esc(key)}">${this._workHead(n, tools)}${steps.map((s) => this._stepRow(s)).join("")}</div>`;
+    const full = steps.some((s) => s.type === "text" && /^Context full/.test(s.text));
+    return `<div class="work ${this._openWork?.has(key) ? "open" : ""}" data-work="${esc(key)}">${this._workHead(n, tools, full)}${steps.map((s) => this._stepRow(s)).join("")}</div>`;
   }
 
   _renderChat() {
@@ -1567,7 +1568,7 @@ class AacPanel extends HTMLElement {
   }
 
   _ruleText(rule) {
-    return (rule.when || []).map((c) => c.type === "state" ? `${this._resourceLabel(c.entity_id)} is ${[].concat(c.state).join(" or ")}`
+    return (rule.when || []).map((c) => c.type === "state" ? `${this._resourceLabel(c.entity_id)} is ${c.not ? "not " : ""}${[].concat(c.state).map((v) => v === "" ? "empty" : v).join(" or ")}`
       : `${c.after || "00:00"}–${c.before || "24:00"}${c.weekdays?.length ? " " + c.weekdays.map((d) => WEEKDAYS[d]).join(" ") : ""}`).join(" and ");
   }
 
@@ -1610,8 +1611,8 @@ class AacPanel extends HTMLElement {
         <div class="src">
           <span class="dot ${it.state === "ok" ? "ok" : it.state === "down" ? "bad" : "open"}"></span>
           <div style="flex:1;min-width:0"><div class="n">${i + 1}. ${esc(this._resourceLabel(it.id))} ${it.active ? '<span class="tag ok">IN USE</span>' : ""}</div>
-            <div class="m">${esc(stateText[it.state] || it.state)}${it.error ? ` · ${esc(it.error)}` : ""}${it.traits ? ` · ${it.traits.speed ? `${esc(it.traits.speed)} tok/s` : "speed unknown"}${it.traits.params_b ? ` · ${esc(it.traits.params_b)}B` : ""}` : ""}</div>
-            ${it.rule ? `<div class="m">rule: ${esc(it.rule.note || this._ruleText(it.rule))} · ${it.rule.applies_to === "all" ? "everything" : "background jobs"} · ${it.background_now ? "allowed now" : "not now"} <button class="btn" style="padding:.1em .6em" data-pool-rule-clear="${esc(it.id)}">Remove rule</button></div>` : ""}
+            <div class="m">${esc(stateText[it.state] || it.state)}${it.error ? ` · ${esc(it.error)}` : ""}${it.traits ? ` · ${it.traits.speed ? `${esc(it.traits.speed)} tok/s` : "speed unknown"}${it.traits.params_b ? ` · ${esc(it.traits.params_b)}B` : ""}${it.traits.n_ctx ? ` · ${esc(Math.round(it.traits.n_ctx / 1024))}k context` : ""}` : ""}</div>
+            ${it.rule ? `<div class="m">rule: ${it.rule.note ? `${esc(it.rule.note)} (${esc(this._ruleText(it.rule))})` : esc(this._ruleText(it.rule))} · ${it.rule.applies_to === "all" ? "everything" : "background jobs"} · ${it.background_now ? "allowed now" : "not now"} <button class="btn" style="padding:.1em .6em" data-pool-rule-clear="${esc(it.id)}">Remove rule</button></div>` : ""}
             ${it.tags?.length ? `<div class="m">${it.tags.map((t) => `<span class="tag ${["fast", "smart", "small"].includes(t) ? "aac" : "ok"}">${esc(t.toUpperCase())}</span>`).join(" ")}</div>` : ""}</div>
           <span class="actions" style="margin:0">
             ${i > 0 ? `<button class="icon-btn" data-pool-up="${esc(id)}|${i}" title="Up">↑</button>` : ""}

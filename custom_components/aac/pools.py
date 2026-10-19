@@ -152,7 +152,11 @@ class Broker:
             state = self.hass.states.get(cond.get("entity_id", ""))
             wanted = cond.get("state")
             wanted = wanted if isinstance(wanted, list) else [wanted]
-            return state is not None and state.state not in ("unknown", "unavailable") and state.state in wanted
+            # unknown/unavailable count as "not met" unless the rule names them (e.g. "now playing" is unknown
+            # while nothing runs); "not": true turns it around (then unknown/unavailable count as met)
+            if state is None or (state.state in ("unknown", "unavailable") and state.state not in wanted):
+                return bool(cond.get("not"))
+            return (state.state in wanted) != bool(cond.get("not"))
         if cond.get("type") == "time":
             now = dt_util.now()
             if (days := cond.get("weekdays")) and now.weekday() not in days:
@@ -180,7 +184,18 @@ class Broker:
             endpoint = resolve_model(self.hass, self.store, resource)
             t["params_b"] = params_from_name(endpoint.model) if endpoint else None
         return {"speed": t.get("speed"), "samples": t.get("samples", 0), "params_b": t.get("params_b"),
-                "tags": list(t.get("tags", []))}
+                "tags": list(t.get("tags", [])), "n_ctx": t.get("n_ctx"), "token_factor": t.get("token_factor", 1.0)}
+
+    def learn_context(self, resource: str, n_ctx: int | None = None, factor: float | None = None) -> None:
+        """What the server said about its context: its size, and real tokens / AAC's estimate."""
+        t = self._traits_entry(resource)
+        changed = False
+        if n_ctx and t.get("n_ctx") != n_ctx:
+            t["n_ctx"], changed = int(n_ctx), True
+        if factor and 0.3 < factor < 4:
+            t["token_factor"], changed = round(factor, 2), True
+        if changed:
+            self.hass.async_create_task(self.store.async_save())
 
     def _traits_entry(self, resource: str) -> dict[str, Any]:
         return self.store.data["traits"].setdefault(resource, {})

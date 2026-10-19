@@ -1,6 +1,7 @@
 """Chats, runs, heartbeat and event triggers."""
 
 from datetime import datetime, timedelta
+import json
 from unittest.mock import patch
 
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
@@ -385,3 +386,49 @@ async def test_edit_aac_answer(hass: HomeAssistant, hass_ws_client, aioclient_mo
     await ws.receive_json()
     texts = [m.get("content") for m in payloads[1]["messages"]]
     assert "Steam is there." in texts and "Steam is not set up." not in texts
+
+
+def test_fit_leaves_out_oldest_turns():
+    """Too long: whole old turns go first; the system prompt and the newest question stay."""
+    from custom_components.aac.context_fit import estimate, fit
+
+    msgs = [{"role": "system", "content": "rules"}]
+    for i in range(20):
+        msgs += [{"role": "user", "content": f"question {i} " + "x" * 400}, {"role": "assistant", "content": "y" * 400}]
+    msgs.append({"role": "user", "content": "newest"})
+    budget = estimate(msgs, None) // 3
+    out, dropped, est = fit(msgs, None, budget)
+    assert est <= budget and dropped > 0 and dropped % 2 == 0  # whole turns
+    assert out[-1]["content"] == "newest" and out[0]["content"].startswith("rules")
+    assert "left out" in out[0]["content"] and out[1]["role"] == "user"
+    assert fit(msgs, None, 10**6)[1] == 0
+
+
+async def test_too_long_chat_is_fitted_and_retried(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """The server says the request is too long: AAC learns its context size and sends a shorter chat."""
+    await setup_aac(hass, mock_entry)
+    ws = await hass_ws_client(hass)
+    _replies(aioclient_mock, *[_reply("x" * 3000) for _ in range(6)])
+    chat_id = None
+    for i in range(6):  # a long chat
+        await ws.send_json_auto_id({"type": "aac/chat", "text": f"tell me a long story {i}", **({"chat_id": chat_id} if chat_id else {})})
+        chat_id = (await ws.receive_json())["result"]["chat_id"]
+    aioclient_mock.clear_requests()
+    payloads: list[dict] = []
+
+    async def side_effect(method, url, data):
+        payloads.append(data)
+        if len(payloads) == 1:
+            return AiohttpClientMockResponse(method, url, status=400, text=json.dumps({"error": {
+                "code": 400, "type": "exceed_context_size_error", "n_prompt_tokens": 6000, "n_ctx": 4096,
+                "message": "request (6000 tokens) exceeds the available context size (4096 tokens)"}}))
+        return AiohttpClientMockResponse(method, url, json=_reply("Short now."))
+
+    aioclient_mock.post(URL, side_effect=side_effect)
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "and now?", "chat_id": chat_id})
+    message = (await ws.receive_json())["result"]["message"]
+    assert message["text"] == "Short now."
+    assert len(payloads) == 2 and len(payloads[1]["messages"]) < len(payloads[0]["messages"])
+    assert payloads[1]["messages"][-1]["content"] == "and now?"
+    assert any("Context full" in (s.get("text") or "") for s in message["steps"])
+    assert mock_entry.runtime_data.broker.traits(mock_entry.runtime_data.store.pools["master"][0])["n_ctx"] == 4096

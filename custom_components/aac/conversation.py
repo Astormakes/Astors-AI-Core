@@ -31,7 +31,9 @@ from .const import (
     MAX_TOOL_ITERATIONS,
     MAX_TOOL_ITERATIONS_AUTO,
 )
-from .provider import OpenAICompatProvider, ProviderConnectionError, ProviderError
+from .context_fit import estimate, fit
+from .models import resolve_model
+from .provider import OpenAICompatProvider, ProviderConnectionError, ProviderContextError, ProviderError
 from .extractor import async_extract
 from .home_api import API_ID as HOME_API_ID
 from .memory_api import API_ID as MEMORY_API_ID
@@ -134,6 +136,10 @@ DECISION_RULE = (
     'Not worth mentioning (NOTHING) means "speak": false.'
 )
 DECISION_TEMPERATURE = 0.3
+# Tokens kept free besides the answer (max_tokens): the estimate is rough
+CONTEXT_MARGIN = 300
+# Models whose server was asked for its context size (once per start)
+_CONTEXT_ASKED: set[str] = set()
 DECIDE_NOW = (
     "Now decide: is what you found worth telling the user right now? "
     "Normal states are not."
@@ -256,6 +262,22 @@ class AACConversationEntity(
 
         return send
 
+    async def _context_of(self, broker, model_id: str, provider: OpenAICompatProvider) -> tuple[int | None, float]:
+        """The model's context size (asked once from its server, else learned from errors) and token factor."""
+        traits = broker.traits(model_id)
+        if traits["n_ctx"] is None and model_id not in _CONTEXT_ASKED:
+            _CONTEXT_ASKED.add(model_id)
+            if n_ctx := await provider.context_size():
+                broker.learn_context(model_id, n_ctx)
+                traits = broker.traits(model_id)
+        return traits["n_ctx"], traits["token_factor"]
+
+    def _label(self, model_id: str) -> str:
+        """A model's name for messages to the owner."""
+        endpoint = resolve_model(self.hass, self.entry.runtime_data.store, model_id)
+        return next((m["name"] for m in self.entry.runtime_data.store.models if m["id"] == model_id),
+                    endpoint.model if endpoint else model_id)
+
     def _provider(self, endpoint) -> OpenAICompatProvider:
         # Short connect timeout: a machine that is off must not stall the answer
         return OpenAICompatProvider(
@@ -365,6 +387,7 @@ class AACConversationEntity(
             params["temperature"] = min(params["temperature"], DECISION_TEMPERATURE)
         limit = MAX_TOOL_ITERATIONS_AUTO if run and run.kind == "auto" else MAX_TOOL_ITERATIONS
         stream_to = self._streamer(run) if run and run.kind == "chat" and run.chat_id and not decide else None
+        left_out, context_retry = 0, False
         for iteration in range(limit + 1):
             # Last round: no tools, so the model has to answer instead of exploring on
             final = iteration == limit
@@ -377,14 +400,26 @@ class AACConversationEntity(
                     **messages[last_user],
                     "content": f"{messages[last_user]['content']}\n\n[{memory_hint}]",
                 }
-            if final:
-                messages.append({"role": "user", "content": FINAL_NUDGE})
-            if decide and messages and messages[0]["role"] == "system":
-                # Into the first system message: some chat templates allow no other
-                messages[0] = {**messages[0], "content": messages[0]["content"] + DECISION_RULE}
             if stream_to:
                 stream_to.round = iteration
+            full = messages
             while True:
+                # Only as much of the chat as the model holds: the oldest turns go first
+                n_ctx, factor = await self._context_of(broker, model_id, provider)
+                messages = full
+                if n_ctx:
+                    messages, dropped, _ = fit(full, None if final else tools,
+                                               n_ctx - params["max_tokens"] - CONTEXT_MARGIN, factor)
+                    if dropped > left_out:
+                        left_out = dropped
+                        if run:
+                            run.steps.append({"type": "text", "text": f"Context full: the first {dropped} messages "
+                                              f"of this chat were left out ({self._label(model_id)} holds {n_ctx} tokens)."})
+                if final:
+                    messages = [*messages, {"role": "user", "content": FINAL_NUDGE}]
+                if decide and messages and messages[0]["role"] == "system":
+                    # Into the first system message: some chat templates allow no other
+                    messages = [{**messages[0], "content": messages[0]["content"] + DECISION_RULE}, *messages[1:]]
                 try:
                     if stream_to:  # the owner watches the panel: show the answer while it is written
                         reply = await provider.chat_stream(
@@ -394,6 +429,18 @@ class AACConversationEntity(
                         reply = await provider.chat(
                             endpoint.model, messages, None if final else tools, **params
                         )
+                except ProviderContextError as err:
+                    # Longer than the model holds: learn its size (and how far off the estimate was), fit again
+                    sent = estimate(messages, None if final else tools)
+                    if context_retry or not err.n_ctx:
+                        raise HomeAssistantError(
+                            f"This chat no longer fits into {self._label(model_id)} ({err.n_ctx or '?'} tokens of "
+                            "context, the request needed " f"{err.n_prompt or '?'}). Start a new chat, or give the "
+                            "model's server a bigger context (llama.cpp: -c)."
+                        ) from err
+                    context_retry = True
+                    broker.learn_context(model_id, err.n_ctx, err.n_prompt / sent if err.n_prompt and sent else None)
+                    continue
                 except ProviderConnectionError as err:
                     # Its machine did not answer (e.g. a PC that is off): next in the pool
                     broker.mark_down(model_id, str(err))

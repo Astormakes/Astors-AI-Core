@@ -33,6 +33,27 @@ class ProviderNotFoundError(ProviderError):
     """The server has no such endpoint (e.g. a speech server without /models)."""
 
 
+class ProviderContextError(ProviderError):
+    """The request is longer than the model's context (llama.cpp: exceed_context_size_error)."""
+
+    def __init__(self, text: str, n_ctx: int | None, n_prompt: int | None) -> None:
+        """Keep what the server reported."""
+        super().__init__(text)
+        self.n_ctx = n_ctx
+        self.n_prompt = n_prompt
+
+
+def _http_error(status: int, text: str) -> ProviderError:
+    """The error for a failed response (a too long request gets its own, with the sizes)."""
+    if status == 400 and ("context" in text and ("exceed" in text or "too long" in text)):
+        try:
+            err = json.loads(text).get("error") or {}
+        except (ValueError, AttributeError):
+            err = {}
+        return ProviderContextError(f"HTTP {status}: {text}", err.get("n_ctx"), err.get("n_prompt_tokens"))
+    return ProviderError(f"HTTP {status}: {text}")
+
+
 class OpenAICompatProvider:
     """Talks to an OpenAI-compatible `/v1` endpoint."""
 
@@ -67,7 +88,7 @@ class OpenAICompatProvider:
                 if resp.status == 404:
                     raise ProviderNotFoundError(f"HTTP 404: {path}")
                 if resp.status >= 400:
-                    raise ProviderError(f"HTTP {resp.status}: {await resp.text()}")
+                    raise _http_error(resp.status, await resp.text())
                 return await resp.json(content_type=None)
         except (aiohttp.ClientConnectionError, TimeoutError) as err:
             raise ProviderConnectionError(str(err) or type(err).__name__) from err
@@ -102,7 +123,7 @@ class OpenAICompatProvider:
                 if resp.status == 404:
                     raise ProviderNotFoundError("HTTP 404: /chat/completions")
                 if resp.status >= 400:
-                    raise ProviderError(f"HTTP {resp.status}: {await resp.text()}")
+                    raise _http_error(resp.status, await resp.text())
                 if "event-stream" not in (resp.headers.get("Content-Type") or ""):
                     # The server ignored "stream": an ordinary answer
                     data = await resp.json(content_type=None)
@@ -167,6 +188,20 @@ class OpenAICompatProvider:
         """Model id → metadata the server gives (llama.cpp: n_params, size, n_ctx_train, …)."""
         data = await self._request("GET", "/models", timeout=aiohttp.ClientTimeout(total=10))
         return {m["id"]: m.get("meta") or {} for m in data.get("data", []) if "id" in m}
+
+    async def context_size(self) -> int | None:
+        """The context the server runs with (llama.cpp /props), None when it does not say."""
+        root = self._base_url[:-3] if self._base_url.endswith("/v1") else self._base_url
+        try:
+            async with self._session.get(f"{root}/props", headers=self._headers,
+                                         timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json(content_type=None)
+        except Exception:  # noqa: BLE001 - only a hint: any failure means "not known"
+            return None
+        n_ctx = (data.get("default_generation_settings") or {}).get("n_ctx") if isinstance(data, dict) else None
+        return int(n_ctx) if isinstance(n_ctx, int) and n_ctx > 0 else None
 
     async def list_models(self) -> list[str]:
         """Return the model IDs the server offers."""

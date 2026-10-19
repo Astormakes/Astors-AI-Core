@@ -145,6 +145,25 @@ async def test_availability_rule_for_background_jobs(hass: HomeAssistant, hass_w
     assert broker.status()["roles"]["master"]["items"][0]["rule"]["note"] == "only while I am at work"
 
 
+async def test_rule_can_name_unknown_and_negate(hass: HomeAssistant, hass_storage, mock_entry, configured):
+    """'Only when I am not gaming': an empty 'now playing' sensor is unknown; the rule can say so, or use not."""
+    _with_pc(hass_storage)
+    await setup_aac(hass, mock_entry)
+    broker = mock_entry.runtime_data.broker
+    hass.states.async_set("sensor.now_playing", "unknown")
+    await broker.async_set_rule(PC["id"], {"applies_to": "all", "when": [
+        {"type": "state", "entity_id": "sensor.now_playing", "state": ["", "unknown", "unavailable"]}]})
+    assert broker.pick("master") == PC["id"]
+    hass.states.async_set("sensor.now_playing", "Portal 2")
+    assert broker.pick("master") == MODEL_CFG["id"]
+    await broker.async_set_rule(PC["id"], {"applies_to": "all", "when": [
+        {"type": "state", "entity_id": "person.owner", "state": "home", "not": True}]})
+    hass.states.async_set("person.owner", "home")
+    assert broker.pick("master") == MODEL_CFG["id"]
+    hass.states.async_set("person.owner", "not_home")
+    assert broker.pick("master") == PC["id"]
+
+
 async def test_setup_tool_writes_the_rule(hass: HomeAssistant, hass_ws_client, hass_storage, aioclient_mock, mock_entry, configured):
     """AAC turns the owner's words into a rule; unknown entities are refused."""
     _with_pc(hass_storage)

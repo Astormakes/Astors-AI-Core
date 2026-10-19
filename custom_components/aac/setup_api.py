@@ -261,7 +261,7 @@ class TagModelTool(_SetupTool):
 
 _CONDITION = probatio.Any(
     probatio.Schema({probatio.Required("type"): "state", probatio.Required("entity_id"): str,
-                     probatio.Required("state"): probatio.Any(str, [str])}),
+                     probatio.Required("state"): probatio.Any(str, [str]), probatio.Optional("not"): bool}),
     probatio.Schema({probatio.Required("type"): "time", probatio.Optional("after"): str, probatio.Optional("before"): str,
                      probatio.Optional("weekdays"): [probatio.Any(str, int)]}),
 )
@@ -275,8 +275,10 @@ class AvailabilityTool(_SetupTool):
     description = (
         "Write down the OWNER's rule for when a model may be used, e.g. 'use my PC for heavy stuff only while "
         "I am at work'. Only when the owner said so. Conditions (all must hold): a state condition on an "
-        "entity that tracks the OWNER (a person entity, or their phone; never a computer or another device), "
-        "where 'away/at work' = not_home or a work zone; and/or a time window (after/before HH:MM, weekdays). "
+        "entity that tracks the OWNER (a person entity, their phone, or what they do, e.g. the game they play; "
+        "never a computer or another device), where 'away/at work' = not_home or a work zone; state may be a "
+        "list, and not=true means 'not one of these'. Check the entity's current state first: an empty sensor "
+        "is often 'unknown', so name 'unknown' when you mean empty. And/or a time window (after/before HH:MM, weekdays). "
         "setup_status lists presence entities with name, kind and state. If none tracks the owner reliably "
         "(state unknown or unavailable), do not guess: propose a time window and ask the owner first. "
         "applies_to 'background' (default) limits only automatic jobs, 'all' also the owner's chats. "
@@ -316,7 +318,15 @@ class AvailabilityTool(_SetupTool):
             return llm.ToolResult(data={"error": "Give at least one condition (or clear=true)."}, error=True)
         rule = {"applies_to": args.get("applies_to", "background"), "when": conditions, "note": args.get("note", "")}
         await broker.async_set_rule(resource, rule)
-        return llm.ToolResult(data={"rule": rule, "allowed_for_background_jobs_now": broker.usable(resource, True)})
+        now = {"chats": broker.allowed(resource, False), "background_jobs": broker.allowed(resource, True)}
+        states = {c["entity_id"]: (st.state if (st := hass.states.get(c["entity_id"])) else None)
+                  for c in conditions if c["type"] == "state"}
+        data = {"rule": rule, "allowed_now": now, "entity_states_now": states}
+        if not now["background_jobs"]:
+            data["check"] = ("With this rule the model may NOT be used right now"
+                             f"{' (states now: ' + ', '.join(f'{e} = {v!r}' for e, v in states.items()) + ')' if states else ''}. "
+                             "If that is not what the owner means, fix the rule now.")
+        return llm.ToolResult(data=data)
 
 
 class MeasureModelsTool(_SetupTool):
