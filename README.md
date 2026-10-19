@@ -51,6 +51,14 @@ Tool use (controlling HA) needs a model and server with function calling
 
 Works on phones, tablets, desktops and TVs (scales with the screen, touch and keyboard friendly).
 
+## Microphones and speakers
+
+AAC listens through its own satellite program (no wake word; it reacts to its name):
+- **On a PC:** `addons/aac_satellite/aac_satellite.py` (see its README).
+- **On the Home Assistant machine** (USB, or Bluetooth through a dongle): add this repository as an app repository
+  in Home Assistant and install **AAC satellite**, then in the AAC panel: SETTINGS → Audio pipeline → Sources →
+  *Set up the Home Assistant app*. Device quirks (e.g. Poly BT600 + Calisto) are handled by plugins.
+
 ## Contracts
 
 The interfaces AAC is built around (runs, triggers, context recipes, agent

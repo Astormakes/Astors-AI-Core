@@ -29,6 +29,7 @@ from .status import aac_agent_entity_id, setup_steps
 from .pools import ROLES, async_set_role
 from .modules import access as module_access, async_set_access, async_set_settings, setting as module_setting
 from .entities import all_entities, async_set_access as async_set_entity_access, async_set_visible
+from .satellite_app import async_prepare as async_prepare_satellite
 from .skins import list_skins, user_dir
 from .domains import Domain, async_remove_domain_data
 from .store import AACStore
@@ -68,6 +69,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_memory_settings,
         ws_pools,
         ws_skins,
+        ws_satellite_app,
         ws_entities,
         ws_entities_set,
         ws_domain_visible,
@@ -868,6 +870,15 @@ async def ws_request_decide(hass: HomeAssistant, connection, msg) -> None:
         connection.send_error(msg["id"], "not_found", str(err))
         return
     connection.send_result(msg["id"], request)
+
+
+@aac_command({vol.Required("type"): "aac/satellite/app"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_satellite_app(hass: HomeAssistant, connection, msg) -> None:
+    """Prepare access for AAC's Home Assistant app (a local-only user + token in <config>/aac/satellite.json)."""
+    if entry := _entry(hass, connection, msg):
+        connection.send_result(msg["id"], await async_prepare_satellite(hass, entry))
 
 
 @aac_command({vol.Required("type"): "aac/skins"})

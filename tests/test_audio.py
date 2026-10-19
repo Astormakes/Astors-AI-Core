@@ -173,3 +173,21 @@ async def test_stt_falls_back_when_machine_is_off(hass: HomeAssistant, aioclient
         calls = aioclient_mock.call_count
         await hub.async_stt(SILENCE * 100)
         assert aioclient_mock.call_count == calls  # no retry within the minute
+
+
+async def test_satellite_app_access(hass: HomeAssistant, hass_ws_client, mock_entry, configured, tmp_path):
+    """AAC makes a local-only user + long-lived token for its HA app and writes them to a file; once."""
+    import json
+
+    with patch("custom_components.aac.satellite_app.config_path", return_value=tmp_path / "aac" / "satellite.json"):
+        await setup_aac(hass, mock_entry)
+        ws = await hass_ws_client(hass)
+        await ws.send_json_auto_id({"type": "aac/satellite/app"})
+        assert (await ws.receive_json())["result"]["ready"]
+        data = json.loads((tmp_path / "aac" / "satellite.json").read_text())
+        assert data["url"].startswith("http://homeassistant:") and data["token"]
+        user = await hass.auth.async_get_user(mock_entry.runtime_data.store.data["satellite_app"]["user_id"])
+        assert user.name == "AAC satellite" and user.local_only and not user.is_admin
+        await ws.send_json_auto_id({"type": "aac/satellite/app"})
+        await ws.receive_json()
+        assert json.loads((tmp_path / "aac" / "satellite.json").read_text())["token"] == data["token"]  # kept

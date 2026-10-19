@@ -1,0 +1,38 @@
+name: AAC satellite
+version: "0.1.0"
+slug: aac_satellite
+description: Lets AAC hear and speak through a microphone and speaker attached to the Home Assistant machine (no wake word; AAC listens for its name).
+url: https://github.com/Astormakes/Astors-AI-Core
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: application
+boot: auto
+# HA's audio system (the microphones and speakers HA itself sees)
+audio: true
+# device quirks: some USB/Bluetooth speakers need a HID command to open their audio (devices/)
+usb: true
+devices:
+  - /dev/hidraw0
+  - /dev/hidraw1
+  - /dev/hidraw2
+  - /dev/hidraw3
+  - /dev/hidraw4
+  - /dev/hidraw5
+  - /dev/hidraw6
+  - /dev/hidraw7
+# AAC writes this app's access (url + token) to <config>/aac/satellite.json
+map:
+  - type: homeassistant_config
+    read_only: true
+options:
+  name: Home Assistant
+  area: ""
+  mic: ""
+  speaker: ""
+schema:
+  name: str
+  area: str?
+  mic: str?
+  speaker: str?

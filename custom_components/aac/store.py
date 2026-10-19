@@ -307,6 +307,7 @@ class AACStore:
         data["module_settings"] = dict(stored.get("module_settings", {}))
         data["module_access"] = dict(stored.get("module_access", {}))
         data["requests"] = list(stored.get("requests", []))[-100:]
+        data["satellite_app"] = dict(stored.get("satellite_app", {}))
         if isinstance(stored.get("entity_access"), dict):
             data["entity_access"] = dict(stored["entity_access"])
         elif any(isinstance(d.get("entities"), dict) for d in stored.get("domains", [])):

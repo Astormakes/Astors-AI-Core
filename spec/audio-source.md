@@ -29,4 +29,12 @@ Planned: listening modes per source (off / wake word / continuous), arbitration
 between mics, quality values per segment, speaker ID, HA devices and the panel
 (browser) as sources.
 
-Code: `custom_components/aac/audio_view.py`, `audio_hub.py`; satellite: `satellite/`.
+## The satellite program and its device plugins
+
+`addons/aac_satellite/aac_satellite.py` (PC: run it directly; HA machine: the "AAC satellite" app from the
+same folder). Device quirks are plugins in `devices/` (`detect()`, `mic_hint`/`speaker_hint`, `start`/`stop`,
+`on_audio(rms)`, `tick()`), so hardware weirdness stays out of AAC and out of the satellite's core. The app reads
+its access from `<config>/aac/satellite.json`, which AAC writes on request (`aac/satellite/app`: a local-only HA
+user "AAC satellite" with a long-lived token).
+
+Code: `custom_components/aac/audio_view.py`, `audio_hub.py`, `satellite_app.py`; satellite: `addons/aac_satellite/`.

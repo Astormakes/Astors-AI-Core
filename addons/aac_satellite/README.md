@@ -19,4 +19,4 @@ Testing without speaking: `--input-file talk.wav` streams a recording as the
 microphone (needs ffmpeg), `--output-dir answers/` saves the answers instead of
 playing them.
 
-Protocol: [spec/audio-source.md](../spec/audio-source.md).
+Protocol: [spec/audio-source.md](../../spec/audio-source.md). As a Home Assistant app: see DOCS.md.

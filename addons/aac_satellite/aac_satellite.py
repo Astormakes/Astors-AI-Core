@@ -15,18 +15,23 @@ Protocol: see custom_components/aac/audio_view.py.
 from __future__ import annotations
 
 import argparse
+from array import array
 import asyncio
 import contextlib
+import json
 import logging
 import os
 from pathlib import Path
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import tempfile
 
 import aiohttp
+
+import devices
 
 RATE = 16000
 CHUNK = 640  # 20 ms of 16-bit mono
@@ -53,6 +58,18 @@ def play_cmd(path: str, device: str | None) -> list[str]:
     raise SystemExit("Neither paplay nor aplay found")
 
 
+def find_audio(kind: str, hint: str | None) -> str | None:
+    """The first PulseAudio source/sink whose name contains hint."""
+    if not hint or not shutil.which("pactl"):
+        return None
+    out = subprocess.run(["pactl", "list", kind, "short"], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        name = line.split("\t")[1] if "\t" in line else ""
+        if hint.lower() in name.lower() and not name.endswith(".monitor"):
+            return name
+    return None
+
+
 def list_devices() -> None:
     """Print microphones and speakers."""
     if shutil.which("pactl"):
@@ -76,6 +93,10 @@ class Satellite:
         self.args = args
         self.token = token
         self.playing = False
+        self.devices = [] if args.input_file else devices.attached()
+        for plugin in self.devices:  # a device plugin knows its own mic and speaker
+            args.mic = args.mic or find_audio("sources", plugin.mic_hint)
+            args.speaker = args.speaker or find_audio("sinks", plugin.speaker_hint)
 
     @property
     def ws_url(self) -> str:
@@ -83,16 +104,33 @@ class Satellite:
         return ("wss://" + url[8:] if url.startswith("https://") else "ws://" + url.split("://", 1)[-1]) + "/api/aac/audio"
 
     async def run_forever(self) -> None:
-        """Connect, stream, reconnect with backoff."""
+        """Start the devices, connect, stream, reconnect with backoff; hang the devices up at the end."""
+        for plugin in self.devices:
+            await plugin.start()
+        ticker = asyncio.create_task(self._tick())
         delay = 1
+        try:
+            while True:
+                try:
+                    await self._session()
+                    delay = 1
+                except (aiohttp.ClientError, OSError, TimeoutError) as err:
+                    LOG.warning("Connection problem: %s (retry in %s s)", err, delay)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 30)
+        finally:
+            ticker.cancel()
+            for plugin in self.devices:
+                await plugin.stop()
+
+    async def _tick(self) -> None:
         while True:
-            try:
-                await self._session()
-                delay = 1
-            except (aiohttp.ClientError, OSError, TimeoutError) as err:
-                LOG.warning("Connection problem: %s (retry in %s s)", err, delay)
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, 30)
+            await asyncio.sleep(3)
+            for plugin in self.devices:
+                try:
+                    await plugin.tick()
+                except Exception:  # noqa: BLE001
+                    LOG.exception("Device %s", plugin.name)
 
     async def _session(self) -> None:
         headers = {"Authorization": f"Bearer {self.token}"}
@@ -127,6 +165,11 @@ class Satellite:
     async def _send_mic(self, ws: aiohttp.ClientWebSocketResponse, mic: asyncio.subprocess.Process) -> None:
         assert mic.stdout
         while chunk := await mic.stdout.read(CHUNK):
+            if self.devices:
+                samples = array("h", chunk[: len(chunk) // 2 * 2])
+                rms = (sum(x * x for x in samples) / len(samples)) ** 0.5 if samples else 0.0
+                for plugin in self.devices:
+                    plugin.on_audio(rms)
             if not self.playing and not ws.closed:  # don't send AAC's own voice back
                 await ws.send_bytes(chunk)
         LOG.error("Microphone stopped (wrong --mic?)")
@@ -166,6 +209,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Stream a microphone to AAC and play its answers.")
     parser.add_argument("--url", default=os.environ.get("AAC_URL", "http://homeassistant.local:8123"))
     parser.add_argument("--token-file", type=Path, default=os.environ.get("AAC_TOKEN_FILE"))
+    parser.add_argument("--config-file", type=Path, default=os.environ.get("AAC_CONFIG_FILE"),
+                        help="JSON with url and token (AAC writes one for its Home Assistant app)")
     parser.add_argument("--name", default=socket.gethostname(), help="Shown in AAC, e.g. 'PC'")
     parser.add_argument("--id", default=None, help="Stable id (default: from the name)")
     parser.add_argument("--area", default=None, help="Room, e.g. 'Office'")
@@ -181,11 +226,26 @@ def main() -> None:
         list_devices()
         return
     token = os.environ.get("AAC_TOKEN") or (args.token_file.expanduser().read_text().strip() if args.token_file else "")
+    if args.config_file:
+        cfg = json.loads(args.config_file.read_text())
+        token = token or cfg.get("token", "")
+        if cfg.get("url") and args.url == parser.get_default("url"):
+            args.url = cfg["url"]
     if not token:
         raise SystemExit("Give a Home Assistant access token: --token-file or AAC_TOKEN")
     args.id = args.id or args.name
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(Satellite(args, token).run_forever())
+        asyncio.run(_run(Satellite(args, token)))
+
+
+async def _run(satellite: Satellite) -> None:
+    """Run until a stop signal (Home Assistant stops add-ons with SIGTERM); devices hang up cleanly."""
+    task = asyncio.current_task()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, task.cancel)
+    with contextlib.suppress(asyncio.CancelledError):
+        await satellite.run_forever()
 
 
 if __name__ == "__main__":

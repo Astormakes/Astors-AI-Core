@@ -1633,6 +1633,11 @@ class AacPanel extends HTMLElement {
           ${this._liveSources(a.connected || [])}
           ${known.map((k) => `<div class="src">${icon("mic")}<div style="flex:1"><div class="n">${esc(k.name)}</div><div class="m">seen before</div></div><span class="tag">OFFLINE</span></div>`).join("")}
         </div>
+        <div class="card"><h2>HOME ASSISTANT APP</h2>
+          <p>For a microphone/speaker attached to the Home Assistant machine itself (USB, or Bluetooth through a dongle): install the app "AAC satellite" (in this project's <code>addons/</code> folder) and let AAC give it access. AAC makes a local-only HA user "AAC satellite" with a token the app reads from <code>config/aac/satellite.json</code>; you can revoke it in HA's user list.</p>
+          <div class="actions"><button class="btn primary" id="sat-app">Set up the Home Assistant app</button></div>
+          ${this._flashHtml()}
+        </div>
         <div class="card"><h2>FROM HOME ASSISTANT</h2>
           <p>Devices with a mic that HA knows. Using them as sources is planned; for now they are only listed.</p>
           ${this._sourceList(a.candidates || [])}
@@ -1782,6 +1787,13 @@ class AacPanel extends HTMLElement {
       await this._ws("aac/request/decide", { request_id: el.dataset.reqNo, approve: false });
       await Promise.all([this._loadRequests(), this._loadState()]);
     }));
+    sr.querySelector("#sat-app")?.addEventListener("click", async () => {
+      try {
+        const r = await this._ws("aac/satellite/app");
+        this._flash = { ok: true, text: `Ready: the app can connect now (access in ${r.file}).` };
+      } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
+      this._render();
+    });
     sr.querySelector("#dlg-input")?.addEventListener("input", (e) => { if (this._dialog) this._dialog.value = e.target.value; });
     sr.querySelector("#dlg-input")?.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); this._closeDialog(true); }
