@@ -2,7 +2,9 @@
   "domain": "aac",
   "name": "AAC – Astor's AI Core",
   "after_dependencies": [
-    "intent"
+    "intent",
+    "stt",
+    "tts"
   ],
   "codeowners": [
     "@Astormakes"
@@ -18,7 +20,7 @@
   "integration_type": "service",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Astormakes/Astors-AI-Core/issues",
-  "requirements": [],
+  "requirements": ["pymicro-vad==1.0.1"],
   "single_config_entry": true,
-  "version": "0.9.0"
+  "version": "0.10.0"
 }

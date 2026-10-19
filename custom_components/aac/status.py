@@ -44,6 +44,14 @@ def setup_steps(hass: HomeAssistant, store: AACStore) -> list[dict]:
             "done": resolve_model(hass, store, store.memory["embed_model"]) is not None,
         },
         {
+            "id": "audio",
+            "title": "Give AAC ears and a voice",
+            "hint": "Run the AAC satellite on a PC or next to a headset; it streams the mic to AAC and plays the answers.",
+            "target": "settings/audio",
+            "optional": True,
+            "done": bool(store.audio["known"]),
+        },
+        {
             "id": "heartbeat",
             "title": "Let AAC think on its own",
             "hint": "A heartbeat wakes the master now and then; it only speaks up when it matters.",

@@ -85,6 +85,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "charter": "",
     # Long-term memory; embed_model = a model id from Models (None: keywords only)
     "memory": {"enabled": True, "embed_model": None},
+    # AAC's own audio pipeline: HA speech engines used as tools (entity ids, None = HA's default),
+    # the names that address AAC by voice, and how long a follow-up needs no name (seconds)
+    # known = sources that ever connected ({id, name}), for the setup step
+    "audio": {"stt": None, "tts": None, "language": None, "names": ["computer"], "follow_up": 10, "known": []},
 }
 
 MASTER_KEYS = set(DEFAULT_CONFIG["master"])
@@ -129,6 +133,7 @@ class AACStore:
         data["heartbeat"].update(stored.get("heartbeat", {}))
         data["triggers"] = [_trigger_v1(t) for t in stored.get("triggers", [])]
         data["memory"].update(stored.get("memory", {}))
+        data["audio"].update(stored.get("audio", {}))
         data["charter"] = stored.get("charter", "")
         data["autonomy"].update(stored.get("autonomy", {}))
         self.data = data
@@ -241,6 +246,22 @@ class AACStore:
     async def async_update_memory(self, changes: dict[str, Any]) -> None:
         """Change memory settings."""
         self.memory.update({k: v for k, v in changes.items() if k in self.memory})
+        await self.async_save()
+
+    @property
+    def audio(self) -> dict[str, Any]:
+        """Audio pipeline settings."""
+        return self.data["audio"]
+
+    async def async_update_audio(self, changes: dict[str, Any]) -> None:
+        """Change audio settings."""
+        self.audio.update({k: v for k, v in changes.items() if k in self.audio})
+        await self.async_save()
+
+    async def async_add_known_source(self, source_id: str, name: str) -> None:
+        """Remember a source that connected once."""
+        known = [k for k in self.audio["known"] if k["id"] != source_id]
+        self.audio["known"] = [*known, {"id": source_id, "name": name}]
         await self.async_save()
 
     async def async_set_skipped(self, step: str, skipped: bool) -> None:

@@ -38,6 +38,8 @@ from .const import (
 from homeassistant.helpers import llm
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .audio_hub import AudioHub
+from .audio_view import AACAudioView
 from .chats import ChatStore
 from .memory import MemoryStore, memory_path
 from .memory_api import AACMemoryAPI
@@ -66,6 +68,7 @@ class AACData:
     chats: ChatStore
     memory: MemoryStore | None = None
     triggers: TriggerEngine | None = None
+    audio: AudioHub | None = None
 
 
 type AACConfigEntry = ConfigEntry[AACData]
@@ -74,6 +77,7 @@ type AACConfigEntry = ConfigEntry[AACData]
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the panel's WebSocket commands and static files."""
     websocket.async_register(hass)
+    hass.http.register_view(AACAudioView())
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
@@ -94,6 +98,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     chats = ChatStore(hass)
     await chats.async_load()
     entry.runtime_data = AACData(store, version, runs, chats)
+    entry.runtime_data.audio = AudioHub(hass, entry)
 
     async def embed(texts: list[str]):
         endpoint = resolve_model(hass, store, store.memory["embed_model"])

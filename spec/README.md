@@ -17,6 +17,7 @@ some of it exists, **planned** = spec only, nothing in the code yet.
 | [Agent template](agent-template.md) | a reusable kind of agent: prompt, tools, model, output | partial |
 | [Memory](memory.md) | text memories + structured facts, search, write path | built (v1) |
 | [Model provider](model-provider.md) | talking to models; broker requests | partial |
+| [Audio source](audio-source.md) | a microphone streaming to AAC and AAC's spoken answers | partial |
 | [Event](event.md) | everything that happens, on one bus | partial |
 | [Module manifest](module.md) | a bundle of the above, installable and shareable | planned |
 | [Domain package](domain.md) | a whole AAC setup, exportable and importable | planned |

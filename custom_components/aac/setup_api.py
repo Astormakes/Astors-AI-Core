@@ -83,7 +83,8 @@ class SetupStatusTool(_SetupTool):
     async def _async_run(self, hass, args):
         store = self._entry.runtime_data.store
         hb = store.heartbeat
-        audio = audio_overview(hass)
+        data = self._entry.runtime_data
+        audio = audio_overview(hass, data.audio, store.audio)
         return llm.ToolResult(
             data={
                 "steps": [
@@ -96,11 +97,14 @@ class SetupStatusTool(_SetupTool):
                 "heartbeat": {k: hb[k] for k in ("enabled", "interval", "quiet_start", "quiet_end")},
                 "triggers": len(store.triggers),
                 "audio": {
-                    "built": audio["built"],
-                    "candidate_sources": [
-                        {"id": s["id"], "name": s["name"], "kind": s["kind"], "available": s["available"]}
-                        for s in audio["sources"]
-                    ],
+                    "connected_sources": [{"id": c["id"], "name": c["name"], "area": c["area"]} for c in audio["connected"]],
+                    "sources_seen_before": [k["name"] for k in store.audio["known"]],
+                    "speech_to_text": audio["engines"]["stt"], "stt_options": audio["engines"]["stt_options"],
+                    "text_to_speech": audio["engines"]["tts"], "tts_options": audio["engines"]["tts_options"],
+                    "names_that_wake_you": store.audio["names"],
+                    "follow_up_seconds": store.audio["follow_up"],
+                    "how_to_add_a_source": "Run the AAC satellite program (satellite/ in the AAC repository) on the "
+                    "machine with the microphone; see its README.",
                 },
             }
         )
@@ -229,6 +233,61 @@ class HeartbeatTool(_SetupTool):
         return llm.ToolResult(data={k: hb[k] for k in ("enabled", "interval", "quiet_start", "quiet_end")})
 
 
+class AudioTool(_SetupTool):
+    """Audio pipeline settings."""
+
+    name = "set_audio"
+    title = "Set audio"
+    description = (
+        "Audio settings: the speech-to-text and text-to-speech engines (entity ids from setup_status), "
+        "the names that wake you by voice, and how many seconds a follow-up needs no name."
+    )
+    annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
+    parameters = probatio.Schema(
+        {
+            probatio.Optional("speech_to_text"): str,
+            probatio.Optional("text_to_speech"): str,
+            probatio.Optional("names", description="e.g. ['computer', 'glados']"): [str],
+            probatio.Optional("follow_up_seconds"): int,
+        }
+    )
+
+    async def _async_run(self, hass, args):
+        data = self._entry.runtime_data
+        changes: dict = {}
+        for arg, key, domain in (("speech_to_text", "stt", "stt"), ("text_to_speech", "tts", "tts")):
+            if arg in args:
+                if args[arg] not in hass.states.async_entity_ids(domain):
+                    return llm.ToolResult(data={"error": f"Unknown {domain} engine; see setup_status."}, error=True)
+                changes[key] = args[arg]
+        if "names" in args:
+            names = [n.strip() for n in args["names"] if n.strip()]
+            if not names:
+                return llm.ToolResult(data={"error": "Keep at least one name."}, error=True)
+            changes["names"] = names
+        if "follow_up_seconds" in args:
+            changes["follow_up"] = min(120, max(0, int(args["follow_up_seconds"])))
+        await data.store.async_update_audio(changes)
+        cfg = data.store.audio
+        return llm.ToolResult(data={k: cfg[k] for k in ("stt", "tts", "names", "follow_up")})
+
+
+class SpeakTestTool(_SetupTool):
+    """Say something on a source."""
+
+    name = "speak_test"
+    title = "Speak test"
+    description = "Say a short text on a connected audio source, to check its speaker and the voice."
+    annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
+    parameters = probatio.Schema({probatio.Required("source_id"): str, probatio.Required("text"): str})
+
+    async def _async_run(self, hass, args):
+        hub = self._entry.runtime_data.audio
+        if (source := hub.sources.get(args["source_id"])) is None:
+            return llm.ToolResult(data={"error": "That source is not connected."}, error=True)
+        return llm.ToolResult(data={"spoken": await hub.async_say(source, args["text"])})
+
+
 class SkipStepTool(_SetupTool):
     """Skip an optional setup step."""
 
@@ -255,7 +314,7 @@ class AACSetupAPI(llm.API):
 
     async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
         """Tools + prompt."""
-        tools = [SetupStatusTool, ListModelsTool, AddModelTool, UseModelTool, HeartbeatTool, SkipStepTool]
+        tools = [SetupStatusTool, ListModelsTool, AddModelTool, UseModelTool, HeartbeatTool, AudioTool, SpeakTestTool, SkipStepTool]
         return llm.APIInstance(
             api=self,
             api_prompt=API_PROMPT,

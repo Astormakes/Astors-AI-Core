@@ -42,6 +42,8 @@ def async_register(hass: HomeAssistant) -> None:
         ws_server_models,
         ws_setup_skip,
         ws_audio,
+        ws_audio_settings,
+        ws_audio_say,
         ws_chat,
         ws_chats,
         ws_chat_get,
@@ -227,9 +229,47 @@ async def ws_setup_skip(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.require_admin
 @callback
 def ws_audio(hass: HomeAssistant, connection, msg) -> None:
-    """AAC's own audio pipeline: stages and candidate sources."""
-    if _loaded(hass, connection, msg):
-        connection.send_result(msg["id"], audio_overview(hass))
+    """AAC's own audio pipeline: stages, live sources, transcript, settings."""
+    if entry := _entry(hass, connection, msg):
+        data = entry.runtime_data
+        connection.send_result(msg["id"], audio_overview(hass, data.audio, data.store.audio))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "aac/audio/settings",
+        vol.Optional("stt"): vol.Any(str, None),
+        vol.Optional("tts"): vol.Any(str, None),
+        vol.Optional("language"): vol.Any(str, None),
+        vol.Optional("names"): [vol.All(str, vol.Length(min=1))],
+        vol.Optional("follow_up"): vol.All(vol.Coerce(int), vol.Range(0, 120)),
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_audio_settings(hass: HomeAssistant, connection, msg) -> None:
+    """Speech engines, AAC's names, follow-up window."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    data = entry.runtime_data
+    await data.store.async_update_audio({k: v for k, v in msg.items() if k not in ("id", "type")})
+    connection.send_result(msg["id"], audio_overview(hass, data.audio, data.store.audio))
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "aac/audio/say", vol.Required("source_id"): str, vol.Required("text"): str}
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_audio_say(hass: HomeAssistant, connection, msg) -> None:
+    """Speak a text on a connected source (to test the speaker and the voice)."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    hub = entry.runtime_data.audio
+    if (source := hub.sources.get(msg["source_id"])) is None:
+        connection.send_error(msg["id"], "not_found", "Source not connected")
+        return
+    connection.send_result(msg["id"], {"spoken": await hub.async_say(source, msg["text"])})
 
 
 def _run_summary(run) -> dict[str, Any]:

@@ -1,5 +1,8 @@
 """Panel WebSocket API tests."""
 
+import json
+from pathlib import Path
+
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
@@ -22,7 +25,8 @@ async def test_state_fresh(hass: HomeAssistant, hass_ws_client, mock_entry):
     msg = await ws.receive_json()
     assert msg["success"]
     state = msg["result"]
-    assert state["version"] == "0.8.0"
+    manifest = json.loads((Path(__file__).parents[1] / "custom_components/aac/manifest.json").read_text())
+    assert state["version"] == manifest["version"]
     assert state["agent_entity_id"] == "conversation.aac"
     steps = {s["id"]: s for s in state["setup"]}
     assert not steps["models"]["done"]
@@ -125,14 +129,14 @@ async def test_audio_overview(hass: HomeAssistant, hass_ws_client, mock_entry):
     ws = await hass_ws_client(hass)
     await ws.send_json_auto_id({"type": "aac/audio"})
     audio = (await ws.receive_json())["result"]
-    assert audio["built"] is False
+    assert audio["built"] is True
     assert [s["id"] for s in audio["stages"]][0] == "source"
-    assert audio["stages"][-1]["id"] == "master"
-    sources = {s["id"]: s for s in audio["sources"]}
-    assert sources["assist_satellite.kitchen"]["kind"] == "voice satellite"
-    assert sources["camera.door"]["name"] == "Door"
-    assert "browser" in sources
-    assert not any(s["connected"] for s in audio["sources"])
+    assert audio["stages"][-1]["id"] == "tts"
+    assert {s["id"]: s["state"] for s in audio["stages"]}["arbitration"] == "planned"
+    candidates = {s["id"]: s for s in audio["candidates"]}
+    assert candidates["assist_satellite.kitchen"]["kind"] == "voice satellite"
+    assert candidates["camera.door"]["name"] == "Door"
+    assert audio["connected"] == [] and audio["settings"]["names"] == ["computer"]
 
 
 async def test_admin_only(hass: HomeAssistant, hass_ws_client, hass_read_only_access_token, mock_entry):

@@ -1,9 +1,11 @@
-"""AAC's own audio pipeline (separate from HA's Assist pipelines).
+"""AAC's own audio pipeline (separate from HA's Assist pipelines): overview for the panel.
 
 Design: docs (framework section 4a). One lightweight pipeline per audio
-source, results become events; the heavy models are shared. Not built yet:
-this module describes the stages and finds candidate audio sources so the
-panel can show them. Nothing here touches HA's own voice setup.
+source, the heavy models are shared. Built: AAC satellites stream in
+(`audio_view.py`), the hub (`audio_hub.py`) buffers, detects speech, turns it
+into text with an HA STT engine and answers by voice through an HA TTS engine.
+Planned: arbitration between mics, speaker ID, HA devices as sources.
+Nothing here touches HA's own voice setup.
 """
 
 from __future__ import annotations
@@ -18,14 +20,15 @@ from homeassistant.helpers import (
 )
 
 STAGES = [
-    ("source", "Sources", "Mics: satellites, cameras, this browser. One pipeline per source."),
-    ("buffer", "Ring buffer", "Last 30–60 s of raw audio, RAM only, never written to disk."),
-    ("vad", "Voice activity", "Cheap, always on. Marks speech segments with a quality score."),
-    ("arbitration", "Arbitration", "Same sentence on several mics: the best one wins (also tells where you are)."),
-    ("stt", "Speech to text", "Only on the winning audio. Pluggable engine (Whisper, …)."),
-    ("speaker", "Speaker ID", "Who said it (voice print). For personalization, not security."),
-    ("transcript", "Transcript buffer", "Rolling text with timestamps, mic, speaker. Lifetime configurable."),
-    ("master", "Master agent", "Decides: answer, act, remember or ignore."),
+    ("source", "Sources", "AAC satellites stream their mic (a PC, or an HA app next to a USB/Bluetooth headset).", "built"),
+    ("buffer", "Ring buffer", "Last 30 s of raw audio, RAM only, never written to disk.", "built"),
+    ("vad", "Voice activity", "Cheap, always on. Cuts speech segments.", "built"),
+    ("arbitration", "Arbitration", "Same sentence on several mics: the best one wins (also tells where you are).", "planned"),
+    ("stt", "Speech to text", "Only on speech. An HA speech-to-text engine used as a tool (e.g. faster-whisper).", "built"),
+    ("speaker", "Speaker ID", "Who said it (voice print). For personalization, not security.", "planned"),
+    ("transcript", "Transcript", "Rolling text with time and mic. Lines with AAC's name (or a follow-up) go to the master.", "built"),
+    ("master", "Master agent", "Answers what was said to it.", "built"),
+    ("tts", "Voice", "The answer is spoken on the same source by an HA text-to-speech engine (own voices later).", "built"),
 ]
 
 # Domains whose entities can deliver audio
@@ -58,27 +61,24 @@ def _sources(hass: HomeAssistant) -> list[dict[str, Any]]:
                     "connected": False,
                 }
             )
-    sources.append(
-        {
-            "id": "browser",
-            "name": "This browser",
-            "kind": "browser mic",
-            "integration": None,
-            "area": None,
-            "available": True,
-            "connected": False,
-        }
-    )
     return sources
 
 
-def audio_overview(hass: HomeAssistant) -> dict[str, Any]:
-    """Stages + candidate sources for the panel."""
+def audio_overview(hass: HomeAssistant, hub=None, settings: dict | None = None) -> dict[str, Any]:
+    """Stages, live sources, settings and engines for the panel."""
+    live = hub.overview() if hub else {"connected": [], "transcript": [], "stt": None, "tts": None}
     return {
-        "built": False,
-        "stages": [
-            {"id": sid, "name": name, "desc": desc, "state": "planned"}
-            for sid, name, desc in STAGES
-        ],
-        "sources": _sources(hass),
+        "built": True,
+        "stages": [{"id": sid, "name": name, "desc": desc, "state": state} for sid, name, desc, state in STAGES],
+        "connected": live["connected"],
+        "transcript": live["transcript"],
+        "settings": settings or {},
+        "engines": {
+            "stt": live["stt"],
+            "tts": live["tts"],
+            "stt_options": sorted(hass.states.async_entity_ids("stt")),
+            "tts_options": sorted(hass.states.async_entity_ids("tts")),
+        },
+        # HA devices with a mic; they become sources later (planned)
+        "candidates": _sources(hass),
     }

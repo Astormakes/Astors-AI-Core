@@ -13,7 +13,7 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - Keep docs tidy: design decisions go into `docs/assistant-framework.md`, status goes here, no duplicate notes
 - Version lives in `custom_components/aac/manifest.json` (`version`). Bump it for every release and tag it (`v0.1.0` …) so HACS shows the version
 
-## Current state (2026-10-19) – v0.9.0
+## Current state (2026-10-19) – v0.10.0
 - HACS-installable custom integration `aac` (`custom_components/aac`, `hacs.json`, min HA 2026.10.0), single instance
 - **Everything is configured in the AAC panel** (spec: `docs/design.md`). Config flow is one click; settings in `.storage/aac.config` (`store.py`), chats in `.storage/aac.chats` (`chats.py`), runs in `.storage/aac.runs` (`runs.py`, last 100). Entry v1 (0.1.0) migrates automatically
 - **HA's own AI is never changed** (user decision): no editing of Assist pipelines; HA AI only as optional tools. Other integrations are only read
@@ -32,9 +32,12 @@ Running log for AAC. Read this first in a new session. Newest state on top.
   - Panel Memory page: settings, stats, facts card (series, click for history), remember form, search, unconfirmed filter, confirm/edit/delete
 - **Goals are not a module** (user decision 2026-10-19: behavior should come out of general rules, no purpose-built functions). They emerge from: memory kind `plan` (shown to automatic runs as open loops), structured facts, and **AAC planning for itself** (`schedule_api.py`: schedule/list/cancel, autonomy off/ask/allowed, agents can't touch the owner's triggers, every plan posted to From AAC, one-off triggers with `date`)
 - **AAC helps set itself up** (`setup_api.py`, LLM API `aac_setup`, v0.9.0; user decision: once a model is wired in, AAC aids in setting up everything else together with the user): setup_status, list_models, add_model, use_model (master/memory), set_heartbeat, skip_setup_step. Offered only when an admin is in a chat run (`owner_present`), checked again inside each tool; never automatic runs or anonymous voice; charter/autonomy not offered. Panel SETUP shows "Set up with AAC" once the master is chosen. 8B on the real HA: status → explains → asks → sets the heartbeat
-- Audio pipeline (`audio.py`): AAC's own, planned; panel shows stages + candidate sources
+- **Audio hub** (v0.10.0, `audio_hub.py`, `audio_view.py`, contract `spec/audio-source.md`): satellites stream 16 kHz PCM over `/api/aac/audio` (HA token) → RAM ring buffer → micro VAD segments → HA STT engine → transcript (RAM) → if addressed (a name from settings, default "computer", or a follow-up within 10 s after AAC spoke) the master answers in the chat `voice_<source>` (anonymous: no setup tools) → HA TTS (WAV) → back to the source. "Local first": without a choice, Wyoming engines win over HA's default (which was Google Translate). Settings `store.audio` (stt, tts, language, names, follow_up, known). Panel audio page: connected sources with a Say test, live transcript, settings, stages; setup step "audio" (optional, done once a source connected); setup tools `set_audio`, `speak_test`
+- **Satellite** (`satellite/aac_satellite.py`, only aiohttp; parec/paplay or arecord/aplay): `--input-file`/`--output-dir` to test without a mic. Real HA test: Piper-made "Computer, what time is it?" → "The time is 09:47." spoken back (8B ~50–75 s). HA is on port 80 (`--url http://192.168.1.107`)
+- Concept vs. build, the gate tiers and the browser mic: `docs/assistant-framework.md` → "Audio hub v1 and the concept"
+
 - WebSocket API (`websocket.py`): state, master, workers (models), chat(s), runs, heartbeat, triggers, audio, subscribe
-- Tests: 56 mocked, 7 live (incl. the weight-goal story without goal code); both models pass the live suite (`-m live`: answer, tool call, heartbeat ×2, smoke alarm must speak, memory round trip; `AAC_LIVE_EMBED_URL/KEY` for embeddings). Both models (8B server, 35B PC) pass the live suite. Real HA: chat with tool calls works, heartbeat on the 8B silent in ~11 s
+- Tests: 59 mocked, 7 live (incl. the weight-goal story without goal code); both models pass the live suite (`-m live`: answer, tool call, heartbeat ×2, smoke alarm must speak, memory round trip; `AAC_LIVE_EMBED_URL/KEY` for embeddings). Both models (8B server, 35B PC) pass the live suite. Real HA: chat with tool calls works, heartbeat on the 8B silent in ~11 s
 
 ## Testing in the real HA
 - No GitHub/HACS round trip needed: `scripts/deploy_ha.sh` copies the working tree over SSH and restarts HA Core (`AAC_HA_SSH`, `AAC_SSH_KEY`; real values in `docs/dev-environment.md`)
@@ -69,7 +72,8 @@ Running log for AAC. Read this first in a new session. Newest state on top.
 - **Charter**: the draft stays for now (user decision 2026-10-19); the user changes it when something feels off
 - User: check the phone again (safe-area fix); try the heartbeat for a day; GitHub release
 - **Own voices** (plan in `docs/plans.md`): GLaDOS EN/DE + Portal announcer via game lines → imitation model → owner hand-picks → retrain → dataset → Piper. Waiting for Portal 2 to be installed in Steam on the PC. Never in the public repo
-- **First audio source**: a Plantronics USB/BT headset, being made to work on Linux in another session. Add audio setup tools to `aac_setup` with it
+- **Audio next** (open questions to the user: own STT provider? HTTPS for the browser mic?): utterance grouper + arbitration before STT, echo rule per area, listening modes per source, gate tiers (pause decision → active voice session), browser mic button, HA app version of the satellite for the Plantronics on the HA host (HA OS audio plugin; USB works there, Bluetooth audio in HA OS is doubtful)
+- Extractor stores setup instructions ("quiet from 23:00") as memories about the user: noise, skip runs that changed settings or let the curator clean it
 - Audio hub: first real source (probably the browser mic or a Wyoming/ESPHome satellite streaming continuously), ring buffer + VAD
 - Contracts first (framework "Rough order" step 0) before memory/context engine
 - Contracts written (`spec/`, 2026-10-19); triggers follow the contract now. Next in that direction: templates as data, then declarative modules

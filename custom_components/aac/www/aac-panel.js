@@ -149,6 +149,7 @@ textarea { min-height: 10em; resize: vertical; }
 .tag { font-size: .7em; letter-spacing: .15em; padding: .15em .45em; border: 1px solid currentColor; color: var(--dim); }
 .tag.aac { color: var(--magenta); }
 .tag.plan { color: var(--amber); }
+.tag.ok { color: var(--green); text-shadow: 0 0 .3em rgba(57, 255, 136, .6); }
 
 /* ---------- chat ---------- */
 .chat { display: flex; flex-direction: column; flex: 1; min-height: 0; }
@@ -172,6 +173,11 @@ textarea { min-height: 10em; resize: vertical; }
 .split { display: grid; gap: 1.3em; grid-template-columns: 1fr; align-items: start; }
 @container (min-width: 60em) { .split { grid-template-columns: minmax(0, 1fr) minmax(20em, 26em); } }
 .flow { display: flex; flex-direction: column; }
+.transcript { max-height: 22em; overflow-y: auto; display: flex; flex-direction: column; gap: .5em; }
+.tline { border-left: 1px solid var(--line, rgba(0,229,255,.3)); padding: .1em 0 .1em .7em; }
+.tline .m { font-size: .8em; opacity: .7; }
+.tline.to-aac { border-left-color: var(--magenta, #ff2bd6); }
+pre.code { white-space: pre-wrap; word-break: break-all; font-size: .85em; padding: .6em .8em; border: 1px solid rgba(0,229,255,.3); background: rgba(0,229,255,.05); }
 .stage { display: grid; grid-template-columns: 2.4em 1fr; gap: 0 .9em; }
 .stage .rail { display: flex; flex-direction: column; align-items: center; }
 .stage .node { width: 1.2em; height: 1.2em; border: 1px solid var(--amber); transform: rotate(45deg); margin-top: .35em; box-shadow: 0 0 .5em rgba(255, 176, 0, .5); flex: none; }
@@ -324,6 +330,12 @@ class AacPanel extends HTMLElement {
       }
       if (this._run && this._run.id === run.id) this._run = run;
       this._render();
+    } else if (ev.what === "audio") {
+      clearTimeout(this._audioTimer);
+      this._audioTimer = setTimeout(async () => {
+        await this._loadAudio();
+        if (this._view.startsWith("settings/audio") && !this._typing()) this._render();
+      }, 300);
     } else if (ev.what === "chat" || ev.what === "chats") {
       if (ev.chat_id === "aac") this._loadState(); // AAC may have planned something (Triggers)
       clearTimeout(this._chatTimer);
@@ -960,6 +972,84 @@ class AacPanel extends HTMLElement {
   }
 
   // ---------------------------------------------------------------- settings: audio
+  _renderAudio() {
+    const a = this._audio;
+    if (!a || !a.stages) return this._page("AUDIO PIPELINE", "", `<div class="card"><p>${a?.error ? esc(a.error) : "Loading…"}</p></div>`);
+    const flow = a.stages.map((s) => `
+      <div class="stage ${s.state === "built" ? "ok" : ""}">
+        <div class="rail"><span class="node"></span><span class="wire"></span></div>
+        <div class="body"><div class="name">${esc(s.name)} ${s.state === "built" ? "" : '<span class="tag plan">PLANNED</span>'}</div><div class="desc">${esc(s.desc)}</div></div>
+      </div>`).join("");
+    const set = a.settings || {}, eng = a.engines || {};
+    const opt = (list, chosen, current) => `<option value="" ${chosen ? "" : "selected"}>Local first (now: ${esc(current || "none")})</option>` +
+      (list || []).map((e) => `<option value="${esc(e)}" ${chosen === e ? "selected" : ""}>${esc(e)}</option>`).join("");
+    const lines = (a.transcript || []).slice().reverse().map((l) => `
+      <div class="tline ${l.addressed ? "to-aac" : ""}"><span class="m">${esc(new Date(l.time).toLocaleTimeString())} · ${esc(l.name)}${l.addressed ? " → AAC" : ""}</span><div>${esc(l.text)}</div></div>`).join("");
+    return this._page("AUDIO PIPELINE", `${(a.connected || []).length} connected · separate from HA's Assist`, `
+      <div class="split">
+        <div class="card"><h2>${icon("mic")} CONNECTED</h2>
+          ${this._liveSources(a.connected || [])}
+          <div class="actions"><button class="btn" data-go="settings/audio/sources">All sources</button></div>
+        </div>
+        <div class="card"><h2>TRANSCRIPT</h2>
+          <p class="hint">What AAC heard (RAM only, the last lines). Lines with one of its names, or right after it spoke, go to the master.</p>
+          <div class="transcript thin-scroll">${lines || '<p class="hint">Nothing heard yet.</p>'}</div>
+        </div>
+      </div>
+      <div class="split">
+        <div class="card"><h2>SETTINGS</h2>
+          <label for="au-names">Names that wake AAC (comma separated)</label><input id="au-names" value="${esc((set.names || []).join(", "))}">
+          <div class="row">
+            <div><label for="au-follow">Follow-up without name (s)</label><input id="au-follow" type="number" min="0" max="120" value="${esc(set.follow_up ?? 10)}" inputmode="numeric"></div>
+            <div><label for="au-lang">Language (empty = HA's)</label><input id="au-lang" value="${esc(set.language || "")}" placeholder="en, de, …"></div>
+          </div>
+          <label for="au-stt">Speech to text</label><select id="au-stt">${opt(eng.stt_options, set.stt, eng.stt)}</select>
+          <label for="au-tts">Voice (text to speech)</label><select id="au-tts">${opt(eng.tts_options, set.tts, eng.tts)}</select>
+          <p class="hint">HA's speech engines are used as tools; HA's own voice assistants stay as they are. "Local first" prefers engines running in your home (Wyoming: faster-whisper, Piper) over cloud ones.</p>
+          <div class="actions"><button class="btn primary" id="au-save">Save</button></div>
+          ${this._flashHtml()}
+        </div>
+        <div class="card"><h2>PIPELINE</h2>
+          <p>Every source gets its own light pipeline; the heavy parts are shared.</p>
+          <div class="flow">${flow}</div>
+        </div>
+      </div>`);
+  }
+
+  _liveSources(list) {
+    if (!list.length) return `<p>No source connected. Run the AAC satellite on the machine with the microphone (a PC, or next to a headset):</p>
+      <pre class="code">python aac_satellite.py --url ${esc(location.origin)} --token-file ~/.aac_token --name PC --area Office</pre>
+      <p class="hint">It is in the <code>satellite/</code> folder of the AAC repository. The token is a long-lived access token (your HA profile → Security). Or ask AAC in a chat to walk you through it.</p>`;
+    return list.map((s) => `
+      <div class="src">${icon("mic")}
+        <div style="flex:1;min-width:0">
+          <div class="n">${esc(s.name)}</div>
+          <div class="m">${s.area ? `${esc(s.area)} · ` : ""}${s.heard} heard${s.playing ? " · speaking" : ""}</div>
+          <div class="row" style="margin-top:.4em"><div style="flex:1"><input data-say-text="${esc(s.id)}" placeholder="Say something here…"></div><div style="flex:none"><button class="btn" data-say="${esc(s.id)}">Say</button></div></div>
+        </div>
+        <span class="tag ok">LIVE</span>
+      </div>`).join("");
+  }
+
+  _renderSources() {
+    const a = this._audio;
+    if (!a || !a.stages) return this._page("AUDIO SOURCES", "", '<div class="card"><p>Loading…</p></div>');
+    const live = new Set((a.connected || []).map((s) => s.id));
+    const known = (a.settings?.known || []).filter((k) => !live.has(k.id));
+    return this._page("AUDIO SOURCES", `${(a.connected || []).length} connected`, `
+      <div class="cards">
+        <div class="card"><h2>AAC SATELLITES</h2>
+          <p>A satellite streams one microphone to AAC and plays its answers. The same program runs on a PC or next to a USB/Bluetooth headset.</p>
+          ${this._liveSources(a.connected || [])}
+          ${known.map((k) => `<div class="src">${icon("mic")}<div style="flex:1"><div class="n">${esc(k.name)}</div><div class="m">seen before</div></div><span class="tag">OFFLINE</span></div>`).join("")}
+        </div>
+        <div class="card"><h2>FROM HOME ASSISTANT</h2>
+          <p>Devices with a mic that HA knows. Using them as sources is planned; for now they are only listed.</p>
+          ${this._sourceList(a.candidates || [])}
+        </div>
+      </div>`);
+  }
+
   _sourceList(sources) {
     if (!sources.length) return '<p class="hint">No audio sources found.</p>';
     return sources.map((s) => `
@@ -968,43 +1058,8 @@ class AacPanel extends HTMLElement {
           <div class="n">${esc(s.name)}</div>
           <div class="m">${esc(s.kind)}${s.area ? ` · ${esc(s.area)}` : ""}${s.integration ? ` · ${esc(s.integration)}` : ""}${s.available ? "" : " · unavailable"}</div>
         </div>
-        <span class="tag">${s.connected ? "ON" : "NOT CONNECTED"}</span>
+        <span class="tag plan">PLANNED</span>
       </div>`).join("");
-  }
-
-  _renderAudio() {
-    const a = this._audio;
-    if (!a) return this._page("AUDIO PIPELINE", "", '<div class="card"><p>Loading…</p></div>');
-    const flow = a.stages.map((s) => `
-      <div class="stage ${s.state === "ok" ? "ok" : ""}">
-        <div class="rail"><span class="node"></span><span class="wire"></span></div>
-        <div class="body"><div class="name">${esc(s.name)} ${s.state === "ok" ? "" : '<span class="tag plan">PLANNED</span>'}</div><div class="desc">${esc(s.desc)}</div></div>
-      </div>`).join("");
-    return this._page("AUDIO PIPELINE", "AAC's own, separate from HA's Assist", `
-      <div class="split">
-        <div class="card"><h2>PIPELINE</h2>
-          <p>AAC listens with its own pipeline, independent of Home Assistant's voice assistants (those stay as they are). It can use many audio sources at once and picks the best mic per sentence.${a.built ? "" : " Not built yet: this is the plan."}</p>
-          <div class="flow">${flow}</div>
-        </div>
-        <div class="card"><h2>${icon("mic")} SOURCES</h2>
-          <p>Mics AAC could listen to. Found in Home Assistant, only read.</p>
-          ${this._sourceList(a.sources)}
-          <div class="actions"><button class="btn" data-go="settings/audio/sources">All sources</button></div>
-        </div>
-      </div>`);
-  }
-
-  _renderSources() {
-    const a = this._audio;
-    if (!a) return this._page("AUDIO SOURCES", "", '<div class="card"><p>Loading…</p></div>');
-    const groups = {};
-    for (const s of a.sources) (groups[s.kind] ||= []).push(s);
-    return this._page("AUDIO SOURCES", `${a.sources.length} found`, `
-      <div class="card"><h2>SOURCES</h2>
-        <p>Every source gets its own lightweight pipeline (ring buffer in RAM, voice activity), and the heavy parts (speech to text, speaker ID) are shared. Each source will have a listening mode: off, wake word, or continuous. Connecting sources comes with the audio hub.</p>
-      </div>
-      <div class="cards">${Object.entries(groups).map(([kind, list]) => `
-        <div class="card"><h2>${esc(kind.toUpperCase())}</h2>${this._sourceList(list)}</div>`).join("")}</div>`);
   }
 
   _flashHtml() {
@@ -1087,6 +1142,13 @@ class AacPanel extends HTMLElement {
       this._render();
     });
     sr.querySelector("#hb-save")?.addEventListener("click", () => this._saveHeartbeat());
+    sr.querySelector("#au-save")?.addEventListener("click", () => this._saveAudio());
+    sr.querySelectorAll("[data-say]").forEach((el) => el.addEventListener("click", async () => {
+      const input = sr.querySelector(`[data-say-text="${CSS.escape(el.dataset.say)}"]`);
+      const text = input?.value.trim() || "Hello, this is AAC.";
+      try { await this._ws("aac/audio/say", { source_id: el.dataset.say, text }); if (input) input.value = ""; }
+      catch (e) { this._flash = { ok: false, text: e.message || String(e) }; this._render(); }
+    }));
     sr.querySelector("#hb-run")?.addEventListener("click", () => this._runHeartbeat());
     sr.querySelector("#t-save")?.addEventListener("click", () => this._saveTrigger());
     sr.querySelector("#aut-schedule")?.addEventListener("change", async (e) => {
@@ -1154,6 +1216,26 @@ class AacPanel extends HTMLElement {
       await this._ws("aac/memory/delete", { memory_id: el.dataset.memDelete });
       await this._loadMemory();
     }));
+  }
+
+  _typing() {
+    const el = this.shadowRoot.activeElement;
+    return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT");
+  }
+
+  async _saveAudio() {
+    const sr = this.shadowRoot;
+    try {
+      this._audio = await this._ws("aac/audio/settings", {
+        names: sr.querySelector("#au-names").value.split(",").map((n) => n.trim()).filter(Boolean),
+        follow_up: Number(sr.querySelector("#au-follow").value) || 0,
+        language: sr.querySelector("#au-lang").value.trim() || null,
+        stt: sr.querySelector("#au-stt").value || null,
+        tts: sr.querySelector("#au-tts").value || null,
+      });
+      this._flash = { ok: true, text: "Saved." };
+    } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
+    this._render();
   }
 
   async _send() {
