@@ -69,7 +69,7 @@ async def test_satellite_round_trip(hass: HomeAssistant, hass_client, aioclient_
         await ws.close()
     await hass.async_block_till_done(wait_background_tasks=True)
 
-    assert [(line["text"], line["addressed"]) for line in hub.transcript] == [
+    assert [(line["text"], line["addressed"]) for line in hub.transcript if line["kind"] != "aac"] == [
         ("hello there", False), ("Computer, what time is it?", True), ("on the computer screen they asked", False)]
     assert hub.transcript[-1]["gate"] == "not meant for AAC"
     assert len(payloads) == 3  # attention check, the answer, attention check (no second answer)
@@ -318,7 +318,8 @@ async def test_follow_up_without_the_name(hass: HomeAssistant, hass_client, aioc
         assert play["text"] == "And the kitchen too."
         await ws.close()
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert [x["addressed"] for x in hub.transcript] == [True, True]
+    assert [x["addressed"] for x in hub.transcript if x["kind"] != "aac"] == [True, True]
+    assert [x["text"] for x in hub.transcript if x["kind"] == "aac"] == ["It is five.", "And the kitchen too."]
     assert 'just finished saying: "It is five."' in payloads[2]["messages"][0]["content"]  # the check knows
 
 
@@ -505,7 +506,7 @@ async def test_split_utterance_is_answered_once(hass: HomeAssistant, hass_client
     await hass.async_block_till_done(wait_background_tasks=True)
     assert len(payloads) == 2  # one attention check, one answer
     assert payloads[1]["messages"][-1]["content"].endswith("Computer, are you there? Please say hello.")
-    assert [x["addressed"] for x in hub.transcript] == [True, True]
+    assert [x["addressed"] for x in hub.transcript if x["kind"] != "aac"] == [True, True]
 
 
 def test_the_model_hears_which_voice_spoke():
@@ -536,3 +537,53 @@ async def test_owner_manages_voices(hass: HomeAssistant, hass_ws_client, mock_en
     assert [v["name"] for v in (await ws.receive_json())["result"]["voices"]] == ["Astor"]
     await ws.send_json_auto_id({"type": "aac/voices/change", "action": "forget_all"})
     assert (await ws.receive_json())["result"]["voices"] == []
+
+
+async def test_companion_follows_the_conversation(hass: HomeAssistant, hass_client, aioclient_mock, mock_entry, configured):
+    """No name needed: the Companion judges each line with the conversation so far and answers when it fits."""
+    await setup_aac(hass, mock_entry)
+    await async_set_access(mock_entry, "companion", "assistant", {"enabled": True})
+    payloads = _queue(aioclient_mock, _text('{"respond": false, "why": "people talk to each other"}'),
+                      _text('{"respond": true, "why": "a question for the assistant"}'), _text("It is five."))
+    heard = iter(["Anna, how was your day?", "Could you tell me what time it is?"])
+    hub = mock_entry.runtime_data.audio
+    client = await hass_client()
+    speech = _audio((SILENCE, 0.3), (LOUD, 0.8), (SILENCE, 1))
+    with (
+        patch("custom_components.aac.audio_hub.make_vad", return_value=EnergyVad()),
+        patch.object(hub, "async_stt", AsyncMock(side_effect=lambda pcm, prompt=None: {"text": next(heard)})),
+        patch.object(hub, "async_tts", AsyncMock(return_value=b"RIFFwave")),
+    ):
+        ws = await client.ws_connect("/api/aac/audio")
+        await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "rate": 16000})
+        await ws.receive_json()
+        await ws.send_bytes(speech)
+        for _ in range(200):
+            if hub.transcript and hub.transcript[-1].get("judged"):
+                break
+            await asyncio.sleep(0.01)
+        await ws.send_bytes(speech)
+        play = await asyncio.wait_for(ws.receive_json(), 5)
+        assert play["text"] == "It is five."
+        await ws.close()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    people = [x for x in hub.transcript if x["kind"] == "speech"]
+    assert [(x["addressed"], x["judged"]) for x in people] == [
+        (False, "people talk to each other"), (True, "a question for the assistant")]
+    second = payloads[1]["messages"][1]["content"]  # the decision sees the conversation so far
+    assert "Anna, how was your day?" in second and second.endswith("Could you tell me what time it is?")
+    assert any(x["kind"] == "aac" and x["text"] == "It is five." for x in hub.transcript)
+
+
+async def test_companion_steps_back_for_the_wake_word(hass: HomeAssistant, mock_entry, configured):
+    """Both on: only the Wake word answers (never two answers)."""
+    await setup_aac(hass, mock_entry)
+    await async_set_access(mock_entry, "companion", "assistant", {"enabled": True})
+    await async_set_access(mock_entry, "wakeword", "assistant", {"enabled": True})
+    hub = mock_entry.runtime_data.audio
+    companion = mock_entry.runtime_data.capabilities.hearing["companion"]
+    source = hub.connect("pc", "PC", None, AsyncMock())
+    with patch.object(hub, "async_answer", AsyncMock()) as answer:
+        await companion.heard(source, {"kind": "speech", "text": "what time is it", "time": "2026-10-19T20:00:00+00:00",
+                                       "source": "pc"}, [])
+    answer.assert_not_called()

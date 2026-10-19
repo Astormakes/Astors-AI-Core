@@ -21,6 +21,8 @@ ctx.add_stage(Stage(id="stt", title="Speech to text", kind="segment", run=run, p
 - Only stages whose module is on in the voice domain run. Without any, a segment is still a speech line
   without text (length and loudness are measured by the core).
 
+AAC's own spoken answers are buffer lines too (kind `aac`), so modules see both sides of a conversation.
+
 ## A heard line
 ```json
 {"time": "2026-10-19T18:06:01+00:00", "source": "ha_app", "name": "Home Assistant", "kind": "speech",
@@ -55,4 +57,8 @@ A manifest may say `"enabled_by_default": false`: the owner switches it on per d
 - **Voices** (`voices`): segment stage → `speaker` {id, name, kind unknown/person/media, note, score, new}; voice
   prints in HA storage, unnamed ones forgotten after keep_days; tools list_voices, name_voice, forget_voice.
   Pool role `voices`. Wake word ignores voices of kind media, and its attention check sees voice and sounds.
-- **Companion** (planned): follows the room and speaks up on its own (decision tiers, interjection gate).
+- **Companion** (`companion`, off by default; v1 2026-10-19): for every spoken line a quick JSON decision on the
+  fast tier reads the last `minutes` of the buffer (voices, AAC's own spoken lines = kind `aac`, sounds) and
+  decides for the newest line: respond or not, with a short reason (`judged` on the line). Mode `spoken_to`
+  (default) or `join`. One decision at a time per source, lines arriving meanwhile are judged together. Steps
+  back while the Wake word module is on. Next: interjection gate (rate limit, timing, research before speaking).

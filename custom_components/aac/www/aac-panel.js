@@ -337,6 +337,9 @@ textarea { min-height: 10em; resize: vertical; }
 .buffer .bl.to-aac { border-left-color: var(--magenta); }
 .buffer .bl.live { border-left-color: var(--cyan); opacity: .85; }
 .buffer .bl.sound { border-left-color: var(--amber); }
+.buffer .bl.aac { border-left-color: var(--magenta); }
+.buffer .bl.aac .bt { color: var(--magenta); }
+.buffer .bm b.why { color: var(--dim); font-style: italic; }
 .buffer .bl.sound .bt { color: var(--amber); }
 .buffer .bl.live .bt { font-style: italic; }
 .buffer .bm { font-size: .82em; color: var(--dim); }
@@ -1854,7 +1857,9 @@ class AacPanel extends HTMLElement {
     if (l.speaker) meta.push(`🗣 ${l.speaker.sure === false ? "probably " : ""}${l.speaker.name}${l.speaker.new ? " (new)" : ""}${l.speaker.kind === "media" ? " · video/TV" : ""}${l.speaker.score > 0 ? ` ${Math.round(l.speaker.score * 100)} %` : ""}`);
     if (l.mood) meta.push(`mood: ${typeof l.mood === "object" ? l.mood.label : l.mood}`);
     if (l.sounds?.length) meta.push(`♪ ${l.sounds.slice(0, 3).map(([n, p]) => `${n} ${Math.round(p * 100)} %`).join(", ")}`);
-    const mark = l.addressed ? '<b class="to">→ AAC</b>' : l.gate ? `<b class="no">${esc(l.gate)}</b>` : "";
+    const mark = (l.addressed ? '<b class="to">→ AAC</b>' : l.gate ? `<b class="no">${esc(l.gate)}</b>` : "")
+      + (l.judged ? ` <b class="why">${esc(l.judged)}</b>` : "");
+    if (l.kind === "aac") return `<div class="bl aac"><div class="bm">${esc(meta[0])} · AAC said</div><div class="bt">${esc(l.text)}</div></div>`;
     const text = l.kind === "sound" ? `<i>${esc(l.text)}</i>` : l.text ? esc(l.text) : '<i class="dim">[speech, not transcribed]</i>';
     return `<div class="bl ${l.addressed ? "to-aac" : ""} ${l.kind === "sound" ? "sound" : ""}"><div class="bm">${esc(meta.join(" · "))} ${mark}</div><div class="bt">${text}</div></div>`;
   }

@@ -532,6 +532,9 @@ class AudioHub:
         async_notify(self.hass, "audio")
         await source.send({"type": "play", "format": "wav", "bytes": len(audio), "text": text})
         await source.send(audio)
+        # what AAC says belongs to the conversation too (the Companion reads both sides)
+        self._add_line(source, {"time": dt_util.utcnow().isoformat(), "source": source.id, "name": source.name,
+                                "kind": "aac", "text": text, "addressed": False, "seconds": 0})
         return True
 
     async def async_answer(self, source: Source, text: str, before: list[str] | None = None,
