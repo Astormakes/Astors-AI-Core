@@ -7,6 +7,7 @@ HA already unifies calendars: every integration (Google, CalDAV, Local Calendar,
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -14,7 +15,9 @@ import voluptuous as vol
 
 from homeassistant.components import websocket_api
 from homeassistant.components.calendar import CalendarEntityFeature
+from homeassistant.components.calendar.const import DATA_COMPONENT as CALENDAR_COMPONENT
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from ...capabilities import CalendarProvider, parse_time
@@ -22,8 +25,15 @@ from ...const import DOMAIN, LOGGER
 from .. import ModuleContext
 
 
+def _foreign(hass: HomeAssistant) -> list[str]:
+    """HA's calendars without AAC's own (reading those would ask AAC about itself, in a loop)."""
+    ent_reg = er.async_get(hass)
+    return sorted(e for e in hass.states.async_entity_ids("calendar")
+                  if not ((reg := ent_reg.async_get(e)) and reg.platform == DOMAIN))
+
+
 def _calendars(hass: HomeAssistant, chosen: Any) -> list[str]:
-    ids = sorted(hass.states.async_entity_ids("calendar"))
+    ids = _foreign(hass)
     return ids if chosen in (None, "all") else [e for e in ids if e in (chosen or [])]
 
 
@@ -31,25 +41,36 @@ async def async_setup_module(ctx: ModuleContext) -> None:
     """Register the HA calendar adapter, the target choices and the agenda page."""
     hass = ctx.hass
 
+    def _iso(value: Any) -> str | None:
+        when = parse_time(value)
+        return when.isoformat() if when else None
+
     async def query(domain_id: str, start: datetime, end: datetime) -> list[dict[str, Any]]:
         entity_ids = _calendars(hass, ctx.setting(domain_id, "read"))
         if not entity_ids:
             return []
-        result = await hass.services.async_call(
-            "calendar", "get_events", {"entity_id": entity_ids, "start_date_time": start, "end_date_time": end},
-            blocking=True, return_response=True,
-        )
+        component = hass.data.get(CALENDAR_COMPONENT)
         entries = []
-        for entity_id, data in (result or {}).items():
+        for entity_id in entity_ids:
             state = hass.states.get(entity_id)
             label = state.attributes.get("friendly_name", entity_id) if state else entity_id
-            for event in data.get("events", []):
+            if component and (entity := component.get_entity(entity_id)):
+                # Straight from the entity: with uid and recurrence_id (HA's get_events action leaves them out)
+                events = [dataclasses.asdict(e) for e in await entity.async_get_events(hass, start, end)]
+            else:
+                result = await hass.services.async_call(
+                    "calendar", "get_events", {"entity_id": [entity_id], "start_date_time": start, "end_date_time": end},
+                    blocking=True, return_response=True,
+                )
+                events = (result or {}).get(entity_id, {}).get("events", [])
+            for event in events:
+                uid = event.get("uid")
                 entries.append({
+                    **({"key": f"{entity_id}/{uid}"} if uid else {}),
+                    **({"recurrence_id": event["recurrence_id"]} if event.get("recurrence_id") else {}),
                     "name": event.get("summary") or "(no title)",
-                    "start": parse_time(event.get("start")).isoformat() if parse_time(event.get("start")) else None,
-                    "end": parse_time(event.get("end")).isoformat() if parse_time(event.get("end")) else None,
-                    "all_day": len(str(event.get("start", ""))) == 10,
-                    "ref": {"module": "calendar", "entity_id": entity_id, "uid": event.get("uid")},
+                    "start": _iso(event.get("start")), "end": _iso(event.get("end")),
+                    "all_day": not isinstance(event.get("start"), datetime) and len(str(event.get("start", ""))) == 10,
                     "data": {k: event[k] for k in ("description", "location") if event.get(k)},
                     "tags": [label],
                 })
@@ -69,16 +90,58 @@ async def async_setup_module(ctx: ModuleContext) -> None:
             data |= {"start_date_time": start, "end_date_time": parse_time(entry.get("end")) or start + timedelta(hours=1)}
         if notes := (entry.get("data") or {}).get("notes"):
             data["description"] = notes
-        await hass.services.async_call("calendar", "create_event", data, blocking=True)
+        component = hass.data.get(CALENDAR_COMPONENT)
+        if component and (entity := component.get_entity(target)):
+            # Straight to the entity (as HA's own calendar page does)
+            await entity.async_create_event(
+                summary=entry["name"],
+                dtstart=start.date() if all_day else start,
+                dtend=(parse_time(entry.get("end")) or start + timedelta(days=1)).date() if all_day
+                else parse_time(entry.get("end")) or start + timedelta(hours=1),
+                **({"description": data["description"]} if "description" in data else {}),
+            )
+        else:
+            await hass.services.async_call("calendar", "create_event", data, blocking=True)
         return {"name": entry["name"], "start": start.isoformat(), "calendar": target}
 
+    def _entity(key: str, feature: CalendarEntityFeature):
+        entity_id, _, uid = key.partition("/")  # entity ids have no "/", event uids may
+        component = hass.data.get(CALENDAR_COMPONENT)
+        entity = component.get_entity(entity_id) if component else None
+        if entity is None or not uid:
+            raise LookupError("That calendar entry cannot be found")
+        if not (entity.supported_features or 0) & feature:
+            raise LookupError(f"{entity.name or entity_id} does not allow that")
+        return entity, entity_id, uid
+
+    async def update(domain_id: str, key: str, changes: dict[str, Any], recurrence_id: str | None = None) -> dict[str, Any]:
+        entity, entity_id, uid = _entity(key, CalendarEntityFeature.UPDATE_EVENT)
+        event: dict[str, Any] = {}
+        if changes.get("name"):
+            event["summary"] = changes["name"]
+        if start := parse_time(changes.get("start")):
+            all_day = bool(changes.get("all_day")) or len(str(changes["start"])) == 10
+            end = parse_time(changes.get("end")) or (start + (timedelta(days=1) if all_day else timedelta(hours=1)))
+            event |= {"dtstart": start.date() if all_day else start, "dtend": end.date() if all_day else end}
+        if "notes" in changes:
+            event["description"] = changes["notes"]
+        if "summary" not in event:  # HA wants the whole event
+            event["summary"] = changes.get("current_name") or "(no title)"
+        await entity.async_update_event(uid, event, recurrence_id=recurrence_id)
+        return {"name": event["summary"], "calendar": entity_id}
+
+    async def delete(domain_id: str, key: str, recurrence_id: str | None = None) -> bool:
+        entity, _, uid = _entity(key, CalendarEntityFeature.DELETE_EVENT)
+        await entity.async_delete_event(uid, recurrence_id=recurrence_id)
+        return True
+
     caps = ctx.entry.runtime_data.capabilities
-    ctx.add_calendar(CalendarProvider("calendar", "Home Assistant calendars", query, create))
+    ctx.add_calendar(CalendarProvider("calendar", "Home Assistant calendars", query, create, update, delete))
 
     def targets(domain_id: str) -> list[tuple[str, str]]:
         found = [("lists", "A list called \"Calendar\" (lists module)")]
-        for state in hass.states.async_all("calendar"):
-            if state.attributes.get("supported_features", 0) & CalendarEntityFeature.CREATE_EVENT:
+        for state in (hass.states.get(e) for e in _foreign(hass)):
+            if state and state.attributes.get("supported_features", 0) & CalendarEntityFeature.CREATE_EVENT:
                 found.append((state.entity_id, f"HA: {state.attributes.get('friendly_name', state.entity_id)}"))
         return found
 

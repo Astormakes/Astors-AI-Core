@@ -196,6 +196,7 @@ def _calendar_entries(lists: ListStore, start: datetime, end: datetime) -> list[
             when = entry["fields"].get("when")
             if when and in_period(when, start, end):
                 found.append({
+                    "key": f"{lst['id']}/{entry['id']}",
                     "name": entry["text"], "start": parse_time(when).isoformat(),
                     "end": (parse_time(entry["fields"].get("end")) or None) and parse_time(entry["fields"]["end"]).isoformat(),
                     "all_day": len(str(when)) == 10, "done": entry.get("done", False),
@@ -231,9 +232,40 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         fields = {"when": entry.get("start"), "end": entry.get("end"), **(entry.get("data") or {})}
         added = lists.add(lst, [{"text": entry["name"], "fields": fields}])[0]
         notifier(domain_id)()
-        return {"name": added["text"], **added["fields"], "list": lst["name"], "item": added["id"]}
+        return {"name": added["text"], **added["fields"], "list": lst["name"], "uid": f"lists:{lst['id']}/{added['id']}"}
 
-    ctx.add_calendar(CalendarProvider("lists", "Lists (entries with a date)", query, create))
+    def _find(domain_id: str, key: str):
+        list_id, _, item_id = key.partition("/")
+        lists = stores[domain_id]
+        lst = lists.get(list_id)
+        if lst is None or lists.find(lst, item_id) is None:
+            raise LookupError("That list entry no longer exists")
+        return lists, lst, item_id
+
+    async def update(domain_id: str, key: str, changes: dict[str, Any], recurrence_id: str | None = None) -> dict[str, Any]:
+        lists, lst, item_id = _find(domain_id, key)
+        fields = {}
+        if "start" in changes:
+            fields["when"] = changes["start"][:10] if changes.get("all_day") else changes["start"]
+        if "end" in changes:
+            fields["end"] = changes["end"]
+        if "notes" in changes:
+            fields["notes"] = changes["notes"]
+        entry = lists.update(lst, item_id, changes.get("name"), None, fields)
+        notifier(domain_id)()
+        return {"name": entry["text"], **entry["fields"]}
+
+    async def delete(domain_id: str, key: str, recurrence_id: str | None = None) -> bool:
+        # Off the calendar = without a date; only the "Calendar" list's entries go entirely
+        lists, lst, item_id = _find(domain_id, key)
+        if lst["name"] == CALENDAR_LIST:
+            lists.remove(lst, [item_id])
+        else:
+            lists.update(lst, item_id, fields={"when": None, "end": None})
+        notifier(domain_id)()
+        return True
+
+    ctx.add_calendar(CalendarProvider("lists", "Lists (entries with a date)", query, create, update, delete))
     ctx.add_ws_commands(ws_lists, ws_lists_op)
     ctx.add_panel_page("lists", "Lists", "aac-lists-page", "page.js")
 

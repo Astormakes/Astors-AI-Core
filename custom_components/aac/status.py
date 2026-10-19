@@ -22,8 +22,10 @@ def _done(hass: HomeAssistant, store: AACStore, cond: dict, values: dict) -> boo
         return bool(values.get(cond["setting"]))
     if "entity_exists" in cond:
         return hass.states.get(cond["entity_exists"]) is not None
-    if "entities_of" in cond:
-        return bool(hass.states.async_entity_ids(cond["entities_of"]))
+    if "entities_of" in cond:  # entities from somewhere else than AAC itself
+        ent_reg = er.async_get(hass)
+        return any(not ((reg := ent_reg.async_get(e)) and reg.platform == DOMAIN)
+                   for e in hass.states.async_entity_ids(cond["entities_of"]))
     if "role" in cond:
         return bool(store.pools.get(cond["role"]))
     if cond.get("rule"):

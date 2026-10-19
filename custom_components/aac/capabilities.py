@@ -29,6 +29,10 @@ from .const import LOGGER
 CalendarQuery = Callable[[str, datetime, datetime], Awaitable[list[dict[str, Any]]]]
 # writer(domain_id, entry) → the stored entry
 CalendarWrite = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
+# changer(domain_id, key, changes, recurrence_id) → the changed entry; changes: name, start, end, all_day, notes
+CalendarChange = Callable[[str, str, dict[str, Any], str | None], Awaitable[dict[str, Any]]]
+# remover(domain_id, key, recurrence_id) → removed from the calendar?
+CalendarRemove = Callable[[str, str, str | None], Awaitable[bool]]
 
 
 @dataclass
@@ -39,6 +43,8 @@ class CalendarProvider:
     title: str
     query: CalendarQuery
     create: CalendarWrite | None = None
+    update: CalendarChange | None = None
+    delete: CalendarRemove | None = None
     module: str | None = None  # set by the loader; a module switched off in a domain is skipped there
 
 
@@ -77,8 +83,33 @@ class Capabilities:
                 continue
             for entry in found:
                 if entry.get("name"):
-                    entries.append({"source": provider.id, **entry})
+                    # Like HA/iCalendar: a uid per entry ("<source>:<key>", the key is the provider's own)
+                    uid = f"{provider.id}:{entry['key']}" if entry.get("key") else None
+                    entries.append({"source": provider.id, "uid": uid,
+                                    **{k: v for k, v in entry.items() if k != "key"}})
         return sorted(entries, key=lambda e: (e.get("start") is None, str(e.get("start") or "")))
+
+    def _home(self, domain_id: str, uid: str) -> tuple[CalendarProvider, str]:
+        source, _, key = uid.partition(":")
+        provider = self.calendar.get(source)
+        if not key or provider is None or (provider.module and not self.module_enabled(domain_id, provider.module)):
+            raise LookupError(f"No calendar entry '{uid}' here")
+        return provider, key
+
+    async def async_change(self, domain_id: str, uid: str, changes: dict[str, Any],
+                           recurrence_id: str | None = None) -> dict[str, Any]:
+        """Change an entry in its home (the module it comes from); uid = "<source>:<key>"."""
+        provider, key = self._home(domain_id, uid)
+        if provider.update is None:
+            raise LookupError(f"{provider.title} cannot change entries")
+        return await provider.update(domain_id, key, changes, recurrence_id)
+
+    async def async_remove(self, domain_id: str, uid: str, recurrence_id: str | None = None) -> bool:
+        """Remove an entry from the calendar, in its home."""
+        provider, key = self._home(domain_id, uid)
+        if provider.delete is None:
+            raise LookupError(f"{provider.title} cannot remove entries")
+        return await provider.delete(domain_id, key, recurrence_id)
 
     def writers(self, domain_id: str | None = None) -> list[CalendarProvider]:
         """Providers that accept new entries, the owner's choice first."""
@@ -131,6 +162,7 @@ def plan_occurrences(triggers: list[dict[str, Any]], start: datetime, end: datet
             ):
                 entries.append({
                     "name": trig.get("name") or "Plan", "start": moment.isoformat(), "all_day": False,
+                    "key": trig["id"], **({} if when.get("date") else {"recurrence_id": day.isoformat()}),
                     "ref": {"module": "core", "trigger": trig["id"]},
                     "data": {"instruction": (trig.get("do") or {}).get("instruction", ""),
                              "by": trig.get("created_by", "owner"), "repeating": not when.get("date")},

@@ -23,6 +23,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
+from homeassistant.util import dt as dt_util
 
 from . import websocket
 from .const import (
@@ -42,7 +43,7 @@ from .audio_hub import AudioHub
 from .audio_view import AACAudioView
 from .chats import ChatStore
 from .domains import Domain, async_load_domain
-from .capabilities import CalendarProvider, Capabilities, plan_occurrences
+from .capabilities import CalendarProvider, Capabilities, parse_time, plan_occurrences
 from .jobs import JobQueue
 from .modules import MODULES_DIR, MODULES_URL, LoadedModule, async_load_modules
 from .pools import Broker
@@ -56,7 +57,7 @@ from .runs import RunRegistry
 from .store import AACStore
 from .triggers import TriggerEngine
 
-PLATFORMS = (Platform.CONVERSATION,)
+PLATFORMS = (Platform.CONVERSATION, Platform.CALENDAR)
 PANEL_URL = "aac"
 STATIC_URL = "/aac_static"
 
@@ -141,7 +142,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         dom = entry.runtime_data.domain(domain_id)
         return plan_occurrences(dom.settings.triggers, start, end) if dom else []
 
-    entry.runtime_data.capabilities.add_calendar(CalendarProvider("core", "AAC's plans and timed triggers", plans))
+    def _own_plan(domain_id: str, key: str):
+        dom = entry.runtime_data.domain(domain_id)
+        trig = next((t for t in dom.settings.triggers if t["id"] == key), None) if dom else None
+        if trig is None:
+            raise LookupError("That plan no longer exists")
+        if trig.get("created_by") != "agent":
+            raise LookupError("That is the owner's trigger; change it in the panel")  # agents organize tasks, not rules
+        return dom, trig
+
+    async def change_plan(domain_id: str, key: str, changes: dict, recurrence_id: str | None = None):
+        # A repeating plan moves as a whole (single occurrences are not kept apart yet)
+        dom, trig = _own_plan(domain_id, key)
+        when = dict(trig["when"])
+        if start := parse_time(changes.get("start")):
+            local = dt_util.as_local(start)
+            when["at"] = local.strftime("%H:%M")
+            if when.get("date"):
+                when["date"] = local.date().isoformat()
+        saved = await dom.settings.async_save_trigger({**trig, "when": when, "name": changes.get("name") or trig["name"]})
+        dom.triggers.async_start()
+        return {"name": saved["name"], "when": saved["when"]}
+
+    async def cancel_plan(domain_id: str, key: str, recurrence_id: str | None = None) -> bool:
+        dom, trig = _own_plan(domain_id, key)
+        await dom.settings.async_delete_trigger(trig["id"])
+        dom.triggers.async_start()
+        return True
+
+    entry.runtime_data.capabilities.add_calendar(
+        CalendarProvider("core", "AAC's plans and timed triggers", plans, update=change_plan, delete=cancel_plan)
+    )
     entry.runtime_data.audio = AudioHub(hass, entry)
 
     async def embed(texts: list[str]):

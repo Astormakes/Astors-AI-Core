@@ -1,7 +1,7 @@
 {
   "id": "calendar",
   "name": "Calendar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "contract": 1,
   "kind": "code",
   "description": "One calendar over everything: entries from all modules (lists with dates, AAC's plans) and your Home Assistant calendars (Google, CalDAV, Local Calendar, …).",
