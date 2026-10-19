@@ -49,6 +49,7 @@ TRANSCRIPT_LINES = 200
 # Integrations whose speech engines run locally (preferred when nothing is chosen)
 LOCAL_ENGINES = {"wyoming", "piper", "whisper", "faster_whisper"}
 
+VOICE_FAILED = "Sorry, that did not work. The details are in the AAC panel."
 VOICE_PROMPT = (
     "This message came in by voice from the microphone '{name}'{area}. Your answer is spoken "
     "aloud: one or two short sentences, plain words, no lists or markdown."
@@ -388,7 +389,8 @@ class AudioHub:
         data.chats.add_message(chat_id, "aac", run.result or "(no answer)",
                                error=run.status == "failed", run_id=run.id, steps=run.steps)
         if run.result and self.sources.get(source.id) is source:
-            await self.async_say(source, run.result)
+            # An error is not read out (long, technical, and loud in the room): one short sentence, details in the panel
+            await self.async_say(source, VOICE_FAILED if run.status == "failed" else run.result)
 
     # ------------------------------------------------------------ panel
     def overview(self) -> dict[str, Any]:

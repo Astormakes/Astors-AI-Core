@@ -432,3 +432,25 @@ async def test_too_long_chat_is_fitted_and_retried(hass: HomeAssistant, hass_ws_
     assert payloads[1]["messages"][-1]["content"] == "and now?"
     assert any("Context full" in (s.get("text") or "") for s in message["steps"])
     assert mock_entry.runtime_data.broker.traits(mock_entry.runtime_data.store.pools["master"][0])["n_ctx"] == 4096
+
+
+async def test_answers_without_tools_when_they_do_not_fit(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """Even the tool descriptions are too long for a small model: it answers without them instead of failing."""
+    await setup_aac(hass, mock_entry)
+    ws = await hass_ws_client(hass)
+    payloads: list[dict] = []
+    too_long = json.dumps({"error": {"code": 400, "type": "exceed_context_size_error", "n_prompt_tokens": 9000,
+                                     "n_ctx": 8192, "message": "request exceeds the available context size"}})
+
+    async def side_effect(method, url, data):
+        payloads.append(data)
+        if data.get("tools"):
+            return AiohttpClientMockResponse(method, url, status=400, text=too_long)
+        return AiohttpClientMockResponse(method, url, json=_reply("Plain answer."))
+
+    aioclient_mock.post(URL, side_effect=side_effect)
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "hello"})
+    message = (await ws.receive_json())["result"]["message"]
+    assert message["text"] == "Plain answer."
+    assert len(payloads) == 3 and not payloads[2].get("tools")
+    assert any("without them" in (s.get("text") or "") for s in message["steps"])

@@ -387,7 +387,7 @@ class AACConversationEntity(
             params["temperature"] = min(params["temperature"], DECISION_TEMPERATURE)
         limit = MAX_TOOL_ITERATIONS_AUTO if run and run.kind == "auto" else MAX_TOOL_ITERATIONS
         stream_to = self._streamer(run) if run and run.kind == "chat" and run.chat_id and not decide else None
-        left_out, context_retry = 0, False
+        left_out, context_retry, no_tools = 0, 0, False
         for iteration in range(limit + 1):
             # Last round: no tools, so the model has to answer instead of exploring on
             final = iteration == limit
@@ -404,11 +404,12 @@ class AACConversationEntity(
                 stream_to.round = iteration
             full = messages
             while True:
+                offered = None if final or no_tools else tools
                 # Only as much of the chat as the model holds: the oldest turns go first
                 n_ctx, factor = await self._context_of(broker, model_id, provider)
                 messages = full
                 if n_ctx:
-                    messages, dropped, _ = fit(full, None if final else tools,
+                    messages, dropped, _ = fit(full, offered,
                                                n_ctx - params["max_tokens"] - CONTEXT_MARGIN, factor)
                     if dropped > left_out:
                         left_out = dropped
@@ -423,22 +424,27 @@ class AACConversationEntity(
                 try:
                     if stream_to:  # the owner watches the panel: show the answer while it is written
                         reply = await provider.chat_stream(
-                            endpoint.model, messages, None if final else tools, on_delta=stream_to, **params
+                            endpoint.model, messages, offered, on_delta=stream_to, **params
                         )
                     else:
-                        reply = await provider.chat(
-                            endpoint.model, messages, None if final else tools, **params
-                        )
+                        reply = await provider.chat(endpoint.model, messages, offered, **params)
                 except ProviderContextError as err:
-                    # Longer than the model holds: learn its size (and how far off the estimate was), fit again
-                    sent = estimate(messages, None if final else tools)
+                    # Longer than the model holds: learn its size (and how far off the estimate was), fit again;
+                    # if even the tool descriptions do not fit (a small model, many tools): answer without tools
+                    sent = estimate(messages, offered)
+                    if context_retry == 1 and offered:
+                        context_retry, no_tools = 2, True
+                        if run:
+                            run.steps.append({"type": "text", "text": f"Context full: {self._label(model_id)} has too "
+                                              "little room for the tools, so this answer is without them."})
+                        continue
                     if context_retry or not err.n_ctx:
                         raise HomeAssistantError(
                             f"This chat no longer fits into {self._label(model_id)} ({err.n_ctx or '?'} tokens of "
                             "context, the request needed " f"{err.n_prompt or '?'}). Start a new chat, or give the "
                             "model's server a bigger context (llama.cpp: -c)."
                         ) from err
-                    context_retry = True
+                    context_retry = 1
                     broker.learn_context(model_id, err.n_ctx, err.n_prompt / sent if err.n_prompt and sent else None)
                     continue
                 except ProviderConnectionError as err:
