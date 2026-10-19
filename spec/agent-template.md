@@ -54,7 +54,7 @@ word. Servers without JSON schema support fall back to the text rule
 
 | id | Started by | Tools | Output |
 |---|---|---|---|
-| `chat` | the owner (panel chat, HA voice) | master's tools + memory | text |
+| `chat` | the owner (panel chat, HA voice) | master's tools + memory + planning; + `aac_setup` when an admin is in the chat | text |
 | `heartbeat` | heartbeat trigger | none by default (`tools` switch) | decision |
 | `event-reaction` | event trigger | master's tools + memory | text (+ NOTHING rule) |
 

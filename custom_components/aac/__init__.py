@@ -42,6 +42,7 @@ from .chats import ChatStore
 from .memory import MemoryStore, memory_path
 from .memory_api import AACMemoryAPI
 from .schedule_api import AACScheduleAPI
+from .setup_api import AACSetupAPI
 from .models import resolve_model
 from .provider import OpenAICompatProvider
 from .runs import RunRegistry
@@ -115,6 +116,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         llm.async_register_api(
             hass, AACScheduleAPI(hass=hass, id="aac_schedule", name="AAC planning", entry=entry)
         )
+    )
+    entry.async_on_unload(
+        llm.async_register_api(hass, AACSetupAPI(hass=hass, id="aac_setup", name="AAC setup", entry=entry))
     )
 
     await panel_custom.async_register_panel(

@@ -34,6 +34,7 @@ from .provider import OpenAICompatProvider, ProviderError
 from .extractor import async_extract
 from .memory_api import API_ID as MEMORY_API_ID
 from .schedule_api import API_ID as SCHEDULE_API_ID
+from .setup_api import API_ID as SETUP_API_ID, owner_present
 from .runs import current_run
 from .store import CONF_MASTER_MODEL
 from .models import resolve_model
@@ -259,6 +260,8 @@ class AACConversationEntity(
                 api_ids.append(MEMORY_API_ID)  # the master always has its own memory
             if store.autonomy.get("schedule", "allowed") != "off":
                 api_ids.append(SCHEDULE_API_ID)  # and may plan for itself
+            if await owner_present(self.hass, user_input.context.user_id):
+                api_ids.append(SETUP_API_ID)  # with the owner present it helps set itself up
         try:
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),

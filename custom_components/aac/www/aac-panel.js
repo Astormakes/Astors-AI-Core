@@ -665,7 +665,11 @@ class AacPanel extends HTMLElement {
             <div style="flex:1"><div class="t">${esc(s.title)}${s.optional ? ' <span class="tag">OPTIONAL</span>' : ""}</div><div class="h">${esc(s.hint)}</div></div>
             ${s.optional && !s.done ? `<button class="btn" data-skip="${esc(s.id)}" data-skipped="${s.skipped ? "0" : "1"}">${s.skipped ? "Undo skip" : "Skip"}</button>` : ""}
           </div>`).join("")}
-      </div>`);
+      </div>${open && steps.find((s) => s.id === "master")?.done ? `
+      <div class="card"><h2>TOGETHER</h2>
+        <p>The master model is wired in, so AAC can walk you through the rest in a chat: it checks what is open, explains each step and asks before it changes anything.</p>
+        <div class="actions"><button class="btn primary" id="setup-chat">Set up with AAC</button></div>
+      </div>` : ""}`);
   }
 
   // ---------------------------------------------------------------- settings: triggers
@@ -1035,6 +1039,11 @@ class AacPanel extends HTMLElement {
     sr.querySelector("#backdrop")?.addEventListener("click", () => { this._navOpen = false; this._render(); });
     sr.querySelector("#refresh-models")?.addEventListener("click", () => this._loadModels());
 
+    sr.querySelector("#setup-chat")?.addEventListener("click", () => {
+      this._go("chat/new");
+      const input = this.shadowRoot.querySelector("#chat-input");
+      if (input) { input.value = "Help me set up the rest of AAC."; this._send(); }
+    });
     sr.querySelectorAll("[data-skip]").forEach((el) => el.addEventListener("click", async (e) => {
       e.stopPropagation();
       this._state = await this._ws("aac/setup/skip", { step: el.dataset.skip, skipped: el.dataset.skipped === "1" });
