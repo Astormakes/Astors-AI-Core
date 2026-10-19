@@ -53,7 +53,9 @@ async def test_model_master_chat_flow(
     )
     model_id = (await ws.receive_json())["result"]["id"]
 
-    await ws.send_json_auto_id({"type": "aac/master/update", "model": model_id})
+    await ws.send_json_auto_id({"type": "aac/pool/set", "role": "master", "items": [model_id]})
+    await ws.receive_json()
+    await ws.send_json_auto_id({"type": "aac/state"})
     state = (await ws.receive_json())["result"]
     steps = {s["id"]: s for s in state["setup"]}
     assert steps["models"]["done"] and steps["master"]["done"]
@@ -90,7 +92,7 @@ async def test_auto_models_from_ha(
     assert auto[0]["online"] and auto[0]["label"] == "llama.cpp: Server"
     model_id = auto[0]["models"][0]["id"]
 
-    await ws.send_json_auto_id({"type": "aac/master/update", "model": model_id})
+    await ws.send_json_auto_id({"type": "aac/pool/set", "role": "master", "items": [model_id]})
     await ws.receive_json()
     aioclient_mock.post(f"{LLAMA_URL}/chat/completions", json=_reply("auto ok"))
     await ws.send_json_auto_id({"type": "aac/chat", "text": "hello"})
@@ -113,12 +115,12 @@ async def test_offline_server(
 
 
 async def test_delete_master_model(hass: HomeAssistant, hass_ws_client, mock_entry, configured):
-    """Deleting the master's model unsets the master."""
+    """Deleting the master's model takes it out of the pool."""
     await setup_aac(hass, mock_entry)
     ws = await hass_ws_client(hass)
     await ws.send_json_auto_id({"type": "aac/model/delete", "model_id": MODEL_CFG["id"]})
     assert (await ws.receive_json())["success"]
-    assert mock_entry.runtime_data.store.master["model"] is None
+    assert mock_entry.runtime_data.store.pools["master"] == []
 
 
 async def test_audio_overview(hass: HomeAssistant, hass_ws_client, mock_entry):

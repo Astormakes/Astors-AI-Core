@@ -53,7 +53,7 @@ async def test_migrate_v1(hass: HomeAssistant, hass_storage):
     store = entry.runtime_data.store
     assert store.models[0]["base_url"] == BASE_URL
     assert store.models[0]["api_key"] == "secret"
-    assert store.master["model"] == store.models[0]["id"]
+    assert store.pools["master"] == [store.models[0]["id"]]
     assert store.master["prompt"] == "Old prompt"
     assert store.master["temperature"] == 0.3
     assert hass_storage[STORAGE_KEY]["data"]["models"][0]["model"] == MODEL
@@ -71,4 +71,4 @@ async def test_old_store_keys_migrate(hass: HomeAssistant, hass_storage, mock_en
     await setup_aac(hass, mock_entry)
     store = mock_entry.runtime_data.store
     assert store.models[0]["id"] == MODEL_CFG["id"]
-    assert store.master["model"] == MODEL_CFG["id"]
+    assert store.pools["master"] == [MODEL_CFG["id"]]

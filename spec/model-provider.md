@@ -18,9 +18,8 @@ How AAC talks to a model. Today one implementation: any OpenAI-compatible server
 (`whisper-server --inference-path /v1/audio/transcriptions`); faster-whisper servers
 (speaches) speak the same API.
 
-**Roles** are just model ids in settings, so every role is interchangeable and can be
-set in the panel or by AAC in a chat (`use_model`): master (chat), memory (embeddings),
-speech (speech to text; HA STT engines are the other choice). Model kind is guessed from
+**Roles** are pool lists (see Pools), so every role is interchangeable and can be set in the
+panel or by AAC in a chat (`use_model`). Model kind is guessed from
 the name for the pickers (`whisper|parakeet|…` = speech, `embed|bge|…` = embedding).
 
 Errors: `ProviderConnectionError` (unreachable/timeout), `ProviderAuthError` (401/403),
@@ -56,9 +55,13 @@ Per resource: capability, machine, privacy tier, availability (`always` for a se
 `sometimes` for a desktop PC), priority. The broker picks the best reachable resource
 that fits the request, falls back down the list, and makes a fallback visible.
 
-Built so far: one choice per role plus an automatic fallback for speech to text (the chosen
-model; when its machine is unreachable, HA's local engine; retried every minute; shown in the
-panel and to the setup tools). Planned: ordered lists per capability instead of single role ids.
+Built (v0.12.0, `pools.py`): `store.pools` = role → ordered list of model ids / HA engine ids.
+Roles: `master` (thinking), `memory` (thinking, one model: vectors do not mix), `stt`, `tts`
+(voice). The broker hands out the first usable entry; a resource whose machine did not answer
+(connect timeout 3 s) is marked down for 60 s and the next one is used (master: within the
+same message; speech: per segment, HA's local engine last). WebSocket `aac/pools`,
+`aac/pool/set`; setup tool `use_model(role, id, position first|last, remove)`. Old single
+choices (≤ 0.11) migrate into the first entry.
 
 ## Broker request (planned)
 

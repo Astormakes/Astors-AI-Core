@@ -81,5 +81,5 @@ async def test_add_and_use_models(hass: HomeAssistant, hass_ws_client, aioclient
     aioclient_mock.clear_requests()  # the first mock would still answer
     _queue(aioclient_mock, _tool_reply("aac-setup__use_model", f'{{"role": "memory", "model_id": "{added["id"]}"}}'), _text("Done."))
     await _chat(ws, "Yes, use it for memory.")
-    assert store.memory["embed_model"] == added["id"]
-    assert store.master["model"] == MODEL_CFG["id"]
+    assert store.pools["memory"] == [added["id"]]
+    assert store.pools["master"] == [MODEL_CFG["id"]]

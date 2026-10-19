@@ -41,14 +41,14 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .audio_hub import AudioHub
 from .audio_view import AACAudioView
 from .chats import ChatStore
+from .pools import Broker
 from .memory import MemoryStore, memory_path
 from .memory_api import AACMemoryAPI
 from .schedule_api import AACScheduleAPI
 from .setup_api import AACSetupAPI
-from .models import resolve_model
-from .provider import OpenAICompatProvider
+from .provider import OpenAICompatProvider, ProviderConnectionError
 from .runs import RunRegistry
-from .store import CONF_MASTER_MODEL, AACStore
+from .store import AACStore
 from .triggers import TriggerEngine
 
 PLATFORMS = (Platform.CONVERSATION,)
@@ -69,6 +69,7 @@ class AACData:
     memory: MemoryStore | None = None
     triggers: TriggerEngine | None = None
     audio: AudioHub | None = None
+    broker: Broker | None = None
 
 
 type AACConfigEntry = ConfigEntry[AACData]
@@ -98,16 +99,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     chats = ChatStore(hass)
     await chats.async_load()
     entry.runtime_data = AACData(store, version, runs, chats)
+    broker = entry.runtime_data.broker = Broker(hass, store)
     entry.runtime_data.audio = AudioHub(hass, entry)
 
     async def embed(texts: list[str]):
-        endpoint = resolve_model(hass, store, store.memory["embed_model"])
-        if endpoint is None:
-            return None
+        if (picked := broker.endpoint("memory")) is None:
+            return None  # keywords only
+        model_id, endpoint = picked
         provider = OpenAICompatProvider(
-            async_get_clientsession(hass), endpoint.base_url, endpoint.api_key
+            async_get_clientsession(hass), endpoint.base_url, endpoint.api_key, connect_timeout=3
         )
-        return await provider.embed(endpoint.model, texts), endpoint.model
+        try:
+            vectors = await provider.embed(endpoint.model, texts)
+        except ProviderConnectionError as err:
+            broker.mark_down(model_id, str(err))
+            raise
+        broker.mark_up(model_id)
+        return vectors, endpoint.model
 
     memory = MemoryStore(hass, memory_path(hass), embed)
     await memory.async_open()
@@ -196,7 +204,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
                 if k in entry.options
             }
-            await store.async_update_master({**master, CONF_MASTER_MODEL: cfg["id"]})
+            await store.async_update_master(master)
+            await store.async_set_pool("master", [cfg["id"]])
         hass.config_entries.async_update_entry(
             entry, data={}, options={}, title=DEFAULT_NAME, version=2
         )

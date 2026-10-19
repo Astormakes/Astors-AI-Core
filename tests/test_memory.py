@@ -139,7 +139,9 @@ async def test_embedding_model_setting(
         f"{BASE_URL}/embeddings", json={"data": [{"index": 0, "embedding": [0.1, 0.2, 0.3]}]}
     )
     ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/memory/settings", "embed_model": "m_test0001"})
+    await ws.send_json_auto_id({"type": "aac/pool/set", "role": "memory", "items": ["m_test0001"]})
+    assert (await ws.receive_json())["result"]["roles"]["memory"]["active"] == "m_test0001"
+    await ws.send_json_auto_id({"type": "aac/state"})
     state = (await ws.receive_json())["result"]
     assert {s["id"]: s for s in state["setup"]}["memory"]["done"]
     await ws.send_json_auto_id({"type": "aac/memory/save", "text": "hello"})

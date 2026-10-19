@@ -26,7 +26,8 @@ from .master import async_run_master
 from .memory import KINDS, SOURCES, summarize
 from .runs import SIGNAL_UPDATE
 from .status import aac_agent_entity_id, setup_steps
-from .store import CONF_MASTER_MODEL, AACStore
+from .pools import ROLES, async_set_role
+from .store import AACStore
 from .models import async_list_models, async_overview
 
 
@@ -60,6 +61,8 @@ def async_register(hass: HomeAssistant) -> None:
         ws_memory_save,
         ws_memory_delete,
         ws_memory_settings,
+        ws_pools,
+        ws_pool_set,
         ws_memory_reembed,
         ws_charter,
         ws_autonomy,
@@ -94,6 +97,7 @@ def _state(hass: HomeAssistant, store: AACStore, entry_id: str) -> dict[str, Any
         "setup": setup_steps(hass, store),
         "heartbeat": store.heartbeat,
         "memory": store.memory,
+        "pools": entry.runtime_data.broker.status() if entry else None,
         "charter": store.charter,
         "autonomy": store.autonomy,
         "charter_is_default": not store.data["charter"],
@@ -114,7 +118,6 @@ def ws_state(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "aac/master/update",
-        vol.Optional(CONF_MASTER_MODEL): vol.Any(str, None),
         vol.Optional(CONF_PROMPT): str,
         vol.Optional(CONF_LLM_HASS_API): [str],
         vol.Optional(CONF_TEMPERATURE): vol.All(vol.Coerce(float), vol.Range(0, 2)),
@@ -241,8 +244,6 @@ def ws_audio(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "aac/audio/settings",
-        vol.Optional("stt"): vol.Any(str, None),
-        vol.Optional("tts"): vol.Any(str, None),
         vol.Optional("language"): vol.Any(str, None),
         vol.Optional("names"): [vol.All(str, vol.Length(min=1))],
         vol.Optional("follow_up"): vol.All(vol.Coerce(int), vol.Range(0, 120)),
@@ -569,23 +570,43 @@ async def ws_memory_delete(hass: HomeAssistant, connection, msg) -> None:
     {
         vol.Required("type"): "aac/memory/settings",
         vol.Optional("enabled"): bool,
-        vol.Optional("embed_model"): vol.Any(str, None),
     }
 )
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_memory_settings(hass: HomeAssistant, connection, msg) -> None:
-    """Memory on/off and the embedding model (a new model re-embeds in the background)."""
+    """Memory on/off (its embedding model is the pool role "memory")."""
     if not (entry := _entry(hass, connection, msg)):
         return
     store = entry.runtime_data.store
-    changed_model = "embed_model" in msg and msg["embed_model"] != store.memory["embed_model"]
     await store.async_update_memory({k: v for k, v in msg.items() if k not in ("id", "type")})
-    if changed_model and msg["embed_model"]:
-        entry.async_create_background_task(
-            hass, entry.runtime_data.memory.async_reembed(), "aac memory re-embed"
-        )
     connection.send_result(msg["id"], _state(hass, store, entry.entry_id))
+
+
+@websocket_api.websocket_command({vol.Required("type"): "aac/pools"})
+@websocket_api.require_admin
+@callback
+def ws_pools(hass: HomeAssistant, connection, msg) -> None:
+    """Pools: per role the ordered list with live state."""
+    if entry := _entry(hass, connection, msg):
+        connection.send_result(msg["id"], entry.runtime_data.broker.status())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "aac/pool/set",
+        vol.Required("role"): vol.In(list(ROLES)),
+        vol.Required("items"): [str],
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_pool_set(hass: HomeAssistant, connection, msg) -> None:
+    """Set a role's ordered list."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    await async_set_role(hass, entry, msg["role"], msg["items"])
+    connection.send_result(msg["id"], entry.runtime_data.broker.status())
 
 
 @websocket_api.websocket_command({vol.Required("type"): "aac/memory/reembed"})

@@ -98,7 +98,7 @@ async def test_stt_through_a_model_server(hass: HomeAssistant, aioclient_mock, m
               "segments": [{"avg_logprob": -0.1}], "words": [{"word": "Mach", "start": 0.1, "end": 0.3}]},
     )
     store = mock_entry.runtime_data.store
-    await store.async_update_audio({"stt": "auto|w:m_test0001|whisper-large-v3-turbo"})
+    await store.async_set_pool("stt", ["auto|w:m_test0001|whisper-large-v3-turbo"])
     heard = await mock_entry.runtime_data.audio.async_stt(SILENCE * 100)
     assert heard["text"] == "Mach das Licht aus." and heard["language"] == "german"
     assert 0.85 < heard["confidence"] < 0.95 and heard["words"][0]["word"] == "Mach"
@@ -123,7 +123,7 @@ async def test_stt_falls_back_to_plain_json(hass: HomeAssistant, aioclient_mock,
         return AiohttpClientMockResponse(method, url, json={"text": "lights off"})
 
     aioclient_mock.post("http://llm.test/v1/audio/transcriptions", side_effect=side_effect)
-    await mock_entry.runtime_data.store.async_update_audio({"stt": "m_test0001"})
+    await mock_entry.runtime_data.store.async_set_pool("stt", ["m_test0001"])
     heard = await mock_entry.runtime_data.audio.async_stt(SILENCE * 100)
     assert heard == {"text": "lights off", "language": None, "confidence": None, "words": [], "engine": "m_test0001"}
 
@@ -153,7 +153,7 @@ async def test_stt_falls_back_when_machine_is_off(hass: HomeAssistant, aioclient
     await setup_aac(hass, mock_entry)
     aioclient_mock.post("http://llm.test/v1/audio/transcriptions", exc=aiohttp.ClientConnectionError("off"))
     hub = mock_entry.runtime_data.audio
-    await mock_entry.runtime_data.store.async_update_audio({"stt": "m_test0001"})
+    await mock_entry.runtime_data.store.async_set_pool("stt", ["m_test0001"])
 
     class FakeEntity:
         entity_id = "stt.local"
@@ -168,7 +168,8 @@ async def test_stt_falls_back_when_machine_is_off(hass: HomeAssistant, aioclient
     ):
         heard = await hub.async_stt(SILENCE * 100)
         assert heard["text"] == "lights off" and heard["engine"] == "stt.local"
-        assert hub.overview()["stt_fallback"]["using"] == "stt.local"
+        stt_role = mock_entry.runtime_data.broker.status()["roles"]["stt"]
+        assert stt_role["items"][0]["state"] == "down" and stt_role["fallback"]
         calls = aioclient_mock.call_count
         await hub.async_stt(SILENCE * 100)
         assert aioclient_mock.call_count == calls  # no retry within the minute

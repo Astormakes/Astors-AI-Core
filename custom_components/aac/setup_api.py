@@ -25,7 +25,7 @@ from .models import async_list_models, async_overview, model_kind, resolve_model
 from .provider import ProviderError, ProviderNotFoundError
 from .runs import current_run
 from .status import setup_steps
-from .store import CONF_MASTER_MODEL
+from .pools import async_set_role, is_entity
 
 if TYPE_CHECKING:
     from . import AACConfigEntry
@@ -49,6 +49,9 @@ async def owner_present(hass: HomeAssistant, user_id: str | None) -> bool:
     if not user_id or not (user := await hass.auth.async_get_user(user_id)):
         return False
     return user.is_admin
+
+
+_ROLE_NAMES = {"master": "master", "memory": "memory", "speech": "stt", "voice": "tts"}
 
 
 class _SetupTool(llm.Tool):
@@ -91,17 +94,20 @@ class SetupStatusTool(_SetupTool):
                      "state": "done" if s["done"] else "skipped" if s["skipped"] else "open"}
                     for s in setup_steps(hass, store)
                 ],
-                "master_model": store.master[CONF_MASTER_MODEL],
-                "memory_model": store.memory["embed_model"],
+                "pools": {
+                    name: {"list": [f"{i['id']} ({i['state']})" for i in data.broker.status()["roles"][role]["items"]],
+                           "in_use_now": data.broker.status()["roles"][role]["active"]}
+                    for name, role in _ROLE_NAMES.items()
+                },
                 "heartbeat": {k: hb[k] for k in ("enabled", "interval", "quiet_start", "quiet_end")},
                 "triggers": len(store.triggers),
                 "audio": {
                     "connected_sources": [{"id": c["id"], "name": c["name"], "area": c["area"]} for c in audio["connected"]],
                     "sources_seen_before": [k["name"] for k in store.audio["known"]],
-                    "speech_to_text": audio["engines"]["stt"],
-                    "speech_to_text_fallback": audio["engines"]["stt_fallback"],
-                    "stt_options": audio["engines"]["stt_options"] + ["or any speech model from list_models (multilingual whisper detects the language)"],
-                    "text_to_speech": audio["engines"]["tts"], "tts_options": audio["engines"]["tts_options"],
+                    "speech_to_text_now": audio["engines"]["stt"],
+                    "ha_stt_engines": audio["engines"]["stt_options"],
+                    "text_to_speech_now": audio["engines"]["tts"], "ha_tts_engines": audio["engines"]["tts_options"],
+                    "language": store.audio["language"] or "detect per sentence",
                     "names_that_wake_you": store.audio["names"],
                     "follow_up_seconds": store.audio["follow_up"],
                     "how_to_add_a_source": "Run the AAC satellite program (satellite/ in the AAC repository) on the "
@@ -181,32 +187,36 @@ class UseModelTool(_SetupTool):
     name = "use_model"
     title = "Use model"
     description = (
-        "Give a model (id from list_models) a role: master (thinks and answers), memory (embeddings) "
-        "or speech (speech to text for the audio pipeline, e.g. a whisper model)."
+        "Put a model (id from list_models) or an HA engine (stt.* / tts.*) into a role's pool. Roles: "
+        "master (thinks and answers), memory (embeddings, one model), speech (speech to text), voice "
+        "(text to speech). position 'first' = preferred, 'last' = fallback when the others are "
+        "unreachable (e.g. a PC that is not always on first, the server's model last). remove=true takes it out."
     )
     annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
     parameters = probatio.Schema(
         {
-            probatio.Required("role"): probatio.In(["master", "memory", "speech"]),
+            probatio.Required("role"): probatio.In(list(_ROLE_NAMES)),
             probatio.Required("model_id"): str,
+            probatio.Optional("position"): probatio.In(["first", "last"]),
+            probatio.Optional("remove"): bool,
         }
     )
 
     async def _async_run(self, hass, args):
         data = self._entry.runtime_data
-        if resolve_model(hass, data.store, args["model_id"]) is None:
-            return llm.ToolResult(data={"error": "Unknown model id; use list_models."}, error=True)
-        if args["role"] == "master":
-            await data.store.async_update_master({CONF_MASTER_MODEL: args["model_id"]})
-            return llm.ToolResult(data={"master": args["model_id"], "note": "Takes effect from the next message."})
-        if args["role"] == "speech":
-            await data.store.async_update_audio({"stt": args["model_id"]})
-            return llm.ToolResult(data={"speech_to_text": args["model_id"]})
-        changed = data.store.memory["embed_model"] != args["model_id"]
-        await data.store.async_update_memory({"embed_model": args["model_id"]})
-        if changed and data.memory:
-            self._entry.async_create_background_task(hass, data.memory.async_reembed(), "aac memory re-embed")
-        return llm.ToolResult(data={"memory_model": args["model_id"]})
+        role, resource = _ROLE_NAMES[args["role"]], args["model_id"]
+        items = [r for r in data.store.pools.get(role, []) if r != resource]
+        if not args.get("remove"):
+            if is_entity(resource):
+                if not resource.startswith(f"{'stt' if role == 'stt' else 'tts'}.") or hass.states.get(resource) is None:
+                    return llm.ToolResult(data={"error": "Unknown engine for this role; see setup_status."}, error=True)
+            elif role == "tts" or resolve_model(hass, data.store, resource) is None:
+                return llm.ToolResult(data={"error": "Unknown model id (use list_models); voice takes HA engines."}, error=True)
+            items = [*items, resource] if args.get("position") == "last" else [resource, *items]
+        await async_set_role(hass, self._entry, role, items)
+        status = data.broker.status()["roles"][role]
+        return llm.ToolResult(data={"role": args["role"], "pool": [i["id"] for i in status["items"]],
+                                    "in_use_now": status["active"]})
 
 
 class HeartbeatTool(_SetupTool):
@@ -249,15 +259,13 @@ class AudioTool(_SetupTool):
     name = "set_audio"
     title = "Set audio"
     description = (
-        "Audio settings: speech to text (an HA engine from setup_status, or a speech model id from list_models), "
-        "text to speech (an HA engine), "
-        "the names that wake you by voice, and how many seconds a follow-up needs no name."
+        "Audio settings: the names that wake you by voice, how many seconds a follow-up needs no name, "
+        "and the language (empty = detect per sentence). Engines are pools: use_model with role speech/voice."
     )
     annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
     parameters = probatio.Schema(
         {
-            probatio.Optional("speech_to_text"): str,
-            probatio.Optional("text_to_speech"): str,
+            probatio.Optional("language", description="e.g. 'de'; empty = detect"): str,
             probatio.Optional("names", description="e.g. ['computer', 'glados']"): [str],
             probatio.Optional("follow_up_seconds"): int,
         }
@@ -266,12 +274,8 @@ class AudioTool(_SetupTool):
     async def _async_run(self, hass, args):
         data = self._entry.runtime_data
         changes: dict = {}
-        for arg, key, domain in (("speech_to_text", "stt", "stt"), ("text_to_speech", "tts", "tts")):
-            if arg in args:
-                is_model = domain == "stt" and resolve_model(hass, data.store, args[arg]) is not None
-                if not is_model and args[arg] not in hass.states.async_entity_ids(domain):
-                    return llm.ToolResult(data={"error": f"Unknown {domain} engine; see setup_status."}, error=True)
-                changes[key] = args[arg]
+        if "language" in args:
+            changes["language"] = args["language"].strip() or None
         if "names" in args:
             names = [n.strip() for n in args["names"] if n.strip()]
             if not names:
@@ -281,7 +285,7 @@ class AudioTool(_SetupTool):
             changes["follow_up"] = min(120, max(0, int(args["follow_up_seconds"])))
         await data.store.async_update_audio(changes)
         cfg = data.store.audio
-        return llm.ToolResult(data={k: cfg[k] for k in ("stt", "tts", "names", "follow_up")})
+        return llm.ToolResult(data={k: cfg[k] for k in ("language", "names", "follow_up")})
 
 
 class SpeakTestTool(_SetupTool):

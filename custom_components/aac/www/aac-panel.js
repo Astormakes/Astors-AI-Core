@@ -173,6 +173,8 @@ textarea { min-height: 10em; resize: vertical; }
 .split { display: grid; gap: 1.3em; grid-template-columns: 1fr; align-items: start; }
 @container (min-width: 60em) { .split { grid-template-columns: minmax(0, 1fr) minmax(20em, 26em); } }
 .flow { display: flex; flex-direction: column; }
+.role { border-top: 1px solid rgba(0, 240, 255, .2); padding-top: .7em; margin-top: .7em; }
+.role h3 { font-size: .95em; letter-spacing: .15em; color: var(--cyan); margin: 0 0 .2em; font-weight: 600; }
 .transcript { max-height: 22em; overflow-y: auto; display: flex; flex-direction: column; gap: .5em; }
 .tline { border-left: 1px solid var(--line, rgba(0,229,255,.3)); padding: .1em 0 .1em .7em; }
 .tline .m { font-size: .8em; opacity: .7; }
@@ -330,6 +332,9 @@ class AacPanel extends HTMLElement {
       }
       if (this._run && this._run.id === run.id) this._run = run;
       this._render();
+    } else if (ev.what === "pools") {
+      clearTimeout(this._poolTimer);
+      this._poolTimer = setTimeout(async () => { await this._loadState(); if (!this._typing()) this._render(); }, 300);
     } else if (ev.what === "audio") {
       clearTimeout(this._audioTimer);
       this._audioTimer = setTimeout(async () => {
@@ -552,9 +557,10 @@ class AacPanel extends HTMLElement {
         <div class="seg">
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
           ${this._tab("settings/charter", "Charter")}
-          ${this._tab("settings/master", "Master agent", this._stepOpen("master") ? '<span class="dot open"></span>' : "")}
+          ${this._tab("settings/master", "Master agent")}
           ${this._tab("settings/triggers", "Triggers")}
-          ${this._tab("models", "Models", this._stepOpen("models") ? '<span class="dot open"></span>' : "")}
+          ${this._tab("settings/pools", "Pools", this._stepOpen("master") || this._stepOpen("memory") ? '<span class="dot open"></span>' : "")}
+          ${this._tab("models", "Models", this._stepOpen("models") ? '<span class="dot open"></span>' : "", "deep")}
           ${this._tab("settings/audio", "Audio pipeline")}
           ${this._tab("settings/audio/sources", "Sources", "", "deep")}
           ${this._tab("settings/mcp", "MCP", "", "soon")}
@@ -583,6 +589,7 @@ class AacPanel extends HTMLElement {
     if (v === "models/new" || v.startsWith("model/edit/")) return this._renderModelForm();
     if (v.startsWith("model/")) return this._renderModel(v.slice(6));
     if (v === "settings/master") return this._renderMaster();
+    if (v === "settings/pools") return this._renderPools();
     if (v === "settings/charter") return this._renderCharter();
     if (v === "settings/triggers") return this._renderTriggers();
     if (v === "trigger/new" || v.startsWith("trigger/edit/")) return this._renderTriggerForm();
@@ -616,7 +623,7 @@ class AacPanel extends HTMLElement {
   }
 
   _renderChat() {
-    const master = this._state?.master?.model;
+    const master = this._poolItems("master")[0];
     const chat = this._view === "chat/new" ? null : this._chat;
     const msgs = chat?.messages || [];
     const isAac = chat?.id === "aac";
@@ -777,7 +784,7 @@ class AacPanel extends HTMLElement {
   _renderModels() {
     const w = this._models;
     if (!w) return this._page("MODELS", "", '<div class="card"><h2>SCANNING</h2><p>Looking for model servers…<span class="cursor"></span></p></div>');
-    const master = this._state?.master?.model;
+    const master = this._poolItems("master")[0];
     // A manual model's own server only matters here if it offers more models
     const servers = w.auto.filter((srv) => srv.models.length || !srv.source.startsWith("w:"));
     const auto = servers.map((srv) => `
@@ -808,7 +815,7 @@ class AacPanel extends HTMLElement {
 
   _renderModel(id) {
     const w = this._models;
-    const master = this._state?.master?.model;
+    const master = this._poolItems("master")[0];
     const manual = w?.manual.find((m) => m.id === id);
     let srv = null, auto = null;
     for (const s of w?.auto || []) { const a = s.models.find((x) => x.id === id); if (a) { srv = s; auto = a; } }
@@ -867,22 +874,88 @@ class AacPanel extends HTMLElement {
       </div>`);
   }
 
+  // ---------------------------------------------------------------- settings: pools
+  _poolItems(role) { return (this._state?.pools?.roles?.[role]?.items || []).map((i) => i.id); }
+
+  async _setPool(role, items) {
+    const pools = await this._ws("aac/pool/set", { role, items });
+    if (this._state) this._state.pools = pools;
+    this._render();
+  }
+
+  _resourceLabel(id) {
+    if (id.startsWith("stt.") || id.startsWith("tts.")) return this._hass?.states?.[id]?.attributes?.friendly_name || id;
+    return this._modelLabel(id);
+  }
+
+  _roleSummary(role, now) {
+    const r = this._state?.pools?.roles?.[role];
+    const active = r?.active || now;
+    const state = !r || !r.items.length ? (now ? `automatic: ${esc(this._resourceLabel(now))}` : "none")
+      : `${esc(this._resourceLabel(active || r.items[0].id))}${r.fallback ? ' <span class="tag plan">FALLBACK</span>' : ""}${r.items.length > 1 ? ` <span class="hint">· ${r.items.length} in the pool</span>` : ""}`;
+    return `<div class="src" style="margin:.2em 0 .6em"><div style="flex:1">${state}</div><button class="btn" data-go="settings/pools">Pools</button></div>`;
+  }
+
+  _roleOptions(role) {
+    const take = this._state?.pools?.roles?.[role]?.takes;
+    const have = new Set(this._poolItems(role));
+    const models = this._allModels().filter((m) => !have.has(m.id));
+    const kind = (m) => /whisper|large-v\d|parakeet|canary|voxtral|moonshine|speech|stt|asr/i.test(m.detail + " " + m.label) ? "speech"
+      : /embed|bge|e5|nomic|minilm|gte/i.test(m.detail + " " + m.label) ? "embedding" : "chat";
+    const ents = (d) => Object.keys(this._hass?.states || {}).filter((e) => e.startsWith(d + ".") && !have.has(e)).sort();
+    let opts = [];
+    if (take === "tts") opts = ents("tts").map((e) => [e, this._resourceLabel(e)]);
+    else {
+      const fit = models.filter((m) => kind(m) === take), rest = models.filter((m) => kind(m) !== take);
+      opts = [...fit, ...rest].map((m) => [m.id, `${m.label} · ${m.detail}${m.online ? "" : " (offline)"}`]);
+      if (take === "speech") opts = [...opts, ...ents("stt").map((e) => [e, `HA: ${this._resourceLabel(e)}`])];
+    }
+    return opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  }
+
+  _renderPools() {
+    const p = this._state?.pools;
+    if (!p) return this._page("POOLS", "", '<div class="card"><p>Loading…</p></div>');
+    const stateText = { ok: "ready", down: "not answering", missing: "gone", unused: "unused (one model only)" };
+    const role = (id) => {
+      const r = p.roles[id];
+      const rows = r.items.map((it, i) => `
+        <div class="src">
+          <span class="dot ${it.state === "ok" ? "ok" : it.state === "down" ? "bad" : "open"}"></span>
+          <div style="flex:1;min-width:0"><div class="n">${i + 1}. ${esc(this._resourceLabel(it.id))} ${it.active ? '<span class="tag ok">IN USE</span>' : ""}</div>
+            <div class="m">${esc(stateText[it.state] || it.state)}${it.error ? ` · ${esc(it.error)}` : ""}</div></div>
+          <span class="actions" style="margin:0">
+            ${i > 0 ? `<button class="icon-btn" data-pool-up="${esc(id)}|${i}" title="Up">↑</button>` : ""}
+            ${i < r.items.length - 1 ? `<button class="icon-btn" data-pool-down="${esc(id)}|${i}" title="Down">↓</button>` : ""}
+            <button class="icon-btn" data-pool-del="${esc(id)}|${i}" title="Remove">${icon("trash")}</button>
+          </span>
+        </div>`).join("");
+      const opts = this._roleOptions(id);
+      return `<div class="role"><h3>${esc(r.title)}</h3><p class="hint">${esc(r.help)}</p>
+        ${rows || '<p class="hint">Empty.</p>'}
+        ${opts && !(r.single && r.items.length) ? `<div class="row" style="margin-top:.4em"><div style="flex:1"><select data-pool-pick="${esc(id)}">${opts}</select></div><div style="flex:none"><button class="btn" data-pool-add="${esc(id)}">Add</button></div></div>` : ""}
+      </div>`;
+    };
+    const pool = (name) => {
+      const roles = Object.keys(p.roles).filter((r) => p.roles[r].pool === name);
+      return `<div class="card"><h2>${esc(name.toUpperCase())}</h2><p>${esc(p.pools[name])}</p>${roles.map(role).join("") || '<p class="hint">Nothing here yet.</p>'}</div>`;
+    };
+    return this._page("POOLS", "the home's models and engines, shared by everything", `
+      <div class="card"><p>Each role uses the first entry that answers. Put a fast machine that is not always on (a PC) first and an always-on one after it: when the first does not answer, the next takes over and the first is tried again a minute later. Models themselves are added under Models.</p>
+        <div class="actions"><button class="btn" data-go="models">Models</button></div></div>
+      <div class="cards">${pool("thinking")}${pool("voice")}${pool("vision")}</div>`);
+  }
+
   // ---------------------------------------------------------------- settings: master
   _renderMaster() {
     const st = this._state;
     if (!st) return this._page("MASTER AGENT", "", "");
     const m = st.master;
-    const models = this._allModels();
-    const known = models.some((w) => w.id === m.model);
-    const opts = [`<option value="" ${m.model ? "" : "selected"}>— choose a model —</option>`]
-      .concat(!known && m.model ? [`<option value="${esc(m.model)}" selected>${esc(this._modelLabel(m.model))} (offline)</option>`] : [])
-      .concat(models.map((w) => `<option value="${esc(w.id)}" ${w.id === m.model ? "selected" : ""}>${esc(w.label)} · ${esc(w.detail)}${w.online ? "" : " (offline)"}</option>`));
     return this._page("MASTER AGENT", st.agent_entity_id ? esc(st.agent_entity_id) : "", `<div class="card"><h2>MASTER AGENT</h2>
-        <p>The persistent agent that answers, decides and acts. Models are managed under SETTINGS → Models.</p>
+        <p>The persistent agent that answers, decides and acts. Which model thinks for it is the master role in SETTINGS → Pools.</p>
         <div class="form-grid">
           <div>
-            <label for="m-model">Model</label><select id="m-model">${opts.join("")}</select>
-            ${this._models ? "" : '<div class="hint">scanning models…</div>'}
+            <label>Model</label>${this._roleSummary("master")}
             <label>Tools from Home Assistant</label>
             ${st.llm_apis.map((a) => `<label class="check"><input type="checkbox" class="m-api" value="${esc(a.id)}" ${(m.llm_hass_api || []).includes(a.id) ? "checked" : ""}>${esc(a.name)}</label>`).join("")}
             <div class="row">
@@ -907,9 +980,6 @@ class AacPanel extends HTMLElement {
     const mem = st.memory;
     const m = this._memory;
     const stats = m?.stats || {};
-    const models = this._allModels();
-    const opts = [`<option value="" ${mem.embed_model ? "" : "selected"}>— none (keywords only) —</option>`]
-      .concat(models.map((w) => `<option value="${esc(w.id)}" ${w.id === mem.embed_model ? "selected" : ""}>${esc(w.label)} · ${esc(w.detail)}${w.online ? "" : " (offline)"}</option>`));
     const rows = !m ? '<p class="hint">Loading…</p>' : !m.memories.length ? `<p class="hint">${this._memQuery ? "Nothing found." : "Nothing remembered yet."}</p>` :
       m.memories.map((x) => `
         <div class="src">
@@ -929,8 +999,8 @@ class AacPanel extends HTMLElement {
         <div class="card"><h2>SETTINGS</h2>
           <p>One local file in Home Assistant's config folder (included in HA backups). Search uses keywords and, with an embedding model, meaning ("cellar" finds "basement"). The master always has remember / recall / forget.</p>
           <label class="check"><input type="checkbox" id="mem-enabled" ${mem.enabled ? "checked" : ""}>Memory on</label>
-          <label for="mem-model">Embedding model</label><select id="mem-model">${opts.join("")}</select>
-          <p class="hint" style="margin-top:.5em">A multilingual one is best (e.g. bge-m3 via llama-server <code>--embeddings</code>). Add it under Models first.</p>
+          <label>Embedding model</label>${this._roleSummary("memory")}
+          <p class="hint" style="margin-top:.5em">A multilingual one is best (e.g. bge-m3 via llama-server <code>--embeddings</code>). Without one: keywords only.</p>
           <div class="kv"><span class="k">Stored</span><span class="v">${esc(stats.total ?? "…")}</span><span class="k">With vectors</span><span class="v">${esc(stats.embedded ?? "…")}</span><span class="k">Unconfirmed</span><span class="v">${esc(stats.unconfirmed ?? "…")}</span></div>
           <div class="actions"><button class="btn primary" id="mem-save">Save</button><button class="btn" id="mem-reembed">Re-embed all</button></div>
           ${this._flashHtml()}
@@ -981,8 +1051,6 @@ class AacPanel extends HTMLElement {
         <div class="body"><div class="name">${esc(s.name)} ${s.state === "built" ? "" : '<span class="tag plan">PLANNED</span>'}</div><div class="desc">${esc(s.desc)}</div></div>
       </div>`).join("");
     const set = a.settings || {}, eng = a.engines || {};
-    const opt = (list, chosen, current) => `<option value="" ${chosen ? "" : "selected"}>Local first (now: ${esc(current || "none")})</option>` +
-      (list || []).map((e) => `<option value="${esc(e)}" ${chosen === e ? "selected" : ""}>${esc(e)}</option>`).join("");
     const lines = (a.transcript || []).slice().reverse().map((l) => `
       <div class="tline ${l.addressed ? "to-aac" : ""}"><span class="m">${esc(new Date(l.time).toLocaleTimeString())} · ${esc(l.name)}${l.language ? ` · ${esc(l.language)}` : ""}${l.addressed ? " → AAC" : ""}</span><div>${esc(l.text)}</div></div>`).join("");
     return this._page("AUDIO PIPELINE", `${(a.connected || []).length} connected · separate from HA's Assist`, `
@@ -1003,10 +1071,9 @@ class AacPanel extends HTMLElement {
             <div><label for="au-follow">Follow-up without name (s)</label><input id="au-follow" type="number" min="0" max="120" value="${esc(set.follow_up ?? 10)}" inputmode="numeric"></div>
             <div><label for="au-lang">Language (empty = HA's)</label><input id="au-lang" value="${esc(set.language || "")}" placeholder="en, de, …"></div>
           </div>
-          ${eng.stt_fallback ? `<div class="msg err">The speech model is not reachable (machine off?) since ${esc(new Date(eng.stt_fallback.since).toLocaleTimeString())}. Using ${esc(eng.stt_fallback.using || "nothing")} meanwhile; AAC tries again every minute.</div>` : ""}
-          <label for="au-stt">Speech to text</label><select id="au-stt">${opt(eng.stt_options, set.stt, eng.stt)}${this._speechModelOptions(set.stt)}</select>
-          <label for="au-tts">Voice (text to speech)</label><select id="au-tts">${opt(eng.tts_options, set.tts, eng.tts)}</select>
-          <p class="hint">Speech to text: any speech model from Models (e.g. a multilingual whisper on an OpenAI-compatible server; without a language it detects German, English, … per sentence), or one of HA's engines. HA's own voice assistants stay as they are. "Local first" prefers engines running in your home over cloud ones.</p>
+          <label>Speech to text</label>${this._roleSummary("stt", eng.stt)}
+          <label>Voice (text to speech)</label>${this._roleSummary("tts", eng.tts)}
+          <p class="hint">Engines are the voice pool (SETTINGS → Pools): speech models from Models (e.g. a multilingual whisper; without a language it detects German, English, … per sentence) or HA's engines, in your order, with fallback. HA's own voice assistants stay as they are.</p>
           <div class="actions"><button class="btn primary" id="au-save">Save</button></div>
           ${this._flashHtml()}
         </div>
@@ -1015,15 +1082,6 @@ class AacPanel extends HTMLElement {
           <div class="flow">${flow}</div>
         </div>
       </div>`);
-  }
-
-  _speechModelOptions(chosen) {
-    const m = this._models || {};
-    const all = [...(m.manual || []).map((x) => ({ id: x.id, label: `${x.name} (${x.model})`, model: x.model })),
-      ...(m.auto || []).flatMap((srv) => (srv.models || []).map((x) => ({ id: x.id, label: `${srv.label}: ${x.model}`, model: x.model })))];
-    const speech = all.filter((x) => /whisper|large-v\d|parakeet|canary|voxtral|moonshine|speech|stt|asr/i.test(x.model) || x.id === chosen);
-    if (!speech.length) return "";
-    return `<optgroup label="Models">${speech.map((x) => `<option value="${esc(x.id)}" ${chosen === x.id ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</optgroup>`;
   }
 
   _liveSources(list) {
@@ -1114,10 +1172,26 @@ class AacPanel extends HTMLElement {
       this._state = await this._ws("aac/setup/skip", { step: el.dataset.skip, skipped: el.dataset.skipped === "1" });
       this._render();
     }));
+    const poolMove = (attr, fn) => sr.querySelectorAll(`[${attr}]`).forEach((el) => el.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const [role, i] = el.getAttribute(attr).split("|");
+      const items = this._poolItems(role);
+      fn(items, Number(i));
+      try { await this._setPool(role, items); } catch (err) { this._flash = { ok: false, text: err.message || String(err) }; this._render(); }
+    }));
+    poolMove("data-pool-up", (a, i) => a.splice(i - 1, 2, a[i], a[i - 1]));
+    poolMove("data-pool-down", (a, i) => a.splice(i, 2, a[i + 1], a[i]));
+    poolMove("data-pool-del", (a, i) => a.splice(i, 1));
+    sr.querySelectorAll("[data-pool-add]").forEach((el) => el.addEventListener("click", async () => {
+      const role = el.dataset.poolAdd;
+      const pick = sr.querySelector(`[data-pool-pick="${CSS.escape(role)}"]`)?.value;
+      if (pick) await this._setPool(role, [...this._poolItems(role), pick]);
+    }));
     sr.querySelectorAll("[data-master]").forEach((el) => el.addEventListener("click", async (e) => {
       e.stopPropagation();
-      this._state = await this._ws("aac/master/update", { model: el.dataset.master });
-      this._flash = { ok: true, text: "Master model set." };
+      const items = [el.dataset.master, ...this._poolItems("master").filter((x) => x !== el.dataset.master)];
+      await this._setPool("master", items);
+      this._flash = { ok: true, text: "First choice for the master now." };
       this._render();
     }));
     sr.querySelectorAll("[data-delete]").forEach((el) => el.addEventListener("click", async () => {
@@ -1184,7 +1258,7 @@ class AacPanel extends HTMLElement {
     sr.querySelector("#mem-open")?.addEventListener("change", (e) => { this._memOpenOnly = e.target.checked; this._memQuery = ""; this._loadMemory(); });
     sr.querySelector("#mem-save")?.addEventListener("click", async () => {
       try {
-        this._state = await this._ws("aac/memory/settings", { enabled: sr.querySelector("#mem-enabled").checked, embed_model: sr.querySelector("#mem-model").value || null });
+        this._state = await this._ws("aac/memory/settings", { enabled: sr.querySelector("#mem-enabled").checked });
         this._flash = { ok: true, text: "Saved. A new embedding model fills in vectors in the background." };
       } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
       this._render();
@@ -1240,8 +1314,6 @@ class AacPanel extends HTMLElement {
         names: sr.querySelector("#au-names").value.split(",").map((n) => n.trim()).filter(Boolean),
         follow_up: Number(sr.querySelector("#au-follow").value) || 0,
         language: sr.querySelector("#au-lang").value.trim() || null,
-        stt: sr.querySelector("#au-stt").value || null,
-        tts: sr.querySelector("#au-tts").value || null,
       });
       this._flash = { ok: true, text: "Saved." };
     } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
@@ -1322,7 +1394,6 @@ class AacPanel extends HTMLElement {
     const sr = this.shadowRoot;
     try {
       this._state = await this._ws("aac/master/update", {
-        model: sr.querySelector("#m-model").value || null,
         prompt: sr.querySelector("#m-prompt").value,
         llm_hass_api: [...sr.querySelectorAll(".m-api:checked")].map((el) => el.value),
         temperature: parseFloat(sr.querySelector("#m-temp").value),

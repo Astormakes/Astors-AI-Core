@@ -30,14 +30,12 @@ from .const import (
     MAX_TOOL_ITERATIONS,
     MAX_TOOL_ITERATIONS_AUTO,
 )
-from .provider import OpenAICompatProvider, ProviderError
+from .provider import OpenAICompatProvider, ProviderConnectionError, ProviderError
 from .extractor import async_extract
 from .memory_api import API_ID as MEMORY_API_ID
 from .schedule_api import API_ID as SCHEDULE_API_ID
 from .setup_api import API_ID as SETUP_API_ID, owner_present
 from .runs import current_run
-from .store import CONF_MASTER_MODEL
-from .models import resolve_model
 
 
 async def async_setup_entry(
@@ -231,6 +229,12 @@ class AACConversationEntity(
         conversation.async_unset_agent(self.hass, self.entry)
         await super().async_will_remove_from_hass()
 
+    def _provider(self, endpoint) -> OpenAICompatProvider:
+        # Short connect timeout: a machine that is off must not stall the answer
+        return OpenAICompatProvider(
+            async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key, connect_timeout=3
+        )
+
     async def _async_handle_message(
         self,
         user_input: conversation.ConversationInput,
@@ -238,20 +242,20 @@ class AACConversationEntity(
     ) -> conversation.ConversationResult:
         """Answer one user message, running tool calls as needed."""
         store = self.entry.runtime_data.store
+        broker = self.entry.runtime_data.broker
         options = store.master
-        endpoint = resolve_model(self.hass, store, options[CONF_MASTER_MODEL])
-        if endpoint is None:
+        picked = broker.endpoint("master")
+        if picked is None:
             response = intent.IntentResponse(language=user_input.language)
             response.async_set_error(
                 intent.IntentResponseErrorCode.UNKNOWN,
-                "AAC has no master model yet. Open the AAC panel to set it up.",
+                "AAC has no reachable master model. Open the AAC panel (SETTINGS → Pools).",
             )
             return conversation.ConversationResult(
                 response=response, conversation_id=chat_log.conversation_id
             )
-        provider = OpenAICompatProvider(
-            async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key
-        )
+        model_id, endpoint = picked
+        provider = self._provider(endpoint)
         run = current_run.get()
         api_ids: list[str] | None = None
         if not run or run.allow_tools:
@@ -328,13 +332,27 @@ class AACConversationEntity(
             if decide and messages and messages[0]["role"] == "system":
                 # Into the first system message: some chat templates allow no other
                 messages[0] = {**messages[0], "content": messages[0]["content"] + DECISION_RULE}
-            try:
-                reply = await provider.chat(
-                    endpoint.model, messages, None if final else tools, **params
-                )
-            except ProviderError as err:
-                LOGGER.error("Model request failed: %s", err)
-                raise HomeAssistantError(f"Model request failed: {err}") from err
+            while True:
+                try:
+                    reply = await provider.chat(
+                        endpoint.model, messages, None if final else tools, **params
+                    )
+                except ProviderConnectionError as err:
+                    # Its machine did not answer (e.g. a PC that is off): next in the pool
+                    broker.mark_down(model_id, str(err))
+                    if (picked := broker.endpoint("master")) is None:
+                        raise HomeAssistantError(f"No master model reachable: {err}") from err
+                    LOGGER.info("Master model %s unreachable, using %s", model_id, picked[0])
+                    if run:
+                        run.steps.append({"type": "text", "text": f"{model_id} unreachable, switched to {picked[0]}"})
+                    model_id, endpoint = picked
+                    provider = self._provider(endpoint)
+                    continue
+                except ProviderError as err:
+                    LOGGER.error("Model request failed: %s", err)
+                    raise HomeAssistantError(f"Model request failed: {err}") from err
+                broker.mark_up(model_id)
+                break
 
             async for _tool_result in chat_log.async_add_assistant_content(
                 conversation.AssistantContent(

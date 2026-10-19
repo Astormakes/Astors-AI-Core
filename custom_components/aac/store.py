@@ -56,7 +56,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Manual models: {id, name, base_url, api_key, model}
     "models": [],
     "master": {
-        CONF_MASTER_MODEL: None,
         CONF_PROMPT: DEFAULT_PROMPT,
         CONF_LLM_HASS_API: [llm.LLM_API_ASSIST],
         CONF_TEMPERATURE: DEFAULT_TEMPERATURE,
@@ -83,12 +82,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "autonomy": {"schedule": "allowed"},
     # The owner's values for every agent; "" = the built-in draft
     "charter": "",
-    # Long-term memory; embed_model = a model id from Models (None: keywords only)
-    "memory": {"enabled": True, "embed_model": None},
-    # AAC's own audio pipeline: HA speech engines used as tools (entity ids, None = HA's default),
-    # the names that address AAC by voice, and how long a follow-up needs no name (seconds)
+    # Long-term memory (its embedding model is the pool role "memory"; none = keywords only)
+    "memory": {"enabled": True},
+    # AAC's own audio pipeline (engines are the pool roles "stt"/"tts"): language (None = detect),
+    # the names that address AAC by voice, how long a follow-up needs no name (seconds),
     # known = sources that ever connected ({id, name}), for the setup step
-    "audio": {"stt": None, "tts": None, "language": None, "names": ["computer"], "follow_up": 10, "known": []},
+    "audio": {"language": None, "names": ["computer"], "follow_up": 10, "known": []},
+    # Pools (thinking / voice / vision, above domains): role → ordered list of model ids
+    # or HA engine entity ids; the broker uses the first reachable one (pools.py)
+    "pools": {"master": [], "memory": [], "stt": [], "tts": []},
 }
 
 MASTER_KEYS = set(DEFAULT_CONFIG["master"])
@@ -136,6 +138,18 @@ class AACStore:
         data["audio"].update(stored.get("audio", {}))
         data["charter"] = stored.get("charter", "")
         data["autonomy"].update(stored.get("autonomy", {}))
+        # Up to 0.11 every role had one model: master.model, memory.embed_model, audio.stt/tts
+        pools = stored.get("pools") or {
+            "master": [master.get(CONF_MASTER_MODEL)],
+            "memory": [stored.get("memory", {}).get("embed_model")],
+            "stt": [stored.get("audio", {}).get("stt")],
+            "tts": [stored.get("audio", {}).get("tts")],
+        }
+        data["pools"].update({role: [r for r in items if r] for role, items in pools.items()})
+        data["master"].pop(CONF_MASTER_MODEL, None)
+        data["memory"].pop("embed_model", None)
+        for key in ("stt", "tts"):
+            data["audio"].pop(key, None)
         self.data = data
 
     async def async_save(self) -> None:
@@ -175,11 +189,25 @@ class AACStore:
         return existing
 
     async def async_delete_model(self, model_id: str) -> None:
-        """Remove a manual model (and unset it as master)."""
+        """Remove a manual model (and take it out of every pool)."""
         self.data["models"] = [w for w in self.models if w["id"] != model_id]
-        if self.master[CONF_MASTER_MODEL] == model_id:
-            self.master[CONF_MASTER_MODEL] = None
+        for role, items in self.pools.items():
+            self.pools[role] = [r for r in items if r != model_id and not r.startswith(f"auto|w:{model_id}|")]
         await self.async_save()
+
+    @property
+    def pools(self) -> dict[str, list[str]]:
+        """Role → ordered list of resources."""
+        return self.data["pools"]
+
+    async def async_set_pool(self, role: str, items: list[str]) -> None:
+        """Replace a role's list (duplicates dropped, order kept)."""
+        self.pools[role] = list(dict.fromkeys(i for i in items if i))
+        await self.async_save()
+
+    async def async_prefer(self, role: str, resource: str) -> None:
+        """Make a resource the first choice of a role."""
+        await self.async_set_pool(role, [resource, *self.pools.get(role, [])])
 
     @property
     def heartbeat(self) -> dict[str, Any]:

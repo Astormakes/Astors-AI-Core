@@ -6,8 +6,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
-from .store import CONF_MASTER_MODEL, AACStore
-from .models import known_servers, resolve_model
+from .models import known_servers
+from .pools import role_configured
+from .store import AACStore
 
 
 def aac_agent_entity_id(hass: HomeAssistant, entry_id: str) -> str | None:
@@ -31,17 +32,17 @@ def setup_steps(hass: HomeAssistant, store: AACStore) -> list[dict]:
             "id": "master",
             "title": "Choose the master model",
             "hint": "The model that thinks and answers for AAC.",
-            "target": "settings/master",
+            "target": "settings/pools",
             "optional": False,
-            "done": resolve_model(hass, store, store.master[CONF_MASTER_MODEL]) is not None,
+            "done": role_configured(hass, store, "master"),
         },
         {
             "id": "memory",
             "title": "Give AAC a memory",
             "hint": "Pick an embedding model so it finds memories by meaning, not only by words.",
-            "target": "settings/memory",
+            "target": "settings/pools",
             "optional": True,
-            "done": resolve_model(hass, store, store.memory["embed_model"]) is not None,
+            "done": role_configured(hass, store, "memory"),
         },
         {
             "id": "audio",

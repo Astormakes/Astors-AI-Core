@@ -66,7 +66,7 @@ def _sources(hass: HomeAssistant) -> list[dict[str, Any]]:
 
 def audio_overview(hass: HomeAssistant, hub=None, settings: dict | None = None) -> dict[str, Any]:
     """Stages, live sources, settings and engines for the panel."""
-    live = hub.overview() if hub else {"connected": [], "transcript": [], "stt": None, "tts": None, "stt_fallback": None}
+    live = hub.overview() if hub else {"connected": [], "transcript": [], "stt": None, "tts": None}
     return {
         "built": True,
         "stages": [{"id": sid, "name": name, "desc": desc, "state": state} for sid, name, desc, state in STAGES],
@@ -75,7 +75,6 @@ def audio_overview(hass: HomeAssistant, hub=None, settings: dict | None = None) 
         "settings": settings or {},
         "engines": {
             "stt": live["stt"],
-            "stt_fallback": live["stt_fallback"],
             "tts": live["tts"],
             "stt_options": sorted(hass.states.async_entity_ids("stt")),
             "tts_options": sorted(hass.states.async_entity_ids("tts")),
