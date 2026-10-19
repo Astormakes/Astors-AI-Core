@@ -26,8 +26,8 @@ STAGES = [
     ("arbitration", "Arbitration", "Same sentence on several mics: the best one wins (also tells where you are).", "planned"),
     ("stt", "Speech to text", "Only on speech. An HA speech-to-text engine used as a tool (e.g. faster-whisper).", "built"),
     ("speaker", "Speaker ID", "Who said it (voice print). For personalization, not security.", "planned"),
-    ("transcript", "Transcript", "Rolling text with time and mic. Lines with AAC's name (or a follow-up) go to the master.", "built"),
-    ("master", "Master agent", "Answers what was said to it.", "built"),
+    ("transcript", "Transcript", "Rolling text with time and mic, handed to the hearing modules.", "built"),
+    ("hearing", "Hearing modules", "Decide what to do with what was heard: Wake word (answers its name), Companion (planned).", "built"),
     ("tts", "Voice", "The answer is spoken on the same source by an HA text-to-speech engine (own voices later).", "built"),
 ]
 
@@ -73,6 +73,8 @@ def audio_overview(hass: HomeAssistant, hub=None, settings: dict | None = None) 
         "connected": live["connected"],
         "transcript": live["transcript"],
         "settings": settings or {},
+        # the hearing modules that are on in the voice domain (what AAC does with what it hears)
+        "hearing": live.get("hearing", []),
         "engines": {
             "stt": live["stt"],
             "tts": live["tts"],

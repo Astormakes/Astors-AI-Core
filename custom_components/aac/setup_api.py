@@ -123,8 +123,9 @@ class SetupStatusTool(_SetupTool):
                     "ha_stt_engines": audio["engines"]["stt_options"],
                     "text_to_speech_now": audio["engines"]["tts"], "ha_tts_engines": audio["engines"]["tts_options"],
                     "language": store.audio["language"] or "detect per sentence",
-                    "names_that_wake_you": store.audio["names"],
-                    "follow_up_seconds": store.audio["follow_up"],
+                    "your_names": store.audio["names"],
+                    "volume": store.audio.get("volume", 40),
+                    "hearing_modules_on": [h.title for h in data.capabilities.listeners(data.voice_domain.id)],
                     "how_to_add_a_source": "Run the AAC satellite program (satellite/ in the AAC repository) on the "
                     "machine with the microphone; see its README.",
                 },
@@ -383,15 +384,15 @@ class AudioTool(_SetupTool):
     name = "set_audio"
     title = "Set audio"
     description = (
-        "Audio settings: the names that wake you by voice, how many seconds a follow-up needs no name, "
-        "and the language (empty = detect per sentence). Engines are pools: use_model with role speech/voice."
+        "Audio settings: your names (what people call you by voice), the language (empty = detect per sentence) "
+        "and the volume of your voice. Engines are pools: use_model with role speech/voice. What you do with "
+        "what you hear is up to the hearing modules (Wake word, …), switched on per domain in the panel."
     )
     annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
     parameters = probatio.Schema(
         {
             probatio.Optional("language", description="e.g. 'de'; empty = detect"): str,
             probatio.Optional("names", description="e.g. ['computer', 'glados']"): [str],
-            probatio.Optional("follow_up_seconds"): int,
             probatio.Optional("volume", description="0-100 % of AAC's voice; 0 = never speak aloud"): int,
         }
     )
@@ -406,13 +407,11 @@ class AudioTool(_SetupTool):
             if not names:
                 return llm.ToolResult(data={"error": "Keep at least one name."}, error=True)
             changes["names"] = names
-        if "follow_up_seconds" in args:
-            changes["follow_up"] = min(120, max(0, int(args["follow_up_seconds"])))
         if "volume" in args:
             changes["volume"] = min(100, max(0, int(args["volume"])))
         await data.store.async_update_audio(changes)
         cfg = data.store.audio
-        return llm.ToolResult(data={k: cfg.get(k) for k in ("language", "names", "follow_up", "volume")})
+        return llm.ToolResult(data={k: cfg.get(k) for k in ("language", "names", "volume")})
 
 
 class SpeakTestTool(_SetupTool):

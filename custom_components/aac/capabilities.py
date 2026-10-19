@@ -35,6 +35,22 @@ CalendarChange = Callable[[str, str, dict[str, Any], str | None], Awaitable[dict
 CalendarRemove = Callable[[str, str, str | None], Awaitable[bool]]
 
 
+# listener(source, line, earlier) → reacts to a heard line (source: audio_hub.Source, line: the transcript
+# record, which the listener may mark: line["addressed"] = True, line["note"] = "…"; earlier: the lines
+# heard on that source before it, oldest first)
+HearingListener = Callable[[Any, dict[str, Any], list[dict[str, Any]]], Awaitable[None]]
+
+
+@dataclass
+class Hearing:
+    """A module that listens to what AAC's microphones hear (wake word, companion, …)."""
+
+    id: str
+    title: str
+    heard: HearingListener
+    module: str | None = None  # set by the loader; only modules on in the voice domain hear
+
+
 @dataclass
 class CalendarProvider:
     """A module that delivers calendar entries (and maybe takes new ones)."""
@@ -54,12 +70,26 @@ class Capabilities:
     def __init__(self) -> None:
         """Initialize."""
         self.calendar: dict[str, CalendarProvider] = {}
+        self.hearing: dict[str, Hearing] = {}
         # Choices for module settings that change at runtime: name → fn(domain_id) → [(value, label)]
         self.options: dict[str, Callable[[str], list[tuple[str, str]]]] = {}
         # Where new calendar entries go: fn(domain_id) → provider id (None = the first writer)
         self.writer_choice: Callable[[str], str | None] | None = None
         # Is a module on in a domain? fn(domain_id, module_id) → bool (set by the module loader)
         self.module_enabled: Callable[[str, str], bool] = lambda domain_id, module_id: True
+
+    def add_hearing(self, listener: Hearing) -> Callable[[], None]:
+        """Register a listener for heard lines; returns the function that removes it again."""
+        self.hearing[listener.id] = listener
+
+        def remove() -> None:
+            self.hearing.pop(listener.id, None)
+
+        return remove
+
+    def listeners(self, domain_id: str) -> list[Hearing]:
+        """The listeners whose module is on in that domain (the voice domain)."""
+        return [h for h in self.hearing.values() if not h.module or self.module_enabled(domain_id, h.module)]
 
     def add_calendar(self, provider: CalendarProvider) -> Callable[[], None]:
         """Register a provider; returns the function that removes it again."""

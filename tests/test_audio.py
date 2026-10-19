@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from homeassistant.core import HomeAssistant
 
 from custom_components.aac.audio_hub import EnergyVad, Segmenter
+from custom_components.aac.modules import async_set_access
 
 from .conftest import setup_aac
 from .test_planning import _queue, _text
@@ -33,6 +34,7 @@ def test_segmenter_cuts_speech():
 async def test_satellite_round_trip(hass: HomeAssistant, hass_client, aioclient_mock, mock_entry, configured):
     """A satellite streams; a line with AAC's name is answered by voice, others only transcribed."""
     await setup_aac(hass, mock_entry)
+    await async_set_access(mock_entry, "wakeword", "assistant", {"enabled": True})
     payloads = _queue(aioclient_mock, _text('{"to_assistant": true}'), _text("It is five o'clock."),
                       _text('{"to_assistant": false}'))
     heard = iter(["hello there", "Computer, what time is it?", "on the computer screen they asked"])
@@ -73,6 +75,8 @@ async def test_satellite_round_trip(hass: HomeAssistant, hass_client, aioclient_
     assert len(payloads) == 3  # attention check, the answer, attention check (no second answer)
     assert "hello there" in payloads[0]["messages"][0]["content"]  # the check sees what came before
     assert "by voice" in payloads[1]["messages"][0]["content"]
+    asked = payloads[1]["messages"][-1]["content"]  # look back: what was said just before the name goes with it
+    assert "hello there" in asked and asked.endswith("Now to you: Computer, what time is it?")
     assert not any(t["function"]["name"].startswith("aac-setup") for t in payloads[1]["tools"])  # voice is anonymous
     chat = mock_entry.runtime_data.chats.get("voice_pc")
     assert [m["text"] for m in chat["messages"]] == ["Computer, what time is it?", "It is five o'clock."]
@@ -80,20 +84,36 @@ async def test_satellite_round_trip(hass: HomeAssistant, hass_client, aioclient_
     assert mock_entry.runtime_data.store.audio["known"] == [{"id": "pc", "name": "PC"}]
 
 
-async def test_addressed(hass: HomeAssistant, mock_entry, configured):
-    """A name as a whole word, or a follow-up right after AAC spoke."""
+async def test_mentions(hass: HomeAssistant, mock_entry, configured):
+    """A name as a whole word, case and punctuation ignored."""
     await setup_aac(hass, mock_entry)
     hub = mock_entry.runtime_data.audio
-    source = hub.connect("pc", "PC", None, AsyncMock())
-    assert hub.addressed(source, "Hey, Computer! Lights off.")
-    assert not hub.addressed(source, "computers are fun")
-    hub.played(source)
-    assert hub.addressed(source, "and the kitchen too")
-    await mock_entry.runtime_data.store.async_update_audio({"follow_up": 0, "names": ["GLaDOS"]})
-    assert not hub.addressed(source, "and the kitchen too")
-    assert hub.addressed(source, "glados, are you there?")
-    await hass.async_block_till_done(wait_background_tasks=True)
+    assert hub.mentions("Hey, Computer! Lights off.")
+    assert not hub.mentions("computers are fun")
+    await mock_entry.runtime_data.store.async_update_audio({"names": ["GLaDOS"]})
+    assert hub.mentions("glados, are you there?") and not hub.mentions("Computer?")
 
+
+async def test_only_hearing_without_a_module(hass: HomeAssistant, hass_client, aioclient_mock, mock_entry, configured):
+    """The Wake word module is off by default: AAC hears and transcribes, but never answers."""
+    await setup_aac(hass, mock_entry)
+    payloads = _queue(aioclient_mock, _text("should not be asked"))
+    hub = mock_entry.runtime_data.audio
+    assert hub.overview()["hearing"] == []
+    client = await hass_client()
+    with (
+        patch("custom_components.aac.audio_hub.make_vad", return_value=EnergyVad()),
+        patch.object(hub, "async_stt", AsyncMock(return_value={"text": "Computer, what time is it?"})),
+    ):
+        ws = await client.ws_connect("/api/aac/audio")
+        await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "rate": 16000})
+        await ws.receive_json()
+        await ws.send_bytes(_audio((SILENCE, 0.3), (LOUD, 0.8), (SILENCE, 1)))
+        await hass.async_block_till_done(wait_background_tasks=True)
+        await ws.close()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert [(x["text"], x["addressed"]) for x in hub.transcript] == [("Computer, what time is it?", False)]
+    assert payloads == []
 
 async def test_stt_through_a_model_server(hass: HomeAssistant, aioclient_mock, mock_entry, configured):
     """Speech to text with a model from Models: WAV upload, language detected by the server."""

@@ -1763,11 +1763,9 @@ class AacPanel extends HTMLElement {
       </div>
       <div class="split">
         <div class="card"><h2>SETTINGS</h2>
-          <label for="au-names">Names that wake AAC (comma separated)</label><input id="au-names" value="${esc((set.names || []).join(", "))}">
-          <div class="row">
-            <div><label for="au-follow">Follow-up without name (s)</label><input id="au-follow" type="number" min="0" max="120" value="${esc(set.follow_up ?? 10)}" inputmode="numeric"></div>
-            <div><label for="au-lang">Language (empty = HA's)</label><input id="au-lang" value="${esc(set.language || "")}" placeholder="en, de, …"></div>
-          </div>
+          <label for="au-names">AAC's names (comma separated)</label><input id="au-names" value="${esc((set.names || []).join(", "))}">
+          <label for="au-lang">Language (empty = detect per sentence)</label><input id="au-lang" value="${esc(set.language || "")}" placeholder="en, de, …">
+          <p class="hint" style="margin-top:.3em">AAC always hears and transcribes; what it does with it is up to the hearing modules (SETTINGS → Modules: Wake word, …). ${(a.hearing || []).length ? `On now: ${esc(a.hearing.join(", "))}.` : "None is on: AAC only listens."}</p>
           <label for="au-volume">AAC's voice volume: <span id="au-volume-val">${esc(set.volume ?? 40)}</span> %</label>
           <input id="au-volume" type="range" min="0" max="100" step="5" value="${esc(set.volume ?? 40)}" style="width:100%">
           <p class="hint" style="margin-top:.2em">0 = AAC never speaks aloud (answers still appear in the Voice chat). The speaker's own buttons still work on top.</p>
@@ -2210,7 +2208,6 @@ class AacPanel extends HTMLElement {
     try {
       this._audio = await this._ws("aac/audio/settings", {
         names: sr.querySelector("#au-names").value.split(",").map((n) => n.trim()).filter(Boolean),
-        follow_up: Number(sr.querySelector("#au-follow").value) || 0,
         volume: Number(sr.querySelector("#au-volume").value),
         language: sr.querySelector("#au-lang").value.trim() || null,
       });

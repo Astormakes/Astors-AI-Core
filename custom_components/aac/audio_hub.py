@@ -53,6 +53,8 @@ LOCAL_ENGINES = {"wyoming", "piper", "whisper", "faster_whisper"}
 
 # The attention check: how many earlier lines it sees, and its answer format
 GATE_CONTEXT = 6
+# How many earlier lines of the same source a listener gets with each new one
+EARLIER_LINES = 20
 GATE_FORMAT = {"type": "json_schema", "json_schema": {"name": "attention", "schema": {
     "type": "object", "properties": {"to_assistant": {"type": "boolean"}}, "required": ["to_assistant"]}}}
 VOICE_FAILED = "Sorry, that did not work. The details are in the AAC panel."
@@ -228,13 +230,10 @@ class AudioHub:
         async_notify(self.hass, "audio")
 
     # ------------------------------------------------------------ hearing
-    def addressed(self, source: Source, text: str) -> bool:
-        """One of AAC's names in the sentence, or a follow-up right after it spoke."""
-        cfg = self.entry.runtime_data.store.audio
-        if source.last_answer and time.monotonic() - source.last_answer < float(cfg["follow_up"]):
-            return True
+    def mentions(self, text: str) -> bool:
+        """One of AAC's names in a sentence (whole words, case and punctuation ignored)."""
         said = f" {_norm(text)} "
-        return any(f" {_norm(name)} " in said for name in cfg["names"] if _norm(name))
+        return any(f" {_norm(name)} " in said for name in self.entry.runtime_data.store.audio["names"] if _norm(name))
 
     async def _async_segment(self, source: Source, pcm: bytes) -> None:
         heard = await self.async_stt(pcm)
@@ -242,21 +241,25 @@ class AudioHub:
         if not text or _HALLUCINATIONS.match(text):
             return
         line = {"time": dt_util.utcnow().isoformat(), "source": source.id, "name": source.name,
-                "text": text, "addressed": self.addressed(source, text),
+                "text": text, "addressed": False,
                 "language": heard.get("language"), "confidence": heard.get("confidence"),
                 "engine": heard.get("engine")}
-        earlier = [x["text"] for x in self.transcript if x["source"] == source.id][-GATE_CONTEXT:]
+        earlier = [x for x in self.transcript if x["source"] == source.id][-EARLIER_LINES:]
         self.transcript.append(line)
         async_notify(self.hass, "audio")
-        if line["addressed"] and self.entry.runtime_data.store.audio.get("gate", True):
-            # The name alone is not enough (a video says "computer"): a quick model judges the situation
-            if not await self._async_gate(text, earlier):
-                line["addressed"], line["gate"] = False, "not meant for AAC"
-                async_notify(self.hass, "audio")
-        if line["addressed"]:
-            await self.async_answer(source, text)
+        # The core only hears; what to do with it is up to the modules (wake word, companion, …)
+        for listener in self.entry.runtime_data.capabilities.listeners(self.entry.runtime_data.voice_domain.id):
+            self.entry.async_create_background_task(
+                self.hass, self._async_tell(listener, source, line, earlier), f"aac hearing {listener.id}"
+            )
 
-    async def _async_gate(self, text: str, earlier: list[str]) -> bool:
+    async def _async_tell(self, listener, source: Source, line: dict[str, Any], earlier: list[dict[str, Any]]) -> None:
+        try:
+            await listener.heard(source, line, earlier)
+        except Exception:  # noqa: BLE001 - one broken listener must not stop hearing
+            LOGGER.exception("AAC audio: listener %s failed", listener.id)
+
+    async def async_attention(self, text: str, earlier: list[str]) -> bool:
         """Is someone talking to AAC, or is the name just part of other speech (TV, a video, a talk)?"""
         broker = self.entry.runtime_data.broker
         if (picked := broker.endpoint_for("fast")) is None:
@@ -406,16 +409,20 @@ class AudioHub:
         await source.send(audio)
         return True
 
-    async def async_answer(self, source: Source, text: str) -> None:
-        """The voice domain's master answers a spoken line; the answer goes back by voice."""
+    async def async_answer(self, source: Source, text: str, before: list[str] | None = None) -> None:
+        """The voice domain's master answers a spoken line; the answer goes back by voice.
+        before = what was said just before it in the room (the wake word module's look-back)."""
         from .master import async_run_master  # noqa: PLC0415 - avoid an import cycle
 
         data = self.entry.runtime_data.voice_domain  # one domain owns the voice
         chat_id = f"voice_{source.id}"
         chat = data.chats.get(chat_id) or data.chats.create(f"Voice · {source.name}", chat_id)
         data.chats.add_message(chat_id, "user", text)
+        said = text
+        if before:  # the room's last lines go with it, so "…, remind me of that, computer" works
+            said = "Said just before in the room:\n" + "\n".join(f"- {b}" for b in before) + f"\n\nNow to you: {text}"
         run, result = await async_run_master(
-            self.hass, self.entry, text,
+            self.hass, self.entry, said,
             kind="chat", trigger=f"voice: {source.name}", title=chat["title"], chat_id=chat_id,
             conversation_id=chat["conversation_id"],
             extra_system_prompt=VOICE_PROMPT.format(
@@ -435,9 +442,17 @@ class AudioHub:
             await self.async_say(source, VOICE_FAILED if run.status == "failed" else run.result)
 
     # ------------------------------------------------------------ panel
+    @callback
+    def changed(self) -> None:
+        """A listener marked a line (addressed, a note): the panel shows it."""
+        async_notify(self.hass, "audio")
+
     def overview(self) -> dict[str, Any]:
         """Live state for the panel and the setup tools."""
+        data = self.entry.runtime_data
+        hearing = [h.title for h in data.capabilities.listeners(data.voice_domain.id)] if data.voice_domain else []
         return {
+            "hearing": hearing,
             "connected": [s.summary() for s in self.sources.values()],
             "transcript": list(self.transcript)[-30:],
             "stt": self.engine("stt"),

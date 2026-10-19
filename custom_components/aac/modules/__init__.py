@@ -22,7 +22,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm
 from homeassistant.helpers.storage import Store
 
-from ..capabilities import CalendarProvider
+from ..capabilities import CalendarProvider, Hearing
 from ..const import DOMAIN, LOGGER
 
 if TYPE_CHECKING:
@@ -38,6 +38,9 @@ ACCESS_DEFAULTS: dict[str, Any] = {
     "auto": True,  # automatic runs (heartbeat, triggers) may use its tools
     "destructive_needs_owner": True,  # deleting tools only while the owner is in a chat
 }
+
+# Modules whose manifest says "enabled_by_default": false (the owner switches them on per domain)
+_DEFAULT_OFF: set[str] = set()
 
 MODULES_DIR = Path(__file__).parent
 MODULES_URL = "/aac_modules"
@@ -95,6 +98,16 @@ class ModuleContext:
         """Provide (and maybe take) calendar entries (not in domains where the module is off)."""
         provider.module = self.module.id
         self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_calendar(provider))
+
+    def add_hearing(self, listener: Hearing) -> None:
+        """Hear what AAC's microphones hear (only while the module is on in the voice domain)."""
+        listener.module = self.module.id
+        self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_hearing(listener))
+
+    @property
+    def audio(self):
+        """The audio hub: sources, transcript, speaking, answering through the master."""
+        return self.entry.runtime_data.audio
 
     def add_llm_api(self, factory: Callable[[Domain, str, str], llm.API]) -> None:
         """Tools for the agents: factory(domain, api_id, name) → an llm.API, registered per domain."""
@@ -170,7 +183,8 @@ def _destructive(tool: llm.Tool) -> bool:
 def access(entry: AACConfigEntry, module_id: str, domain_id: str | None) -> dict[str, Any]:
     """A module's permissions and properties in a domain (defaults filled in)."""
     stored = entry.runtime_data.store.data["module_access"].get(domain_id or "", {}).get(module_id, {})
-    return {**ACCESS_DEFAULTS, **{k: v for k, v in stored.items() if k in ACCESS_DEFAULTS}}
+    return {**ACCESS_DEFAULTS, "enabled": module_id not in _DEFAULT_OFF,
+            **{k: v for k, v in stored.items() if k in ACCESS_DEFAULTS}}
 
 
 async def async_set_access(entry: AACConfigEntry, module_id: str, domain_id: str, values: dict[str, Any]) -> None:
@@ -218,6 +232,8 @@ async def async_load_modules(hass: HomeAssistant, entry: AACConfigEntry) -> list
     loaded = []
     for manifest in await hass.async_add_executor_job(_manifests):
         module = LoadedModule(manifest)
+        if manifest.get("enabled_by_default") is False:
+            _DEFAULT_OFF.add(manifest["id"])
         try:
             code = await hass.async_add_import_executor_job(importlib.import_module, f".{manifest['id']}", __name__)
             await code.async_setup_module(ModuleContext(hass, entry, module))
