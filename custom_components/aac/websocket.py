@@ -43,6 +43,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_state,
         ws_master_update,
         ws_models,
+        ws_machine_set,
         ws_model_save,
         ws_model_delete,
         ws_server_models,
@@ -198,6 +199,16 @@ async def ws_models(hass: HomeAssistant, connection, msg) -> None:
         if entry := _entry(hass, connection, msg):
             entry.runtime_data.broker.learn_from_overview(overview)  # real sizes for "smart"
         connection.send_result(msg["id"], overview)
+
+
+@aac_command({vol.Required("type"): "aac/machine/set", vol.Required("host"): str, vol.Required("name"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_machine_set(hass: HomeAssistant, connection, msg) -> None:
+    """Name a machine (empty = default name)."""
+    if loaded := _loaded(hass, connection, msg):
+        await loaded[0].async_set_machine(msg["host"], msg["name"])
+        connection.send_result(msg["id"], {"machines": loaded[0].machines})
 
 
 @aac_command(

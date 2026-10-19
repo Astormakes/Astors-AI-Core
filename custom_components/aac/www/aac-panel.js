@@ -255,6 +255,15 @@ textarea { min-height: 10em; resize: vertical; }
 .kv .v { word-break: break-all; }
 .wrow { display: flex; align-items: center; justify-content: space-between; gap: .85em; margin: .55em 0; flex-wrap: wrap; }
 .wrow .actions { margin: 0; }
+.machine { padding-top: .6em; padding-bottom: .6em; }
+.mhead { display: flex; align-items: center; gap: .6em; cursor: pointer; user-select: none; flex-wrap: wrap; }
+.mhead .fold { color: var(--dim); width: 1em; }
+.mhead .mname { font-weight: bold; letter-spacing: .05em; }
+.mhead .hint { margin: 0; flex: 1; }
+.mbody { margin-top: .5em; border-top: 1px solid var(--line); padding-top: .2em; }
+.mrow { flex-wrap: nowrap; }
+.mrow > span:first-child { flex: 1; min-width: 0; }
+.mrow .tag { font-size: .7em; }
 .tag { font-size: .7em; letter-spacing: .15em; padding: .15em .45em; border: 1px solid currentColor; color: var(--dim); }
 .tag.aac { color: var(--magenta); }
 .tag.plan { color: var(--amber); }
@@ -897,7 +906,7 @@ class AacPanel extends HTMLElement {
           ${this._tab("settings/entities", "Entities", this._stepOpen("entities") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/triggers", "Triggers")}
           ${this._tab("settings/pools", "Pools", this._stepOpen("master") || this._stepOpen("memory") ? '<span class="dot open"></span>' : "")}
-          ${this._tab("models", "Models", this._stepOpen("models") ? '<span class="dot open"></span>' : "", "deep")}
+          ${this._tab("models", "Compute", this._stepOpen("models") ? '<span class="dot open"></span>' : "", "deep")}
           ${this._tab("settings/audio", "Audio pipeline")}
           ${this._tab("settings/audio/sources", "Sources", "", "deep")}
           ${this._tab("settings/modules", "Modules")}
@@ -925,6 +934,7 @@ class AacPanel extends HTMLElement {
     if (v.startsWith("run/")) return this._renderRun();
     if (v === "setup") return this._renderSetup();
     if (v === "models") return this._renderModels();
+    if (v.startsWith("machine/")) return this._renderMachine(v.slice(8));
     if (v === "models/new" || v.startsWith("model/edit/")) return this._renderModelForm();
     if (v.startsWith("model/")) return this._renderModel(v.slice(6));
     if (v === "settings/master") return this._renderMaster();
@@ -1180,36 +1190,63 @@ class AacPanel extends HTMLElement {
   }
 
   // ---------------------------------------------------------------- settings: models
+  // COMPUTE: the machines AAC can think with; unfold one for its models, ⚙ for its settings
+  _modelRoles(id) {
+    const roles = this._state?.pools?.roles || {};
+    return Object.entries(roles).flatMap(([role, r]) => {
+      const i = (r.items || []).findIndex((x) => x.id === id);
+      return i < 0 ? [] : [`${(r.title || role).toUpperCase()}${r.items.length > 1 ? ` ${i + 1}` : ""}`];
+    });
+  }
+
   _renderModels() {
     const w = this._models;
-    if (!w) return this._page("MODELS", "", '<div class="card"><h2>SCANNING</h2><p>Looking for model servers…<span class="cursor"></span></p></div>');
-    const master = this._poolItems("master")[0];
-    // A manual model's own server only matters here if it offers more models
-    const servers = w.auto.filter((srv) => srv.models.length || !srv.source.startsWith("w:"));
-    const auto = servers.map((srv) => `
-      <div class="card"><h2><span class="dot ${srv.online ? "ok" : "bad"}"></span>${esc(srv.label)}</h2>
-        <p>${esc(srv.base_url)}${srv.error ? ` · <span class="msg err">${esc(srv.error)}</span>` : ""}</p>
-        ${srv.models.length ? srv.models.map((a) => `
-          <div class="wrow">
-            <span>${esc(a.model)} ${a.id === master ? '<span class="tag aac">MASTER</span>' : ""}</span>
-            <span class="actions">
-              <button class="btn" data-go="model/${esc(a.id)}">Details</button>
-              ${a.id === master ? "" : `<button class="btn primary" data-master="${esc(a.id)}">Use as master</button>`}
-            </span>
-          </div>`).join("") : '<p class="hint">No models offered.</p>'}
-      </div>`).join("");
-    const manual = `<div class="card"><h2>MANUAL</h2><p>Models you add yourself: any OpenAI-compatible server (llama.cpp, Ollama, vLLM, LM Studio, cloud APIs).</p>
-        ${w.manual.map((m) => `
-          <div class="wrow">
-            <span><span class="dot ${m.online ? "ok" : "bad"}"></span> ${esc(m.name)} <span class="hint">· ${esc(m.model)}</span> ${m.id === master ? '<span class="tag aac">MASTER</span>' : ""}</span>
-            <span class="actions"><button class="btn" data-go="model/${esc(m.id)}">Details</button></span>
-          </div>`).join("")}
-        <div class="actions"><button class="btn primary" data-go="models/new">${icon("plus")} Add model</button></div>
-      </div>`;
-    return this._page("MODELS", "what AAC's agents can think with", `
-      <div class="card"><h2>AUTO</h2><p>Found automatically: model servers already set up in Home Assistant (llama.cpp, Ollama; only read, never changed) and the servers of your manual models. Every model they offer can be used by AAC's agents.</p>
-        ${servers.length ? "" : '<p class="hint">Nothing else found.</p>'}</div>
-      <div class="cards">${auto}${manual}</div>`, `<button class="icon-btn" id="refresh-models" title="Scan again">${icon("refresh")}</button>`);
+    if (!w) return this._page("COMPUTE", "", '<div class="card"><h2>SCANNING</h2><p>Looking for model servers…<span class="cursor"></span></p></div>');
+    const open = this._openMachines || new Set();
+    const kindLabel = { chat: "chat", embedding: "embeddings", stt: "speech-to-text", speech: "speech-to-text" };
+    const machines = (w.machines || []).map((mc) => {
+      const isOpen = open.has(mc.host);
+      const n = mc.models.length;
+      const rows = mc.models.map((a) => {
+        const roles = this._modelRoles(a.id);
+        return `<div class="wrow mrow">
+            <span><span class="dot ${a.online === false ? "bad" : "ok"}"></span> ${esc(a.name)}${a.manual && a.name !== a.model ? ` <span class="hint">· ${esc(a.model)}</span>` : ""}
+              <span class="tag">${esc(kindLabel[a.kind] || a.kind)}</span>${roles.map((r) => ` <span class="tag aac">${esc(r)}</span>`).join("")}</span>
+            <span class="actions"><button class="btn" data-go="model/${esc(a.id)}">Details</button></span>
+          </div>`;
+      }).join("");
+      return `<div class="card machine ${isOpen ? "open" : ""}">
+          <div class="mhead" role="button" tabindex="0" data-machine-toggle="${esc(mc.host)}">
+            <span class="fold">${isOpen ? "▾" : "▸"}</span>
+            <span class="dot ${mc.online ? "ok" : "bad"}"></span>
+            <span class="mname">${esc(mc.name)}</span>
+            <span class="hint">${mc.named ? `${esc(mc.host)} · ` : ""}${n} model${n === 1 ? "" : "s"}${mc.online ? "" : " · offline"}</span>
+            <button class="icon-btn" data-go="machine/${esc(mc.host)}" title="Machine settings">${icon("settings")}</button>
+          </div>
+          ${isOpen ? `<div class="mbody">${rows || '<p class="hint">No models offered.</p>'}</div>` : ""}
+        </div>`;
+    }).join("");
+    return this._page("COMPUTE", "the machines AAC thinks with", `
+      ${machines || '<div class="card"><p>No machines yet. Add a model server: any OpenAI-compatible one (llama.cpp, Ollama, vLLM, LM Studio, cloud APIs).</p></div>'}
+      <div class="actions"><button class="btn primary" data-go="models/new">${icon("plus")} Add model</button></div>
+      <p class="hint">Found on their own: model servers set up in Home Assistant (only read, never changed) and everything the servers of your models offer. Who does what (master, speech, …) is set in Pools.</p>`,
+      `<button class="icon-btn" id="refresh-models" title="Scan again">${icon("refresh")}</button>`);
+  }
+
+  _renderMachine(host) {
+    const mc = (this._models?.machines || []).find((m) => m.host === host);
+    if (!mc) return this._page("MACHINE", "", `<div class="card"><h2>NOT FOUND</h2><p>${this._models ? "No models on this machine any more." : "Scanning…"}</p></div>`);
+    return this._page(mc.name, mc.named ? esc(mc.host) : "", `<div class="card"><h2>MACHINE</h2>
+        <label for="mc-name">Name</label><input id="mc-name" value="${esc(mc.named ? mc.name : "")}" placeholder="${esc(mc.name)}">
+        <p class="hint">How AAC and this panel call it, e.g. "Main PC". Empty = the default.</p>
+        <label>Servers on it</label>
+        ${mc.servers.map((sv) => `<div class="wrow"><span><span class="dot ${sv.online ? "ok" : "bad"}"></span> ${esc(sv.url)}</span>${sv.error ? `<span class="msg err">${esc(sv.error)}</span>` : ""}</div>`).join("")}
+        <div class="actions"><button class="btn primary" id="mc-save" data-host="${esc(mc.host)}">Save</button>
+          <button class="btn" id="mc-add" data-url="${esc(mc.servers[0]?.url || "")}">${icon("plus")} Add model here</button>
+          <button class="btn" data-go="models">Compute</button></div>
+        ${this._flashHtml()}
+      </div>
+      <div class="card"><h2>LOADING <span class="tag plan">PLANNED</span></h2><p>Which models this machine can load, which one is loaded now, how long loading takes, and "free this machine" (e.g. when you start a game).</p></div>`);
   }
 
   _renderModel(id) {
@@ -1231,7 +1268,7 @@ class AacPanel extends HTMLElement {
         <div class="actions">
           ${id === master ? "" : `<button class="btn primary" data-master="${esc(id)}">Use as master</button>`}
           ${manual ? `<button class="btn" data-go="model/edit/${esc(id)}">Edit</button><button class="btn danger" data-delete="${esc(id)}">Delete</button>` : ""}
-          <button class="btn" data-go="models">All models</button>
+          <button class="btn" data-go="models">Compute</button>
         </div>
         ${this._flashHtml()}
       </div>`);
@@ -1824,6 +1861,30 @@ class AacPanel extends HTMLElement {
     sr.querySelector("#nav-toggle")?.addEventListener("click", () => { this._navOpen = !this._navOpen; this._render(); });
     sr.querySelector("#backdrop")?.addEventListener("click", () => { this._navOpen = false; this._render(); });
     sr.querySelector("#refresh-models")?.addEventListener("click", () => this._loadModels());
+    sr.querySelectorAll("[data-machine-toggle]").forEach((el) => {
+      const toggle = (e) => {
+        if (e.target.closest("button")) return;  // the ⚙ button opens the settings instead
+        this._openMachines = this._openMachines || new Set();
+        const host = el.dataset.machineToggle;
+        this._openMachines.has(host) ? this._openMachines.delete(host) : this._openMachines.add(host);
+        this._render();
+      };
+      el.addEventListener("click", toggle);
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(e); } });
+    });
+    sr.querySelector("#mc-save")?.addEventListener("click", async (e) => {
+      try {
+        await this._ws("aac/machine/set", { host: e.target.dataset.host, name: sr.querySelector("#mc-name").value });
+        await this._loadModels();
+        this._flash = { ok: true, text: "Saved." };
+      } catch (err) { this._flash = { ok: false, text: err.message || String(err) }; }
+      this._render();
+    });
+    sr.querySelector("#mc-add")?.addEventListener("click", (e) => {
+      this._go("models/new");
+      if (this._form) this._form.base_url = e.target.closest("button").dataset.url;
+      this._render();
+    });
 
     sr.querySelector("#setup-chat")?.addEventListener("click", () => {
       this._go("chat/new");

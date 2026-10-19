@@ -153,8 +153,10 @@ class ListModelsTool(_SetupTool):
                 for m in server["models"]
             )
         run = current_run.get()
+        on = {a["id"]: mach["name"] for mach in overview["machines"] for a in mach["models"]}
         for m in models:
             m["looks_like"] = model_kind(m["model"])
+            m["machine"] = on.get(m["id"])
             if run and run.model == m["id"]:
                 m["this_is_you"] = True  # the model answering right now (so it is online)
         return llm.ToolResult(data={"models": models})

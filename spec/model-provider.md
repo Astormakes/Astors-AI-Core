@@ -40,6 +40,14 @@ as online and its model name is typed by hand), `ProviderError` (anything else).
 
 The API key is never sent to the panel (`has_key` instead).
 
+## Machines (built, v0.25.0)
+
+Models are grouped by the machine they run on: the host of the server URL (`127.0.0.1` = `localhost`).
+The owner may name a machine (`{host: {"name": …}}` in the store, `aac/machine/set`); unnamed it is
+called after its HA integration or its host. A server with a single model serves it whatever the entry
+calls it (llama.cpp names models by file path), so that entry counts as online.
+Planned: a machine as a "socket" — the models it can load, the loaded one, measured load/unload times.
+
 ## Pools (partial)
 
 The home's compute, shared by all domains (pools stand above domains). Three pools

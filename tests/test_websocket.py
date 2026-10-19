@@ -183,3 +183,19 @@ async def test_single_model_server_counts_as_online(hass: HomeAssistant, hass_ws
     result = (await ws.receive_json())["result"]
     assert result["manual"][0]["online"] is True
     assert all(m["model"] != "/models/test-model-Q4.gguf" for s in result["auto"] for m in s["models"])
+
+
+async def test_machines_group_models_and_take_names(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """Models are grouped by the host they run on; the owner can name the machine."""
+    await setup_aac(hass, mock_entry)
+    aioclient_mock.get(f"{BASE_URL}/models", json={"data": [{"id": "/models/test-model-Q4.gguf"}]})
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/models"})
+    machines = (await ws.receive_json())["result"]["machines"]
+    assert len(machines) == 1 and machines[0]["online"] and not machines[0]["named"]
+    host = machines[0]["host"]
+    assert [m["manual"] for m in machines[0]["models"]] == [True]
+    await ws.send_json_auto_id({"type": "aac/machine/set", "host": host, "name": "Main PC"})
+    assert (await ws.receive_json())["success"]
+    await ws.send_json_auto_id({"type": "aac/models"})
+    assert (await ws.receive_json())["result"]["machines"][0]["name"] == "Main PC"

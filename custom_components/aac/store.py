@@ -88,6 +88,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Module permissions and properties per domain (modules/__init__.py ACCESS_DEFAULTS):
     # {domain id: {module id: {enabled, name, instructions, access, auto, destructive_needs_owner}}}
     "module_access": {},
+    # Machines (hosts that run model servers, models.py): {host: {"name": str}}
+    "machines": {},
 }
 
 DEFAULT_DOMAIN_ID = "assistant"
@@ -308,6 +310,7 @@ class AACStore:
         data["module_access"] = dict(stored.get("module_access", {}))
         data["requests"] = list(stored.get("requests", []))[-100:]
         data["satellite_app"] = dict(stored.get("satellite_app", {}))
+        data["machines"] = dict(stored.get("machines", {}))
         if isinstance(stored.get("entity_access"), dict):
             data["entity_access"] = dict(stored["entity_access"])
         elif any(isinstance(d.get("entities"), dict) for d in stored.get("domains", [])):
@@ -500,6 +503,19 @@ class AACStore:
     async def async_prefer(self, role: str, resource: str) -> None:
         """Make a resource the first choice of a role."""
         await self.async_set_pool(role, [resource, *self.pools.get(role, [])])
+
+    @property
+    def machines(self) -> dict[str, dict[str, Any]]:
+        """Names of the machines that run model servers, by host."""
+        return self.data["machines"]
+
+    async def async_set_machine(self, host: str, name: str) -> None:
+        """Name a machine (an empty name goes back to the default)."""
+        if name.strip():
+            self.data["machines"][host] = {**self.data["machines"].get(host, {}), "name": name.strip()}
+        else:
+            self.data["machines"].pop(host, None)
+        await self.async_save()
 
     @property
     def entity_access(self) -> dict[str, dict[str, bool]] | None:

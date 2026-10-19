@@ -16,6 +16,7 @@ import asyncio
 from dataclasses import dataclass
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from homeassistant.const import CONF_API_KEY, CONF_URL
 from homeassistant.core import HomeAssistant
@@ -176,4 +177,39 @@ async def async_overview(hass: HomeAssistant, store: AACStore) -> dict[str, Any]
                 ],
             }
         )
-    return {"manual": manual, "auto": auto}
+    return {"manual": manual, "auto": auto, "machines": machines(hass, store, manual, auto)}
+
+
+def host_of(url: str) -> str:
+    """The machine part of a server URL."""
+    host = (urlparse(url).hostname or url).lower()
+    return "localhost" if host in ("127.0.0.1", "::1") else host
+
+
+def machines(hass: HomeAssistant, store: AACStore, manual: list[dict], auto: list[dict]) -> list[dict[str, Any]]:
+    """The models grouped by the machine they run on (its host); the owner can name machines."""
+    found: dict[str, dict[str, Any]] = {}
+
+    def machine(url: str, label: str | None = None) -> dict[str, Any]:
+        host = host_of(url)
+        if host not in found:
+            name = store.machines.get(host, {}).get("name")
+            found[host] = {"host": host, "name": name or ("Home Assistant" if host in ("localhost", "homeassistant") else label or host),
+                           "named": bool(name), "servers": {}, "models": []}
+        return found[host]
+
+    for server in auto:
+        m = machine(server["base_url"], server["label"] if not server["source"].startswith("w:") else None)
+        m["servers"][server["base_url"]] = {"url": server["base_url"], "online": server["online"], "error": server["error"]}
+        m["models"] += [{**a, "name": a["model"], "manual": False} for a in server["models"]]
+    for cfg in manual:
+        m = machine(cfg["base_url"])
+        url = cfg["base_url"].rstrip("/")
+        m["servers"].setdefault(url, {"url": url, "online": cfg["online"], "error": cfg["error"]})
+        m["models"].append({**cfg, "manual": True})
+    for m in found.values():
+        m["servers"] = list(m["servers"].values())
+        m["online"] = any(s["online"] for s in m["servers"])
+        for a in m["models"]:
+            a["kind"] = model_kind(a["model"])
+    return sorted(found.values(), key=lambda m: (not m["online"], m["name"].lower()))
