@@ -20,6 +20,7 @@ some of it exists, **planned** = spec only, nothing in the code yet.
 | [Audio source](audio-source.md) | a microphone streaming to AAC and AAC's spoken answers | partial |
 | [Event](event.md) | everything that happens, on one bus | partial |
 | [Module manifest](module.md) | a bundle of the above, installable and shareable | partial |
+| [Requests](requests.md) | AAC asks, the owner decides outside the chat; entity access as the first kind | built |
 | [Calendar](calendar.md) | one calendar over all modules: an interface, no table | built |
 | [Domain package](domain.md) | a whole AAC setup, exportable and importable | partial |
 

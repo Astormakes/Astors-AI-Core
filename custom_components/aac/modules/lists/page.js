@@ -1,6 +1,9 @@
 // Lists module: its page in the AAC panel. No shadow DOM, so the panel's styles and skins apply.
 // The panel sets .ws(type, data) (sends the selected domain along) and calls .refresh() on updates.
 
+// The panel's own dialogs (the HA app's web view swallows the browser's ones)
+const ask = (el, text, value) => (el.panel?._prompt ? el.panel._prompt(text, value ?? "") : Promise.resolve(window.prompt(text, value ?? "")));
+const sure = (el, text, ok) => (el.panel?._confirm ? el.panel._confirm(text, ok, true) : Promise.resolve(window.confirm(text)));
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 class AacListsPage extends HTMLElement {
@@ -159,13 +162,13 @@ class AacListsPage extends HTMLElement {
     const act = t.closest("[data-act]")?.dataset.act;
     const lst = this._current();
     if (t.classList.contains("ltext")) {
-      const text = prompt("Entry:", t.textContent);
+      const text = await ask(this, "Entry:", t.textContent);
       if (text?.trim()) await this._op({ op: "update", list: lst.id, item: this._itemId(t), text: text.trim() });
       return;
     }
     if (!act) return;
     if (act === "newlist") {
-      const name = prompt("Name of the new list:");
+      const name = await ask(this, "Name of the new list:");
       if (!name?.trim()) return;
       await this._op({ op: "create", name: name.trim() });
       this._sel = this._lists.find((l) => l.name === name.trim())?.id || this._sel;
@@ -174,14 +177,14 @@ class AacListsPage extends HTMLElement {
       const input = this.querySelector("#lnew");
       if (input?.value.trim()) { await this._op({ op: "add", list: lst.id, text: input.value.trim() }); this.querySelector("#lnew")?.focus(); }
     } else if (act === "sub") {
-      const text = prompt("Sub-entry:");
+      const text = await ask(this, "Sub-entry:");
       if (text?.trim()) await this._op({ op: "add", list: lst.id, text: text.trim(), parent: this._itemId(t) });
     } else if (act === "fields") {
       const id = this._itemId(t);
       const find = (items) => { for (const x of items) { if (x.id === id) return x; const f = find(x.children || []); if (f) return f; } return null; };
       const entry = find(lst.items);
       const now = Object.entries(entry.fields || {}).map(([k, v]) => `${k}=${v}`).join(", ");
-      const text = prompt("Fields as key=value, comma separated (e.g. qty=2, store=Lidl, when=2026-10-24). Empty value removes a field:", now);
+      const text = await ask(this, "Fields as key=value, comma separated (e.g. qty=2, store=Lidl, when=2026-10-24). Empty value removes a field:", now);
       if (text === null) return;
       const fields = {};
       for (const k of Object.keys(entry.fields || {})) fields[k] = null;
@@ -196,12 +199,12 @@ class AacListsPage extends HTMLElement {
     } else if (act === "del") {
       await this._op({ op: "remove", list: lst.id, item: this._itemId(t) });
     } else if (act === "rename") {
-      const name = prompt("Name:", lst.name);
+      const name = await ask(this, "Name:", lst.name);
       if (name?.trim()) await this._op({ op: "rename", list: lst.id, name: name.trim() });
     } else if (act === "view") {
       await this._op({ op: "rename", list: lst.id, name: lst.name, view: lst.view === "checklist" ? "outline" : "checklist" });
     } else if (act === "dellist") {
-      if (confirm(`Delete the list "${lst.name}" with all entries?`)) await this._op({ op: "delete", list: lst.id });
+      if (await sure(this, `Delete the list "${lst.name}" with all entries?`, "Delete")) await this._op({ op: "delete", list: lst.id });
       this._sel = this._lists?.[0]?.id || null;
       this._render();
     }

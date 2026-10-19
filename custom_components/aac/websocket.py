@@ -28,6 +28,7 @@ from .runs import SIGNAL_UPDATE, async_notify
 from .status import aac_agent_entity_id, setup_steps
 from .pools import ROLES, async_set_role
 from .modules import access as module_access, async_set_access, async_set_settings, setting as module_setting
+from .entities import async_set_levels, everything as entity_list
 from .skins import list_skins, user_dir
 from .domains import Domain, async_remove_domain_data
 from .store import AACStore
@@ -66,6 +67,10 @@ def async_register(hass: HomeAssistant) -> None:
         ws_memory_settings,
         ws_pools,
         ws_skins,
+        ws_entities,
+        ws_entities_set,
+        ws_requests,
+        ws_request_decide,
         ws_modules,
         ws_module_settings,
         ws_module_access,
@@ -136,6 +141,7 @@ def _state(hass: HomeAssistant, entry, dom: Domain) -> dict[str, Any]:
         "memory": settings.memory,
         "ui": store.data["ui"],
         "modules": [m.summary(entry, dom.id) for m in entry.runtime_data.modules],
+        "requests_open": len(entry.runtime_data.requests.pending(dom.id)),
         "pools": entry.runtime_data.broker.status(),
         "charter": settings.charter,
         "autonomy": settings.autonomy,
@@ -774,6 +780,56 @@ async def ws_module_access(hass: HomeAssistant, connection, msg) -> None:
     await async_set_access(entry, module.id, dom.id, msg["values"])
     async_notify(hass, "modules", domain=dom.id)
     connection.send_result(msg["id"], _module_view(hass, entry, module, dom.id))
+
+
+@aac_command({vol.Required("type"): "aac/entities"})
+@websocket_api.require_admin
+@callback
+def ws_entities(hass: HomeAssistant, connection, msg) -> None:
+    """All entities with AAC's access level in the selected domain."""
+    if entry := _entry(hass, connection, msg):
+        settings = _d(entry, msg).settings
+        connection.send_result(msg["id"], {"entities": entity_list(hass, settings),
+                                           "own_list": settings.entities is not None})
+
+
+@aac_command({vol.Required("type"): "aac/entities/set", vol.Required("levels"): {str: vol.In(["hidden", "read", "control"])}})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_entities_set(hass: HomeAssistant, connection, msg) -> None:
+    """Change some entities' access (the first change makes AAC's own list from HA's Assist exposure)."""
+    if entry := _entry(hass, connection, msg):
+        settings = _d(entry, msg).settings
+        await async_set_levels(hass, settings, msg["levels"])
+        async_notify(hass, "entities", domain=_d(entry, msg).id)
+        connection.send_result(msg["id"], {"entities": entity_list(hass, settings), "own_list": True})
+
+
+@aac_command({vol.Required("type"): "aac/requests"})
+@websocket_api.require_admin
+@callback
+def ws_requests(hass: HomeAssistant, connection, msg) -> None:
+    """Open and recent requests of the selected domain."""
+    if entry := _entry(hass, connection, msg):
+        dom = _d(entry, msg)
+        mine = [r for r in entry.runtime_data.requests.all if r["domain"] == dom.id]
+        connection.send_result(msg["id"], {"requests": list(reversed(mine))[:30]})
+
+
+@aac_command({vol.Required("type"): "aac/request/decide", vol.Required("request_id"): str,
+              vol.Required("approve"): vol.Any(bool, [str])})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_request_decide(hass: HomeAssistant, connection, msg) -> None:
+    """Approve all (true), none (false) or some (item ids) of a request."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    try:
+        request = await entry.runtime_data.requests.async_decide(msg["request_id"], msg["approve"])
+    except LookupError as err:
+        connection.send_error(msg["id"], "not_found", str(err))
+        return
+    connection.send_result(msg["id"], request)
 
 
 @aac_command({vol.Required("type"): "aac/skins"})

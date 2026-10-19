@@ -80,6 +80,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "queue": {"notify_no_model": True, "postpone_notice": 10},
     # Module settings per domain: {domain id: {module id: {key: value}}} (defaults in the manifests)
     "module_settings": {},
+    # Requests from AAC that wait for the owner's OK (requests.py)
+    "requests": [],
     # Module permissions and properties per domain (modules/__init__.py ACCESS_DEFAULTS):
     # {domain id: {module id: {enabled, name, instructions, access, auto, destructive_needs_owner}}}
     "module_access": {},
@@ -116,6 +118,9 @@ DOMAIN_DEFAULTS: dict[str, Any] = {
     "charter": "",
     # Long-term memory (its embedding model is the pool role "memory"; none = keywords only)
     "memory": {"enabled": True},
+    # What AAC may see and control: {entity_id: "read" | "control"} (missing = hidden).
+    # None = not chosen yet: follow HA's "expose to Assist" setting (entities.py)
+    "entities": None,
 }
 
 MASTER_KEYS = set(DOMAIN_DEFAULTS["master"])
@@ -151,6 +156,7 @@ def _domain_from(stored: dict[str, Any], domain_id: str, name: str) -> dict[str,
     d["autonomy"].update(stored.get("autonomy", {}))
     d["charter"] = stored.get("charter", "")
     d["memory"].update({k: v for k, v in stored.get("memory", {}).items() if k != "embed_model"})
+    d["entities"] = dict(stored["entities"]) if isinstance(stored.get("entities"), dict) else None
     return {"id": domain_id, "name": name, **d}
 
 
@@ -244,6 +250,16 @@ class DomainSettings:
         await self.async_save()
 
     @property
+    def entities(self) -> dict[str, str] | None:
+        """AAC's own entity access ({entity_id: read | control}); None = follow HA's Assist exposure."""
+        return self.data["entities"]
+
+    async def async_set_entities(self, levels: dict[str, str]) -> None:
+        """Replace the access list (the caller merges)."""
+        self.data["entities"] = {e: lvl for e, lvl in levels.items() if lvl in ("read", "control")}
+        await self.async_save()
+
+    @property
     def memory(self) -> dict[str, Any]:
         """Memory settings."""
         return self.data["memory"]
@@ -276,6 +292,7 @@ class AACStore:
         data["queue"].update(stored.get("queue", {}))
         data["module_settings"] = dict(stored.get("module_settings", {}))
         data["module_access"] = dict(stored.get("module_access", {}))
+        data["requests"] = list(stored.get("requests", []))[-100:]
         # Up to 0.14 there was one implicit domain: its settings were at the top level
         domains = stored.get("domains") or [_domain_from(stored, DEFAULT_DOMAIN_ID, "Assistant")]
         data["domains"] = [_domain_from(d, d["id"], d.get("name") or d["id"]) for d in domains]

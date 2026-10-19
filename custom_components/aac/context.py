@@ -45,13 +45,17 @@ def _state_text(state) -> str:
     return f"{state.state} {unit}".strip()
 
 
-def home_snapshot(hass: HomeAssistant) -> str:
-    """One line per exposed entity: area, name, state (+ unit)."""
+def home_snapshot(hass: HomeAssistant, settings=None) -> str:
+    """One line per entity AAC may see (its own list, else HA's Assist exposure): area, name, state."""
+    from .entities import level  # noqa: PLC0415
     ent_reg = er.async_get(hass)
     area_reg = ar.async_get(hass)
     lines = []
     for state in sorted(hass.states.async_all(), key=lambda s: s.entity_id):
-        if not async_should_expose(hass, "conversation", state.entity_id):
+        if settings is not None:
+            if level(hass, settings, state.entity_id) == "hidden":
+                continue
+        elif not async_should_expose(hass, "conversation", state.entity_id):
             continue
         entry = ent_reg.async_get(state.entity_id)
         area_id = entry.area_id if entry else None

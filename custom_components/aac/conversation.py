@@ -32,6 +32,7 @@ from .const import (
 )
 from .provider import OpenAICompatProvider, ProviderConnectionError, ProviderError
 from .extractor import async_extract
+from .home_api import API_ID as HOME_API_ID
 from .memory_api import API_ID as MEMORY_API_ID
 from .schedule_api import API_ID as SCHEDULE_API_ID
 from .setup_api import API_ID as SETUP_API_ID, owner_present
@@ -271,6 +272,7 @@ class AACConversationEntity(
         api_ids: list[str] | None = None
         if not run or run.allow_tools:
             api_ids = list(options.get(CONF_LLM_HASS_API) or [])
+            api_ids.append(self.domain.api_id(HOME_API_ID))  # the home, within the owner's access list
             if store.memory["enabled"]:
                 api_ids.append(self.domain.api_id(MEMORY_API_ID))  # the master always has its own memory
             if store.autonomy.get("schedule", "allowed") != "off":

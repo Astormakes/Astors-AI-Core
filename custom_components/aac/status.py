@@ -96,6 +96,15 @@ def setup_steps(hass: HomeAssistant, store: AACStore, domain: DomainSettings | N
             "done": bool(store.audio["known"]),
         },
         {
+            "id": "entities",
+            "title": "Choose what AAC may see and control",
+            "hint": "AAC keeps its own list (HA's Assist settings stay HA's). Until you choose, it uses what you "
+                    "exposed to Assist. It can also ask you for more, with a reason, and you decide.",
+            "target": "settings/entities",
+            "optional": True,
+            "done": domain.entities is not None,
+        },
+        {
             "id": "rules",
             "title": "Tell AAC when it may use your machines",
             "hint": "Optional rules per model, e.g. \"use my PC for heavy jobs only while I'm at work\". Say it in a chat; "

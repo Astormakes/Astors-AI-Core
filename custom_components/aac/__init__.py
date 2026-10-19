@@ -44,7 +44,9 @@ from .audio_view import AACAudioView
 from .chats import ChatStore
 from .domains import Domain, async_load_domain
 from .capabilities import CalendarProvider, Capabilities, parse_time, plan_occurrences
+from .home_api import AACHomeAPI, apply_entities
 from .jobs import JobQueue
+from .requests import Requests
 from .modules import MODULES_DIR, MODULES_URL, LoadedModule, async_load_modules
 from .pools import Broker
 from .skins import USER_URL as USER_SKINS_URL, user_dir
@@ -76,6 +78,7 @@ class AACData:
     jobs: JobQueue | None = None
     capabilities: Capabilities = field(default_factory=Capabilities)
     modules: list[LoadedModule] = field(default_factory=list)
+    requests: Requests | None = None
 
     def domain(self, domain_id: str | None = None) -> Domain | None:
         """A domain by id (None = the first)."""
@@ -137,6 +140,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     entry.runtime_data = AACData(store, version)
     broker = entry.runtime_data.broker = Broker(hass, store)
     entry.runtime_data.jobs = JobQueue(hass, entry)
+    entry.runtime_data.requests = Requests(hass, entry)
+    entry.runtime_data.requests.register_kind("entities", apply_entities)
 
     async def plans(domain_id: str, start, end):
         dom = entry.runtime_data.domain(domain_id)
@@ -200,6 +205,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
             AACMemoryAPI(hass=hass, id=dom.api_id("aac_memory"), name=f"AAC memory{label}", memory=dom.memory),
             AACScheduleAPI(hass=hass, id=dom.api_id("aac_schedule"), name=f"AAC planning{label}", entry=entry, domain=dom),
             AACSetupAPI(hass=hass, id=dom.api_id("aac_setup"), name=f"AAC setup{label}", entry=entry, domain=dom),
+            AACHomeAPI(hass=hass, id=dom.api_id("aac_home"), name=f"AAC home{label}", entry=entry, domain=dom),
         ):
             entry.async_on_unload(llm.async_register_api(hass, api))
 

@@ -67,7 +67,17 @@ nav {
 .brand .name { font-size: 1.45em; font-weight: 700; letter-spacing: .28em; color: var(--magenta);
   text-shadow: 0 0 .2em var(--magenta), 0 0 .7em rgba(255, 43, 214, .6); }
 .brand .ver { font-size: .8em; color: var(--dim); }
+.ent-table { width: 100%; border-collapse: collapse; }
+.ent-table td { padding: .3em .4em; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); vertical-align: middle; }
+.ent-table td:last-child { width: 9em; }
+.ent-table select { min-height: 0; padding: .3em .4em; }
+.dlg-back { position: absolute; inset: 0; z-index: 60; background: rgba(0, 0, 0, .55); display: grid; place-items: center; padding: 1em; }
+.dlg { width: min(32em, 100%); margin: 0; }
+.dlg textarea { min-height: 8em; }
 .update-banner { display: flex; align-items: center; gap: 1em; padding: .5em 1.7em; background: rgba(255, 176, 0, .12); color: var(--amber); border-bottom: 1px solid var(--amber); font-size: .9em; }
+.tab .chatdel { margin-left: .3em; padding: 0 .3em; font-size: .85em; line-height: 1; opacity: 0; }
+.tab:hover .chatdel, .tab:focus-within .chatdel, .tab.active .chatdel { opacity: .6; }
+@media (hover: none) { .tab .chatdel { opacity: .5; } }
 .tab .modmore { margin-left: auto; padding: 0 .3em; font-size: 1.1em; line-height: 1; opacity: .6; }
 .dswitch { position: relative; padding: 0 1em .7em; border-bottom: 1px solid var(--line); }
 .dbtn { width: 100%; display: flex; align-items: center; gap: .5em; background: transparent; color: var(--cyan); border: 1px solid var(--line);
@@ -360,6 +370,10 @@ class AacPanel extends HTMLElement {
       for (const [key, el] of Object.entries(this._modEls || {})) if (key.endsWith("|lists/lists") || key.endsWith("|calendar/agenda")) el.refresh?.();
     } else if (ev.what === "modules") {
       this._loadState();
+    } else if (ev.what === "requests" || ev.what === "entities") {
+      this._loadState();
+      if (this._view === "requests") this._loadRequests();
+      if (this._view === "settings/entities" && ev.what === "entities") this._loadEntities();
     } else if (ev.what === "jobs") {
       clearTimeout(this._jobsTimer);
       this._jobsTimer = setTimeout(() => this._loadJobs(), 300);
@@ -391,6 +405,95 @@ class AacPanel extends HTMLElement {
     }
     this._render();
   }
+  // ---------------------------------------------------------------- entities and requests
+  async _loadEntities() {
+    try { this._ents = await this._ws("aac/entities"); } catch (e) { this._ents = { entities: [], error: e.message }; }
+    this._render();
+  }
+
+  async _loadRequests() {
+    try { this._reqs = (await this._ws("aac/requests")).requests; } catch (e) { this._reqs = []; }
+    this._render();
+  }
+
+  _renderEntities() {
+    const d = this._ents;
+    if (!d) return this._page("ENTITIES", "", '<div class="card"><p>Loading…</p></div>');
+    const q = (this._entQuery || "").toLowerCase(), show = this._entShow || "all";
+    const rows = d.entities.filter((e) => (!q || `${e.name} ${e.entity_id} ${e.area || ""}`.toLowerCase().includes(q))
+      && (show === "all" || (show === "visible" ? e.level !== "hidden" : e.level === "hidden")));
+    const groups = {};
+    for (const e of rows) (groups[e.area || "No room"] ||= []).push(e);
+    const counts = { read: 0, control: 0 };
+    for (const e of d.entities) if (e.level !== "hidden") counts[e.level]++;
+    const sel = (e) => `<select class="ent-level" data-ent="${esc(e.entity_id)}">${[["hidden", "hidden"], ["read", "read"], ["control", "control"]]
+      .map(([v, l]) => `<option value="${v}" ${e.level === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+    const shown = Object.entries(groups).slice(0, 60);
+    return this._page("ENTITIES", `${counts.control} control · ${counts.read} read · ${d.entities.length} in total`, `
+      <div class="card"><h2>WHAT AAC MAY SEE AND CONTROL</h2>
+        <p>AAC's own list for "${esc(this._state?.domain?.name || "")}"; Home Assistant's Assist settings stay as they are. <b>read</b> = AAC sees the state, <b>control</b> = it may also switch it (locks, alarms and doors only while you are in the chat), <b>hidden</b> = it only knows the entity exists. ${d.own_list ? "" : "You have not chosen yet, so this shows what you exposed to Assist in HA; your first change makes it AAC's own list."} AAC can also ask you for more; requests appear under WORKERS → Requests.</p>
+        <div class="row"><div><label for="ent-q">Search</label><input id="ent-q" value="${esc(this._entQuery || "")}" placeholder="name, room, entity id"></div>
+          <div style="flex:none;min-width:12em"><label for="ent-show">Show</label><select id="ent-show">${[["all", "All"], ["visible", "AAC can see"], ["hidden", "Hidden"]].map(([v, l]) => `<option value="${v}" ${show === v ? "selected" : ""}>${l}</option>`).join("")}</select></div></div>
+      </div>
+      ${(this._state?.master?.llm_hass_api || []).length ? `<div class="card"><h2>HOME ASSISTANT'S OWN TOOLS ARE ALSO ON</h2>
+        <p>The master agent also has Home Assistant's tools (${esc(this._state.master.llm_hass_api.join(", "))}). Those follow HA's own "expose to Assist" setting, not this list, so AAC can still see and switch what is exposed there. They also bring things like timers and HA's to-do lists.</p>
+        <div class="actions"><button class="btn primary" id="ent-only-aac">Use only AAC's list</button><button class="btn" data-go="settings/master">Master agent settings</button></div></div>` : ""}
+      ${shown.map(([area, list]) => `<div class="card"><h2>${esc(area.toUpperCase())} <span class="tag">${list.length}</span>
+          <span class="actions" style="margin:0 0 0 auto">${["hidden", "read", "control"].map((l) => `<button class="btn" data-ent-area="${esc(area)}" data-ent-to="${l}">all ${l}</button>`).join("")}</span></h2>
+        <table class="ent-table"><tbody>${list.map((e) => `<tr><td>${esc(e.name)}<div class="hint" style="margin:0">${esc(e.entity_id)}</div></td><td class="hint">${esc(e.device_class || e.domain)}</td><td>${sel(e)}</td></tr>`).join("")}</tbody></table>
+      </div>`).join("")}
+      ${Object.keys(groups).length > 60 ? '<div class="card"><p class="hint">More rooms than shown; narrow it down with the search.</p></div>' : ""}`);
+  }
+
+  _renderRequests() {
+    const reqs = this._reqs;
+    if (!reqs) return this._page("REQUESTS", "", '<div class="card"><p>Loading…</p></div>');
+    const open = reqs.filter((r) => r.status === "pending"), done = reqs.filter((r) => r.status !== "pending");
+    const card = (r) => `<div class="card"><h2>${esc(r.title)}</h2>
+        <p><b>Why:</b> ${esc(r.reason)}</p>
+        ${r.items.map((i) => `<label class="check"><input type="checkbox" class="req-item" data-req="${esc(r.id)}" value="${esc(i.id)}" checked>${esc(i.label)} <span class="hint" style="margin:0">${esc(i.detail || "")}</span></label>`).join("")}
+        <div class="actions"><button class="btn primary" data-req-ok="${esc(r.id)}">Allow selected</button><button class="btn danger" data-req-no="${esc(r.id)}">Decline</button></div>
+        <p class="hint">${esc(fmtTime(r.created))}</p></div>`;
+    return this._page("REQUESTS", `${open.length} open`, `
+      <div class="card"><p>Things AAC may only do with your OK. It asked with a reason; allow all, some or none. It hears the outcome in "From AAC".</p></div>
+      ${open.length ? open.map(card).join("") : '<div class="card"><p class="hint">Nothing waiting for you.</p></div>'}
+      ${done.length ? `<div class="card"><h2>DECIDED</h2>${done.map((r) => `<div class="src"><span class="dot ${r.status === "rejected" ? "bad" : "ok"}"></span><div style="flex:1"><div class="n">${esc(r.title)}</div><div class="m">${esc(r.status)} · ${esc(fmtTime(r.decided))} · ${esc(r.reason)}</div></div></div>`).join("")}</div>` : ""}`);
+  }
+
+  // ---------------------------------------------------------------- dialogs
+  // Own dialogs instead of the browser's ones: the HA app's web view swallows those silently.
+  _ask(opts) {
+    return new Promise((resolve) => {
+      this._dialog = { ...opts, value: opts.input ?? null, resolve };
+      this._render();
+      setTimeout(() => (this.shadowRoot.querySelector("#dlg-input") || this.shadowRoot.querySelector("#dlg-ok"))?.focus(), 0);
+    });
+  }
+  _prompt(text, value = "") { return this._ask({ text, input: value ?? "" }); }
+  _confirm(text, ok = "OK", danger = false, cancel = "Cancel") { return this._ask({ text, ok, danger, cancel }); }
+
+  _dialogHtml() {
+    const d = this._dialog;
+    if (!d) return "";
+    const isPrompt = d.input !== undefined && d.input !== null;
+    const multi = isPrompt && (String(d.input).length > 60 || String(d.input).includes("\n"));
+    return `<div class="dlg-back"><div class="dlg card" role="dialog" aria-modal="true">
+      <p style="white-space:pre-wrap">${esc(d.text)}</p>
+      ${isPrompt ? (multi ? `<textarea id="dlg-input" class="thin-scroll">${esc(d.value)}</textarea>` : `<input id="dlg-input" value="${esc(d.value)}">`) : ""}
+      <div class="actions"><button class="btn ${d.danger ? "danger" : "primary"}" id="dlg-ok">${esc(d.ok || "OK")}</button>
+        <button class="btn" id="dlg-cancel">${esc(d.cancel || "Cancel")}</button></div>
+    </div></div>`;
+  }
+
+  _closeDialog(ok) {
+    const d = this._dialog;
+    if (!d) return;
+    this._dialog = null;
+    const isPrompt = d.input !== undefined && d.input !== null;
+    d.resolve(isPrompt ? (ok ? d.value : null) : ok);
+    this._render();
+  }
+
   // ---------------------------------------------------------------- skins
   _syncSkin() {
     if (this._skinCss === undefined) { // first render: last skin from this browser, so there is no neon flash
@@ -508,6 +611,8 @@ class AacPanel extends HTMLElement {
     }
     if (view.startsWith("settings/audio")) this._loadAudio();
     if (view === "settings/triggers") this._loadJobs();
+    if (view === "settings/entities") this._loadEntities();
+    if (view === "requests") this._loadRequests();
     if (view === "settings/modules" || view.startsWith("settings/module/")) this._loadModuleSettings();
     if (view === "settings/memory") this._loadMemory();
     if (view === "settings/appearance") this._ws("aac/skins").then((r) => { this._skins = r; this._render(); }).catch(() => {});
@@ -545,6 +650,7 @@ class AacPanel extends HTMLElement {
       <div class="root ${this._navOpen ? "nav-open" : ""}">
         ${this._renderNav()}
         <div class="backdrop" id="backdrop"></div>
+        ${this._dialogHtml()}
         <main>${this._renderMain()}</main>
       </div>`;
 
@@ -597,9 +703,11 @@ class AacPanel extends HTMLElement {
 
     const chats = this._chats.length
       ? this._chats.map((c) => this._tab(`chat/${c.id}`, c.title, c.id === "aac" ? icon("bolt") : "",
-          c.id === "aac" ? "" : "", c.unread ? `<span class="unread">${c.unread}</span>` : "")).join("")
+          c.id === "aac" ? "" : "", `${c.unread ? `<span class="unread">${c.unread}</span>` : ""}<button class="icon-btn chatdel" data-chat-del="${esc(c.id)}" title="Delete chat">✕</button>`)).join("")
       : '<div class="empty">no chats yet</div>';
     const running = this._runs.filter((r) => r.status === "running").length;
+    const openRequests = this._state?.requests_open || 0;
+    const requestsTab = this._tab("requests", "Requests", "", "", openRequests ? `<span class="unread">${openRequests}</span>` : "");
     const autoList = !this._autoOpen ? "" : (this._runs.length
       ? this._runs.slice(0, 25).map((r) => this._tab(`run/${r.id}`, r.title, `<span class="dot ${STATUS_DOT[r.status] || ""}"></span>`, "deep",
           `<span class="time">${esc(fmtTime(r.started))}</span>`)).join("")
@@ -617,6 +725,7 @@ class AacPanel extends HTMLElement {
           <div class="seg-title">${icon("workers")}WORKERS<span class="acts"><button class="icon-btn" data-go="chat/new" title="New chat">${icon("plus")}</button></span></div>
           <div class="seg-line"></div>
           ${chats}
+          ${requestsTab}
           <div class="tab fold ${this._autoOpen ? "open" : ""}" id="auto-fold" tabindex="0" role="button" aria-expanded="${this._autoOpen}">
             ${icon("chev")}<span class="grow">Auto<span class="count ${running ? "" : "zero"}">(${running})</span>${this._jobs?.waiting?.length ? `<span class="count" title="waiting for a model">+${this._jobs.waiting.length} waiting</span>` : ""}</span>
           </div>
@@ -635,6 +744,7 @@ class AacPanel extends HTMLElement {
           ${this._tab("settings/charter", "Charter")}
           ${this._tab("settings/appearance", "Appearance")}
           ${this._tab("settings/master", "Master agent")}
+          ${this._tab("settings/entities", "Entities", this._stepOpen("entities") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/triggers", "Triggers")}
           ${this._tab("settings/pools", "Pools", this._stepOpen("master") || this._stepOpen("memory") ? '<span class="dot open"></span>' : "")}
           ${this._tab("models", "Models", this._stepOpen("models") ? '<span class="dot open"></span>' : "", "deep")}
@@ -672,6 +782,8 @@ class AacPanel extends HTMLElement {
     if (v === "settings/appearance") return this._renderAppearance();
     if (v.startsWith("mod/")) return this._renderModulePage(v);
     if (v === "settings/modules") return this._renderModules();
+    if (v === "settings/entities") return this._renderEntities();
+    if (v === "requests") return this._renderRequests();
     if (v.startsWith("settings/module/")) return this._renderModuleSettings(v.slice(16));
     if (v === "settings/charter") return this._renderCharter();
     if (v === "settings/triggers") return this._renderTriggers();
@@ -1163,18 +1275,18 @@ class AacPanel extends HTMLElement {
     const st = this._state;
     try {
       if (kind === "new") {
-        const name = prompt("Name of the new domain (e.g. Work):");
+        const name = await this._prompt("Name of the new domain (e.g. Work):");
         if (!name?.trim()) return;
-        const copy = confirm(`Start with the settings of "${st.domain.name}" (charter, master, triggers)? Its memory and chats are never copied.\n\nOK = copy settings, Cancel = start empty.`);
+        const copy = await this._confirm(`Start with the settings of "${st.domain.name}" (charter, master, triggers)? Its memory and chats are never copied.`, "Copy settings", false, "Start empty");
         const r = await this._ws("aac/domain/create", { name: name.trim(), copy_from: copy ? st.domain.id : null });
         await this._afterReload(r.domain);
       } else if (kind === "rename") {
-        const name = prompt("New name:", st.domain.name);
+        const name = await this._prompt("New name:", st.domain.name);
         if (!name?.trim() || name.trim() === st.domain.name) return;
         await this._ws("aac/domain/rename", { domain_id: st.domain.id, name: name.trim() });
         await this._afterReload(st.domain.id);
       } else if (kind === "delete") {
-        if (!confirm(`Delete "${st.domain.name}" with its memory, chats, runs and triggers? This cannot be undone.`)) return;
+        if (!(await this._confirm(`Delete "${st.domain.name}" with its memory, chats, runs and triggers? This cannot be undone.`, "Delete", true))) return;
         await this._ws("aac/domain/delete", { domain_id: st.domain.id });
         await this._afterReload(st.domains[0].id);
       } else if (kind === "voice") {
@@ -1550,6 +1662,46 @@ class AacPanel extends HTMLElement {
       this._flash = { ok: true, text: "Saved." };
       this._render();
     });
+    sr.querySelector("#ent-q")?.addEventListener("input", (e) => {
+      this._entQuery = e.target.value;
+      clearTimeout(this._entTimer);
+      this._entTimer = setTimeout(() => { this._render(); const el = this.shadowRoot.querySelector("#ent-q"); el?.focus(); el?.setSelectionRange(el.value.length, el.value.length); }, 250);
+    });
+    sr.querySelector("#ent-only-aac")?.addEventListener("click", async () => {
+      this._state = await this._ws("aac/master/update", { llm_hass_api: [] });
+      this._flash = { ok: true, text: "AAC now only uses its own list." };
+      this._render();
+    });
+    sr.querySelector("#ent-show")?.addEventListener("change", (e) => { this._entShow = e.target.value; this._render(); });
+    sr.querySelectorAll(".ent-level").forEach((el) => el.addEventListener("change", async () => {
+      this._ents = await this._ws("aac/entities/set", { levels: { [el.dataset.ent]: el.value } });
+      this._render();
+      this._loadState();
+    }));
+    sr.querySelectorAll("[data-ent-area]").forEach((el) => el.addEventListener("click", async () => {
+      const area = el.dataset.entArea, to = el.dataset.entTo, q = (this._entQuery || "").toLowerCase();
+      const ids = this._ents.entities.filter((e) => (e.area || "No room") === area && (!q || `${e.name} ${e.entity_id} ${e.area || ""}`.toLowerCase().includes(q))).map((e) => e.entity_id);
+      if (!(await this._confirm(`Set ${ids.length} entities in "${area}" to ${to}?`, "Set"))) return;
+      this._ents = await this._ws("aac/entities/set", { levels: Object.fromEntries(ids.map((i) => [i, to])) });
+      this._render();
+      this._loadState();
+    }));
+    sr.querySelectorAll("[data-req-ok]").forEach((el) => el.addEventListener("click", async () => {
+      const ids = [...sr.querySelectorAll(`.req-item[data-req="${CSS.escape(el.dataset.reqOk)}"]:checked`)].map((c) => c.value);
+      await this._ws("aac/request/decide", { request_id: el.dataset.reqOk, approve: ids });
+      await Promise.all([this._loadRequests(), this._loadState()]);
+    }));
+    sr.querySelectorAll("[data-req-no]").forEach((el) => el.addEventListener("click", async () => {
+      await this._ws("aac/request/decide", { request_id: el.dataset.reqNo, approve: false });
+      await Promise.all([this._loadRequests(), this._loadState()]);
+    }));
+    sr.querySelector("#dlg-input")?.addEventListener("input", (e) => { if (this._dialog) this._dialog.value = e.target.value; });
+    sr.querySelector("#dlg-input")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); this._closeDialog(true); }
+      if (e.key === "Escape") this._closeDialog(false);
+    });
+    sr.querySelector("#dlg-ok")?.addEventListener("click", () => this._closeDialog(true));
+    sr.querySelector("#dlg-cancel")?.addEventListener("click", () => this._closeDialog(false));
     sr.querySelector("#reload-page")?.addEventListener("click", () => location.reload());
     sr.querySelector("#ma-save")?.addEventListener("click", (e) => this._saveModuleAccess(e.target.dataset.module));
     sr.querySelector("#ma-reset")?.addEventListener("click", () => {
@@ -1567,7 +1719,7 @@ class AacPanel extends HTMLElement {
       const id = el.dataset.poolTags;
       const item = (this._state?.pools?.roles?.master?.items || []).find((x) => x.id === id);
       const now = (item?.traits?.tags || []).join(", ");
-      const text = prompt("Your own tags for this model, comma separated (e.g. efficient):", now);
+      const text = await this._prompt("Your own tags for this model, comma separated (e.g. efficient):", now);
       if (text === null) return;
       const pools = await this._ws("aac/pool/tags", { resource: id, tags: text.split(",").map((t) => t.trim()).filter(Boolean) });
       if (this._state) this._state.pools = pools;
@@ -1597,7 +1749,7 @@ class AacPanel extends HTMLElement {
       this._render();
     }));
     sr.querySelectorAll("[data-delete]").forEach((el) => el.addEventListener("click", async () => {
-      if (!confirm("Delete this model?")) return;
+      if (!(await this._confirm("Delete this model?", "Delete", true))) return;
       await this._ws("aac/model/delete", { model_id: el.dataset.delete });
       this._view = "models";
       await Promise.all([this._loadState(), this._loadModels()]);
@@ -1608,8 +1760,16 @@ class AacPanel extends HTMLElement {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); this._send(); }
     });
     sr.querySelector("#chat-send")?.addEventListener("click", () => this._send());
+    sr.querySelectorAll("[data-chat-del]").forEach((el) => el.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const chat = this._chats.find((c) => c.id === el.dataset.chatDel);
+      if (!(await this._confirm(`Delete the chat "${chat?.title || ""}"?`, "Delete", true))) return;
+      await this._ws("aac/chat/delete", { chat_id: el.dataset.chatDel });
+      if (this._chat?.id === el.dataset.chatDel) { this._chat = null; this._view = "chat/new"; }
+      await this._loadChats();
+    }));
     sr.querySelector("#chat-delete")?.addEventListener("click", async () => {
-      if (!this._chat || !confirm("Delete this chat?")) return;
+      if (!this._chat || !(await this._confirm("Delete this chat?", "Delete", true))) return;
       await this._ws("aac/chat/delete", { chat_id: this._chat.id });
       this._chat = null;
       this._view = "chat/new";
@@ -1692,13 +1852,13 @@ class AacPanel extends HTMLElement {
     }));
     sr.querySelectorAll("[data-mem-edit]").forEach((el) => el.addEventListener("click", async () => {
       const item = this._memory.memories.find((x) => x.id === el.dataset.memEdit);
-      const text = prompt("Edit memory", item?.text || "");
+      const text = await this._prompt("Edit memory", item?.text || "");
       if (text === null || !text.trim()) return;
       await this._ws("aac/memory/save", { memory_id: el.dataset.memEdit, text: text.trim(), confirmed: true });
       await this._loadMemory();
     }));
     sr.querySelectorAll("[data-mem-delete]").forEach((el) => el.addEventListener("click", async () => {
-      if (!confirm("Forget this memory?")) return;
+      if (!(await this._confirm("Forget this memory?", "Forget", true))) return;
       await this._ws("aac/memory/delete", { memory_id: el.dataset.memDelete });
       await this._loadMemory();
     }));
@@ -1879,7 +2039,7 @@ class AacPanel extends HTMLElement {
   }
 
   async _deleteTrigger() {
-    if (!this._form?.id || !confirm("Delete this trigger?")) return;
+    if (!this._form?.id || !(await this._confirm("Delete this trigger?", "Delete", true))) return;
     await this._ws("aac/trigger/delete", { trigger_id: this._form.id });
     this._view = "settings/triggers";
     await this._loadState();
