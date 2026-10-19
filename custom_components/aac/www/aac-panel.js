@@ -332,6 +332,15 @@ textarea { min-height: 10em; resize: vertical; }
 .flow { display: flex; flex-direction: column; }
 .role { border-top: 1px solid rgba(0, 240, 255, .2); padding-top: .7em; margin-top: .7em; }
 .role h3 { font-size: .95em; letter-spacing: .15em; color: var(--cyan); margin: 0 0 .2em; font-weight: 600; }
+.buffer { max-height: 26em; overflow-y: auto; font-family: ui-monospace, monospace; font-size: .85em; padding: .3em 0; }
+.buffer .bl { border-left: 2px solid var(--line); padding: .15em 0 .15em .7em; margin: .35em 0; }
+.buffer .bl.to-aac { border-left-color: var(--magenta); }
+.buffer .bl.live { border-left-color: var(--cyan); opacity: .85; }
+.buffer .bl.live .bt { font-style: italic; }
+.buffer .bm { font-size: .82em; color: var(--dim); }
+.buffer .bm b { font-weight: normal; margin-left: .4em; }
+.buffer .bm b.to { color: var(--magenta); }
+.buffer .bm b.no { color: var(--amber); }
 .transcript { max-height: 22em; overflow-y: auto; display: flex; flex-direction: column; gap: .5em; }
 .tline { border-left: 1px solid var(--line, rgba(0,229,255,.3)); padding: .1em 0 .1em .7em; }
 .tline .m { font-size: .8em; opacity: .7; }
@@ -1755,19 +1764,18 @@ class AacPanel extends HTMLElement {
         <div class="body"><div class="name">${esc(s.name)} ${s.state === "built" ? "" : '<span class="tag plan">PLANNED</span>'}</div><div class="desc">${esc(s.desc)}</div></div>
       </div>`).join("");
     const set = a.settings || {}, eng = a.engines || {};
-    const lines = (a.transcript || []).slice().reverse().map((l) => `
-      <div class="tline ${l.addressed ? "to-aac" : ""}"><span class="m">${esc(new Date(l.time).toLocaleTimeString())} · ${esc(l.name)}${l.language ? ` · ${esc(l.language)}` : ""}${l.addressed ? " → AAC" : ""}${l.gate ? ` · ${esc(l.gate)}` : ""}</span><div>${esc(l.text)}</div></div>`).join("");
+    const lines = (a.transcript || []).map((l) => this._bufferLine(l)).join("");
     return this._page("AUDIO PIPELINE", `${(a.connected || []).length} connected · separate from HA's Assist`, `
       ${this._liveTimer ? "" : (setTimeout(() => this._liveTimer || this._liveTick(), 0), "")}<div class="card"><h2>LIVE</h2><p class="hint">What each microphone hears right now: the last 10 seconds of loudness; the bright part is what the speech detector cut out as speech, which then goes to speech to text.</p>
-        <div id="audio-live">${this._liveHtml2()}</div></div>
+        <div id="audio-live">${this._liveHtml2()}</div>
+        <label style="margin-top:1em">Buffer</label>
+        <p class="hint" style="margin-top:0">Everything heard (RAM only, the last lines), oldest at the top. While someone talks, the words appear live and get corrected; the finished line is handed to the hearing modules that are on. Per line: start · length · language · loudness · how sure the recognizer was · which engine and how fast.</p>
+        <div class="buffer thin-scroll" id="audio-buffer">${lines || '<p class="hint">Nothing heard yet.</p>'}<div id="audio-partial">${this._partialHtml()}</div></div>
+      </div>
       <div class="split">
         <div class="card"><h2>${icon("mic")} CONNECTED</h2>
           ${this._liveSources(a.connected || [])}
           <div class="actions"><button class="btn" data-go="settings/audio/sources">All sources</button></div>
-        </div>
-        <div class="card"><h2>TRANSCRIPT</h2>
-          <p class="hint">What AAC heard (RAM only, the last lines), handed to the hearing modules that are on.</p>
-          <div class="transcript thin-scroll">${lines || '<p class="hint">Nothing heard yet.</p>'}</div>
         </div>
       </div>
       <div class="split">
@@ -1806,6 +1814,22 @@ class AacPanel extends HTMLElement {
     }).join("");
   }
 
+  _bufferLine(l) {
+    const t = new Date(l.time);
+    const hms = `${t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}.${String(Math.floor(t.getMilliseconds() / 100))}`;
+    const meta = [hms, l.seconds != null ? `${l.seconds} s` : null, l.language, l.loudness_db != null ? `${l.loudness_db} dB` : null,
+      l.confidence != null ? `${Math.round(l.confidence * 100)} % sure` : null,
+      l.engine ? `${this._resourceLabel(l.engine)}${l.stt_ms != null ? ` ${l.stt_ms} ms` : ""}` : null].filter(Boolean);
+    const mark = l.addressed ? '<b class="to">→ AAC</b>' : l.gate ? `<b class="no">${esc(l.gate)}</b>` : "";
+    return `<div class="bl ${l.addressed ? "to-aac" : ""}"><div class="bm">${esc(meta.join(" · "))} ${mark}</div><div class="bt">${esc(l.text)}</div></div>`;
+  }
+
+  _partialHtml() {
+    return (this._audioLive || []).filter((x) => x.state !== "listening" || x.partial).map((x) => `
+      <div class="bl live"><div class="bm">${esc(x.name)} · ${esc(x.state)}${x.speech_seconds ? ` · ${esc(x.speech_seconds)} s` : ""}</div>
+        <div class="bt">${esc(x.partial || "")}<span class="cursor"></span></div></div>`).join("");
+  }
+
   _liveTick() {
     clearTimeout(this._liveTimer);
     this._liveTimer = null;
@@ -1816,6 +1840,12 @@ class AacPanel extends HTMLElement {
       this._audioLive = r.sources;
       const box = this.shadowRoot.querySelector("#audio-live");
       if (box) box.innerHTML = this._liveHtml2();
+      const part = this.shadowRoot.querySelector("#audio-partial"), buf = this.shadowRoot.querySelector("#audio-buffer");
+      if (part && buf) {
+        const follow = buf.scrollHeight - buf.scrollTop - buf.clientHeight < 60;  // at the bottom: keep following
+        part.innerHTML = this._partialHtml();
+        if (follow) buf.scrollTop = buf.scrollHeight;
+      }
     }).catch(() => {});
   }
 
@@ -1910,6 +1940,14 @@ class AacPanel extends HTMLElement {
     sr.querySelector("#nav-toggle")?.addEventListener("click", () => { this._navOpen = !this._navOpen; this._render(); });
     sr.querySelector("#backdrop")?.addEventListener("click", () => { this._navOpen = false; this._render(); });
     sr.querySelector("#refresh-models")?.addEventListener("click", () => this._loadModels());
+    const buf = sr.querySelector("#audio-buffer");
+    if (buf) {  // the buffer follows new lines unless you scrolled up to read
+      buf.scrollTop = this._bufFollow === false ? this._bufScroll || 0 : buf.scrollHeight;
+      buf.addEventListener("scroll", () => {
+        this._bufFollow = buf.scrollHeight - buf.scrollTop - buf.clientHeight < 60;
+        this._bufScroll = buf.scrollTop;
+      });
+    }
     sr.querySelector("#au-volume")?.addEventListener("input", (e) => { sr.querySelector("#au-volume-val").textContent = e.target.value; });
     sr.querySelectorAll("[data-machine-toggle]").forEach((el) => {
       const toggle = (e) => {

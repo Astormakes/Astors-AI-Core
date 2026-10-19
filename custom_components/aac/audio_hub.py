@@ -16,6 +16,7 @@ from array import array
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 import io
 import json
 import math
@@ -50,6 +51,7 @@ MAX_SEGMENT_FRAMES = 2000  # 20 s
 MIN_SPEECH_FRAMES = 30  # shorter blips are dropped
 METER_FRAMES = 10  # one meter point = 100 ms
 METER_POINTS = 100  # the live view shows the last 10 s
+PARTIAL_EVERY = 120  # frames (1.2 s) of new speech before the open segment is transcribed again
 TRANSCRIPT_LINES = 200
 # Integrations whose speech engines run locally (preferred when nothing is chosen)
 LOCAL_ENGINES = {"wyoming", "piper", "whisper", "faster_whisper"}
@@ -135,6 +137,15 @@ class Segmenter:
         """Inside a speech segment right now."""
         return self._segment is not None
 
+    @property
+    def frames(self) -> int:
+        """Frames in the open segment (0 when none is open)."""
+        return len(self._segment) if self._segment is not None else 0
+
+    def so_far(self) -> bytes:
+        """The open segment's audio so far (for a live, partial transcript)."""
+        return b"".join(self._segment) if self._segment is not None else b""
+
     def _measure(self, frame: bytes, speech: bool) -> None:
         samples = array("h", frame)
         peak = max(abs(min(samples)), max(samples)) if samples else 0
@@ -197,6 +208,9 @@ class Source:
     last_answer: float = 0.0
     heard: int = 0  # segments
     transcribing: int = 0  # segments at speech to text right now
+    partial: str = ""  # what the open segment said so far (live transcript)
+    partial_at: int = 0  # segment frames when the last partial was started
+    partial_busy: bool = False
 
     def summary(self) -> dict[str, Any]:
         """For the panel."""
@@ -239,7 +253,13 @@ class AudioHub:
         if source.playing:
             return  # AAC is speaking there; don't listen to itself
         source.ring.append(chunk)
-        for segment in source.segmenter.feed(chunk):
+        seg = source.segmenter
+        if (seg.active and not source.partial_busy and seg.frames - source.partial_at >= PARTIAL_EVERY
+                and self._partials_ok()):
+            source.partial_busy, source.partial_at = True, seg.frames
+            self.entry.async_create_background_task(self.hass, self._async_partial(source), f"aac partial {source.id}")
+        for segment in seg.feed(chunk):
+            source.partial, source.partial_at = "", 0
             source.heard += 1
             self.entry.async_create_background_task(
                 self.hass, self._async_segment(source, segment), f"aac audio {source.id}"
@@ -259,8 +279,25 @@ class AudioHub:
         said = f" {_norm(text)} "
         return any(f" {_norm(name)} " in said for name in self.entry.runtime_data.store.audio["names"] if _norm(name))
 
+    def _partials_ok(self) -> bool:
+        """Live partial transcripts only on a model server (a GPU whisper); HA's CPU engines are too slow."""
+        resource = self.entry.runtime_data.broker.pick("stt")
+        return resource is not None and not is_entity(resource)
+
+    async def _async_partial(self, source: Source) -> None:
+        """The open segment so far, transcribed (only for the live view; the final line comes at its end)."""
+        try:
+            if len(pcm := source.segmenter.so_far()) >= PARTIAL_EVERY * FRAME_BYTES:
+                heard = await self.async_stt(pcm)
+                if source.segmenter.active and (text := (heard or {}).get("text", "").strip()):
+                    source.partial = text
+        finally:
+            source.partial_busy = False
+
     async def _async_segment(self, source: Source, pcm: bytes) -> None:
+        ended = dt_util.utcnow()
         source.transcribing += 1
+        started = time.monotonic()
         try:
             heard = await self.async_stt(pcm)
         finally:
@@ -268,10 +305,16 @@ class AudioHub:
         text = (heard or {}).get("text", "").strip()
         if not text or _HALLUCINATIONS.match(text):
             return
-        line = {"time": dt_util.utcnow().isoformat(), "source": source.id, "name": source.name,
+        seconds = len(pcm) / (SAMPLE_RATE * 2)
+        samples = array("h", pcm)
+        rms = math.sqrt(sum(v * v for v in samples[::4]) / max(1, len(samples[::4])))
+        line = {"time": (ended - timedelta(seconds=seconds)).isoformat(), "source": source.id, "name": source.name,
                 "text": text, "addressed": False,
                 "language": heard.get("language"), "confidence": heard.get("confidence"),
-                "engine": heard.get("engine")}
+                "engine": heard.get("engine"),
+                # details for the live buffer (and later the companion): how long, how loud, how fast recognized
+                "seconds": round(seconds, 1), "loudness_db": round(20 * math.log10(rms / 32767), 1) if rms > 0 else None,
+                "stt_ms": int((time.monotonic() - started) * 1000), "words": heard.get("words") or []}
         earlier = [x for x in self.transcript if x["source"] == source.id][-EARLIER_LINES:]
         self.transcript.append(line)
         async_notify(self.hass, "audio")
@@ -472,7 +515,8 @@ class AudioHub:
     # ------------------------------------------------------------ panel
     def live(self) -> list[dict[str, Any]]:
         """The live view per source: the last seconds of loudness and speech, and what happens now."""
-        return [{"id": s.id, "name": s.name, "meter": list(s.segmenter.meter),
+        return [{"id": s.id, "name": s.name, "meter": list(s.segmenter.meter), "partial": s.partial,
+                 "speech_seconds": round(s.segmenter.frames / 100, 1),
                  "state": "speaking" if s.playing else "transcribing" if s.transcribing else
                  "hearing speech" if s.segmenter.active else "listening"} for s in self.sources.values()]
 
