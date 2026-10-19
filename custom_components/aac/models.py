@@ -141,6 +141,11 @@ async def async_overview(hass: HomeAssistant, store: AACStore) -> dict[str, Any]
         url = cfg[CONF_BASE_URL].rstrip("/")
         probe = by_url.get(url, {"online": False, "models": [], "error": None})
         taken.add((url, cfg[CONF_MODEL]))
+        # A server with a single model serves it whatever it is called (llama.cpp names it by its file path
+        # and ignores the name in requests); count it as this entry, not as a second model
+        single = probe["online"] and len(probe["models"]) == 1
+        if single:
+            taken.add((url, probe["models"][0]))
         manual.append(
             {
                 "id": cfg["id"],
@@ -148,7 +153,7 @@ async def async_overview(hass: HomeAssistant, store: AACStore) -> dict[str, Any]
                 "base_url": cfg[CONF_BASE_URL],
                 "model": cfg[CONF_MODEL],
                 "has_key": bool(cfg.get(CONF_API_KEY)),
-                "online": probe["online"] and (cfg[CONF_MODEL] in probe["models"] or probe.get("unlisted", False)),
+                "online": probe["online"] and (cfg[CONF_MODEL] in probe["models"] or probe.get("unlisted", False) or single),
                 "n_params": (probe.get("meta") or {}).get(cfg[CONF_MODEL], {}).get("n_params"),
                 "error": probe["error"],
             }

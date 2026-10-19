@@ -32,7 +32,9 @@ API_PROMPT = (
     "tell the user what exists even when it is invisible to you (never claim something is missing just "
     "because list_entities did not find it). To get more, ask: request_visibility for an integration's "
     "entities, request_access for reading/switching entities you can see, each with a short reason; the owner "
-    "decides outside the chat and you hear the outcome in 'From AAC'. Ask only for what the task needs."
+    "decides outside the chat and you hear the outcome in 'From AAC'. Ask only for what the task needs. "
+    "The home changes during a chat: when asked to check again, use the tools again instead of repeating "
+    "what you found earlier."
 )
 
 

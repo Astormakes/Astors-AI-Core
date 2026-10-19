@@ -39,7 +39,8 @@ API_PROMPT = (
     "You can help the owner set up AAC itself (models, memory, heartbeat, audio). Start with "
     "setup_status. Go one step at a time, explain in a sentence why a step is useful, and ask "
     "before you change anything. The charter and what you may do on your own are the owner's "
-    "to set in the panel; you cannot change them."
+    "to set in the panel; you cannot change them. Settings change while you talk (the owner may fix things "
+    "in the panel meanwhile): when asked to check again, call setup_status again instead of repeating earlier answers."
 )
 
 
@@ -150,8 +151,11 @@ class ListModelsTool(_SetupTool):
                  "online": server["online"], "kind": "found"}
                 for m in server["models"]
             )
+        run = current_run.get()
         for m in models:
             m["looks_like"] = model_kind(m["model"])
+            if run and run.model == m["id"]:
+                m["this_is_you"] = True  # the model answering right now (so it is online)
         return llm.ToolResult(data={"models": models})
 
 

@@ -172,3 +172,14 @@ async def test_charter_reaches_every_agent(
     assert system.startswith("Be kind. Never lie.")
     assert "You are a test." in system
     assert mock_entry.runtime_data.store.default_domain.data["charter"] == "Be kind. Never lie."
+
+
+async def test_single_model_server_counts_as_online(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """llama.cpp names its one model by the file path; the entry still counts as online, no duplicate."""
+    await setup_aac(hass, mock_entry)
+    aioclient_mock.get(f"{BASE_URL}/models", json={"data": [{"id": "/models/test-model-Q4.gguf"}]})
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/models"})
+    result = (await ws.receive_json())["result"]
+    assert result["manual"][0]["online"] is True
+    assert all(m["model"] != "/models/test-model-Q4.gguf" for s in result["auto"] for m in s["models"])
