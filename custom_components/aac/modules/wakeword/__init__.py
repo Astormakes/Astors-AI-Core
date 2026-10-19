@@ -78,6 +78,10 @@ async def async_setup_module(ctx: ModuleContext) -> None:
             return  # sounds and untranscribed speech do not carry a name
         if (line.get("speaker") or {}).get("kind") == "media":
             return  # the owner said this voice is from a video or the TV
+        if line.get("part", 1) < line.get("parts", 1):
+            return  # one utterance split into sentences: answer once, on its last part, with all of it
+        together = [x for x in earlier if line.get("utterance") and x.get("utterance") == line["utterance"]]
+        text = " ".join([*(x["text"] for x in together), line["text"]])
         hub = ctx.audio
         domain_id = ctx.entry.runtime_data.voice_domain.id
         follow_up = float(ctx.setting(domain_id, "follow_up") or 0)
@@ -85,20 +89,23 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         # measured to when the sentence STARTED (a long sentence takes a while to be recognized)
         after = (datetime.fromisoformat(line["time"]) - spoke["at"]).total_seconds() if spoke else None
         is_follow_up = after is not None and -5 <= after < follow_up  # the mic is muted while AAC speaks; -5 s = pre-roll and timing slack
-        if not (hub.mentions(line["text"]) or is_follow_up):
+        if not (hub.mentions(text) or is_follow_up):
             return
-        line["addressed"] = True
+        for x in [*together, line]:
+            x["addressed"] = True
         if ctx.setting(domain_id, "attention") and not await async_attention(
-            ctx, line["text"], [x["text"] for x in earlier if x.get("kind", "speech") == "speech"][-ATTENTION_LINES:],
+            ctx, text, [x["text"] for x in earlier if x.get("kind", "speech") == "speech"][-ATTENTION_LINES:],
             spoke["text"] if is_follow_up else None, describe(line),
         ):
-            line["addressed"], line["gate"] = False, "not meant for AAC"
+            for x in [*together, line]:
+                x["addressed"], x["gate"] = False, "not meant for AAC"
             hub.changed()
             return
         hub.changed()
         seconds = float(ctx.setting(domain_id, "look_back") or 0)
         since = datetime.fromisoformat(line["time"]) - timedelta(seconds=seconds)
-        before = [x["text"] for x in earlier if seconds and x.get("text") and datetime.fromisoformat(x["time"]) >= since]
-        await hub.async_answer(source, line["text"], before)
+        before = [x["text"] for x in earlier if seconds and x.get("text") and x not in together
+                  and datetime.fromisoformat(x["time"]) >= since]
+        await hub.async_answer(source, text, before)
 
     ctx.add_hearing(Hearing(id="wakeword", title="Wake word", heard=heard))

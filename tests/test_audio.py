@@ -472,3 +472,34 @@ def test_unsure_lines_do_not_start_voices():
     assert b is a and not new and 0.65 <= score < 0.8 and a["print"] == before
     c, _, _ = voices.match([0.0, 1.0], 0.8, 0.65, may_add=False)
     assert c is None and len(voices.voices) == 1
+
+
+async def test_split_utterance_is_answered_once(hass: HomeAssistant, hass_client, aioclient_mock, mock_entry, configured):
+    """'Computer, are you there? Please say hello.' split into two sentences: one request with both."""
+    await setup_aac(hass, mock_entry)
+    await async_set_access(mock_entry, "wakeword", "assistant", {"enabled": True})
+    await async_set_access(mock_entry, "voices", "assistant", {"enabled": False})
+    payloads = _queue(aioclient_mock, _text('{"to_assistant": true}'), _text("Hello!"))
+    hub = mock_entry.runtime_data.audio
+
+    async def stt(pcm, prompt=None):
+        return {"text": "Computer, are you there? Please say hello.", "segments": [
+            {"text": "Computer, are you there?", "start": 0.0, "end": 2.0}, {"text": "Please say hello.", "start": 2.0, "end": 4.0}]}
+
+    client = await hass_client()
+    with (
+        patch("custom_components.aac.audio_hub.make_vad", return_value=EnergyVad()),
+        patch.object(hub, "async_stt", side_effect=stt),
+        patch.object(hub, "async_tts", AsyncMock(return_value=b"RIFFwave")),
+    ):
+        ws = await client.ws_connect("/api/aac/audio")
+        await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "rate": 16000})
+        await ws.receive_json()
+        await ws.send_bytes(_audio((SILENCE, 0.3), (LOUD, 4.0), (SILENCE, 1)))
+        play = await asyncio.wait_for(ws.receive_json(), 5)
+        assert play["text"] == "Hello!"
+        await ws.close()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(payloads) == 2  # one attention check, one answer
+    assert payloads[1]["messages"][-1]["content"].endswith("Computer, are you there? Please say hello.")
+    assert [x["addressed"] for x in hub.transcript] == [True, True]

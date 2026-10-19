@@ -338,7 +338,8 @@ class AudioHub:
             if parts := found.get("split"):
                 start = datetime.fromisoformat(line["time"])
                 lines = []
-                for part in parts:
+                utterance = f"{source.id}-{line['time']}"  # the parts belong together (one breath, one request)
+                for n, part in enumerate(parts):
                     a = max(0, int(part["start"] * SAMPLE_RATE)) * 2
                     b = min(len(pcm), int(part["end"] * SAMPLE_RATE) * 2)
                     if b - a < FRAME_BYTES:
@@ -346,7 +347,8 @@ class AudioHub:
                     piece = pcm[a:b]
                     sub = {**self._segment_line(source, piece, start + timedelta(seconds=part["start"])),
                            **{k: v for k, v in found.items() if k != "split"},
-                           **{k: v for k, v in part.items() if k not in ("start", "end")}}
+                           **{k: v for k, v in part.items() if k not in ("start", "end")},
+                           "utterance": utterance, "part": n + 1, "parts": len(parts)}
                     lines += await self._async_stages(source, piece, sub, stages[i + 1:])
                 return lines
             line.update(found)
