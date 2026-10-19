@@ -236,3 +236,7 @@ def test_volume_scales_the_voice():
     with wave.open(io.BytesIO(scale_wav(buf.getvalue(), 0.5))) as r:
         assert struct.unpack("<3h", r.readframes(3)) == (500, -1000, 16383)
     assert scale_wav(b"RIFFwave", 0.5) == b"RIFFwave"
+    streamed = bytearray(buf.getvalue())  # Piper streams with "unknown length" in the header
+    streamed[4:8] = streamed[40:44] = b"\xff\xff\xff\xff"
+    with wave.open(io.BytesIO(scale_wav(bytes(streamed), 0.5))) as r:
+        assert struct.unpack("<3h", r.readframes(3)) == (500, -1000, 16383)

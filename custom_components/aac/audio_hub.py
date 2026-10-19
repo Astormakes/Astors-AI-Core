@@ -512,6 +512,9 @@ def scale_wav(audio: bytes, gain: float) -> bytes:
         samples.byteswap()
     out = io.BytesIO()
     with wave.open(out, "wb") as dst:
-        dst.setparams(params)
+        # not setparams: a streamed WAV (Piper) has "unknown length" (0xFFFFFFFF) as its frame count
+        dst.setnchannels(params.nchannels)
+        dst.setsampwidth(params.sampwidth)
+        dst.setframerate(params.framerate)
         dst.writeframes(samples.tobytes())
     return out.getvalue()
