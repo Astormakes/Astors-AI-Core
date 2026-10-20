@@ -52,6 +52,7 @@ from .pools import Broker
 from .skins import USER_URL as USER_SKINS_URL, user_dir
 from .memory import MemoryStore, memory_path
 from .memory_api import AACMemoryAPI
+from .menu_api import MENU_API_ID, AACMenuAPI
 from .schedule_api import AACScheduleAPI
 from .setup_api import AACSetupAPI
 from .provider import OpenAICompatProvider, ProviderConnectionError
@@ -207,6 +208,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
             AACScheduleAPI(hass=hass, id=dom.api_id("aac_schedule"), name=f"AAC planning{label}", entry=entry, domain=dom),
             AACSetupAPI(hass=hass, id=dom.api_id("aac_setup"), name=f"AAC setup{label}", entry=entry, domain=dom),
             AACHomeAPI(hass=hass, id=dom.api_id("aac_home"), name=f"AAC home{label}", entry=entry, domain=dom),
+            AACMenuAPI(hass=hass, id=dom.api_id(MENU_API_ID), name=f"AAC menu{label}"),
         ):
             entry.async_on_unload(llm.async_register_api(hass, api))
 

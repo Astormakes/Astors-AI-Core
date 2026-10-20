@@ -1123,6 +1123,15 @@ class AacPanel extends HTMLElement {
   // ---------------------------------------------------------------- the chat view
   // Shared by chats, run details and the heartbeat's runs (later modules too). One message; opts:
   // editable (edit / rerun), details (a link to the run), key (unique per view, for the folds)
+  // A model's traits (speed, size, tool mode …) from the pool status
+  _traitsOf(id) {
+    for (const r of Object.values(this._state?.pools?.roles || {})) {
+      const it = (r.items || []).find((x) => x.id === id);
+      if (it?.traits) return it.traits;
+    }
+    return null;
+  }
+
   _bubbleHtml(m, i, msgs, opts = {}) {
     const key = `${opts.key || "m"}${i}`;
     const editing = opts.editable && this._editing === i;
@@ -1467,7 +1476,10 @@ class AacPanel extends HTMLElement {
       : [["Type", "auto"], ["Model", auto.model], ["Found via", srv.label], ["Server", srv.base_url]];
     rows.push(["State", online ? "online" : "offline"]);
     const err = manual ? manual.error : srv.error;
-    return this._page(manual ? manual.name : auto.model, id === master ? '<span class="tag aac">MASTER</span>' : "", `<div class="card"><h2>MODEL</h2>
+    const mode = this._traitsOf(id)?.tool_mode || "menu";
+    const toolCard = `<div class="card" data-autosave="toolmode" data-arg="${esc(id)}" data-label="Tool mode"><h2>TOOLS ${tip("Menu: the model first gets one line per area (home, memory, lists …) and opens what it needs; requests stay small and the server's cache keeps working. All: every tool up front (about 9,000 tokens), better for small models that get lost in the menu. Compare with 🔍 What the model got under an answer.")}</h2>
+        <label for="tm-mode">Tool mode</label><select id="tm-mode">${[["menu", "Menu (areas, opened when needed)"], ["all", "All tools up front"]].map(([v, l]) => `<option value="${v}" ${mode === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>`;
+    return this._page(manual ? manual.name : auto.model, id === master ? '<span class="tag aac">MASTER</span>' : "", `${toolCard}<div class="card"><h2>MODEL</h2>
         <div class="kv">${rows.map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span>`).join("")}</div>
         ${err ? `<div class="msg err">${esc(err)}</div>` : ""}
         <div class="actions">
@@ -2079,6 +2091,7 @@ class AacPanel extends HTMLElement {
   async _saveCard(key, arg) {
     const sr = this.shadowRoot;
     if (key === "heartbeat") return this._saveHeartbeat();
+    if (key === "toolmode") { this._state.pools = await this._ws("aac/pool/tool_mode", { resource: arg, mode: sr.querySelector("#tm-mode").value }); return; }
     if (key === "audio") return this._saveAudio();
     if (key === "master") return this._saveMaster();
     if (key === "module") return this._saveModule(arg);

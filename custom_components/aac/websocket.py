@@ -63,6 +63,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_runs,
         ws_run_get,
         ws_run_request,
+        ws_pool_tool_mode,
         ws_heartbeat_update,
         ws_heartbeat_run,
         ws_trigger_save,
@@ -997,6 +998,17 @@ async def ws_pool_tags(hass: HomeAssistant, connection, msg) -> None:
     """The owner's own tags for a model (e.g. efficient)."""
     if entry := _entry(hass, connection, msg):
         await entry.runtime_data.broker.async_set_tags(msg["resource"], msg["tags"])
+        connection.send_result(msg["id"], entry.runtime_data.broker.status())
+
+
+@aac_command({vol.Required("type"): "aac/pool/tool_mode", vol.Required("resource"): str,
+              vol.Required("mode"): vol.In(["menu", "all"])})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_pool_tool_mode(hass: HomeAssistant, connection, msg) -> None:
+    """How a model gets its tools: menu (areas, opened on demand) or all (every tool up front)."""
+    if entry := _entry(hass, connection, msg):
+        await entry.runtime_data.broker.async_set_tool_mode(msg["resource"], msg["mode"])
         connection.send_result(msg["id"], entry.runtime_data.broker.status())
 
 

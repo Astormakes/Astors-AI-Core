@@ -190,7 +190,8 @@ class Broker:
             endpoint = resolve_model(self.hass, self.store, resource)
             t["params_b"] = params_from_name(endpoint.model) if endpoint else None
         return {"speed": t.get("speed"), "samples": t.get("samples", 0), "params_b": t.get("params_b"),
-                "tags": list(t.get("tags", [])), "n_ctx": t.get("n_ctx"), "token_factor": t.get("token_factor", 1.0)}
+                "tags": list(t.get("tags", [])), "n_ctx": t.get("n_ctx"), "token_factor": t.get("token_factor", 1.0),
+                "tool_mode": t.get("tool_mode", "menu")}
 
     def learn_context(self, resource: str, n_ctx: int | None = None, factor: float | None = None) -> None:
         """What the server said about its context: its size, and real tokens / AAC's estimate."""
@@ -228,6 +229,12 @@ class Broker:
     async def async_set_tags(self, resource: str, tags: list[str]) -> None:
         """The owner's own tags (e.g. efficient)."""
         self._traits_entry(resource)["tags"] = sorted({t.strip().lower() for t in tags if t.strip()})
+        await self.store.async_save()
+        async_notify(self.hass, "pools")
+
+    async def async_set_tool_mode(self, resource: str, mode: str) -> None:
+        """How a model gets its tools: menu (areas, opened on demand) or all (every tool up front)."""
+        self._traits_entry(resource)["tool_mode"] = mode
         await self.store.async_save()
         async_notify(self.hass, "pools")
 

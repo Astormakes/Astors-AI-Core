@@ -63,8 +63,8 @@ def mock_panel(hass: HomeAssistant) -> Generator[dict[str, MagicMock]]:
         yield {"register": reg, "remove": rem}
 
 
-def store_data(**master: Any) -> dict[str, Any]:
-    """Stored AAC config with one manual model as master."""
+def store_data(tool_mode: str = "all", **master: Any) -> dict[str, Any]:
+    """Stored AAC config with one manual model as master (all tools up front, unless tool_mode="menu")."""
     return {
         "version": 1,
         "key": STORAGE_KEY,
@@ -73,6 +73,7 @@ def store_data(**master: Any) -> dict[str, Any]:
             "master": {"model": MODEL_CFG["id"], "prompt": "You are a test.",
                        "llm_hass_api": [], **master},
             "setup": {"skipped": []},
+            "traits": {MODEL_CFG["id"]: {"tool_mode": tool_mode}},
         },
     }
 
@@ -87,6 +88,12 @@ def mock_entry() -> MockConfigEntry:
 def configured(hass_storage) -> None:
     """AAC with a master model, no HA control."""
     hass_storage[STORAGE_KEY] = store_data()
+
+
+@pytest.fixture
+def configured_menu(hass_storage) -> None:
+    """AAC with a master model that gets its tools as a menu, and the Assist API."""
+    hass_storage[STORAGE_KEY] = store_data(tool_mode="menu", llm_hass_api=["assist"])
 
 
 @pytest.fixture

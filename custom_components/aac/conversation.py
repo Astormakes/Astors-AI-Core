@@ -7,6 +7,7 @@ import time
 from typing import Any, Literal
 
 import probatio
+import slugify as unicode_slug
 
 from homeassistant.components import conversation
 from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT, MATCH_ALL
@@ -37,6 +38,7 @@ from .provider import OpenAICompatProvider, ProviderConnectionError, ProviderCon
 from .extractor import async_extract
 from .home_api import API_ID as HOME_API_ID
 from .memory_api import API_ID as MEMORY_API_ID
+from .menu_api import AREA_INFO, MENU_API_ID, build_menu, current_menu
 from .schedule_api import API_ID as SCHEDULE_API_ID
 from .setup_api import API_ID as SETUP_API_ID, owner_present
 from .domains import Domain
@@ -173,8 +175,10 @@ def _strip_tool_text(text: str | None) -> str | None:
 
 
 def _steps(contents: list[conversation.Content]) -> list[dict[str, Any]]:
-    """What the model said and which tools it used in one turn, for the run log."""
+    """What the model said and which tools it used in one turn, for the run log (menu calls unwrapped:
+    use_tool shows the tool it called, open_area a short note)."""
     steps: list[dict[str, Any]] = []
+    inner: dict[str, str | None] = {}  # tool call id → the tool use_tool called (None: open_area, no result shown)
     for content in contents:
         # thinking = the model's hidden reasoning (reasoning_content); say = what it wrote for the reader
         # before calling tools (shown in the answer, between the steps); the final answer is the result
@@ -183,15 +187,22 @@ def _steps(contents: list[conversation.Content]) -> list[dict[str, Any]]:
         if isinstance(content, conversation.AssistantContent) and content.content and content.tool_calls:
             steps.append({"type": "say", "text": content.content})
         if isinstance(content, conversation.AssistantContent) and content.tool_calls:
-            steps.extend(
-                {"type": "tool_call", "tool": call.tool_name, "args": call.tool_args}
-                for call in content.tool_calls
-            )
+            for call in content.tool_calls:
+                if call.tool_name.endswith("__use_tool"):
+                    inner[call.id] = str(call.tool_args.get("tool", "?"))
+                    steps.append({"type": "tool_call", "tool": inner[call.id], "args": call.tool_args.get("arguments") or {}})
+                elif call.tool_name.endswith("__open_area"):
+                    inner[call.id] = None
+                    steps.append({"type": "note", "text": f"opened {call.tool_args.get('area', '?')}"})
+                else:
+                    steps.append({"type": "tool_call", "tool": call.tool_name, "args": call.tool_args})
         elif isinstance(content, conversation.ToolResultContent):
+            if content.tool_call_id in inner and inner[content.tool_call_id] is None:
+                continue
             steps.append(
                 {
                     "type": "tool_result",
-                    "tool": content.tool_name,
+                    "tool": inner.get(content.tool_call_id) or content.tool_name,
                     "error": bool(content.result.error),
                     "data": json_dumps(content.result.data)[:500],
                 }
@@ -281,6 +292,16 @@ class AACConversationEntity(
         return next((m["name"] for m in self.entry.runtime_data.store.models if m["id"] == model_id),
                     endpoint.model if endpoint else model_id)
 
+    def _describe_area(self, area: str, names: list[str]) -> str | None:
+        """One line for an area of the tool menu."""
+        for key, text in AREA_INFO.items():
+            if area == key or area.startswith(f"{key}-"):
+                return text
+        for module in self.entry.runtime_data.modules:  # a module's area: its own description
+            if area.startswith(unicode_slug.slugify(f"AAC {module.manifest.get('name', module.id).lower()}")):
+                return (module.manifest.get("description", "").split(". ")[0][:140]) or None
+        return None
+
     def _provider(self, endpoint) -> OpenAICompatProvider:
         # Short connect timeout: a machine that is off must not stall the answer
         return OpenAICompatProvider(
@@ -326,6 +347,10 @@ class AACConversationEntity(
                     api_ids.append(api_id)
             if await owner_present(self.hass, user_input.context.user_id):
                 api_ids.append(self.domain.api_id(SETUP_API_ID))  # with the owner present it helps set itself up
+        # Tools as a menu (per model): areas first, an area's tools when the model opens it
+        menu_mode = bool(api_ids) and broker.traits(model_id)["tool_mode"] == "menu"
+        if menu_mode:
+            api_ids.append(self.domain.api_id(MENU_API_ID))
         try:
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),
@@ -376,6 +401,15 @@ class AACConversationEntity(
                 _format_tool(tool, chat_log.llm_api.custom_serializer)
                 for tool in chat_log.llm_api.tools
             ]
+            names = [t["function"]["name"] for t in tools]
+            if menu_mode and (prefix := next((n.split("__")[0] for n in names if n.endswith("__open_area")), None)):
+                own = [t for t in tools if t["function"]["name"].startswith(f"{prefix}__")]
+                menu, menu_text = build_menu(chat_log.llm_api, prefix, [t for t in tools if t not in own], self._describe_area)
+                # the areas instead of every tool's instructions; the two menu tools instead of all tools
+                chat_log.content[0] = conversation.SystemContent(
+                    content=chat_log.content[0].content.replace(chat_log.llm_api.api_prompt, menu_text))
+                tools = own
+                current_menu.set(menu)
 
         params = {
             "temperature": float(options.get(CONF_TEMPERATURE, DEFAULT_TEMPERATURE)),

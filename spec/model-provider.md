@@ -97,6 +97,23 @@ gate (a fast model decides whether the smart one is needed), research and curato
 
 Measured on the real setup: Qwen3-8B on 2× K2200 6.1 tok/s, Qwen3.6-35B on the RTX 5070 Ti 86 tok/s.
 
+### Tool mode (built, v0.40.0)
+
+Per model, `traits.tool_mode` (`aac/pool/tool_mode {resource, mode}`, model page under Compute):
+
+- `menu` (default): the system prompt carries one line per area (a tool namespace: `aac-home`,
+  `aac-memory`, `aac-planning`, `assist`, a module's …) instead of every API's instructions, and the
+  model is offered only `aac-menu__open_area {area}` (→ the area's instructions and its tools with
+  their parameters) and `aac-menu__use_tool {tool, arguments}` (→ calls the tool on the chat's full
+  tool set, arguments checked against its schema). The tool list stays the same for the whole chat,
+  so the server's prompt cache holds; what an area brings is appended as a tool result. A model that
+  calls a real tool directly still gets it run. Runs show the real tools (`use_tool` unwrapped,
+  `open_area` as a note "opened …").
+- `all`: every tool and every API's instructions up front.
+
+Bench 2026-10-20 (12 questions, made-up results): 35B all 11/12 (~10 s to read 8k tokens cold),
+menu 12/12 (~1 s cold, 2.5–5 s per question); Qwen3-8B all 12/12 (~105 s cold), menu 10/12.
+
 ### Availability rules (built, v0.16.0)
 
 The owner's rule for when a model may be used, stored with its traits:

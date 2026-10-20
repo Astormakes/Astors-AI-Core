@@ -496,3 +496,34 @@ async def test_memory_reads_only_the_own_words(hass: HomeAssistant, aioclient_mo
     await hass.async_block_till_done()
     assert run.input == said
     assert conv.async_extract.call_args.args[3] == "turn on the bed light"
+
+
+async def test_tools_as_a_menu(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured_menu):
+    """A menu model gets the areas and two tools; it opens an area, calls a tool through use_tool,
+    and the run shows the real tool (the menu calls unwrapped)."""
+    await setup_aac(hass, mock_entry)
+
+    def call(name, args):
+        return {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
+            {"id": f"c_{name}", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}}]}
+
+    payloads = _replies(aioclient_mock, call("aac-menu__open_area", {"area": "home"}),
+                        call("aac-menu__use_tool", {"tool": "aac-home__list_entities", "arguments": {}}),
+                        call("aac-menu__use_tool", {"tool": "aac-home__nonsense"}),
+                        _reply("You have no devices I can see."))
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "what devices do I have?"})
+    message = (await ws.receive_json())["result"]["message"]
+
+    first = payloads[0]
+    assert [t["function"]["name"] for t in first["tools"]] == ["aac-menu__open_area", "aac-menu__use_tool"]
+    system = first["messages"][0]["content"]
+    assert "You are a test." in system and "- aac-home: The home" in system and "- assist:" in system
+    assert "Follow these instructions for tools from" not in system
+    opened = json.loads(payloads[1]["messages"][-1]["content"])["data"]
+    assert opened["area"] == "aac-home" and "list_entities" in opened["instructions"]
+    assert "aac-home__list_entities" in [t["name"] for t in opened["tools"]]
+    assert "error" in json.loads(payloads[3]["messages"][-1]["content"])["data"]  # an unknown tool: told to open first
+    assert [(s["type"], s.get("tool") or s.get("text")) for s in message["steps"]][:3] == [
+        ("note", "opened home"), ("tool_call", "aac-home__list_entities"), ("tool_result", "aac-home__list_entities")]
+    assert payloads[0]["tools"] == payloads[3]["tools"]  # the tool list never changes (the prompt cache holds)
