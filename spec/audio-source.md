@@ -22,7 +22,9 @@ Rules:
 What AAC does with it (built): voice activity → speech segments → speech to text (a
 speech model from Models, see [model-provider.md](model-provider.md), or an HA STT engine) →
 transcript line `{time, source, name, text, addressed, language, confidence}` → when addressed, the master
-answers and the answer is spoken on the same source. Voice runs are anonymous (no
+answers and the answer is spoken on the same source, in the owner's voice for the answer's language
+(`audio.voices`: `de`/`en` → `{language, voice}` of the TTS engine; guessed from the answer's words; the engine's
+default when unset or failing). Voice runs are anonymous (no
 setup tools) until there is speaker ID.
 
 Planned: listening modes per source (off / wake word / continuous), arbitration
