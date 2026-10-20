@@ -19,12 +19,17 @@ with what information (the audit log).
   "chat_id": null,
   "allow_tools": false,
   "steps": [
-    {"type": "text", "text": "Let me look at the battery."},
+    {"type": "thinking", "text": "The battery sensor reads 12 %, that may be worth a look."},
+    {"type": "say", "text": "Let me look at the battery."},
     {"type": "tool_call", "tool": "assist__homeassistant__GetLiveContext", "args": {"area": "Battery"}},
     {"type": "tool_result", "tool": "assist__homeassistant__GetLiveContext", "error": false, "data": "{…}"}
   ]
 }
 ```
+
+Step types: `say` (what the model wrote for the reader before calling tools; shown in the answer between
+the steps), `thinking` (its hidden reasoning, folded), `tool_call`, `tool_result`, `note` (AAC's own remark:
+context full, model switched, decision). Runs before v0.38 have `text` for both say and note.
 
 | Field | Meaning |
 |---|---|

@@ -334,6 +334,9 @@ textarea { min-height: 10em; resize: vertical; }
 .work:not(.open) .row { display: none; }
 .work:not(.open) .row.fold { display: block; overflow: hidden; animation: fold 1.1s cubic-bezier(.5, 0, .2, 1) forwards; }
 .work .row b { color: var(--cyan); font-weight: normal; }
+.txt.said { margin-bottom: .5em; }
+.work .steprow { letter-spacing: .1em; opacity: .85; }
+.work.thought .work-head { font-style: italic; }
 .work .row.err b { color: var(--red); }
 @keyframes fold { 0% { max-height: 14em; opacity: 1; } 35% { max-height: 14em; opacity: .9; } 100% { max-height: 0; opacity: 0; margin-top: 0; transform: translateY(-.8em); } }
 .bubble .edited { font-size: .7em; color: var(--dim); margin-left: .5em; letter-spacing: .1em; }
@@ -1042,9 +1045,35 @@ class AacPanel extends HTMLElement {
 
   // ---------------------------------------------------------------- workers: chats + runs
   // What AAC did on the way (thinking text, tool calls): one folded block above the answer, click to open
+  // Old runs stored the model's words and AAC's own notes both as "text"
+  _stepKind(s) {
+    if (s.type !== "text") return s.type;
+    return /^(Context full|decision:)|unreachable, switched to /.test(s.text) ? "note" : "say";
+  }
+
+  // An answer as it happened: the model's words for the reader, its steps folded in between, its thinking
+  // (if any) folded apart; then the final text
+  _answerHtml(steps, finalHtml, key) {
+    const parts = [];
+    let work = null;
+    for (const s of steps || []) {
+      const k = this._stepKind(s);
+      if (k === "say") { work = null; parts.push(`<div class="txt md said">${md(s.text)}</div>`); }
+      else if (k === "thinking") { work = null; parts.push({ thought: s.text }); }
+      else { if (!work) { work = []; parts.push(work); } work.push(s); }
+    }
+    return parts.map((p, i) => Array.isArray(p) ? this._stepsHtml(p, `${key}w${i}`)
+      : p.thought !== undefined ? this._thoughtHtml(p.thought, `${key}t${i}`) : p).join("") + finalHtml;
+  }
+
+  _thoughtHtml(text, key) {
+    return `<div class="work thought ${this._openWork?.has(key) ? "open" : ""}" data-work="${esc(key)}"><div class="work-head" role="button" tabindex="0">💭 thought</div><div class="row">${esc(String(text).trim())}</div></div>`;
+  }
+
   _stepRow(s) {
     const cut = (t) => (t = String(t ?? "").trim()).length > 600 ? `${t.slice(0, 600)} …` : t;
-    return s.type === "text" ? `<div class="row">${/^Context full/.test(s.text) ? "⚠" : "💭"} ${esc(cut(s.text))}</div>`
+    const k = this._stepKind(s);
+    return k === "say" || k === "thinking" || k === "note" ? `<div class="row">${k === "note" ? (/^Context full/.test(s.text) ? "⚠" : "ℹ") : k === "thinking" ? "💭" : "💬"} ${esc(cut(s.text))}</div>`
       : s.type === "tool_call" ? `<div class="row"><b>→ ${esc(s.tool.split("__").pop())}</b> ${esc(cut(JSON.stringify(s.args)))}</div>`
       : `<div class="row ${s.error ? "err" : ""}"><b>← ${esc(s.tool.split("__").pop())}</b> ${esc(cut(s.data))}</div>`;
   }
@@ -1057,13 +1086,13 @@ class AacPanel extends HTMLElement {
     if (!steps || !steps.length) return "";
     const tools = steps.filter((s) => s.type === "tool_call").map((s) => s.tool.split("__").pop());
     const n = steps.filter((s) => s.type !== "tool_result").length;
-    const full = steps.some((s) => s.type === "text" && /^Context full/.test(s.text));
+    const full = steps.some((s) => this._stepKind(s) === "note" && /^Context full/.test(s.text));
     return `<div class="work ${this._openWork?.has(key) ? "open" : ""}" data-work="${esc(key)}">${this._workHead(n, tools, full)}${steps.map((s) => this._stepRow(s)).join("")}</div>`;
   }
 
   _renderChat() {
     const master = this._poolItems("master")[0];
-    const chat = this._view === "chat/new" ? null : this._chat;
+    const chat = this._view === "chat/new" && !this._busy ? null : this._chat;  // a new chat shows what is being sent
     const msgs = chat?.messages || [];
     const isAac = chat?.id === "aac";
     const log = msgs.length
@@ -1078,11 +1107,11 @@ class AacPanel extends HTMLElement {
             : "AAC takes the changed text as its own words from now on; the rest of the chat stays. Putting words in a model's mouth can make it act oddly, so keep it plausible.";
           return `<div class="bubble ${m.role} ${m.error ? "err" : ""}">
           ${m.trigger ? `<div class="trig">⚡ ${esc(m.trigger)}</div>` : `<div class="who">${m.role === "user" ? "YOU" : "AAC"}${m.via === "voice" ? `<span class="edited" title="${m.role === "user" ? "spoken at" : "said aloud at"} ${esc(m.mic || "")}">🎤 ${esc((m.mic || "VOICE").toUpperCase())}</span>` : ""}${m.edited ? `<span class="edited">EDITED</span>` : ""}</div>`}
-          ${m.role === "aac" ? this._stepsHtml(m.steps, `m${i}`) : ""}
+          ${m.role === "aac" && (editing || m.error) ? this._stepsHtml(m.steps, `m${i}`) : ""}
           ${editing ? `<textarea id="msg-edit" class="thin-scroll">${esc(this._editText ?? m.text)}</textarea>
             <div class="actions" style="margin-top:.5em"><button class="btn primary" id="msg-edit-send">${m.role === "user" ? "Send" : "Save"}</button><button class="btn" id="msg-edit-cancel">Cancel</button></div>
             <div class="hint" style="margin:.3em 0 0">${editHint}</div>`
-          : m.role === "aac" && !m.error ? `<div class="txt md">${md(m.text)}</div>` : `<div class="txt">${esc(m.text)}</div>`}
+          : m.role === "aac" && !m.error ? this._answerHtml(m.steps, `<div class="txt md">${md(m.text)}</div>`, `m${i}`) : `<div class="txt">${esc(m.text)}</div>`}
           ${m.run_id && isAac ? `<div class="steps"><span tabindex="0" role="button" data-go="run/${esc(m.run_id)}" style="cursor:pointer">details ›</span></div>` : ""}
           ${acts}
         </div>`;
@@ -1117,8 +1146,8 @@ class AacPanel extends HTMLElement {
           ${r.chat_id ? `<div class="actions"><button class="btn" data-go="chat/${esc(r.chat_id)}">Open chat</button></div>` : ""}
         </div>
         <div class="card"><h2>STEPS</h2>
-          ${r.steps.length ? `<div class="timeline">${r.steps.map((s) => s.type === "text"
-            ? `<div class="st said"><b>💭 model</b><pre>${esc(s.text)}</pre></div>`
+          ${r.steps.length ? `<div class="timeline">${r.steps.map((s, k = this._stepKind(s)) => k === "say" || k === "thinking" || k === "note"
+            ? `<div class="st said"><b>${k === "say" ? "💬 said" : k === "thinking" ? "💭 thought" : "ℹ AAC"}</b><pre>${esc(s.text)}</pre></div>`
             : s.type === "tool_call"
             ? `<div class="st"><b>→ ${esc(s.tool)}</b><pre>${esc(JSON.stringify(s.args, null, 1))}</pre></div>`
             : `<div class="st ${s.error ? "err" : ""}"><b>← ${esc(s.tool)}${s.error ? " (error)" : ""}</b><pre>${esc(s.data)}</pre></div>`).join("")}</div>`
@@ -2417,22 +2446,14 @@ class AacPanel extends HTMLElement {
   // The answer while it is written (deltas from the backend). Every model call is a round; a finished
   // round (text before a tool call) folds up into the steps block instead of vanishing.
   _liveHtml() {
-    const rounds = this._stream?.rounds || [], cur = rounds[rounds.length - 1] || {};
-    return `<div class="txt md">${md(cur.text || "")}</div>${cur.tool ? `<div class="steps">→ ${esc(cur.tool)}…</div>` : ""}<span class="cursor"></span>`;
-  }
-
-  _roundRow(r, fold) {
-    return `<div class="row${fold ? " fold" : ""}">${r.text?.trim() ? `💭 ${esc(r.text.trim())} ` : ""}${r.tool ? `<b>→ ${esc(r.tool)}</b>` : ""}</div>`;
-  }
-
-  _workLiveHtml(fold) {
-    const done = (this._stream?.rounds || []).slice(0, -1).filter((r) => r.text || r.tool);
-    if (!done.length) return "";
-    return `${this._workHead(done.length, done.map((r) => r.tool).filter(Boolean))}${done.map((r, i) => this._roundRow(r, fold && i === done.length - 1)).join("")}`;
+    const rounds = this._stream?.rounds || [];
+    return rounds.map((r, i) => `${r.text?.trim() ? `<div class="txt md said">${md(r.text)}</div>` : ""}${r.tool
+      ? `<div class="work"><div class="steprow">⚙ ${esc(r.tool.split("__").pop())}${i === rounds.length - 1 ? "…" : ""}</div></div>` : ""}`).join("")
+      + '<span class="cursor"></span>';
   }
 
   _streamHtml() {
-    return `<div class="work ${this._openWork?.has("live") ? "open" : ""}" data-work="live">${this._workLiveHtml(false)}</div><div class="live">${this._liveHtml()}</div>`;
+    return `<div class="live">${this._liveHtml()}</div>`;
   }
 
   _onDelta(ev) {
@@ -2441,18 +2462,10 @@ class AacPanel extends HTMLElement {
     if (!mine) return;
     this._streamChat = ev.chat_id;
     const st = this._stream = this._stream || { rounds: [] };
-    const r = ev.round ?? 0, newRound = r >= st.rounds.length && st.rounds.length > 0;
+    const r = ev.round ?? 0;
     st.rounds[r] = { text: ev.text, tool: ev.tool || st.rounds[r]?.tool };
     const bubble = this.shadowRoot.querySelector(".bubble.busy");
     if (!bubble?.querySelector(".live")) { this._render(); return; }
-    if (newRound) {  // the last round is done: it slides up into the steps block
-      const work = bubble.querySelector(".work");
-      work.innerHTML = this._workLiveHtml(true);
-      work.querySelector(".work-head")?.addEventListener("click", () => {
-        this._openWork = this._openWork || new Set();
-        work.classList.toggle("open") ? this._openWork.add("live") : this._openWork.delete("live");
-      });
-    }
     bubble.querySelector(".live").innerHTML = this._liveHtml();
     const log = this.shadowRoot.querySelector(".log");
     if (log && log.scrollHeight - log.scrollTop - log.clientHeight < 160) log.scrollTop = log.scrollHeight;  // follow, unless scrolled up

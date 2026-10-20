@@ -176,9 +176,12 @@ def _steps(contents: list[conversation.Content]) -> list[dict[str, Any]]:
     """What the model said and which tools it used in one turn, for the run log."""
     steps: list[dict[str, Any]] = []
     for content in contents:
-        # Text next to tool calls = the model's reasoning; the final answer is the result
+        # thinking = the model's hidden reasoning (reasoning_content); say = what it wrote for the reader
+        # before calling tools (shown in the answer, between the steps); the final answer is the result
+        if isinstance(content, conversation.AssistantContent) and content.thinking_content:
+            steps.append({"type": "thinking", "text": content.thinking_content})
         if isinstance(content, conversation.AssistantContent) and content.content and content.tool_calls:
-            steps.append({"type": "text", "text": content.content})
+            steps.append({"type": "say", "text": content.content})
         if isinstance(content, conversation.AssistantContent) and content.tool_calls:
             steps.extend(
                 {"type": "tool_call", "tool": call.tool_name, "args": call.tool_args}
@@ -414,7 +417,7 @@ class AACConversationEntity(
                     if dropped > left_out:
                         left_out = dropped
                         if run:
-                            run.steps.append({"type": "text", "text": f"Context full: the first {dropped} messages "
+                            run.steps.append({"type": "note", "text": f"Context full: the first {dropped} messages "
                                               f"of this chat were left out ({self._label(model_id)} holds {n_ctx} tokens)."})
                 if final:
                     messages = [*messages, {"role": "user", "content": FINAL_NUDGE}]
@@ -435,7 +438,7 @@ class AACConversationEntity(
                     if context_retry == 1 and offered:
                         context_retry, no_tools = 2, True
                         if run:
-                            run.steps.append({"type": "text", "text": f"Context full: {self._label(model_id)} has too "
+                            run.steps.append({"type": "note", "text": f"Context full: {self._label(model_id)} has too "
                                               "little room for the tools, so this answer is without them."})
                         continue
                     if context_retry or not err.n_ctx:
@@ -454,7 +457,7 @@ class AACConversationEntity(
                         raise HomeAssistantError(f"{NO_MODEL}: {err}") from err
                     LOGGER.info("Master model %s unreachable, using %s", model_id, picked[0])
                     if run:
-                        run.steps.append({"type": "text", "text": f"{model_id} unreachable, switched to {picked[0]}"})
+                        run.steps.append({"type": "note", "text": f"{model_id} unreachable, switched to {picked[0]}"})
                     model_id, endpoint = picked
                     provider = self._provider(endpoint)
                     continue
@@ -505,7 +508,7 @@ class AACConversationEntity(
                 LOGGER.warning("Decision call failed, keeping the text answer: %s", err)
             else:
                 decided = _decision_text(reply.get("content"))
-                run.steps.append({"type": "text", "text": f"decision: {decided}"})
+                run.steps.append({"type": "note", "text": f"decision: {decided}"})
                 async for _ in chat_log.async_add_assistant_content(
                     conversation.AssistantContent(agent_id=self.entity_id, content=decided)
                 ):
