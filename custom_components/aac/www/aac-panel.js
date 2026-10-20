@@ -250,6 +250,10 @@ textarea { min-height: 10em; resize: vertical; }
 .btn:disabled { opacity: .4; cursor: default; }
 .actions { display: flex; gap: .7em; margin-top: 1.3em; flex-wrap: wrap; }
 .msg { font-size: .85em; margin-top: .7em; }
+.toast { position: fixed; right: 16px; bottom: 1.2em; z-index: 50; max-width: calc(100vw - 32px); padding: .55em 1.1em; border-radius: .5em; background: var(--bg2); border: 1px solid currentColor; font-size: .88em; box-shadow: 0 .3em 1.2em rgba(0, 0, 0, .45); pointer-events: none; }
+.toast.ok { color: var(--green); }
+.toast.err { color: var(--red); }
+.card.editing > h2::after { content: "· saved when you leave the field"; font-size: .78em; letter-spacing: .05em; color: var(--amber); text-shadow: none; }
 .msg.err { color: var(--red); text-shadow: 0 0 .3em rgba(255, 56, 96, .6); }
 .msg.ok { color: var(--green); text-shadow: 0 0 .3em rgba(57, 255, 136, .6); }
 .step { display: flex; gap: 1em; align-items: flex-start; padding: .85em 0; border-bottom: 1px dashed rgba(0, 240, 255, .2); cursor: pointer; }
@@ -585,12 +589,12 @@ class AacPanel extends HTMLElement {
     const v = this._vis, dom = this._state?.domain?.name || "";
     if (!v) return this._page("WHAT THIS DOMAIN CAN SEE", "", '<div class="card"><p>Loading…</p></div>');
     const groups = this._entityGroups(v.entities);
-    return this._page(`WHAT "${dom.toUpperCase()}" CAN SEE`, `${v.picked.size} of ${v.entities.length} ticked${v.dirty ? " · not saved" : ""}`, `
+    return this._page(`WHAT "${dom.toUpperCase()}" CAN SEE`, `${v.picked.size} of ${v.entities.length} ticked`, `
       <div class="card">
         <p>Only ticked entities exist for "${esc(dom)}": its agent, its automatic runs and the modules in it. Whether it may read or switch them is set separately under SETTINGS → Entities. ${v.chosen ? "" : "Not chosen yet: the ticks show what you exposed to Assist in HA."}</p>
         ${this._entitySearch()}
-        <div class="actions"><button class="btn primary" id="vis-save" ${v.dirty ? "" : "disabled"}>Save</button>
-          <button class="btn" id="vis-all">Tick all</button><button class="btn" id="vis-none">Untick all</button></div>
+        <p class="hint">Every tick is saved at once.</p>
+        <div class="actions"><button class="btn" id="vis-all">Tick all</button><button class="btn" id="vis-none">Untick all</button></div>
       </div>
       ${Object.entries(groups).map(([area, list]) => {
         const on = list.filter((e) => v.picked.has(e.entity_id)).length;
@@ -854,6 +858,7 @@ class AacPanel extends HTMLElement {
         <div class="backdrop" id="backdrop"></div>
         ${this._dialogHtml()}
         <main>${this._renderMain()}</main>
+        ${this._toastHtml()}
       </div>`;
 
     const nav = sr.querySelector("nav .scroll");
@@ -1127,7 +1132,7 @@ class AacPanel extends HTMLElement {
     const triggers = st.triggers || [];
     return this._page("TRIGGERS", "what wakes the master on its own", `
       <div class="cards">
-        <div class="card"><h2>HEARTBEAT</h2>
+        <div class="card" data-autosave="heartbeat" data-label="Heartbeat"><h2>HEARTBEAT</h2>
           <p>Wakes the master every few minutes to look at the situation. It only speaks up when something matters (answers land in "From AAC"); otherwise it stays silent. Runs show up under WORKERS → Auto.</p>
           <label class="check"><input type="checkbox" id="hb-enabled" ${hb.enabled ? "checked" : ""}>Heartbeat on</label>
           <div class="row">
@@ -1138,7 +1143,7 @@ class AacPanel extends HTMLElement {
           <label for="hb-tier">Model (pool request)</label><select id="hb-tier">${this._tierOptions(hb.tier || "fast")}</select>
           <label class="check"><input type="checkbox" id="hb-tools" ${hb.tools ? "checked" : ""}>Allow tools (slower; it already gets a snapshot of the home, and small models tend to tour every room with tools)</label>
           <label for="hb-instr">Instructions</label><textarea id="hb-instr" class="thin-scroll">${esc(hb.instructions)}</textarea>
-          <div class="actions"><button class="btn primary" id="hb-save">Save</button><button class="btn" id="hb-run">Run once now</button></div>
+          <div class="actions"><button class="btn" id="hb-run">Run once now</button></div>
           ${this._flashHtml()}
         </div>
         <div class="card"><h2>AAC'S OWN PLANS</h2>
@@ -1173,11 +1178,10 @@ class AacPanel extends HTMLElement {
       <div style="flex:1;min-width:0"><div class="n">${esc(j.title)} <span class="tag">${esc(j.priority.toUpperCase())}</span>${j.critical ? ' <span class="tag plan">TIME-CRITICAL</span>' : ""}</div>
       <div class="m">${esc(j.status)}${j.reason && j.status === "queued" ? ` · ${esc(j.reason)}` : ""} · since ${esc(fmtTime(j.created))}${j.due ? ` · due ${esc(fmtTime(j.due))}` : ""}</div></div></div>`;
     const recent = q.history.filter((j) => j.status !== "done").slice(0, 5);
-    return `<div class="card"><h2>QUEUE</h2>
+    return `<div class="card" data-autosave="queue" data-label="Queue settings"><h2>QUEUE</h2>
       <p>Automatic jobs wait here when no allowed model is free, most important first. Reminders and appointments are time-critical: if no model comes before they are due, the reminder reaches you anyway as a plain notification. Others expire. Your own chats never wait here.</p>
       <label class="check"><input type="checkbox" id="q-notify" ${q.settings.notify_no_model ? "checked" : ""}>Tell me when no model is available (once per outage)</label>
       <div class="row"><div><label for="q-postpone">Tell a job it was late after (minutes)</label><input id="q-postpone" type="number" min="0" max="1440" value="${esc(q.settings.postpone_notice)}" inputmode="numeric"></div></div>
-      <div class="actions"><button class="btn primary" id="q-save">Save</button></div>
       <h3 style="margin-top:1em">Waiting</h3>${q.waiting.length ? q.waiting.map(row).join("") : '<p class="hint">Nothing waits.</p>'}
       ${recent.length ? `<h3>Recently expired or sent without a model</h3>${recent.map(row).join("")}` : ""}
     </div>`;
@@ -1231,7 +1235,7 @@ class AacPanel extends HTMLElement {
         </div>
         ${f.msg ? `<div class="msg ${f.msg.ok ? "ok" : "err"}">${esc(f.msg.text)}</div>` : ""}
         <div class="actions">
-          <button class="btn primary" id="t-save">Save</button>
+          <button class="btn primary" id="t-save">${f.id ? "Save trigger" : "Create trigger"}</button>
           ${f.id ? `<button class="btn danger" id="t-delete">Delete</button>` : ""}
           <button class="btn" data-go="settings/triggers">Cancel</button>
         </div>
@@ -1286,13 +1290,12 @@ class AacPanel extends HTMLElement {
   _renderMachine(host) {
     const mc = (this._models?.machines || []).find((m) => m.host === host);
     if (!mc) return this._page("MACHINE", "", `<div class="card"><h2>NOT FOUND</h2><p>${this._models ? "No models on this machine any more." : "Scanning…"}</p></div>`);
-    return this._page(mc.name, mc.named ? esc(mc.host) : "", `<div class="card"><h2>MACHINE</h2>
+    return this._page(mc.name, mc.named ? esc(mc.host) : "", `<div class="card" data-autosave="machine" data-arg="${esc(mc.host)}" data-label="Machine name"><h2>MACHINE</h2>
         <label for="mc-name">Name</label><input id="mc-name" value="${esc(mc.named ? mc.name : "")}" placeholder="${esc(mc.name)}">
         <p class="hint">How AAC and this panel call it, e.g. "Main PC". Empty = the default.</p>
         <label>Servers on it</label>
         ${mc.servers.map((sv) => `<div class="wrow"><span><span class="dot ${sv.online ? "ok" : "bad"}"></span> ${esc(sv.url)}</span>${sv.error ? `<span class="msg err">${esc(sv.error)}</span>` : ""}</div>`).join("")}
-        <div class="actions"><button class="btn primary" id="mc-save" data-host="${esc(mc.host)}">Save</button>
-          <button class="btn" id="mc-add" data-url="${esc(mc.servers[0]?.url || "")}">${icon("plus")} Add model here</button>
+        <div class="actions"><button class="btn" id="mc-add" data-url="${esc(mc.servers[0]?.url || "")}">${icon("plus")} Add model here</button>
           <button class="btn" data-go="models">Compute</button></div>
         ${this._flashHtml()}
       </div>
@@ -1341,7 +1344,7 @@ class AacPanel extends HTMLElement {
         ${f.msg ? `<div class="msg ${f.msg.ok ? "ok" : "err"}">${esc(f.msg.text)}</div>` : ""}
         <div class="actions">
           <button class="btn" id="f-test">Test &amp; load models</button>
-          <button class="btn primary" id="f-save">Save</button>
+          <button class="btn primary" id="f-save">${f.id ? "Save model" : "Add model"}</button>
           <button class="btn" data-go="${f.id ? `model/${esc(f.id)}` : "models"}">Cancel</button>
         </div>
       </div>`);
@@ -1351,12 +1354,11 @@ class AacPanel extends HTMLElement {
   _renderCharter() {
     const st = this._state;
     if (!st) return this._page("CHARTER", "", "");
-    return this._page("CHARTER", st.charter_is_default ? "built-in draft" : "your own", `<div class="card"><h2>CHARTER</h2>
+    return this._page("CHARTER", st.charter_is_default ? "built-in draft" : "your own", `<div class="card" data-autosave="charter" data-label="Charter"><h2>CHARTER</h2>
         <p>Your values in plain words. Every AAC agent gets this first, before anything else, and no agent can change it; only you can, here. It is not a score to optimize: it tells AAC how to behave (honest, sparing, your decisions stay yours).</p>
         <label for="ch-text">Charter</label>
         <textarea id="ch-text" class="thin-scroll" style="min-height:20em">${esc(st.charter)}</textarea>
-        <div class="actions"><button class="btn primary" id="ch-save">Save</button></div>
-        ${this._flashHtml()}
+        <p class="hint">Saved when you leave the field. Every agent follows it from the next message on.</p>
       </div>`);
   }
 
@@ -1390,13 +1392,11 @@ class AacPanel extends HTMLElement {
     const field = (m, key, f) => this._settingField(m, key, f);
     return this._page("MODULES", `${this._mods.length} loaded · settings for ${esc(this._state?.domain?.name || "")}`, `
       <div class="cards">${this._mods.map((m) => `
-        <div class="card"><h2>${esc(m.name)} <span class="tag">${esc(m.version || "")}</span>${m.enabled ? "" : ' <span class="tag plan">OFF</span>'}</h2>
+        <div class="card" data-autosave="module" data-arg="${esc(m.id)}" data-label="${esc(m.name)}"><h2>${esc(m.name)} <span class="tag">${esc(m.version || "")}</span>${m.enabled ? "" : ' <span class="tag plan">OFF</span>'}</h2>
           <p>${esc(m.description)}</p>
           <div class="actions" style="margin-top:0"><button class="btn" data-go="settings/module/${esc(m.id)}">Properties, instructions, permissions</button></div>
           ${Object.entries(m.settings).map(([k, f]) => field(m, k, f)).join("") || '<p class="hint">No settings.</p>'}
-          ${Object.keys(m.settings).length ? `<div class="actions"><button class="btn primary" data-ms-save="${esc(m.id)}">Save</button></div>` : ""}
-        </div>`).join("")}</div>
-      ${this._flashHtml()}`);
+        </div>`).join("")}</div>`);
   }
 
   _renderModuleSettings(id) {
@@ -1407,14 +1407,14 @@ class AacPanel extends HTMLElement {
     const settings = Object.entries(m.settings);
     return this._page(m.name.toUpperCase(), `module · settings for ${esc(this._state?.domain?.name || "")}`, `
       <div class="cards">
-        <div class="card"><h2>PROPERTIES</h2>
+        <div class="card" data-autosave="access" data-arg="${esc(m.id)}" data-label="${esc(m.name)} properties"><h2>PROPERTIES</h2>
           <label for="ma-name">Name</label><input id="ma-name" value="${esc(a.name || "")}" placeholder="${esc(m.default_name)}">
           <p class="hint">Empty = "${esc(m.default_name)}". Shown in the sidebar for this domain.</p>
           <div class="kv"><span class="k">Id</span><span class="v">${esc(m.id)}</span><span class="k">Version</span><span class="v">${esc(m.version || "")}</span>
             <span class="k">Kind</span><span class="v">${esc(m.manifest.kind || "")}</span>${list(provides)}${Object.keys(uses).length ? list(uses) : ""}</div>
           <p style="margin-top:.8em">${esc(m.description)}</p>
         </div>
-        <div class="card"><h2>PERMISSIONS</h2>
+        <div class="card" data-autosave="access" data-arg="${esc(m.id)}" data-label="${esc(m.name)} permissions"><h2>PERMISSIONS</h2>
           <label class="check"><input type="checkbox" id="ma-enabled" ${a.enabled ? "checked" : ""}>On in this domain</label>
           <p class="hint">Off: no tools for AAC, no page, no calendar entries in "${esc(this._state?.domain?.name || "")}". Its data stays.</p>
           ${m.has_tools ? `
@@ -1424,16 +1424,13 @@ class AacPanel extends HTMLElement {
           <label class="check"><input type="checkbox" id="ma-destr" ${a.destructive_needs_owner ? "checked" : ""}>Deleting only while I am in the chat</label>` : '<p class="hint">This module brings no tools for AAC.</p>'}
         </div>
       </div>
-      ${m.has_tools ? `<div class="card"><h2>INSTRUCTIONS FOR AAC</h2>
+      ${m.has_tools ? `<div class="card" data-autosave="access" data-arg="${esc(m.id)}" data-label="${esc(m.name)} instructions"><h2>INSTRUCTIONS FOR AAC</h2>
         <p>How AAC should use this module (sent along with its tools). Change it to your liking; empty or "Reset" = the module's own.</p>
         <textarea id="ma-instr" class="thin-scroll" placeholder="${esc(m.default_instructions)}">${esc(a.instructions || m.default_instructions)}</textarea>
         <div class="actions"><button class="btn" id="ma-reset">Reset to the module's instructions</button></div>
       </div>` : ""}
-      <div class="actions"><button class="btn primary" id="ma-save" data-module="${esc(m.id)}">Save</button></div>
-      ${settings.length ? `<div class="card"><h2>SETTINGS</h2>${settings.map(([k, f]) => this._settingField(m, k, f)).join("")}
-        <div class="actions"><button class="btn primary" data-ms-save="${esc(m.id)}">Save settings</button></div></div>` : ""}
-      <div class="card"><h2>MANIFEST</h2><details><summary class="hint" style="cursor:pointer">Show</summary><pre class="code">${esc(JSON.stringify(m.manifest, null, 2))}</pre></details></div>
-      ${this._flashHtml()}`);
+      ${settings.length ? `<div class="card" data-autosave="module" data-arg="${esc(m.id)}" data-label="${esc(m.name)} settings"><h2>SETTINGS</h2>${settings.map(([k, f]) => this._settingField(m, k, f)).join("")}</div>` : ""}
+      <div class="card"><h2>MANIFEST</h2><details><summary class="hint" style="cursor:pointer">Show</summary><pre class="code">${esc(JSON.stringify(m.manifest, null, 2))}</pre></details></div>`);
   }
 
   async _saveModuleAccess(id) {
@@ -1451,12 +1448,9 @@ class AacPanel extends HTMLElement {
         instructions: instr && instr.value.trim() !== (m.default_instructions || "").trim() ? instr.value : null,
       });
     }
-    try {
-      const updated = await this._ws("aac/module/access", { module: id, values });
-      this._mods = this._mods.map((x) => (x.id === id ? updated : x));
-      this._flash = { ok: true, text: "Saved." };
-      await this._loadState();
-    } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; this._render(); }
+    const updated = await this._ws("aac/module/access", { module: id, values });
+    this._mods = this._mods.map((x) => (x.id === id ? updated : x));
+    await this._loadState();
   }
 
   async _saveModule(id) {
@@ -1470,12 +1464,9 @@ class AacPanel extends HTMLElement {
       else if (f.type === "number") values[key] = Number(els[0]?.value);
       else if (els[0]) values[key] = els[0].value;
     }
-    try {
-      const updated = await this._ws("aac/module/settings", { module: id, values });
-      this._mods = this._mods.map((x) => (x.id === id ? updated : x));
-      this._flash = { ok: true, text: `${m.name}: saved.` };
-      await this._loadState();
-    } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; this._render(); }
+    const updated = await this._ws("aac/module/settings", { module: id, values });
+    this._mods = this._mods.map((x) => (x.id === id ? updated : x));
+    await this._loadState();
   }
 
   _renderModulePage(view) {
@@ -1692,7 +1683,7 @@ class AacPanel extends HTMLElement {
     const st = this._state;
     if (!st) return this._page("MASTER AGENT", "", "");
     const m = st.master;
-    return this._page("MASTER AGENT", st.agent_entity_id ? esc(st.agent_entity_id) : "", `<div class="card"><h2>MASTER AGENT</h2>
+    return this._page("MASTER AGENT", st.agent_entity_id ? esc(st.agent_entity_id) : "", `<div class="card" data-autosave="master" data-label="Master agent"><h2>MASTER AGENT</h2>
         <p>The persistent agent that answers, decides and acts. Which model thinks for it is the master role in the thinking pool (SETTINGS → Compute).</p>
         <div class="form-grid">
           <div>
@@ -1706,10 +1697,6 @@ class AacPanel extends HTMLElement {
             <label class="check"><input type="checkbox" id="m-think" ${m.thinking ? "checked" : ""}>Let the model think (slower, llama.cpp / vLLM)</label>
           </div>
           <div><label for="m-prompt">Instructions</label><textarea id="m-prompt" class="thin-scroll">${esc(m.prompt)}</textarea></div>
-          <div class="span">
-            <div class="actions"><button class="btn primary" id="m-save">Save</button></div>
-            ${this._flashHtml()}
-          </div>
         </div>
       </div>`);
   }
@@ -1737,13 +1724,13 @@ class AacPanel extends HTMLElement {
         </div>`).join("");
     return this._page("MEMORY", `${stats.total ?? "…"} memories${stats.unconfirmed ? ` · ${stats.unconfirmed} unconfirmed` : ""}`, `
       <div class="cards">
-        <div class="card"><h2>SETTINGS</h2>
+        <div class="card" data-autosave="memory" data-label="Memory"><h2>SETTINGS</h2>
           <p>One local file in Home Assistant's config folder (included in HA backups). Search uses keywords and, with an embedding model, meaning ("cellar" finds "basement"). The master always has remember / recall / forget.</p>
           <label class="check"><input type="checkbox" id="mem-enabled" ${mem.enabled ? "checked" : ""}>Memory on</label>
           <label>Embedding model</label>${this._roleSummary("memory")}
           <p class="hint" style="margin-top:.5em">A multilingual one is best (e.g. bge-m3 via llama-server <code>--embeddings</code>). Without one: keywords only.</p>
           <div class="kv"><span class="k">Stored</span><span class="v">${esc(stats.total ?? "…")}</span><span class="k">With vectors</span><span class="v">${esc(stats.embedded ?? "…")}</span><span class="k">Unconfirmed</span><span class="v">${esc(stats.unconfirmed ?? "…")}</span></div>
-          <div class="actions"><button class="btn primary" id="mem-save">Save</button><button class="btn" id="mem-reembed">Re-embed all</button></div>
+          <div class="actions"><button class="btn" id="mem-reembed">Re-embed all</button></div>
           ${this._flashHtml()}
         </div>
         <div class="card"><h2>REMEMBER</h2>
@@ -1811,7 +1798,7 @@ class AacPanel extends HTMLElement {
         </div>
       </div>
       <div class="split">
-        <div class="card"><h2>SETTINGS</h2>
+        <div class="card" data-autosave="audio" data-label="Audio settings"><h2>SETTINGS</h2>
           <label for="au-names">AAC's names (comma separated)</label><input id="au-names" value="${esc((set.names || []).join(", "))}">
           <label for="au-lang">Language (empty = detect per sentence)</label><input id="au-lang" value="${esc(set.language || "")}" placeholder="en, de, …">
           <p class="hint" style="margin-top:.3em">AAC always hears and transcribes; what it does with it is up to the hearing modules (SETTINGS → Modules: Wake word, …). ${(a.hearing || []).length ? `On now: ${esc(a.hearing.join(", "))}.` : "None is on: AAC only listens."}</p>
@@ -1819,12 +1806,11 @@ class AacPanel extends HTMLElement {
           <input id="au-pause" type="number" min="200" max="3000" step="100" value="${esc(set.pause_ms ?? 800)}" inputmode="numeric">
           <p class="hint" style="margin-top:.2em">Shorter = shorter lines (snappier, but the recognizer gets less context); longer = whole thoughts. Watch the LIVE meter while you try.</p>
           <label for="au-volume">AAC's voice volume: <span id="au-volume-val">${esc(set.volume ?? 40)}</span> %</label>
-          <input id="au-volume" type="range" min="0" max="100" step="5" value="${esc(set.volume ?? 40)}" style="width:100%">
+          <input id="au-volume" data-nosave type="range" min="0" max="100" step="5" value="${esc(set.volume ?? 40)}" style="width:100%">
           <p class="hint" style="margin-top:.2em">Saved when you let go, with a short test sentence. 0 = AAC never speaks aloud (answers still appear in the Voice chat). The speaker's own buttons still work on top.</p>
           <label>Speech to text</label>${this._roleSummary("stt", eng.stt)}
           <label>Voice (text to speech)</label>${this._roleSummary("tts", eng.tts)}
           <p class="hint">Engines come from the voice pool below: speech models from Compute (e.g. a multilingual whisper; without a language it detects German, English, … per sentence) or HA's engines, in your order, with fallback. HA's own voice assistants stay as they are.</p>
-          <div class="actions"><button class="btn primary" id="au-save">Save</button></div>
           ${this._flashHtml()}
         </div>
         <div class="card"><h2>PIPELINE</h2>
@@ -1942,6 +1928,65 @@ class AacPanel extends HTMLElement {
       </div>`).join("");
   }
 
+  // One save per settings card (data-autosave): coalesced, one at a time, then a short note at the bottom
+  _autosave(key, arg, label) {
+    const id = `${key}|${arg || ""}`;
+    this._saveTimers = this._saveTimers || {};
+    clearTimeout(this._saveTimers[id]);
+    this._saveTimers[id] = setTimeout(async () => {
+      this._saving = (this._saving || Promise.resolve()).then(async () => {
+        try {
+          await this._saveCard(key, arg);
+          this._toast(`✓ ${label || "Settings"} saved`, true);
+        } catch (e) { this._toast(`${label || "Settings"}: not saved: ${e.message || e}`, false); }
+        this._render();
+      });
+    }, key === "visible" ? 600 : 150);
+  }
+
+  async _saveCard(key, arg) {
+    const sr = this.shadowRoot;
+    if (key === "heartbeat") return this._saveHeartbeat();
+    if (key === "audio") return this._saveAudio();
+    if (key === "master") return this._saveMaster();
+    if (key === "module") return this._saveModule(arg);
+    if (key === "access") return this._saveModuleAccess(arg);
+    if (key === "charter") { this._state = await this._ws("aac/charter", { text: sr.querySelector("#ch-text").value }); return; }
+    if (key === "memory") { this._state = await this._ws("aac/memory/settings", { enabled: sr.querySelector("#mem-enabled").checked }); return; }
+    if (key === "queue") {
+      this._jobs = await this._ws("aac/jobs/settings", {
+        notify_no_model: sr.querySelector("#q-notify").checked,
+        postpone_notice: Number(sr.querySelector("#q-postpone").value) || 0,
+      });
+      return;
+    }
+    if (key === "machine") {
+      await this._ws("aac/machine/set", { host: arg, name: sr.querySelector("#mc-name").value });
+      await this._loadModels();
+      return;
+    }
+    if (key === "visible") {
+      const r = await this._ws("aac/domain/visible/set", { visible: [...this._vis.picked] });
+      this._vis = { entities: r.entities, chosen: true, picked: new Set(r.entities.filter((e) => e.visible).map((e) => e.entity_id)) };
+      this._loadState();
+      return;
+    }
+    throw new Error(`unknown settings card ${key}`);
+  }
+
+  // A short note at the bottom of the screen, outside the page (survives re-renders)
+  _toast(text, ok) {
+    this._toastMsg = { text, ok };
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => { this._toastMsg = null; this.shadowRoot.querySelector(".toast")?.remove(); }, ok ? 2200 : 8000);
+    this.shadowRoot.querySelector(".toast")?.remove();
+    this.shadowRoot.querySelector(".root")?.insertAdjacentHTML("beforeend", this._toastHtml());
+  }
+
+  _toastHtml() {
+    return this._toastMsg ? `<div class="toast ${this._toastMsg.ok ? "ok" : "err"}" role="status">${esc(this._toastMsg.text)}</div>` : "";
+  }
+
   _flashHtml() {
     return this._flash ? `<div class="msg ${this._flash.ok ? "ok" : "err"}">${esc(this._flash.text)}</div>` : "";
   }
@@ -2011,8 +2056,8 @@ class AacPanel extends HTMLElement {
         this._audio = { ...this._audio, ...(await this._ws("aac/audio/settings", { volume })) };
         const src = (this._audio.connected || [])[0];
         if (src && volume > 0) await this._ws("aac/audio/say", { source_id: src.id, text: `This is my voice at ${volume} percent.` });
-        this._flash = { ok: true, text: `Volume ${volume} % saved.` };
-      } catch (err) { this._flash = { ok: false, text: err.message || String(err) }; }
+        this._toast(`✓ Volume ${volume} % saved`, true);
+      } catch (err) { this._toast(err.message || String(err), false); }
       this._render();
     });
     sr.querySelectorAll("[data-machine-toggle]").forEach((el) => {
@@ -2025,14 +2070,6 @@ class AacPanel extends HTMLElement {
       };
       el.addEventListener("click", toggle);
       el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(e); } });
-    });
-    sr.querySelector("#mc-save")?.addEventListener("click", async (e) => {
-      try {
-        await this._ws("aac/machine/set", { host: e.target.dataset.host, name: sr.querySelector("#mc-name").value });
-        await this._loadModels();
-        this._flash = { ok: true, text: "Saved." };
-      } catch (err) { this._flash = { ok: false, text: err.message || String(err) }; }
-      this._render();
     });
     sr.querySelector("#mc-add")?.addEventListener("click", (e) => {
       this._go("models/new");
@@ -2060,14 +2097,6 @@ class AacPanel extends HTMLElement {
     poolMove("data-pool-up", (a, i) => a.splice(i - 1, 2, a[i], a[i - 1]));
     poolMove("data-pool-down", (a, i) => a.splice(i, 2, a[i + 1], a[i]));
     poolMove("data-pool-del", (a, i) => a.splice(i, 1));
-    sr.querySelector("#q-save")?.addEventListener("click", async () => {
-      this._jobs = await this._ws("aac/jobs/settings", {
-        notify_no_model: sr.querySelector("#q-notify").checked,
-        postpone_notice: Number(sr.querySelector("#q-postpone").value) || 0,
-      });
-      this._flash = { ok: true, text: "Saved." };
-      this._render();
-    });
     sr.querySelector("#ent-q")?.addEventListener("input", (e) => {
       this._entQuery = e.target.value;
       clearTimeout(this._entTimer);
@@ -2093,32 +2122,25 @@ class AacPanel extends HTMLElement {
     }));
     sr.querySelectorAll(".vis-tick").forEach((el) => el.addEventListener("change", () => {
       if (el.checked) this._vis.picked.add(el.value); else this._vis.picked.delete(el.value);
-      this._vis.dirty = true;
       this._render();
+      this._autosave("visible", null, "Visible entities");
     }));
     sr.querySelectorAll("[data-vis-area]").forEach((el) => el.addEventListener("click", () => {
       for (const e of this._entityGroups(this._vis.entities)[el.dataset.visArea] || []) {
         if (el.dataset.visTo === "1") this._vis.picked.add(e.entity_id); else this._vis.picked.delete(e.entity_id);
       }
-      this._vis.dirty = true;
       this._render();
+      this._autosave("visible", null, "Visible entities");
     }));
     sr.querySelector("#vis-all")?.addEventListener("click", () => {
       for (const list of Object.values(this._entityGroups(this._vis.entities))) for (const e of list) this._vis.picked.add(e.entity_id);
-      this._vis.dirty = true;
       this._render();
+      this._autosave("visible", null, "Visible entities");
     });
     sr.querySelector("#vis-none")?.addEventListener("click", () => {
       for (const list of Object.values(this._entityGroups(this._vis.entities))) for (const e of list) this._vis.picked.delete(e.entity_id);
-      this._vis.dirty = true;
       this._render();
-    });
-    sr.querySelector("#vis-save")?.addEventListener("click", async () => {
-      const r = await this._ws("aac/domain/visible/set", { visible: [...this._vis.picked] });
-      this._vis = { entities: r.entities, chosen: true, picked: new Set(r.entities.filter((e) => e.visible).map((e) => e.entity_id)), dirty: false };
-      this._flash = { ok: true, text: "Saved." };
-      this._render();
-      this._loadState();
+      this._autosave("visible", null, "Visible entities");
     });
     sr.querySelectorAll("[data-req-ok]").forEach((el) => el.addEventListener("click", async () => {
       const ids = [...sr.querySelectorAll(`.req-item[data-req="${CSS.escape(el.dataset.reqOk)}"]:checked`)].map((c) => c.value);
@@ -2144,13 +2166,11 @@ class AacPanel extends HTMLElement {
     sr.querySelector("#dlg-ok")?.addEventListener("click", () => this._closeDialog(true));
     sr.querySelector("#dlg-cancel")?.addEventListener("click", () => this._closeDialog(false));
     sr.querySelector("#reload-page")?.addEventListener("click", () => location.reload());
-    sr.querySelector("#ma-save")?.addEventListener("click", (e) => this._saveModuleAccess(e.target.dataset.module));
     sr.querySelector("#ma-reset")?.addEventListener("click", () => {
       const m = this._mods.find((x) => `settings/module/${x.id}` === this._view);
       const t = sr.querySelector("#ma-instr");
-      if (m && t) t.value = m.default_instructions || "";
+      if (m && t) { t.value = m.default_instructions || ""; this._autosave("access", m.id, `${m.name} instructions`); }
     });
-    sr.querySelectorAll("[data-ms-save]").forEach((el) => el.addEventListener("click", () => this._saveModule(el.dataset.msSave)));
     sr.querySelectorAll("[data-skin]").forEach((el) => el.addEventListener("click", async () => {
       this._skins = await this._ws("aac/skin/set", { skin: el.dataset.skin });
       if (this._state) this._state.ui = { ...(this._state.ui || {}), skin: el.dataset.skin };
@@ -2253,16 +2273,17 @@ class AacPanel extends HTMLElement {
     // forms
     sr.querySelector("#f-test")?.addEventListener("click", () => this._formTest());
     sr.querySelector("#f-save")?.addEventListener("click", () => this._formSave());
-    sr.querySelector("#m-save")?.addEventListener("click", () => this._saveMaster());
-    sr.querySelector("#ch-save")?.addEventListener("click", async () => {
-      try {
-        this._state = await this._ws("aac/charter", { text: sr.querySelector("#ch-text").value });
-        this._flash = { ok: true, text: "Saved. Every agent follows it from the next message on." };
-      } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
-      this._render();
+    // Settings cards save themselves: toggles, selects, sliders at once, text fields when you leave them
+    sr.querySelectorAll("[data-autosave]").forEach((card) => {
+      card.addEventListener("input", (e) => {
+        if (e.target.matches("textarea, input:not([type=checkbox]):not([type=radio]):not([type=range])") && !e.target.closest("[data-nosave]")) card.classList.add("editing");
+      });
+      card.addEventListener("change", (e) => {
+        if (!e.target.matches("input, select, textarea") || e.target.closest("[data-nosave]")) return;
+        card.classList.remove("editing");
+        this._autosave(card.dataset.autosave, card.dataset.arg, card.dataset.label);
+      });
     });
-    sr.querySelector("#hb-save")?.addEventListener("click", () => this._saveHeartbeat());
-    sr.querySelector("#au-save")?.addEventListener("click", () => this._saveAudio());
     sr.querySelectorAll("[data-say]").forEach((el) => el.addEventListener("click", async () => {
       const input = sr.querySelector(`[data-say-text="${CSS.escape(el.dataset.say)}"]`);
       const text = input?.value.trim() || "Hello, this is AAC.";
@@ -2292,13 +2313,6 @@ class AacPanel extends HTMLElement {
     sr.querySelector("#mem-search")?.addEventListener("click", memSearch);
     sr.querySelector("#mem-q")?.addEventListener("keydown", (e) => { if (e.key === "Enter") memSearch(); });
     sr.querySelector("#mem-open")?.addEventListener("change", (e) => { this._memOpenOnly = e.target.checked; this._memQuery = ""; this._loadMemory(); });
-    sr.querySelector("#mem-save")?.addEventListener("click", async () => {
-      try {
-        this._state = await this._ws("aac/memory/settings", { enabled: sr.querySelector("#mem-enabled").checked });
-        this._flash = { ok: true, text: "Saved. A new embedding model fills in vectors in the background." };
-      } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
-      this._render();
-    });
     sr.querySelector("#mem-reembed")?.addEventListener("click", async () => {
       this._flash = { ok: true, text: "Embedding…" }; this._render();
       try { const r = await this._ws("aac/memory/reembed"); this._flash = { ok: true, text: `Done: ${r.embedded} memories got vectors.` }; }
@@ -2345,16 +2359,11 @@ class AacPanel extends HTMLElement {
 
   async _saveAudio() {
     const sr = this.shadowRoot;
-    try {
-      this._audio = await this._ws("aac/audio/settings", {
-        names: sr.querySelector("#au-names").value.split(",").map((n) => n.trim()).filter(Boolean),
-        volume: Number(sr.querySelector("#au-volume").value),
-        pause_ms: Number(sr.querySelector("#au-pause").value) || 800,
-        language: sr.querySelector("#au-lang").value.trim() || null,
-      });
-      this._flash = { ok: true, text: "Saved." };
-    } catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
-    this._render();
+    this._audio = await this._ws("aac/audio/settings", {
+      names: sr.querySelector("#au-names").value.split(",").map((n) => n.trim()).filter(Boolean),
+      pause_ms: Number(sr.querySelector("#au-pause").value) || 800,
+      language: sr.querySelector("#au-lang").value.trim() || null,
+    });
   }
 
   // The answer while it is written (deltas from the backend). Every model call is a round; a finished
@@ -2488,38 +2497,26 @@ class AacPanel extends HTMLElement {
 
   async _saveMaster() {
     const sr = this.shadowRoot;
-    try {
-      this._state = await this._ws("aac/master/update", {
-        prompt: sr.querySelector("#m-prompt").value,
-        llm_hass_api: [...sr.querySelectorAll(".m-api:checked")].map((el) => el.value),
-        temperature: parseFloat(sr.querySelector("#m-temp").value),
-        max_tokens: parseInt(sr.querySelector("#m-max").value, 10),
-        thinking: sr.querySelector("#m-think").checked,
-      });
-      this._flash = { ok: true, text: "Saved." };
-    } catch (e) {
-      this._flash = { ok: false, text: e.message || String(e) };
-    }
-    this._render();
+    this._state = await this._ws("aac/master/update", {
+      prompt: sr.querySelector("#m-prompt").value,
+      llm_hass_api: [...sr.querySelectorAll(".m-api:checked")].map((el) => el.value),
+      temperature: parseFloat(sr.querySelector("#m-temp").value),
+      max_tokens: parseInt(sr.querySelector("#m-max").value, 10),
+      thinking: sr.querySelector("#m-think").checked,
+    });
   }
 
   async _saveHeartbeat() {
     const sr = this.shadowRoot;
-    try {
-      this._state = await this._ws("aac/heartbeat/update", {
-        enabled: sr.querySelector("#hb-enabled").checked,
-        interval: parseInt(sr.querySelector("#hb-interval").value, 10),
-        quiet_start: sr.querySelector("#hb-qs").value || "00:00",
-        quiet_end: sr.querySelector("#hb-qe").value || "00:00",
-        instructions: sr.querySelector("#hb-instr").value,
-        tools: sr.querySelector("#hb-tools").checked,
-        tier: sr.querySelector("#hb-tier").value,
-      });
-      this._flash = { ok: true, text: "Saved." };
-    } catch (e) {
-      this._flash = { ok: false, text: e.message || String(e) };
-    }
-    this._render();
+    this._state = await this._ws("aac/heartbeat/update", {
+      enabled: sr.querySelector("#hb-enabled").checked,
+      interval: parseInt(sr.querySelector("#hb-interval").value, 10),
+      quiet_start: sr.querySelector("#hb-qs").value || "00:00",
+      quiet_end: sr.querySelector("#hb-qe").value || "00:00",
+      instructions: sr.querySelector("#hb-instr").value,
+      tools: sr.querySelector("#hb-tools").checked,
+      tier: sr.querySelector("#hb-tier").value,
+    });
   }
 
   async _runHeartbeat() {

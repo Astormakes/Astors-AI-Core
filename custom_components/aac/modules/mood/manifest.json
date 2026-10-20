@@ -16,7 +16,7 @@
                     "help": "Very short lines say little about a mood."}
   },
   "setup": [
-    {"id": "model", "title": "Add a mood model", "optional": true,
+    {"id": "model", "done_when": {"role": "mood"}, "title": "Add a mood model", "optional": true,
      "hint": "Run the AAC senses service (services/aac_senses in the AAC repository) on a machine, add it under Compute and put it into the voice pool's Mood role.",
      "how": ["chat", "panel"]}
   ]

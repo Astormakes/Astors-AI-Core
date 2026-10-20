@@ -18,7 +18,7 @@
                     "help": "What is behind a spoken line: music, a TV, laughter … (a hint that it comes from a video)."}
   },
   "setup": [
-    {"id": "tagger", "title": "Add a sound tagger", "optional": true,
+    {"id": "tagger", "done_when": {"role": "sounds"}, "title": "Add a sound tagger", "optional": true,
      "hint": "Run the AAC senses service (services/aac_senses in the AAC repository) on a machine, add it under Compute and put it into the voice pool's Sound tagger role.",
      "how": ["chat", "panel"]}
   ]
