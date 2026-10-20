@@ -1188,7 +1188,7 @@ class AacPanel extends HTMLElement {
         <span class="dot ${STATUS_DOT[r.status] || ""}"></span>
         <div style="flex:1;min-width:0"><div class="n">${esc(fmtTime(r.started))} · ${r.status === "silent" ? "nothing to report" : r.status === "done" ? "said something" : esc(r.status)}</div>
           ${r.status !== "silent" && r.result ? `<div class="m">${esc(r.result.length > 220 ? r.result.slice(0, 220) + "…" : r.result)}</div>` : ""}</div>
-        <span class="actions" style="margin:0">${r.chat_id ? `<button class="btn" data-go="chat/${esc(r.chat_id)}">Chat</button>` : ""}<button class="btn" data-go="run/${esc(r.id)}">Details</button></span>
+        <span class="actions" style="margin:0">${r.chat_id && (this._chats || []).some((c) => c.id === r.chat_id) ? `<button class="btn" data-go="chat/${esc(r.chat_id)}">Chat</button>` : ""}<button class="btn" data-go="run/${esc(r.id)}">Details</button></span>
       </div>`).join("");
     return this._page("HEARTBEAT", hb.enabled ? `every ${esc(hb.interval)} min` : "off", `
       <div class="cards">
