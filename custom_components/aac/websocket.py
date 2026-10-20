@@ -827,7 +827,7 @@ async def ws_module_settings(hass: HomeAssistant, connection, msg) -> None:
 @aac_command({vol.Required("type"): "aac/module/access", vol.Required("module"): str, vol.Required("values"): {
     vol.Optional("enabled"): bool, vol.Optional("name"): vol.Any(str, None), vol.Optional("instructions"): vol.Any(str, None),
     vol.Optional("access"): vol.In(["full", "read", "none"]), vol.Optional("auto"): bool,
-    vol.Optional("destructive_needs_owner"): bool}})
+    vol.Optional("destructive_needs_owner"): bool, vol.Optional("hidden"): bool}})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_module_access(hass: HomeAssistant, connection, msg) -> None:

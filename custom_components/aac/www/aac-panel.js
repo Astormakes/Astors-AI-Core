@@ -166,6 +166,10 @@ nav {
 .tab:hover .chatdel, .tab:focus-within .chatdel, .tab.active .chatdel { opacity: .6; }
 @media (hover: none) { .tab .chatdel { opacity: .5; } }
 .tab .modmore { margin-left: auto; padding: 0 .3em; font-size: 1.1em; line-height: 1; opacity: .6; }
+.modwrap { position: relative; }
+.modmenu { top: 100%; }
+.tab.hidden-mod { opacity: .45; }
+.navhint { margin: .3em 1.2em 0; font-size: .75em; }
 .dswitch { position: relative; padding: 0 1em .7em; border-bottom: 1px solid var(--line); }
 .dbtn { width: 100%; display: flex; align-items: center; gap: .5em; background: transparent; color: var(--cyan); border: 1px solid var(--line);
   padding: .45em .7em; font: inherit; font-size: .93em; letter-spacing: .12em; cursor: pointer; text-align: left; text-shadow: 0 0 .3em rgba(0, 240, 255, .5); }
@@ -933,7 +937,7 @@ class AacPanel extends HTMLElement {
       <div class="scroll thin-scroll">
         ${setup}
         <div class="seg">
-          <div class="seg-title">${icon("workers")}WORKERS<span class="acts"><button class="icon-btn" data-go="chat/new" title="New chat">${icon("plus")}</button></span></div>
+          <div class="seg-title">${icon("workers")}CHATS<span class="acts"><button class="icon-btn" data-go="chat/new" title="New chat">${icon("plus")}</button></span></div>
           <div class="seg-line"></div>
           ${chats}
           ${requestsTab}
@@ -944,11 +948,18 @@ class AacPanel extends HTMLElement {
         </div>
         ${(this._state?.modules || []).length ? `<div class="seg">
           <div class="seg-title">${icon("workers")}MODULES</div><div class="seg-line"></div>
-          ${(this._state.modules).map((m) => {
-            const more = `<button class="icon-btn modmore" data-go="settings/module/${esc(m.id)}" title="${esc(m.name)}: properties, instructions, permissions, settings">⋯</button>`;
-            if (!m.pages.length) return this._tab(`settings/module/${m.id}`, m.name, "", m.enabled ? "" : "soon", more);
-            return m.pages.map((p) => this._tab(`mod/${m.id}/${p.id}`, p.title, "", "", more)).join("");
+          ${(this._state.modules).filter((m) => !m.hidden || this._showAll || this._modMenu === m.id).map((m) => {
+            const more = `<button class="icon-btn modmore" data-mod-menu="${esc(m.id)}" aria-expanded="${this._modMenu === m.id}" title="${esc(m.name)}: more">⋯</button>`;
+            const menu = this._modMenu !== m.id ? "" : `<div class="dmenu modmenu">
+                <button class="ditem" data-mod-open="${esc(m.id)}">Properties, permissions, settings…</button>
+                <button class="ditem" data-mod-hide="${esc(m.id)}" data-hidden="${m.hidden ? "0" : "1"}">${m.hidden ? "Show in this menu again" : "Hide from this menu"}</button>
+              </div>`;
+            const cls = m.hidden ? "hidden-mod" : "";
+            const tabs = !m.pages.length ? this._tab(`settings/module/${m.id}`, m.name, "", `${m.enabled ? "" : "soon"} ${cls}`, more)
+              : m.pages.map((p, i) => this._tab(`mod/${m.id}/${p.id}`, p.title, "", cls, i === 0 ? more : "")).join("");
+            return `<div class="modwrap">${tabs}${menu}</div>`;
           }).join("")}
+          ${!this._showAll && this._state.modules.some((m) => m.hidden) ? `<p class="hint navhint">${this._state.modules.filter((m) => m.hidden).length} hidden · the eye button above shows them</p>` : ""}
         </div>` : ""}
         <div class="seg">
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
@@ -1133,7 +1144,7 @@ class AacPanel extends HTMLElement {
     return this._page("TRIGGERS", "what wakes the master on its own", `
       <div class="cards">
         <div class="card" data-autosave="heartbeat" data-label="Heartbeat"><h2>HEARTBEAT</h2>
-          <p>Wakes the master every few minutes to look at the situation. It only speaks up when something matters (answers land in "From AAC"); otherwise it stays silent. Runs show up under WORKERS → Auto.</p>
+          <p>Wakes the master every few minutes to look at the situation. It only speaks up when something matters (answers land in "From AAC"); otherwise it stays silent. Runs show up under CHATS → Auto.</p>
           <label class="check"><input type="checkbox" id="hb-enabled" ${hb.enabled ? "checked" : ""}>Heartbeat on</label>
           <div class="row">
             <div><label for="hb-interval">Every (minutes)</label><input id="hb-interval" type="number" min="1" max="1440" value="${esc(hb.interval)}" inputmode="numeric"></div>
@@ -1410,6 +1421,7 @@ class AacPanel extends HTMLElement {
         <div class="card" data-autosave="access" data-arg="${esc(m.id)}" data-label="${esc(m.name)} properties"><h2>PROPERTIES</h2>
           <label for="ma-name">Name</label><input id="ma-name" value="${esc(a.name || "")}" placeholder="${esc(m.default_name)}">
           <p class="hint">Empty = "${esc(m.default_name)}". Shown in the sidebar for this domain.</p>
+          <label class="check"><input type="checkbox" id="ma-shown" ${a.hidden ? "" : "checked"}>Show in the sidebar</label>
           <div class="kv"><span class="k">Id</span><span class="v">${esc(m.id)}</span><span class="k">Version</span><span class="v">${esc(m.version || "")}</span>
             <span class="k">Kind</span><span class="v">${esc(m.manifest.kind || "")}</span>${list(provides)}${Object.keys(uses).length ? list(uses) : ""}</div>
           <p style="margin-top:.8em">${esc(m.description)}</p>
@@ -1439,6 +1451,7 @@ class AacPanel extends HTMLElement {
     const values = {
       name: sr.querySelector("#ma-name").value.trim() || null,
       enabled: sr.querySelector("#ma-enabled").checked,
+      hidden: !sr.querySelector("#ma-shown").checked,
     };
     if (m.has_tools) {
       Object.assign(values, {
@@ -2011,6 +2024,23 @@ class AacPanel extends HTMLElement {
       this._render();
     });
     sr.querySelector("#dom-toggle")?.addEventListener("click", () => { this._domainMenu = !this._domainMenu; this._render(); });
+    sr.querySelectorAll("[data-mod-menu]").forEach((el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();  // not the tab under it
+      this._modMenu = this._modMenu === el.dataset.modMenu ? null : el.dataset.modMenu;
+      this._render();
+    }));
+    sr.querySelectorAll("[data-mod-open]").forEach((el) => el.addEventListener("click", () => { this._modMenu = null; this._go(`settings/module/${el.dataset.modOpen}`); }));
+    sr.querySelectorAll("[data-mod-hide]").forEach((el) => el.addEventListener("click", async () => {
+      const id = el.dataset.modHide, hidden = el.dataset.hidden === "1", m = this._state.modules.find((x) => x.id === id);
+      this._modMenu = null;
+      try {
+        await this._ws("aac/module/access", { module: id, values: { hidden } });
+        await this._loadState();
+        if (this._mods) this._mods = (await this._ws("aac/modules")).modules;
+        this._toast(hidden ? `${m?.name || id} hidden · the eye button above shows it again` : `${m?.name || id} is back in the menu`, true);
+      } catch (err) { this._toast(err.message || String(err), false); }
+      this._render();
+    }));
     sr.querySelectorAll("[data-domain-go]").forEach((el) => el.addEventListener("click", () => {
       if (el.dataset.domainGo === this._state?.domain?.id) { this._domainMenu = false; this._render(); return; }
       this._switchDomain(el.dataset.domainGo);
@@ -2520,7 +2550,7 @@ class AacPanel extends HTMLElement {
   }
 
   async _runHeartbeat() {
-    this._flash = { ok: true, text: "Heartbeat running… (see WORKERS → Auto)" };
+    this._flash = { ok: true, text: "Heartbeat running… (see CHATS → Auto)" };
     this._autoOpen = true;
     this._render();
     try {

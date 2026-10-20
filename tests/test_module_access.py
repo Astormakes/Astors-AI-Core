@@ -86,3 +86,15 @@ async def test_module_setup_steps(hass: HomeAssistant, hass_ws_client, mock_entr
     await ws.send_json_auto_id({"type": "aac/module/access", "module": "calendar", "values": {"enabled": False}})
     await ws.receive_json()
     assert await step() is None  # a module that is off asks for nothing
+
+
+async def test_hide_from_the_sidebar(hass: HomeAssistant, hass_ws_client, mock_entry, configured):
+    """A hidden module stays on; the panel's state marks it hidden."""
+    await setup_aac(hass, mock_entry)
+    ws = await hass_ws_client(hass)
+    result = await _set(ws, hidden=True)
+    assert result["access"]["hidden"] and result["access"]["enabled"]
+    lists = next(m for m in mock_entry.runtime_data.modules if m.id == "lists")
+    domain = next(iter(mock_entry.runtime_data.domains.values()))
+    summary = lists.summary(mock_entry, domain.id)
+    assert summary["hidden"] and summary["pages"]

@@ -37,6 +37,7 @@ ACCESS_DEFAULTS: dict[str, Any] = {
     "access": "full",  # what agents may do with its tools: full · read · none
     "auto": True,  # automatic runs (heartbeat, triggers) may use its tools
     "destructive_needs_owner": True,  # deleting tools only while the owner is in a chat
+    "hidden": False,  # left out of the panel's sidebar (still on; the eye button shows it)
 }
 
 # Modules whose manifest says "enabled_by_default": false (the owner switches them on per domain)
@@ -72,7 +73,7 @@ class LoadedModule:
         if acc["name"] and len(pages) == 1:
             pages = [{**pages[0], "title": acc["name"]}]
         return {"id": m["id"], "name": name, "version": m.get("version"), "enabled": acc["enabled"],
-                "description": m.get("description", ""), "pages": pages}
+                "hidden": acc["hidden"], "description": m.get("description", ""), "pages": pages}
 
 
 class ModuleContext:
