@@ -21,6 +21,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm
 from homeassistant.helpers.storage import Store
+from homeassistant.loader import async_get_loaded_integration
 
 from ..capabilities import CalendarProvider, Hearing, Stage
 from ..const import DOMAIN, LOGGER
@@ -143,7 +144,8 @@ class ModuleContext:
                        visible_setting: str | None = None) -> None:
         """A page in the panel: a web component (script relative to the module folder);
         visible_setting = a bool setting that switches the page on or off per domain."""
-        version = self.module.manifest.get("version", "0")
+        # AAC's version too: built-in modules change with AAC while their own version stays (browser cache)
+        version = f"{self.module.manifest.get('version', '0')}-{async_get_loaded_integration(self.hass, DOMAIN).version}"
         self.module.pages.append({"id": page_id, "title": title, "element": element, "visible_setting": visible_setting,
                                   "url": f"{MODULES_URL}/{self.module.id}/{script}?v={version}"})
 

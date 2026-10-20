@@ -66,7 +66,7 @@ class AacListsPage extends HTMLElement {
       return `<div class="lrow ${e.done ? "ldone-row" : ""}" style="--depth:${depth}" data-item="${esc(e.id)}" draggable="true">
           <span class="lgrip" title="Drag to move (further right = as a sub-entry)">⠿</span>
           ${view === "checklist" || e.done ? `<input type="checkbox" class="ldone" ${e.done ? "checked" : ""} aria-label="done">` : `<span class="lbullet">•</span>`}
-          <span class="ltext" tabindex="0" role="button" title="Click to edit">${esc(e.text)}</span>${fields ? ` <span class="lfields">${fields}</span>` : ""}
+          <span class="lmain"><span class="ltext" tabindex="0" role="button" title="Click to edit">${esc(e.text)}</span>${fields ? `<span class="lfields">${fields}</span>` : ""}</span>
           <span class="lacts">
             <button class="icon-btn" data-act="outdent" title="Outdent">←</button>
             <button class="icon-btn" data-act="indent" title="Indent (into the entry above)">→</button>
@@ -115,8 +115,10 @@ class AacListsPage extends HTMLElement {
         aac-lists-page .lrow { display: flex; align-items: center; gap: .45em; padding: .22em .3em .22em calc(.3em + var(--depth) * 1.5em);
           border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); min-height: 2.1em; }
         aac-lists-page .lrow input[type=checkbox] { width: 1.05em; height: 1.05em; min-height: 0; flex: none; margin: 0; accent-color: var(--magenta); }
-        aac-lists-page .lrow .ltext { cursor: text; overflow-wrap: anywhere; flex: 0 1 auto; min-width: 0; }
-        aac-lists-page .lrow .lfields { flex: none; }
+        aac-lists-page .lrow .lmain { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: .2em; }
+        aac-lists-page .lrow .ltext { cursor: text; overflow-wrap: anywhere; align-self: flex-start; }
+        aac-lists-page .lrow .lfields { display: flex; flex-wrap: wrap; gap: .3em; }
+        aac-lists-page .lfields .tag { white-space: normal; overflow-wrap: anywhere; text-align: left; }
         aac-lists-page .ldone-row .ltext { text-decoration: line-through; opacity: .55; }
         aac-lists-page .lfields .tag { font-size: .68em; }
         aac-lists-page .lgrip { cursor: grab; opacity: .35; user-select: none; }
