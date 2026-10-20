@@ -17,7 +17,7 @@ from typing import Any
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
-from ...audio_hub import voice_label
+from ...audio_hub import mood_word, voice_label
 from ...capabilities import Hearing
 from ...const import LOGGER
 from ...provider import OpenAICompatProvider, ProviderError
@@ -67,7 +67,8 @@ def who(line: dict[str, Any]) -> str:
         return "you (the assistant)"
     if line.get("kind") == "sound":
         return "(sound)"
-    return voice_label(line.get("speaker")) or "someone"
+    label = voice_label(line.get("speaker")) or "someone"
+    return f"{label} ({mood})" if (mood := mood_word(line)) else label
 
 
 def with_percent(lines: list[dict[str, Any]], related: dict[int, int]) -> list[str]:
@@ -89,7 +90,7 @@ def room_line(line: dict[str, Any], start: datetime, n: int | None = None) -> st
     elif line.get("kind") == "sound":
         return f"{num}[{t:5.0f}s] (sound) {line['text']}"
     else:
-        speaker = voice_label(line.get("speaker")) or "someone"
+        speaker = who(line)
     return f"{num}[{t:5.0f}s] {speaker}: {line['text']}"
 
 
@@ -121,6 +122,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         system = (f"You are the ears of a home assistant called {names}. It hears the room through a microphone "
                   f"('{source.name}'). You decide whether the assistant should answer the NEWEST line now. "
                   f"{RULES.get(setting('mode'), RULES['spoken_to'])} Voices marked (media) are from a video or TV. "
+                  "A mood like (sounds happy) is heard from the voice, not the words; it is often wrong. "
                   "Also rate every earlier line: how likely (0-100 %) it belongs to what the newest line is about "
                   "(the same request, topic or person), so the assistant can tell context from chatter. "
                   'Reply only with JSON: {"respond": true or false, "why": "a few words", '
@@ -163,7 +165,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
                     ctx.audio.changed()
                     if found["respond"]:
                         await ctx.audio.async_answer(source, line["text"], found["before"], line.get("speaker"),
-                                                     before_title=RATED_TITLE)
+                                                     before_title=RATED_TITLE, mood=mood_word(line))
                 if (nxt := waiting.pop(source.id, None)) is None:
                     break
                 source, line = nxt

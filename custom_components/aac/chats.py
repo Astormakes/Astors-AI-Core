@@ -147,8 +147,8 @@ def spoken(message: dict[str, Any]) -> str:
     AAC's own answers stay plain: marked ones were copied by the model into its next answers."""
     if message.get("via") != "voice" or message["role"] != "user":
         return strip_marks(message["text"]) if message["role"] == "aac" else message["text"]
-    who = f" by {message['voice']}" if message.get("voice") else ""
-    return f"[spoken at the microphone '{message.get('mic') or '?'}'{who}] {message['text']}"
+    how = ", ".join(x for x in (f"by {message['voice']}" if message.get("voice") else None, message.get("mood")) if x)
+    return f"[spoken at the microphone '{message.get('mic') or '?'}'{f' {how}' if how else ''}] {message['text']}"
 
 
 # Notes a model copied from marked history ("[you said this aloud]", "(you said this out loud)")

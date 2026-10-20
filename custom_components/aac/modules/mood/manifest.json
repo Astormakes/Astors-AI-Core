@@ -1,0 +1,23 @@
+{
+  "id": "mood",
+  "name": "Mood",
+  "version": "0.1.0",
+  "contract": 1,
+  "kind": "code",
+  "enabled_by_default": false,
+  "description": "Hears how a voice sounds: neutral, happy, angry, sad (from the sound, not the words). Each spoken line gets a mood; the Companion and the answering model see it when it is clear (\"voice #8, sounds happy\"). Needs a mood model in the voice pool (the AAC senses service). A hint, not a verdict: it is often wrong.",
+  "instructions": "",
+  "provides": {"capabilities": {"audio_stage": {"segment": true}}},
+  "uses": {"capabilities": ["audio_stage"], "pool_roles": ["mood"]},
+  "settings": {
+    "threshold": {"type": "number", "title": "Tell the model from (percent sure)", "default": 60,
+                  "help": "Moods below this are only shown in the buffer. Neutral is never passed on."},
+    "min_seconds": {"type": "number", "title": "Shortest line (seconds)", "default": 1,
+                    "help": "Very short lines say little about a mood."}
+  },
+  "setup": [
+    {"id": "model", "title": "Add a mood model", "optional": true,
+     "hint": "Run the AAC senses service (services/aac_senses in the AAC repository) on a machine, add it under Compute and put it into the voice pool's Mood role.",
+     "how": ["chat", "panel"]}
+  ]
+}

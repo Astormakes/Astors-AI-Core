@@ -1,14 +1,17 @@
-"""AAC senses: a small HTTP service that tags sounds and makes voice prints, for AAC's audio stages.
+"""AAC senses: a small HTTP service that tags sounds, makes voice prints and hears moods, for AAC's audio stages.
 
 Runs on any machine in AAC's Compute (CPU is enough). Endpoints (16-bit mono WAV in the body):
   GET  /v1/models            → {"data": [{"id": "aac-senses"}]}  (so AAC sees it online)
   POST /v1/audio/tags        → {"labels": [["Speech", 0.81], ["Music", 0.42], …]}  (AudioSet, top 10)
   POST /v1/audio/voiceprint  → {"embedding": [… 512 floats …]}  (compare with cosine similarity)
+  POST /v1/audio/mood        → {"moods": [["neutral", 0.71], ["happy", 0.2], …]}  (how the voice sounds)
 
 Models (downloaded on first start): MIT/ast-finetuned-audioset-10-10-0.4593 (sound tagger),
-microsoft/wavlm-base-plus-sv (speaker verification x-vector).
+microsoft/wavlm-base-plus-sv (speaker verification x-vector), superb/wav2vec2-base-superb-er (speech
+emotion: neutral, happy, angry, sad; from the sound of the voice, not the words; any other audio
+classification model can be named with --mood-model).
 
-    python server.py --port 8083 [--api-key-file FILE] [--threads 4] [--no-tagger] [--no-voices]
+    python server.py --port 8083 [--api-key-file FILE] [--threads 4] [--no-tagger] [--no-voices] [--no-mood]
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from transformers import (
     ASTFeatureExtractor,
     ASTForAudioClassification,
     AutoFeatureExtractor,
+    AutoModelForAudioClassification,
     WavLMForXVector,
 )
 
@@ -34,6 +38,9 @@ LOG = logging.getLogger("aac_senses")
 RATE = 16000
 TAGGER = "MIT/ast-finetuned-audioset-10-10-0.4593"
 VOICES = "microsoft/wavlm-base-plus-sv"
+MOOD = "superb/wav2vec2-base-superb-er"
+MOOD_NAMES = {"neu": "neutral", "hap": "happy", "ang": "angry", "sad": "sad", "exc": "excited", "fru": "frustrated",
+              "sur": "surprised", "fea": "fearful", "dis": "disgusted", "cal": "calm"}
 
 
 def read_wav(data: bytes) -> np.ndarray:
@@ -49,10 +56,10 @@ def read_wav(data: bytes) -> np.ndarray:
 
 
 class Senses:
-    """Both models, loaded once; calls run in a thread, one at a time."""
+    """The models, loaded once; calls run in a thread, one at a time."""
 
-    def __init__(self, tagger: bool = True, voices: bool = True) -> None:
-        self.tagger = self.voices = None
+    def __init__(self, tagger: bool = True, voices: bool = True, mood: str | None = MOOD) -> None:
+        self.tagger = self.voices = self.mood = None
         if tagger:
             LOG.info("Loading %s", TAGGER)
             self.tag_fx = ASTFeatureExtractor.from_pretrained(TAGGER)
@@ -61,6 +68,10 @@ class Senses:
             LOG.info("Loading %s", VOICES)
             self.voice_fx = AutoFeatureExtractor.from_pretrained(VOICES)
             self.voices = WavLMForXVector.from_pretrained(VOICES).eval()
+        if mood:
+            LOG.info("Loading %s", mood)
+            self.mood_fx = AutoFeatureExtractor.from_pretrained(mood)
+            self.mood = AutoModelForAudioClassification.from_pretrained(mood).eval()
         self.lock = asyncio.Lock()
 
     @torch.inference_mode()
@@ -76,6 +87,14 @@ class Senses:
         inputs = self.voice_fx(audio, sampling_rate=RATE, return_tensors="pt")
         emb = torch.nn.functional.normalize(self.voices(**inputs).embeddings, dim=-1)[0]
         return [round(float(x), 5) for x in emb]
+
+    @torch.inference_mode()
+    def moods(self, audio: np.ndarray) -> list[list]:
+        inputs = self.mood_fx(audio, sampling_rate=RATE, return_tensors="pt")
+        probs = torch.softmax(self.mood(**inputs).logits[0], dim=-1)
+        labels = self.mood.config.id2label
+        found = [[MOOD_NAMES.get(labels[i].lower()[:3], labels[i].lower()), round(float(p), 3)] for i, p in enumerate(probs)]
+        return sorted(found, key=lambda x: x[1], reverse=True)
 
 
 def make_app(senses: Senses, api_key: str | None) -> web.Application:
@@ -108,9 +127,14 @@ def make_app(senses: Senses, api_key: str | None) -> web.Application:
             return web.json_response({"error": "voice prints are not loaded (--no-voices)"}, status=404)
         return await run(request, lambda a: {"embedding": senses.voiceprint(a)})
 
+    async def mood(request: web.Request) -> web.Response:
+        if senses.mood is None:
+            return web.json_response({"error": "the mood model is not loaded (--no-mood)"}, status=404)
+        return await run(request, lambda a: {"moods": senses.moods(a)})
+
     app = web.Application(middlewares=[auth], client_max_size=32 * 1024 * 1024)
     app.add_routes([web.get("/v1/models", models), web.post("/v1/audio/tags", tags),
-                    web.post("/v1/audio/voiceprint", voiceprint)])
+                    web.post("/v1/audio/voiceprint", voiceprint), web.post("/v1/audio/mood", mood)])
     return app
 
 
@@ -122,11 +146,13 @@ def main() -> None:
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--no-tagger", action="store_true", help="do not load the sound tagger")
     parser.add_argument("--no-voices", action="store_true", help="do not load the voice print model")
+    parser.add_argument("--no-mood", action="store_true", help="do not load the mood model")
+    parser.add_argument("--mood-model", default=MOOD, help="a Hugging Face audio classification model for moods")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     torch.set_num_threads(args.threads)
     key = args.api_key_file.read_text().strip() if args.api_key_file else None
-    web.run_app(make_app(Senses(not args.no_tagger, not args.no_voices), key), host=args.host, port=args.port)
+    web.run_app(make_app(Senses(not args.no_tagger, not args.no_voices, None if args.no_mood else args.mood_model), key), host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

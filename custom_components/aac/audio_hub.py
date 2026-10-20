@@ -484,7 +484,7 @@ class AudioHub:
         return heard | {"engine": model_id}
 
     async def async_senses(self, role: str, path: str, pcm: bytes) -> dict[str, Any] | None:
-        """Ask the service of a voice-pool role (sounds / voices) about a piece of audio; None when none answers."""
+        """Ask the service of a voice-pool role (sounds / voices / mood) about a piece of audio; None when none answers."""
         broker = self.entry.runtime_data.broker
         if (resource := broker.pick(role)) is None or is_entity(resource):
             return None
@@ -538,18 +538,21 @@ class AudioHub:
         return True
 
     async def async_answer(self, source: Source, text: str, before: list[str] | None = None,
-                           speaker: dict[str, Any] | None = None, before_title: str = "The same person said just before") -> None:
+                           speaker: dict[str, Any] | None = None, before_title: str = "The same person said just before",
+                           mood: str | None = None) -> None:
         """The voice domain's master answers a spoken line; the answer goes back by voice.
         before = what was said just before it in the room (the wake word module's look-back);
-        speaker = the line's voice (Voices module), so the model knows who talks ("that's me")."""
+        speaker = the line's voice (Voices module), so the model knows who talks ("that's me");
+        mood = how it sounded (Mood module, mood_word), e.g. "sounds happy"."""
         from .master import async_run_master  # noqa: PLC0415 - avoid an import cycle
 
         data = self.entry.runtime_data.voice_domain  # one domain owns the voice
         chat_id = self._voice_chat(data, source)
         chat = data.chats.get(chat_id) or data.chats.create(f"Voice · {source.name}", chat_id)
         who = voice_label(speaker)
-        data.chats.add_message(chat_id, "user", text, via="voice", mic=source.name, voice=who)
-        where = f"spoken at the microphone '{source.name}'{f' by {who}' if who else ''}"
+        data.chats.add_message(chat_id, "user", text, via="voice", mic=source.name, voice=who, mood=mood)
+        how = ", ".join(x for x in (f"by {who}" if who else None, mood) if x)
+        where = f"spoken at the microphone '{source.name}'{f' {how}' if how else ''}"
         said = f"[{where}; your answer is spoken aloud there] {text}"
         if before:  # the room's last lines go with it, so "…, remind me of that, computer" works
             said = (f"{before_title}:\n" + "\n".join(f"- {b}" for b in before)
@@ -664,3 +667,9 @@ def voice_label(speaker: dict[str, Any] | None) -> str | None:
         return None
     label = speaker["name"] + (f" ({speaker['kind']})" if speaker.get("kind") not in (None, "unknown") else "")
     return ("probably " if speaker.get("sure") is False else "") + label
+
+
+def mood_word(line: dict[str, Any]) -> str | None:
+    """A line's mood for the model when the Mood module is sure: "sounds happy" (neutral says nothing)."""
+    mood = line.get("mood") or {}
+    return f"sounds {mood['label']}" if mood.get("sure") else None

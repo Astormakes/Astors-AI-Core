@@ -57,6 +57,10 @@ A manifest may say `"enabled_by_default": false`: the owner switches it on per d
 - **Voices** (`voices`): segment stage → `speaker` {id, name, kind unknown/person/media, note, score, new}; voice
   prints in HA storage, unnamed ones forgotten after keep_days; tools list_voices, name_voice, forget_voice.
   Pool role `voices`. Wake word ignores voices of kind media, and its attention check sees voice and sounds.
+- **Mood** (`mood`, off by default): segment stage → `mood` {label neutral/happy/angry/sad, score, sure}
+  from a speech emotion model (the sound of the voice, not the words). `sure` = not neutral and ≥ threshold;
+  only sure moods reach the Companion and the master ("by voice #8, sounds happy", `audio_hub.mood_word`).
+  Pool role `mood` (services/aac_senses `/v1/audio/mood`, superb/wav2vec2-base-superb-er).
 - **Companion** (`companion`, off by default; v1 2026-10-19): for every spoken line a quick JSON decision on the
   fast tier reads the last `minutes` of the buffer (voices, AAC's own spoken lines = kind `aac`, sounds) and
   decides for the newest line: respond or not, with a short reason (`judged` on the line). Mode `spoken_to`

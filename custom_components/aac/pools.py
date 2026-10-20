@@ -40,6 +40,8 @@ ROLES: dict[str, dict[str, Any]] = {
                "help": "Names the sounds in the room (AudioSet: music, laughter, a door, a motorbike …), for the Sounds module. An AAC senses service (services/aac_senses)."},
     "voices": {"pool": "voice", "title": "Voice prints", "takes": "senses",
                "help": "Tells voices apart (who is talking), for the Voices module. An AAC senses service (services/aac_senses)."},
+    "mood": {"pool": "voice", "title": "Mood", "takes": "senses",
+             "help": "Hears how a voice sounds (neutral, happy, angry, sad), for the Mood module. An AAC senses service (services/aac_senses)."},
 }
 # Requests by trait, over the master role's models (the owner's chat models)
 TIERS = {
@@ -52,7 +54,7 @@ _PARAMS_RE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*[bB](?![a-zA-Z])")
 
 POOLS = {
     "thinking": "Chat models and embeddings",
-    "voice": "Speech to text, voices, sounds and voice prints",
+    "voice": "Speech to text, voices, sounds, voice prints and moods",
     "vision": "Detectors and vision models (planned)",
 }
 

@@ -71,6 +71,8 @@ const md = (text) => {
 // Where each pool is set: thinking in Compute, voice in the audio pipeline, vision under Video
 const POOL_HOME = { thinking: "models", voice: "settings/audio", vision: "settings/video" };
 const POOL_HOME_NAME = { models: "Compute", "settings/audio": "Audio pipeline", "settings/video": "Video" };
+// The Mood module's moods in the buffer
+const MOOD_ICON = { neutral: "😐", happy: "😊", angry: "😠", sad: "😢", excited: "🤩", frustrated: "😤", surprised: "😮", fearful: "😨", calm: "😌" };
 
 const ICONS = {
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
@@ -1855,7 +1857,7 @@ class AacPanel extends HTMLElement {
       l.confidence != null ? `${Math.round(l.confidence * 100)} % sure` : null,
       l.engine ? `${this._resourceLabel(l.engine)}${l.stt_ms != null ? ` ${l.stt_ms} ms` : ""}` : null].filter(Boolean);
     if (l.speaker) meta.push(`🗣 ${l.speaker.sure === false ? "probably " : ""}${l.speaker.name}${l.speaker.new ? " (new)" : ""}${l.speaker.kind === "media" ? " · video/TV" : ""}${l.speaker.score > 0 ? ` ${Math.round(l.speaker.score * 100)} %` : ""}`);
-    if (l.mood) meta.push(`mood: ${typeof l.mood === "object" ? l.mood.label : l.mood}`);
+    if (l.mood) meta.push(`${MOOD_ICON[l.mood.label] || "◌"} ${l.mood.label} ${Math.round(l.mood.score * 100)} %${l.mood.sure ? "" : " (not passed on)"}`);
     if (l.sounds?.length) meta.push(`♪ ${l.sounds.slice(0, 3).map(([n, p]) => `${n} ${Math.round(p * 100)} %`).join(", ")}`);
     const mark = (l.addressed ? '<b class="to">→ AAC</b>' : l.gate ? `<b class="no">${esc(l.gate)}</b>` : "")
       + (l.judged ? ` <b class="why">${esc(l.judged)}</b>` : "");
