@@ -27,6 +27,12 @@
       "default": true,
       "help": "What was said just before keeps short pieces in the right language and topic."
     },
+    "home_languages": {
+      "type": "bool",
+      "title": "Keep to the home's languages",
+      "default": true,
+      "help": "When the recognizer hears a language that is not on the home's list (SETTINGS → Languages), the line is recognized again in the last home language heard there (or the main one)."
+    },
     "names": {
       "type": "bool",
       "title": "Tell the recognizer AAC's names",

@@ -34,7 +34,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from .const import LOGGER
-from .languages import code_of, detect
+from .languages import code_of, detect, home_languages
 from .chats import strip_marks
 from .models import resolve_model
 from .pools import is_entity
@@ -415,7 +415,7 @@ class AudioHub:
                                     "stage": stage.id, **item})
 
     def saw_language(self, value: str | None) -> None:
-        """Count a language heard or spoken (the panel proposes voices for these); saved when it is new."""
+        """Count a language heard or spoken (the panel proposes adding heard ones to the home's list)."""
         if not (code := code_of(value)):
             return
         seen = self.entry.runtime_data.store.audio.setdefault("languages_seen", {})
@@ -423,10 +423,6 @@ class AudioHub:
         if seen[code] == 1:
             self.entry.async_create_background_task(
                 self.hass, self.entry.runtime_data.store.async_save(), "aac language seen")
-
-    def languages_in_use(self) -> list[str]:
-        """Languages heard or spoken more than a couple of times (one misheard line does not count)."""
-        return [c for c, n in (self.entry.runtime_data.store.audio.get("languages_seen") or {}).items() if n >= 3]
 
     def _add_line(self, source: Source, line: dict[str, Any]) -> None:
         """Into the buffer, and to the hearing modules (the core only hears; they decide what to do)."""
@@ -462,16 +458,21 @@ class AudioHub:
         except KeyError:  # the stt/tts component is not loaded
             return None
 
-    def _language(self, supported: list[str]) -> str:
-        wanted = self.entry.runtime_data.store.audio["language"] or self.hass.config.language
+    def languages(self) -> list[str]:
+        """The home's languages, first = primary (global, languages.py)."""
+        return home_languages(self.hass, self.entry.runtime_data.store)
+
+    def _language(self, supported: list[str], wanted: str | None = None) -> str:
+        wanted = wanted or self.languages()[0]  # HA engines need one language: the primary
         for lang in supported:
             if lang == wanted or lang.split("-")[0] == wanted.split("-")[0]:
                 return lang
         return supported[0] if supported else wanted
 
-    async def async_stt(self, pcm: bytes, prompt: str | None = None) -> dict[str, Any] | None:
+    async def async_stt(self, pcm: bytes, prompt: str | None = None, language: str | None = None) -> dict[str, Any] | None:
         """Speech to text through the voice pool: models (any OpenAI-compatible server) or HA engines,
         in the owner's order; a machine that does not answer is skipped, HA's local engine is last.
+        language = transcribe in this one (default: the home's only language, or detected among all).
 
         Returns {"text", "language", "confidence", "words", "engine"} (HA engines give only the text)."""
         broker = self.entry.runtime_data.broker
@@ -479,20 +480,20 @@ class AudioHub:
         while (resource := broker.pick("stt")) is not None and resource not in tried:
             tried.add(resource)
             if is_entity(resource):
-                return await self._async_stt_entity(resource, pcm)
-            heard = await self._async_stt_model(resource, pcm, prompt)
+                return await self._async_stt_entity(resource, pcm, language)
+            heard = await self._async_stt_model(resource, pcm, prompt, language)
             if heard is not None or broker.usable(resource):
                 return heard  # answered (or failed on this segment only)
         if (fallback := self.ha_engine("stt")) is None:
             LOGGER.warning("AAC audio: no speech-to-text engine")
             return None
-        return await self._async_stt_entity(fallback, pcm)
+        return await self._async_stt_entity(fallback, pcm, language)
 
-    async def _async_stt_entity(self, entity_id: str, pcm: bytes) -> dict[str, Any] | None:
+    async def _async_stt_entity(self, entity_id: str, pcm: bytes, language: str | None = None) -> dict[str, Any] | None:
         if (entity := stt.async_get_speech_to_text_entity(self.hass, entity_id)) is None:
             return None
         metadata = stt.SpeechMetadata(
-            language=self._language(list(entity.supported_languages)),
+            language=self._language(list(entity.supported_languages), language),
             format=stt.AudioFormats.WAV,
             codec=stt.AudioCodecs.PCM,
             bit_rate=stt.AudioBitRates.BITRATE_16,
@@ -514,7 +515,8 @@ class AudioHub:
         return {"text": result.text or "", "language": metadata.language, "confidence": None, "words": [],
                 "engine": entity_id}
 
-    async def _async_stt_model(self, model_id: str, pcm: bytes, prompt: str | None = None) -> dict[str, Any] | None:
+    async def _async_stt_model(self, model_id: str, pcm: bytes, prompt: str | None = None,
+                               language: str | None = None) -> dict[str, Any] | None:
         broker = self.entry.runtime_data.broker
         if (endpoint := resolve_model(self.hass, self.entry.runtime_data.store, model_id)) is None:
             return None
@@ -522,9 +524,10 @@ class AudioHub:
             async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key, timeout=60, connect_timeout=3
         )
         try:
-            # No language = the model detects it per sentence (German and English alike)
+            # One home language: say so; several: the model detects it per sentence (the modules check it)
+            home = self.languages()
             heard = await provider.transcribe(
-                endpoint.model, pcm_to_wav(pcm), self.entry.runtime_data.store.audio["language"] or None, prompt
+                endpoint.model, pcm_to_wav(pcm), language or (home[0] if len(home) == 1 else None), prompt
             )
         except ProviderConnectionError as err:
             # The machine may simply be off (e.g. a desktop PC): the broker skips it for a minute
@@ -565,7 +568,7 @@ class AudioHub:
             LOGGER.warning("AAC audio: no text-to-speech engine")
             return None
         voices = self.entry.runtime_data.store.audio.get("voices") or {}
-        lang = detect(text, [*voices, *self.languages_in_use()])
+        lang = detect(text, self.languages())
         self.saw_language(lang)
         picked = voices.get(lang)
         options = {tts.ATTR_PREFERRED_FORMAT: "wav", tts.ATTR_PREFERRED_SAMPLE_RATE: 22050,

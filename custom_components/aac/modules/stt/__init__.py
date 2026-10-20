@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 from ...capabilities import Stage
+from ...languages import code_of
 from ...pools import is_entity
 from .. import ModuleContext
 
@@ -30,6 +31,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         return ctx.entry.runtime_data.voice_domain.id
 
     last: dict[str, str] = {}  # per source: the last line said, as context for the next
+    last_language: dict[str, str] = {}  # per source: the last home language heard
 
     async def run(source, pcm: bytes, line: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
@@ -40,6 +42,14 @@ async def async_setup_module(ctx: ModuleContext) -> None:
             # (only with the wake word on: otherwise the names would just bend what is heard)
             prompt = " ".join(filter(None, [", ".join(n.capitalize() for n in names) + ".", prompt]))
         heard = await ctx.audio.async_stt(pcm, prompt) or {}
+        home, lang = ctx.languages, code_of(heard.get("language"))
+        if ctx.setting(domain_id(), "home_languages") and lang and len(home) > 1 and lang not in home:
+            # Whisper guessed a language nobody here speaks (accents, short pieces): again in a home language
+            again = last_language.get(source.id) or home[0]
+            if ((retry := await ctx.audio.async_stt(pcm, prompt, again)) or {}).get("text", "").strip():
+                heard = {**retry, "language": again, "heard_as": lang}
+        if (lang := code_of(heard.get("language"))) in home:
+            last_language[source.id] = lang
         text = (heard.get("text") or "").strip()
         if not any(c.isalpha() for c in text) or (ctx.setting(domain_id(), "filter") and HALLUCINATIONS.match(text)):
             return {"drop": True}
@@ -47,7 +57,8 @@ async def async_setup_module(ctx: ModuleContext) -> None:
             return {"kind": "sound", "text": f"[{sound.group(1).lower()}]", "engine": heard.get("engine"),
                     "stt_ms": int((time.monotonic() - started) * 1000)}
         last[source.id] = text
-        found = {"text": text, "language": heard.get("language"), "confidence": heard.get("confidence"),
+        found = {"text": text, "language": code_of(heard.get("language")) or heard.get("language"),
+                 "heard_as": heard.get("heard_as"), "confidence": heard.get("confidence"),
                  "engine": heard.get("engine"), "words": heard.get("words") or [],
                  "stt_ms": int((time.monotonic() - started) * 1000)}
         if ctx.setting(domain_id(), "split") and (parts := sentences(heard.get("segments") or [], line["seconds"])):

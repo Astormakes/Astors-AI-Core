@@ -66,7 +66,7 @@ rules for the machines, heartbeat) are declared the same way, so SETUP has one c
 gives: `storage(domain, name)` (per AAC domain), `add_calendar(provider)`, `add_llm_api(factory)` (one
 LLM API per domain, offered to that domain's agent), `add_ws_commands(...)`, `add_panel_page(id, title,
 element, script, visible_setting)` (a web component without shadow DOM, so the panel's styles and skins
-apply; the panel keeps the element across re-renders), `setting(domain, key)`. Settings from the manifest
+apply; the panel keeps the element across re-renders), `setting(domain, key)`, `languages` (the home's languages, ISO codes, first = main). Settings from the manifest
 are stored per domain (`store.module_settings`) and edited in SETTINGS → Modules (form built from the
 schema: bool, text, number, select, entity, entities; `options_from` = choices a module computes at runtime).
 A module that fails to load is skipped. Deleting a domain removes its module data too.

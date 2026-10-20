@@ -1,10 +1,14 @@
-"""Languages: names, codes and which language a text is in (owner, 2026-10-20: "it should list all, hidden, and
-propose the ones the detection has already seen").
+"""Languages: the home's list, names, codes and which language a text is in.
+
+The home's languages are one global list (owner, 2026-10-20: "a setup step and a global thing that modules use
+as well"), first = primary. Until the owner sets it, it comes from HA: HA's language, then the country's
+languages; English if HA says nothing. Detection guesses only among them, and the audio modules decide what to
+do with a line in another language.
 
 Codes are ISO 639-1 (de, en, …). Whisper servers report either the code (faster-whisper) or the English name
 (whisper.cpp: "german"); code_of() takes both, and TTS locales such as de_DE. Text detection: py3langid
-(~97 languages, offline, ~0.1 ms per sentence). One-word answers are unreliable ("Done." → it), so it chooses
-among the languages that are in use here (voices picked, languages heard) whenever there are two or more.
+(~97 languages, offline, ~0.1 ms per sentence). One-word answers are unreliable ("Done." → it) unless it
+chooses among the home's languages.
 """
 
 from __future__ import annotations
@@ -33,7 +37,28 @@ NAMES = {
 }
 _BY_NAME = {name.lower(): code for code, name in NAMES.items()} | {"javanese": "jw", "burmese": "my"}
 
+# Languages spoken in a country (HA's country setting), most common first; countries not listed add nothing
+COUNTRY = {
+    "AT": ["de"], "AU": ["en"], "BE": ["nl", "fr", "de"], "BR": ["pt"], "CA": ["en", "fr"], "CH": ["de", "fr", "it"],
+    "CN": ["zh"], "CZ": ["cs"], "DE": ["de"], "DK": ["da"], "EE": ["et"], "ES": ["es", "ca"], "FI": ["fi", "sv"],
+    "FR": ["fr"], "GB": ["en"], "GR": ["el"], "HR": ["hr"], "HU": ["hu"], "IE": ["en"], "IL": ["he"], "IN": ["hi", "en"],
+    "IS": ["is"], "IT": ["it"], "JP": ["ja"], "KR": ["ko"], "LT": ["lt"], "LU": ["lb", "fr", "de"], "LV": ["lv"],
+    "MX": ["es"], "NL": ["nl"], "NO": ["no"], "NZ": ["en"], "PL": ["pl"], "PT": ["pt"], "RO": ["ro"], "RS": ["sr"],
+    "RU": ["ru"], "SE": ["sv"], "SI": ["sl"], "SK": ["sk"], "TR": ["tr"], "UA": ["uk"], "US": ["en"], "ZA": ["en", "af"],
+}
+
 _identifier: Any = None
+
+
+def from_ha(language: str | None, country: str | None) -> list[str]:
+    """The home's languages as HA describes it: its language, then the country's; English if neither."""
+    found = [c for c in [code_of(language), *COUNTRY.get((country or "").upper(), [])] if c]
+    return list(dict.fromkeys(found)) or ["en"]
+
+
+def home_languages(hass, store) -> list[str]:
+    """The owner's list, or HA's description of the home until the owner sets one."""
+    return store.data.get("languages") or from_ha(hass.config.language, hass.config.country)
 
 
 def code_of(value: str | None) -> str | None:

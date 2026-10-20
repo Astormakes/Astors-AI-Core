@@ -852,6 +852,7 @@ class AacPanel extends HTMLElement {
     if (view === "requests") this._loadRequests();
     if (view === "settings/modules" || view.startsWith("settings/module/")) this._loadModuleSettings();
     if (view === "settings/memory") this._loadMemory();
+    if (view === "settings/languages") this._ws("aac/languages").then((r) => { this._langs = r; this._render(); }).catch(() => {});
     if (view === "settings/appearance") this._ws("aac/skins").then((r) => { this._skins = r; this._render(); }).catch(() => {});
     if (view.startsWith("chat/") && view !== "chat/new") { this._openChat(view.slice(5)); return; }
     if (view === "chat/new") this._chat = null;
@@ -1003,6 +1004,7 @@ class AacPanel extends HTMLElement {
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
           ${this._tab("settings/charter", "Charter")}
           ${this._tab("settings/appearance", "Appearance")}
+          ${this._tab("settings/languages", "Languages", this._stepOpen("languages") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/master", "Master agent")}
           ${this._tab("settings/entities", "Entities", this._stepOpen("entities") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/heartbeat", "Heartbeat", this._stepOpen("heartbeat") ? '<span class="dot open"></span>' : "")}
@@ -1050,6 +1052,7 @@ class AacPanel extends HTMLElement {
     if (v === "requests") return this._renderRequests();
     if (v.startsWith("settings/module/")) return this._renderModuleSettings(v.slice(16));
     if (v === "settings/charter") return this._renderCharter();
+    if (v === "settings/languages") return this._renderLanguages();
     if (v === "settings/triggers") return this._renderTriggers();
     if (v === "settings/heartbeat") return this._renderHeartbeat();
     if (v === "trigger/new" || v.startsWith("trigger/edit/")) return this._renderTriggerForm();
@@ -1523,6 +1526,42 @@ class AacPanel extends HTMLElement {
       </div>`);
   }
 
+  // The home's languages (global): from HA until the owner sets them; first = main
+  _renderLanguages() {
+    const L = this._langs;
+    if (!L) return this._page("LANGUAGES", "", '<p class="hint">Loading…</p>');
+    const name = (c) => L.names[c] || c, list = L.languages;
+    const ha = `HA: language ${esc(L.ha.language || "–")}, country ${esc(L.ha.country || "–")} → ${esc(L.from_ha.map(name).join(", "))}`;
+    const heard = Object.entries(L.seen).filter(([c]) => !list.includes(c) && L.names[c]).sort((a, b) => b[1] - a[1]);
+    const rest = Object.keys(L.names).filter((c) => !list.includes(c)).sort((a, b) => name(a).localeCompare(name(b)));
+    return this._page("LANGUAGES", L.set_by_owner ? "your list" : "from Home Assistant", `<div class="card"><h2>SPOKEN HERE ${tip(`One list for all of AAC, the main language first. Speech recognition and the voices only consider these, modules ask for them too, and a line in another language is the audio modules' business (e.g. Speech to text recognizes it again in a home language). Until you change it, AAC takes HA's language and country (English if HA says nothing).`)}</h2>
+      ${list.map((c, i) => `<div class="row" style="display:flex;align-items:center;gap:.5em;padding:.35em 0">
+        <span style="flex:1">${esc(name(c))} <span class="hint">${esc(c)}${i === 0 ? " · main" : ""}</span></span>
+        <span style="display:flex;gap:.5em;justify-content:flex-end;align-items:center">
+          ${i ? `<button class="btn" style="flex:none" data-lang-up="${esc(c)}" title="Make it the main language">↑ Main</button>` : ""}
+          ${list.length > 1 ? `<button class="icon-btn" data-lang-remove="${esc(c)}" title="Remove">${icon("trash")}</button>` : ""}
+        </span>
+      </div>`).join("")}
+      <label for="lang-new">Add a language</label>
+      <div style="display:flex;gap:.5em"><select id="lang-new" style="flex:1">${rest.map((c) => `<option value="${esc(c)}">${esc(name(c))}</option>`).join("")}</select>
+        <button class="btn" id="lang-add">Add</button></div>
+      ${heard.length ? `<label>Heard here, not on the list ${tip(`What the recognizer thought it heard (lines, answers). A language heard only a few times is usually a mistake or a video.`)}</label>
+        <div>${heard.map(([c, n]) => `<button class="btn" data-lang-add="${esc(c)}">+ ${esc(name(c))} <span class="hint">${n}×</span></button>`).join(" ")}</div>` : ""}
+      <p class="hint" style="margin-top:1em">${ha}</p>
+      <div class="actions">${L.set_by_owner ? '<button class="btn" id="lang-reset">Use HA\'s again</button>'
+        : '<button class="btn" id="lang-keep" title="Keep this list as yours (closes the setup step)">This is right</button>'}</div>
+    </div>`);
+  }
+
+  async _setLanguages(list) {
+    try {
+      this._langs = await this._ws("aac/languages/set", { languages: list });
+      this._toast("✓ Languages saved", true);
+      this._state = await this._ws("aac/state", {});  // the setup step closes
+    } catch (e) { this._toast(`Languages: not saved: ${e.message || e}`, false); }
+    this._render();
+  }
+
   // ---------------------------------------------------------------- modules
   _modulePages() {
     return (this._state?.modules || []).flatMap((m) => (m.pages || []).map((p) => ({ ...p, module: m.id, moduleName: m.name })));
@@ -1952,7 +1991,7 @@ class AacPanel extends HTMLElement {
       <div class="split">
         <div class="card" data-autosave="audio" data-label="Audio settings"><h2>SETTINGS</h2>
           <label for="au-names">AAC's names (comma separated)</label><input id="au-names" value="${esc((set.names || []).join(", "))}">
-          <label for="au-lang">Language (empty = detect per sentence) ${tip(`AAC always hears and transcribes; what it does with it is up to the hearing modules (SETTINGS → Modules: Wake word, …). ${(a.hearing || []).length ? `On now: ${esc(a.hearing.join(", "))}.` : "None is on: AAC only listens."}`)}</label><input id="au-lang" value="${esc(set.language || "")}" placeholder="en, de, …">
+          <p class="hint">Languages: ${esc((a.languages || []).map((c) => (eng.language_names || {})[c] || c).join(", "))} · <button class="btn" data-go="settings/languages">Change</button> ${tip(`AAC always hears and transcribes; what it does with it is up to the hearing modules (SETTINGS → Modules: Wake word, …). ${(a.hearing || []).length ? `On now: ${esc(a.hearing.join(", "))}.` : "None is on: AAC only listens."}`)}</p>
           <label for="au-pause">Pause that ends a line (ms) ${tip(`Shorter = shorter lines (snappier, but the recognizer gets less context); longer = whole thoughts. Watch the LIVE meter while you try.`)}</label>
           <input id="au-pause" type="number" min="200" max="3000" step="100" value="${esc(set.pause_ms ?? 800)}" inputmode="numeric">
           <label for="au-volume">AAC's voice volume: <span id="au-volume-val">${esc(set.volume ?? 40)}</span> % ${tip(`Saved when you let go, with a short test sentence. 0 = AAC never speaks aloud (answers still appear in the Voice chat). The speaker's own buttons still work on top.`)}</label>
@@ -1974,8 +2013,7 @@ class AacPanel extends HTMLElement {
   _voicePicks(set, eng) {
     const avail = eng.tts_voices || {}, names = eng.language_names || {}, chosen = set.voices || {};
     const seen = set.languages_seen || {};
-    const shown = [...new Set([...Object.keys(seen).sort((a, b) => seen[b] - seen[a]), ...Object.keys(chosen)])]
-      .filter((l) => avail[l]);
+    const shown = [...new Set([...(this._audio?.languages || []), ...Object.keys(chosen)])].filter((l) => avail[l]);
     const rest = Object.keys(avail).filter((l) => !shown.includes(l)).sort((a, b) => (names[a] || a).localeCompare(names[b] || b));
     const pick = (lang) => {
       const cur = chosen[lang];
@@ -1985,8 +2023,8 @@ class AacPanel extends HTMLElement {
           return `<option value="${esc(val)}" ${cur && `${cur.language}|${cur.voice}` === val ? "selected" : ""}>${esc(v.name || v.voice)}</option>`;
         }).join("")}</select>`;
     };
-    return `<label>Voice per language ${tip(`AAC detects the language of each answer (any language) and reads it with the voice you pick for it. Shown: the languages heard or spoken here and those with a voice; the rest is folded away. Empty = the engine's default voice.`)}</label>
-      ${shown.map(pick).join("") || '<p class="hint">No language heard yet.</p>'}
+    return `<label>Voice per language ${tip(`AAC detects the language of each answer among the home's languages (SETTINGS → Languages) and reads it with the voice you pick for it. The rest is folded away. Empty = the engine's default voice.`)}</label>
+      ${shown.map(pick).join("") || '<p class="hint">The voice engine has none of the home\'s languages.</p>'}
       ${rest.length ? `<details><summary class="hint" style="cursor:pointer">All languages (${rest.length})</summary>${rest.map(pick).join("")}</details>` : ""}`;
   }
 
@@ -2175,6 +2213,15 @@ class AacPanel extends HTMLElement {
       }
     };
     sr.querySelectorAll("[data-go]").forEach((el) => onActivate(el, () => this._go(el.dataset.go)));
+    const langs = () => this._langs?.languages || [];
+    sr.querySelectorAll("[data-lang-up]").forEach((el) => onActivate(el, () =>
+      this._setLanguages([el.dataset.langUp, ...langs().filter((c) => c !== el.dataset.langUp)])));
+    sr.querySelectorAll("[data-lang-remove]").forEach((el) => onActivate(el, () =>
+      this._setLanguages(langs().filter((c) => c !== el.dataset.langRemove))));
+    sr.querySelectorAll("[data-lang-add]").forEach((el) => onActivate(el, () => this._setLanguages([...langs(), el.dataset.langAdd])));
+    sr.querySelector("#lang-add")?.addEventListener("click", () => this._setLanguages([...langs(), sr.querySelector("#lang-new").value]));
+    sr.querySelector("#lang-reset")?.addEventListener("click", () => this._setLanguages(null));
+    sr.querySelector("#lang-keep")?.addEventListener("click", () => this._setLanguages(langs()));
     const fold = sr.querySelector("#auto-fold");
     if (fold) onActivate(fold, () => {
       this._autoOpen = !this._autoOpen;
@@ -2594,7 +2641,6 @@ class AacPanel extends HTMLElement {
     this._audio = await this._ws("aac/audio/settings", {
       names: sr.querySelector("#au-names").value.split(",").map((n) => n.trim()).filter(Boolean),
       pause_ms: Number(sr.querySelector("#au-pause").value) || 800,
-      language: sr.querySelector("#au-lang").value.trim() || null,
       voices: Object.fromEntries([...sr.querySelectorAll("[data-voice-lang]")].map((el) => [el.dataset.voiceLang, el.value])
         .filter(([, v]) => v).map(([lang, v]) => { const [language, voice] = v.split("|"); return [lang, { language, voice }]; })),
     });

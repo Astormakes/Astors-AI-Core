@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er, llm
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
+from .languages import NAMES, from_ha, home_languages
 from .const import (
     CONF_BASE_URL,
     CONF_MAX_TOKENS,
@@ -50,6 +51,8 @@ def async_register(hass: HomeAssistant) -> None:
         ws_setup_skip,
         ws_audio,
         ws_audio_settings,
+        ws_languages,
+        ws_languages_set,
         ws_audio_say,
         ws_audio_live,
         ws_chat,
@@ -313,7 +316,6 @@ def ws_audio(hass: HomeAssistant, connection, msg) -> None:
 @aac_command(
     {
         vol.Required("type"): "aac/audio/settings",
-        vol.Optional("language"): vol.Any(str, None),
         vol.Optional("names"): [vol.All(str, vol.Length(min=1))],
         vol.Optional("volume"): vol.All(vol.Coerce(int), vol.Range(0, 100)),
         vol.Optional("pause_ms"): vol.All(vol.Coerce(int), vol.Range(200, 3000)),
@@ -330,6 +332,32 @@ async def ws_audio_settings(hass: HomeAssistant, connection, msg) -> None:
     await data.store.async_update_audio({k: v for k, v in msg.items() if k not in ("id", "type", "domain")})
     data.audio.apply_settings()
     connection.send_result(msg["id"], audio_overview(hass, data.audio, data.store.audio))
+
+
+def _languages(hass: HomeAssistant, store) -> dict:
+    return {"languages": home_languages(hass, store), "set_by_owner": store.data["languages"] is not None,
+            "from_ha": from_ha(hass.config.language, hass.config.country),
+            "ha": {"language": hass.config.language, "country": hass.config.country},
+            "seen": store.audio.get("languages_seen") or {}, "names": NAMES}
+
+
+@aac_command({vol.Required("type"): "aac/languages"})
+@websocket_api.require_admin
+@callback
+def ws_languages(hass: HomeAssistant, connection, msg) -> None:
+    """The home's languages (global), what HA says, what was heard, every known language."""
+    if entry := _entry(hass, connection, msg):
+        connection.send_result(msg["id"], _languages(hass, entry.runtime_data.store))
+
+
+@aac_command({vol.Required("type"): "aac/languages/set", vol.Required("languages"): vol.Any(None, [vol.In(list(NAMES))])})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_languages_set(hass: HomeAssistant, connection, msg) -> None:
+    """Set the list (first = primary); null or [] = as HA describes the home."""
+    if entry := _entry(hass, connection, msg):
+        await entry.runtime_data.store.async_set_languages(msg["languages"] or None)
+        connection.send_result(msg["id"], _languages(hass, entry.runtime_data.store))
 
 
 @aac_command(

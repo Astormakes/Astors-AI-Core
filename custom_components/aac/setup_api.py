@@ -19,6 +19,7 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm
 
+from .languages import NAMES, code_of, home_languages
 from .audio import audio_overview
 from .const import CONF_BASE_URL, CONF_MODEL, DOMAIN
 from .models import async_list_models, async_overview, model_kind, resolve_model
@@ -114,6 +115,8 @@ class SetupStatusTool(_SetupTool):
                      "state": st.state}
                     for st in hass.states.async_all(("person", "device_tracker", "zone"))
                 ],
+                "languages": {"list": home_languages(hass, store), "set_by_owner": store.data["languages"] is not None,
+                              "heard": store.audio.get("languages_seen") or {}},
                 "heartbeat": {k: hb[k] for k in ("enabled", "interval", "quiet_start", "quiet_end")},
                 "triggers": len(store.triggers),
                 "audio": {
@@ -122,7 +125,6 @@ class SetupStatusTool(_SetupTool):
                     "speech_to_text_now": audio["engines"]["stt"],
                     "ha_stt_engines": audio["engines"]["stt_options"],
                     "text_to_speech_now": audio["engines"]["tts"], "ha_tts_engines": audio["engines"]["tts_options"],
-                    "language": store.audio["language"] or "detect per sentence",
                     "your_names": store.audio["names"],
                     "volume": store.audio.get("volume", 40),
                     "hearing_modules_on": [h.title for h in data.capabilities.listeners(data.voice_domain.id)],
@@ -384,14 +386,12 @@ class AudioTool(_SetupTool):
     name = "set_audio"
     title = "Set audio"
     description = (
-        "Audio settings: your names (what people call you by voice), the language (empty = detect per sentence) "
-        "and the volume of your voice. Engines are pools: use_model with role speech/voice. What you do with "
+        "Audio settings: your names (what people call you by voice) and the volume of your voice. Engines are pools: use_model with role speech/voice. What you do with "
         "what you hear is up to the hearing modules (Wake word, …), switched on per domain in the panel."
     )
     annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
     parameters = probatio.Schema(
         {
-            probatio.Optional("language", description="e.g. 'de'; empty = detect"): str,
             probatio.Optional("names", description="e.g. ['computer', 'glados']"): [str],
             probatio.Optional("volume", description="0-100 % of AAC's voice; 0 = never speak aloud"): int,
         }
@@ -400,8 +400,6 @@ class AudioTool(_SetupTool):
     async def _async_run(self, hass, args):
         data = self._entry.runtime_data
         changes: dict = {}
-        if "language" in args:
-            changes["language"] = args["language"].strip() or None
         if "names" in args:
             names = [n.strip() for n in args["names"] if n.strip()]
             if not names:
@@ -411,7 +409,32 @@ class AudioTool(_SetupTool):
             changes["volume"] = min(100, max(0, int(args["volume"])))
         await data.store.async_update_audio(changes)
         cfg = data.store.audio
-        return llm.ToolResult(data={k: cfg.get(k) for k in ("language", "names", "volume")})
+        return llm.ToolResult(data={k: cfg.get(k) for k in ("names", "volume")})
+
+
+class LanguagesTool(_SetupTool):
+    """The home's languages."""
+
+    name = "set_languages"
+    title = "Set languages"
+    description = (
+        "The languages spoken in this home, the main one first (ISO codes like 'en', 'de'). Speech recognition, "
+        "voices and modules use only these. Ask the owner; don't guess. setup_status shows the list and the "
+        "languages heard so far. reset=true goes back to what HA says (its language and country)."
+    )
+    annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
+    parameters = probatio.Schema({probatio.Optional("languages"): [str], probatio.Optional("reset"): bool})
+
+    async def _async_run(self, hass, args):
+        store = self._entry.runtime_data.store
+        if args.get("reset"):
+            await store.async_set_languages(None)
+        else:
+            codes = [c for c in (code_of(x) for x in args.get("languages") or []) if c in NAMES]
+            if not codes:
+                return llm.ToolResult(data={"error": "Give at least one known language code, e.g. ['en', 'de']."}, error=True)
+            await store.async_set_languages(codes)
+        return llm.ToolResult(data={"languages": [NAMES[c] for c in home_languages(hass, store)]})
 
 
 class SpeakTestTool(_SetupTool):
@@ -457,7 +480,7 @@ class AACSetupAPI(llm.API):
 
     async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
         """Tools + prompt."""
-        tools = [SetupStatusTool, ListModelsTool, AddModelTool, UseModelTool, TagModelTool, AvailabilityTool, MeasureModelsTool, HeartbeatTool, AudioTool, SpeakTestTool, SkipStepTool]
+        tools = [SetupStatusTool, ListModelsTool, AddModelTool, UseModelTool, TagModelTool, AvailabilityTool, MeasureModelsTool, HeartbeatTool, AudioTool, LanguagesTool, SpeakTestTool, SkipStepTool]
         return llm.APIInstance(
             api=self,
             api_prompt=API_PROMPT,

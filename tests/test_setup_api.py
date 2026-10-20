@@ -29,7 +29,7 @@ async def test_owner_chat_sets_up_heartbeat(hass: HomeAssistant, hass_ws_client,
     message = await _chat(ws, "Help me set up the rest of AAC.")
     assert SETUP_TOOLS <= _names(payloads[0])
     status = next(s for s in message["steps"] if s["type"] == "tool_result")
-    assert '"open"' in status["data"]
+    assert '"steps"' in status["data"] and "Connect a model" in status["data"]  # (cut at 500 characters in the run)
     hb = mock_entry.runtime_data.store.heartbeat
     assert hb["enabled"] and hb["interval"] == 15 and hb["quiet_start"] == "23:00"
 

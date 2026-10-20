@@ -80,6 +80,15 @@ def setup_steps(hass: HomeAssistant, store: AACStore, domain: DomainSettings | N
             "done": role_configured(hass, store, "master"),
         },
         {
+            "id": "languages",
+            "title": "Which languages are spoken here",
+            "hint": "AAC starts from HA's language and country. Add the others you speak, main one first: speech "
+                    "recognition, voices and modules then only consider these.",
+            "target": "settings/languages",
+            "optional": True,
+            "done": store.data["languages"] is not None,
+        },
+        {
             "id": "memory",
             "title": "Give AAC a memory",
             "hint": "Pick an embedding model so it finds memories by meaning, not only by words.",

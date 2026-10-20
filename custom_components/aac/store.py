@@ -63,10 +63,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "domains": [],
     # The domain that owns the voice (microphones talk to it)
     "voice_domain": None,
-    # AAC's own audio pipeline (engines are the pool roles "stt"/"tts"): language (None = detect),
+    # The home's languages, first = primary (languages.py); None = as HA describes the home (language, country)
+    "languages": None,
+    # AAC's own audio pipeline (engines are the pool roles "stt"/"tts"):
     # the names that address AAC by voice, how long a follow-up needs no name (seconds),
     # known = sources that ever connected ({id, name}), for the setup step
-    "audio": {"language": None, "names": ["computer"], "follow_up": 10, "known": [], "volume": 40, "pause_ms": 800,
+    "audio": {"names": ["computer"], "follow_up": 10, "known": [], "volume": 40, "pause_ms": 800,
               "voices": {},  # language (de, en, …) → {"language": the engine's code, "voice": its voice id}
               "languages_seen": {}},  # language → how often it was heard or spoken
     # Pools (thinking / voice / vision, above domains): role → ordered list of model ids
@@ -305,6 +307,12 @@ class AACStore:
         data["models"] = stored.get("models", stored.get("workers", []))
         data["setup"].update(stored.get("setup", {}))
         data["audio"].update(stored.get("audio", {}))
+        data["languages"] = stored.get("languages")
+        if forced := data["audio"].pop("language", None):  # 0.41 and older: one language for speech to text
+            from .languages import code_of, from_ha  # noqa: PLC0415
+
+            data["languages"] = data["languages"] or list(dict.fromkeys(
+                [c for c in [code_of(forced), *from_ha(self.hass.config.language, self.hass.config.country)] if c]))
         data["traits"] = dict(stored.get("traits", {}))
         data["ui"].update(stored.get("ui", {}))
         data["queue"].update(stored.get("queue", {}))
@@ -534,6 +542,11 @@ class AACStore:
     def audio(self) -> dict[str, Any]:
         """Audio pipeline settings."""
         return self.data["audio"]
+
+    async def async_set_languages(self, languages: list[str] | None) -> None:
+        """The home's languages (first = primary); None = as HA describes the home."""
+        self.data["languages"] = list(dict.fromkeys(languages)) if languages else None
+        await self.async_save()
 
     async def async_update_audio(self, changes: dict[str, Any]) -> None:
         """Change audio settings."""

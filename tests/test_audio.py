@@ -128,6 +128,7 @@ async def test_stt_through_a_model_server(hass: HomeAssistant, aioclient_mock, m
     )
     store = mock_entry.runtime_data.store
     await store.async_set_pool("stt", ["auto|w:m_test0001|whisper-large-v3-turbo"])
+    await store.async_set_languages(["de", "en"])  # several home languages: the server detects which
     heard = await mock_entry.runtime_data.audio.async_stt(SILENCE * 100)
     assert heard["text"] == "Mach das Licht aus." and heard["language"] == "german"
     assert 0.85 < heard["confidence"] < 0.95 and heard["words"][0]["word"] == "Mach"
@@ -678,3 +679,54 @@ async def test_answers_are_read_in_their_languages_voice(hass: HomeAssistant, mo
         assert await hub.async_tts("The light is on.") == b"RIFF"
     assert asked == [("de_DE", "de_DE-thorsten-high"), (None, None), ("en_US", "broken"), (None, None)]
     assert mock_entry.runtime_data.store.audio["languages_seen"] == {"de": 1, "en": 2}  # proposed in the panel
+
+
+async def test_home_languages(hass: HomeAssistant, hass_ws_client, mock_entry, configured):
+    """One global list (owner, 2026-10-20): from HA's language and country until the owner sets it, English when HA
+    says nothing; detection guesses among them; the old single STT language migrates into it."""
+    from custom_components.aac import languages
+
+    assert languages.from_ha("en", "DE") == ["en", "de"] and languages.from_ha("de-CH", "CH") == ["de", "fr", "it"]
+    assert languages.from_ha(None, None) == ["en"]
+    hass.config.language, hass.config.country = "en", "DE"
+    await setup_aac(hass, mock_entry)
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/languages"})
+    got = (await ws.receive_json())["result"]
+    assert got["languages"] == ["en", "de"] and not got["set_by_owner"] and got["names"]["de"] == "German"
+    await ws.send_json_auto_id({"type": "aac/languages/set", "languages": ["de", "en", "nl"]})
+    assert (await ws.receive_json())["result"]["languages"] == ["de", "en", "nl"]
+    assert mock_entry.runtime_data.audio.languages() == ["de", "en", "nl"]
+    await ws.send_json_auto_id({"type": "aac/state"})
+    assert next(s for s in (await ws.receive_json())["result"]["setup"] if s["id"] == "languages")["done"]
+    await ws.send_json_auto_id({"type": "aac/languages/set", "languages": None})
+    assert (await ws.receive_json())["result"]["languages"] == ["en", "de"]
+
+    # 0.41: audio.language forced one language for speech to text → first in the list
+    from custom_components.aac.store import AACStore
+
+    mock_entry.runtime_data.store.audio["language"] = "fr"
+    await mock_entry.runtime_data.store.async_save()
+    store = AACStore(hass)
+    await store.async_load()
+    assert store.data["languages"] == ["fr", "en", "de"] and "language" not in store.audio
+
+
+async def test_a_line_outside_the_home_languages_is_heard_again(hass: HomeAssistant, mock_entry, configured):
+    """Whisper guessed Dutch for German with an accent: the STT module recognizes it again in a home language."""
+    from types import SimpleNamespace
+
+    await setup_aac(hass, mock_entry)
+    await mock_entry.runtime_data.store.async_set_languages(["de", "en"])
+    hub = mock_entry.runtime_data.audio
+    calls = []
+
+    async def stt(pcm, prompt=None, language=None):
+        calls.append(language)
+        return {"text": "Mach het licht uit." if language is None else "Mach das Licht aus.", "language": language or "dutch"}
+
+    stage = mock_entry.runtime_data.capabilities.stages["stt"]
+    with patch.object(hub, "async_stt", side_effect=stt):
+        line = await stage.run(SimpleNamespace(id="pc"), SILENCE, {"seconds": 1.0})
+    assert calls == [None, "de"]  # no home language heard on this mic yet: the main one
+    assert line["text"] == "Mach das Licht aus." and line["language"] == "de" and line["heard_as"] == "nl"

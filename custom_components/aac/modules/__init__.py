@@ -136,6 +136,13 @@ class ModuleContext:
                 websocket_api.async_register_command(self.hass, handler)
                 done.add(name)
 
+    @property
+    def languages(self) -> list[str]:
+        """The home's languages (ISO codes, first = primary): what to expect and answer in (languages.py)."""
+        from ..languages import home_languages  # noqa: PLC0415
+
+        return home_languages(self.hass, self.entry.runtime_data.store)
+
     def setting(self, domain_id: str, key: str) -> Any:
         """A module setting in one domain (the manifest's default when the owner never set it)."""
         return setting(self.entry, self.module.manifest, domain_id, key)

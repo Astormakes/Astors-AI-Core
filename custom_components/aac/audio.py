@@ -76,6 +76,7 @@ def audio_overview(hass: HomeAssistant, hub=None, settings: dict | None = None) 
         "connected": live["connected"],
         "transcript": live["transcript"],
         "settings": settings or {},
+        "languages": hub.languages() if hub else [],  # the home's (global, SETTINGS → Languages)
         # the hearing modules that are on in the voice domain (what AAC does with what it hears)
         "hearing": live.get("hearing", []),
         "engines": {
