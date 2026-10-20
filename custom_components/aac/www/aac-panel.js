@@ -2036,7 +2036,7 @@ class AacPanel extends HTMLElement {
         if (!t || !box || innerWidth <= 700) return;
         t.style.left = ""; t.style.display = "block";
         const r = t.getBoundingClientRect();
-        const dx = r.left < box.left + 8 ? box.left + 8 - r.left : r.right > box.right - 8 ? box.right - 8 - r.right : 0;
+        const dx = r.left < box.left + 16 ? box.left + 16 - r.left : r.right > box.right - 16 ? box.right - 16 - r.right : 0;
         t.style.left = `calc(50% + ${dx}px)`; t.style.display = "";
       };
       el.addEventListener("mouseenter", place);
