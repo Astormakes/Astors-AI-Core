@@ -42,7 +42,8 @@ Common rules:
   automatic runs are skipped inside. Built for the heartbeat and every trigger.
 - A trigger never fires while a run with the same trigger is still running.
 - Only `state` changes count, not attribute-only updates.
-- Whatever the agent decides to say goes to the "From AAC" chat; silence is normal.
+- Whatever the agent decides to say goes to the "From AAC" chat; a heartbeat finding opens a chat of its own
+  (`hb_<utc time>`, "Heartbeat · …"), so a reply is about that one thing. Silence is normal (the run list shows it).
 - `time` triggers usually *are* the message (a reminder): the agent is told to write
   it, and may stay silent only for "check whether …" instructions. `state` triggers
   get the plain "say nothing unless it matters" rule. (Tested: with the plain rule the

@@ -90,6 +90,9 @@ const ICONS = {
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
   mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/>',
 };
+// A small "?" whose text shows on hover / focus (tap on a phone): explanations stay out of the way
+const tip = (html) => `<span class="qm" tabindex="0" role="button" aria-label="Explain">?<span class="tip" role="tooltip">${html}</span></span>`;
+
 const icon = (name, cls = "") =>
   `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
 
@@ -167,9 +170,16 @@ nav {
 @media (hover: none) { .tab .chatdel { opacity: .5; } }
 .tab .modmore { margin-left: auto; padding: 0 .3em; font-size: 1.1em; line-height: 1; opacity: .6; }
 .modwrap { position: relative; }
+.qm { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 1.25em; height: 1.25em; margin-left: .35em;
+  border: 1px solid currentColor; border-radius: 50%; font-size: .8em; line-height: 1; letter-spacing: 0; text-transform: none; opacity: .55; cursor: help; vertical-align: middle; flex: none; }
+.qm:hover, .qm:focus { opacity: 1; outline: none; }
+.qm .tip { display: none; position: absolute; z-index: 60; left: 50%; top: calc(100% + .5em); transform: translateX(-50%); width: max-content; max-width: min(26em, 80vw);
+  padding: .7em .9em; background: var(--bg2); color: var(--text); border: 1px solid var(--line); border-radius: .4em; box-shadow: 0 .4em 1.4em rgba(0, 0, 0, .5);
+  font-size: .95rem; font-weight: normal; letter-spacing: normal; line-height: 1.45; text-shadow: none; text-align: left; white-space: normal; cursor: auto; }
+.qm:hover .tip, .qm:focus .tip, .qm:focus-within .tip { display: block; }
+@media (max-width: 700px) { .qm .tip { position: fixed; left: 16px; right: 16px; top: auto; bottom: 16px; transform: none; max-width: none; width: auto; } }
 .modmenu { top: 100%; }
 .tab.hidden-mod { opacity: .45; }
-.navhint { margin: .3em 1.2em 0; font-size: .75em; }
 .dswitch { position: relative; padding: 0 1em .7em; border-bottom: 1px solid var(--line); }
 .dbtn { width: 100%; display: flex; align-items: center; gap: .5em; background: transparent; color: var(--cyan); border: 1px solid var(--line);
   padding: .45em .7em; font: inherit; font-size: .93em; letter-spacing: .12em; cursor: pointer; text-align: left; text-shadow: 0 0 .3em rgba(0, 240, 255, .5); }
@@ -597,7 +607,6 @@ class AacPanel extends HTMLElement {
       <div class="card">
         <p>Only ticked entities exist for "${esc(dom)}": its agent, its automatic runs and the modules in it. Whether it may read or switch them is set separately under SETTINGS → Entities. ${v.chosen ? "" : "Not chosen yet: the ticks show what you exposed to Assist in HA."}</p>
         ${this._entitySearch()}
-        <p class="hint">Every tick is saved at once.</p>
         <div class="actions"><button class="btn" id="vis-all">Tick all</button><button class="btn" id="vis-none">Untick all</button></div>
       </div>
       ${Object.entries(groups).map(([area, list]) => {
@@ -616,8 +625,7 @@ class AacPanel extends HTMLElement {
     const reads = d.entities.filter((e) => e.read).length, writes = d.entities.filter((e) => e.write).length;
     const tog = (e, what) => `<button class="lit ${e[what] ? "on" : ""}" data-acc="${esc(e.entity_id)}" data-what="${what}" aria-pressed="${!!e[what]}">${what === "read" ? "Read" : "Write"}</button>`;
     return this._page("ENTITIES", `${writes} write · ${reads} read · ${d.entities.length} in total`, `
-      <div class="card"><h2>READ AND WRITE</h2>
-        <p>For every domain and module: <b>Read</b> = AAC may see the state, <b>Write</b> = it may also switch it (locks, alarms and doors only while you are in the chat). What a domain can see at all is its own tick list (domain menu → "What … can see"); both together decide. Home Assistant's Assist settings stay as they are. ${d.chosen ? "" : "Not chosen yet: this shows what you exposed to Assist in HA; your first change makes it AAC's own."}</p>
+      <div class="card"><h2>READ AND WRITE ${tip(`For every domain and module: <b>Read</b> = AAC may see the state, <b>Write</b> = it may also switch it (locks, alarms and doors only while you are in the chat). What a domain can see at all is its own tick list (domain menu → "What … can see"); both together decide. Home Assistant's Assist settings stay as they are. ${d.chosen ? "" : "Not chosen yet: this shows what you exposed to Assist in HA; your first change makes it AAC's own."}`)}</h2>
         ${this._entitySearch()}
       </div>
       ${(this._state?.master?.llm_hass_api || []).length ? `<div class="card"><h2>HOME ASSISTANT'S OWN TOOLS ARE ALSO ON</h2>
@@ -735,7 +743,7 @@ class AacPanel extends HTMLElement {
       <div class="wrow"><span>🗣 <b>${esc(v.name)}</b> <span class="tag">${esc(kindText[v.kind] || v.kind)}</span>
         <span class="hint">heard ${esc(v.heard || 0)}× · last ${esc(new Date(v.last).toLocaleString([], { hour12: false }))}${v.note ? ` · ${esc(v.note)}` : ""}${v.merged?.length ? ` · joined: ${esc(v.merged.join(", "))}` : ""}</span></span>
         <span class="actions"><button class="btn" data-voice-name="${esc(v.id)}">Name</button><button class="icon-btn" data-voice-forget="${esc(v.id)}" title="Forget this voice">${icon("trash")}</button></span></div>`).join("");
-    return `<div class="card"><h2>VOICES</h2><p class="hint">The voices AAC tells apart (Voices module). A voice print cannot be split again: if two people got mixed into one, forget it and AAC learns them anew. Unnamed voices are forgotten on their own after a few days.</p>
+    return `<div class="card"><h2>VOICES ${tip(`The voices AAC tells apart (Voices module). A voice print cannot be split again: if two people got mixed into one, forget it and AAC learns them anew. Unnamed voices are forgotten on their own after a few days.`)}</h2>
       ${rows || '<p class="hint">No voices yet.</p>'}
       ${this._voices.length ? '<div class="actions"><button class="btn danger" id="voices-forget-all">Forget all voices</button></div>' : ""}</div>`;
   }
@@ -820,6 +828,7 @@ class AacPanel extends HTMLElement {
     if (view.startsWith("settings/audio")) this._loadAudio();
     if (view === "settings/audio" && !this._liveTimer) this._liveTick();
     if (view === "settings/triggers") this._loadJobs();
+    if (view === "settings/heartbeat") this._loadRuns().then(() => this._render());
     if (view === "settings/entities") this._loadEntities();
     if (view === "domain/visible") this._loadVisible();
     if (view === "requests") this._loadRequests();
@@ -959,7 +968,7 @@ class AacPanel extends HTMLElement {
               : m.pages.map((p, i) => this._tab(`mod/${m.id}/${p.id}`, p.title, "", cls, i === 0 ? more : "")).join("");
             return `<div class="modwrap">${tabs}${menu}</div>`;
           }).join("")}
-          ${!this._showAll && this._state.modules.some((m) => m.hidden) ? `<p class="hint navhint">${this._state.modules.filter((m) => m.hidden).length} hidden · the eye button above shows them</p>` : ""}
+          ${!this._showAll && this._state.modules.some((m) => m.hidden) ? `<div class="empty" title="The eye button at the top shows them">${this._state.modules.filter((m) => m.hidden).length} hidden</div>` : ""}
         </div>` : ""}
         <div class="seg">
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
@@ -967,6 +976,7 @@ class AacPanel extends HTMLElement {
           ${this._tab("settings/appearance", "Appearance")}
           ${this._tab("settings/master", "Master agent")}
           ${this._tab("settings/entities", "Entities", this._stepOpen("entities") ? '<span class="dot open"></span>' : "")}
+          ${this._tab("settings/heartbeat", "Heartbeat", this._stepOpen("heartbeat") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/triggers", "Triggers")}
           ${this._tab("models", "Compute", ["models", "master", "memory"].some((x) => this._stepOpen(x)) ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/audio", "Audio pipeline")}
@@ -1012,6 +1022,7 @@ class AacPanel extends HTMLElement {
     if (v.startsWith("settings/module/")) return this._renderModuleSettings(v.slice(16));
     if (v === "settings/charter") return this._renderCharter();
     if (v === "settings/triggers") return this._renderTriggers();
+    if (v === "settings/heartbeat") return this._renderHeartbeat();
     if (v === "trigger/new" || v.startsWith("trigger/edit/")) return this._renderTriggerForm();
     if (v === "settings/audio") return this._renderAudio();
     if (v === "settings/audio/sources") return this._renderSources();
@@ -1120,8 +1131,7 @@ class AacPanel extends HTMLElement {
   _renderSetup() {
     const steps = this._steps();
     const open = this._openSteps().length;
-    return this._page("SETUP", open ? `${open} open` : "all done", `<div class="card"><h2>WORKFLOW</h2>
-        <p>${open ? "Work through the open steps. Each one opens the place where it is configured." : "Everything is set up. This segment hides itself now; the eye at the top shows it again."}</p>
+    return this._page("SETUP", open ? `${open} open` : "all done", `<div class="card"><h2>WORKFLOW ${tip(`${open ? "Work through the open steps. Each one opens the place where it is configured." : "Everything is set up. This segment hides itself now; the eye at the top shows it again."}`)}</h2>
         ${steps.map((s) => `
           <div class="step" data-go="${esc(s.target)}" tabindex="0" role="button">
             <span class="mark ${s.done ? "done" : s.skipped ? "skip" : "open"}">${s.done ? "✓" : s.skipped ? "–" : "›"}</span>
@@ -1129,8 +1139,7 @@ class AacPanel extends HTMLElement {
             ${s.optional && !s.done ? `<button class="btn" data-skip="${esc(s.id)}" data-skipped="${s.skipped ? "0" : "1"}">${s.skipped ? "Undo skip" : "Skip"}</button>` : ""}
           </div>`).join("")}
       </div>${open && steps.find((s) => s.id === "master")?.done ? `
-      <div class="card"><h2>TOGETHER</h2>
-        <p>The master model is wired in, so AAC can walk you through the rest in a chat: it checks what is open, explains each step and asks before it changes anything.</p>
+      <div class="card"><h2>TOGETHER ${tip(`The master model is wired in, so AAC can walk you through the rest in a chat: it checks what is open, explains each step and asks before it changes anything.`)}</h2>
         <div class="actions"><button class="btn primary" id="setup-chat">Set up with AAC</button></div>
       </div>` : ""}`);
   }
@@ -1143,29 +1152,16 @@ class AacPanel extends HTMLElement {
     const triggers = st.triggers || [];
     return this._page("TRIGGERS", "what wakes the master on its own", `
       <div class="cards">
-        <div class="card" data-autosave="heartbeat" data-label="Heartbeat"><h2>HEARTBEAT</h2>
-          <p>Wakes the master every few minutes to look at the situation. It only speaks up when something matters (answers land in "From AAC"); otherwise it stays silent. Runs show up under CHATS → Auto.</p>
-          <label class="check"><input type="checkbox" id="hb-enabled" ${hb.enabled ? "checked" : ""}>Heartbeat on</label>
-          <div class="row">
-            <div><label for="hb-interval">Every (minutes)</label><input id="hb-interval" type="number" min="1" max="1440" value="${esc(hb.interval)}" inputmode="numeric"></div>
-            <div><label for="hb-qs">Quiet from</label><input id="hb-qs" type="time" value="${esc(hb.quiet_start)}"></div>
-            <div><label for="hb-qe">Quiet until</label><input id="hb-qe" type="time" value="${esc(hb.quiet_end)}"></div>
-          </div>
-          <label for="hb-tier">Model (pool request)</label><select id="hb-tier">${this._tierOptions(hb.tier || "fast")}</select>
-          <label class="check"><input type="checkbox" id="hb-tools" ${hb.tools ? "checked" : ""}>Allow tools (slower; it already gets a snapshot of the home, and small models tend to tour every room with tools)</label>
-          <label for="hb-instr">Instructions</label><textarea id="hb-instr" class="thin-scroll">${esc(hb.instructions)}</textarea>
-          <div class="actions"><button class="btn" id="hb-run">Run once now</button></div>
-          ${this._flashHtml()}
+        <div class="card"><h2>HEARTBEAT ${tip(`A regular look at the home, without chat history. Settings and its last runs: SETTINGS → Heartbeat.`)}</h2>
+          <div class="actions"><button class="btn" data-go="settings/heartbeat">Heartbeat${hb.enabled ? ` · every ${esc(hb.interval)} min` : " · off"}</button></div>
         </div>
-        <div class="card"><h2>AAC'S OWN PLANS</h2>
-          <p>AAC may set itself reminders and check-ins (e.g. following up on something you want to achieve). It can never change your triggers, and every plan it makes is posted in "From AAC".</p>
+        <div class="card"><h2>AAC'S OWN PLANS ${tip(`AAC may set itself reminders and check-ins (e.g. following up on something you want to achieve). It can never change your triggers, and every plan it makes is posted in "From AAC".`)}</h2>
           <label for="aut-schedule">AAC may plan on its own</label>
           <select id="aut-schedule">
             ${[["allowed", "Yes, and tell me"], ["ask", "Only with my approval"], ["off", "No"]].map(([v, l]) => `<option value="${v}" ${st.autonomy?.schedule === v ? "selected" : ""}>${l}</option>`).join("")}
           </select>
         </div>
-        <div class="card"><h2>TRIGGERS</h2>
-          <p>Wake the master when something changes in Home Assistant, or at a time (reminders, routines), with your instruction.</p>
+        <div class="card"><h2>TRIGGERS ${tip(`Wake the master when something changes in Home Assistant, or at a time (reminders, routines), with your instruction.`)}</h2>
           ${triggers.length ? triggers.map((t) => `
             <div class="wrow">
               <span><span class="dot ${t.proposed ? "open" : t.enabled ? "ok" : ""}"></span> ${esc(t.name || t.when.entity_id || t.when.at)}
@@ -1182,6 +1178,39 @@ class AacPanel extends HTMLElement {
       </div>`);
   }
 
+  _renderHeartbeat() {
+    const st = this._state;
+    if (!st) return this._page("HEARTBEAT", "", "");
+    const hb = st.heartbeat;
+    const runs = (this._runs || []).filter((r) => r.trigger === "heartbeat").slice(0, 30);
+    const said = runs.filter((r) => r.status === "done").length;
+    const rows = runs.map((r) => `<div class="src">
+        <span class="dot ${STATUS_DOT[r.status] || ""}"></span>
+        <div style="flex:1;min-width:0"><div class="n">${esc(fmtTime(r.started))} · ${r.status === "silent" ? "nothing to report" : r.status === "done" ? "said something" : esc(r.status)}</div>
+          ${r.status !== "silent" && r.result ? `<div class="m">${esc(r.result.length > 220 ? r.result.slice(0, 220) + "…" : r.result)}</div>` : ""}</div>
+        <span class="actions" style="margin:0">${r.chat_id ? `<button class="btn" data-go="chat/${esc(r.chat_id)}">Chat</button>` : ""}<button class="btn" data-go="run/${esc(r.id)}">Details</button></span>
+      </div>`).join("");
+    return this._page("HEARTBEAT", hb.enabled ? `every ${esc(hb.interval)} min` : "off", `
+      <div class="cards">
+        <div class="card" data-autosave="heartbeat" data-label="Heartbeat"><h2>HEARTBEAT ${tip(`Wakes the master every few minutes to look at the situation, without any chat history: it sees only the home right now and its open plans. When something matters it opens a new chat just for that (a reply is about that one thing); otherwise it stays silent.`)}</h2>
+          <label class="check"><input type="checkbox" id="hb-enabled" ${hb.enabled ? "checked" : ""}>Heartbeat on</label>
+          <div class="row">
+            <div><label for="hb-interval">Every (minutes)</label><input id="hb-interval" type="number" min="1" max="1440" value="${esc(hb.interval)}" inputmode="numeric"></div>
+            <div><label for="hb-qs">Quiet from</label><input id="hb-qs" type="time" value="${esc(hb.quiet_start)}"></div>
+            <div><label for="hb-qe">Quiet until</label><input id="hb-qe" type="time" value="${esc(hb.quiet_end)}"></div>
+          </div>
+          <label for="hb-tier">Model (pool request)</label><select id="hb-tier">${this._tierOptions(hb.tier || "fast")}</select>
+          <label class="check"><input type="checkbox" id="hb-tools" ${hb.tools ? "checked" : ""}>Allow tools (slower; it already gets a snapshot of the home, and small models tend to tour every room with tools)</label>
+          <label for="hb-instr">Instructions</label><textarea id="hb-instr" class="thin-scroll">${esc(hb.instructions)}</textarea>
+          <div class="actions"><button class="btn" id="hb-run">Run once now</button></div>
+          ${this._flashHtml()}
+        </div>
+        <div class="card"><h2>LAST RUNS <span class="tag">${runs.length}</span>${said ? ` <span class="tag aac">${said} SAID SOMETHING</span>` : ""} ${tip(`Silent runs only show up here. Details shows what it saw and thought.`)}</h2>
+          ${rows || '<p class="hint">No heartbeat yet.</p>'}
+        </div>
+      </div>`);
+  }
+
   _renderQueueCard() {
     const q = this._jobs;
     if (!q) return "";
@@ -1189,8 +1218,7 @@ class AacPanel extends HTMLElement {
       <div style="flex:1;min-width:0"><div class="n">${esc(j.title)} <span class="tag">${esc(j.priority.toUpperCase())}</span>${j.critical ? ' <span class="tag plan">TIME-CRITICAL</span>' : ""}</div>
       <div class="m">${esc(j.status)}${j.reason && j.status === "queued" ? ` · ${esc(j.reason)}` : ""} · since ${esc(fmtTime(j.created))}${j.due ? ` · due ${esc(fmtTime(j.due))}` : ""}</div></div></div>`;
     const recent = q.history.filter((j) => j.status !== "done").slice(0, 5);
-    return `<div class="card" data-autosave="queue" data-label="Queue settings"><h2>QUEUE</h2>
-      <p>Automatic jobs wait here when no allowed model is free, most important first. Reminders and appointments are time-critical: if no model comes before they are due, the reminder reaches you anyway as a plain notification. Others expire. Your own chats never wait here.</p>
+    return `<div class="card" data-autosave="queue" data-label="Queue settings"><h2>QUEUE ${tip(`Automatic jobs wait here when no allowed model is free, most important first. Reminders and appointments are time-critical: if no model comes before they are due, the reminder reaches you anyway as a plain notification. Others expire. Your own chats never wait here.`)}</h2>
       <label class="check"><input type="checkbox" id="q-notify" ${q.settings.notify_no_model ? "checked" : ""}>Tell me when no model is available (once per outage)</label>
       <div class="row"><div><label for="q-postpone">Tell a job it was late after (minutes)</label><input id="q-postpone" type="number" min="0" max="1440" value="${esc(q.settings.postpone_notice)}" inputmode="numeric"></div></div>
       <h3 style="margin-top:1em">Waiting</h3>${q.waiting.length ? q.waiting.map(row).join("") : '<p class="hint">Nothing waits.</p>'}
@@ -1292,8 +1320,7 @@ class AacPanel extends HTMLElement {
     }).join("");
     return this._page("COMPUTE", "the machines AAC thinks with", `
       ${machines || '<div class="card"><p>No machines yet. Add a model server: any OpenAI-compatible one (llama.cpp, Ollama, vLLM, LM Studio, cloud APIs).</p></div>'}
-      <div class="actions"><button class="btn primary" data-go="models/new">${icon("plus")} Add model</button></div>
-      <p class="hint">Found on their own: model servers set up in Home Assistant (only read, never changed) and everything the servers of your models offer. Speech and voice engines are ordered under Audio pipeline, vision under Video.</p>
+      <div class="actions"><button class="btn primary" data-go="models/new">${icon("plus")} Add model</button>${tip(`Found on their own: model servers set up in Home Assistant (only read, never changed) and everything the servers of your models offer. Speech and voice engines are ordered under Audio pipeline, vision under Video.`)}</div>
       ${this._poolCard("thinking")}`,
       `<button class="icon-btn" id="refresh-models" title="Scan again">${icon("refresh")}</button>`);
   }
@@ -1302,8 +1329,7 @@ class AacPanel extends HTMLElement {
     const mc = (this._models?.machines || []).find((m) => m.host === host);
     if (!mc) return this._page("MACHINE", "", `<div class="card"><h2>NOT FOUND</h2><p>${this._models ? "No models on this machine any more." : "Scanning…"}</p></div>`);
     return this._page(mc.name, mc.named ? esc(mc.host) : "", `<div class="card" data-autosave="machine" data-arg="${esc(mc.host)}" data-label="Machine name"><h2>MACHINE</h2>
-        <label for="mc-name">Name</label><input id="mc-name" value="${esc(mc.named ? mc.name : "")}" placeholder="${esc(mc.name)}">
-        <p class="hint">How AAC and this panel call it, e.g. "Main PC". Empty = the default.</p>
+        <label for="mc-name">Name ${tip(`How AAC and this panel call it, e.g. "Main PC". Empty = the default.`)}</label><input id="mc-name" value="${esc(mc.named ? mc.name : "")}" placeholder="${esc(mc.name)}">
         <label>Servers on it</label>
         ${mc.servers.map((sv) => `<div class="wrow"><span><span class="dot ${sv.online ? "ok" : "bad"}"></span> ${esc(sv.url)}</span>${sv.error ? `<span class="msg err">${esc(sv.error)}</span>` : ""}</div>`).join("")}
         <div class="actions"><button class="btn" id="mc-add" data-url="${esc(mc.servers[0]?.url || "")}">${icon("plus")} Add model here</button>
@@ -1344,8 +1370,7 @@ class AacPanel extends HTMLElement {
     const models = f.models.length
       ? `<select id="f-model">${f.models.map((m) => `<option ${m === f.model ? "selected" : ""}>${esc(m)}</option>`).join("")}</select>`
       : `<input id="f-model" value="${esc(f.model)}" placeholder="load the list with Test, or type a model id">`;
-    return this._page(f.id ? "EDIT MODEL" : "ADD MODEL", "", `<div class="card"><h2>${f.id ? "EDIT" : "ADD"} MANUAL MODEL</h2>
-        <p>Any OpenAI-compatible server. The base URL includes <code>/v1</code>, e.g. <code>http://192.168.1.20:8080/v1</code>.</p>
+    return this._page(f.id ? "EDIT MODEL" : "ADD MODEL", "", `<div class="card"><h2>${f.id ? "EDIT" : "ADD"} MANUAL MODEL ${tip(`Any OpenAI-compatible server. The base URL includes <code>/v1</code>, e.g. <code>http://192.168.1.20:8080/v1</code>.`)}</h2>
         <div class="form-grid">
           <div><label for="f-name">Name</label><input id="f-name" value="${esc(f.name)}" placeholder="e.g. Server GPU"></div>
           <div><label for="f-url">Base URL</label><input id="f-url" value="${esc(f.base_url)}" placeholder="http://host:8080/v1" inputmode="url"></div>
@@ -1365,11 +1390,9 @@ class AacPanel extends HTMLElement {
   _renderCharter() {
     const st = this._state;
     if (!st) return this._page("CHARTER", "", "");
-    return this._page("CHARTER", st.charter_is_default ? "built-in draft" : "your own", `<div class="card" data-autosave="charter" data-label="Charter"><h2>CHARTER</h2>
-        <p>Your values in plain words. Every AAC agent gets this first, before anything else, and no agent can change it; only you can, here. It is not a score to optimize: it tells AAC how to behave (honest, sparing, your decisions stay yours).</p>
-        <label for="ch-text">Charter</label>
+    return this._page("CHARTER", st.charter_is_default ? "built-in draft" : "your own", `<div class="card" data-autosave="charter" data-label="Charter"><h2>CHARTER ${tip(`Your values in plain words. Every AAC agent gets this first, before anything else, and no agent can change it; only you can, here. It is not a score to optimize: it tells AAC how to behave (honest, sparing, your decisions stay yours).`)}</h2>
+        <label for="ch-text">Charter ${tip(`Saved when you leave the field. Every agent follows it from the next message on.`)}</label>
         <textarea id="ch-text" class="thin-scroll" style="min-height:20em">${esc(st.charter)}</textarea>
-        <p class="hint">Saved when you leave the field. Every agent follows it from the next message on.</p>
       </div>`);
   }
 
@@ -1427,8 +1450,7 @@ class AacPanel extends HTMLElement {
           <p style="margin-top:.8em">${esc(m.description)}</p>
         </div>
         <div class="card" data-autosave="access" data-arg="${esc(m.id)}" data-label="${esc(m.name)} permissions"><h2>PERMISSIONS</h2>
-          <label class="check"><input type="checkbox" id="ma-enabled" ${a.enabled ? "checked" : ""}>On in this domain</label>
-          <p class="hint">Off: no tools for AAC, no page, no calendar entries in "${esc(this._state?.domain?.name || "")}". Its data stays.</p>
+          <label class="check"><input type="checkbox" id="ma-enabled" ${a.enabled ? "checked" : ""}>On in this domain ${tip(`Off: no tools for AAC, no page, no calendar entries in "${esc(this._state?.domain?.name || "")}". Its data stays.`)}</label>
           ${m.has_tools ? `
           <label for="ma-access">What AAC may do with it</label>
           <select id="ma-access">${[["full", "Everything"], ["read", "Only read"], ["none", "Nothing"]].map(([v, l]) => `<option value="${v}" ${a.access === v ? "selected" : ""}>${l}</option>`).join("")}</select>
@@ -1436,8 +1458,7 @@ class AacPanel extends HTMLElement {
           <label class="check"><input type="checkbox" id="ma-destr" ${a.destructive_needs_owner ? "checked" : ""}>Deleting only while I am in the chat</label>` : '<p class="hint">This module brings no tools for AAC.</p>'}
         </div>
       </div>
-      ${m.has_tools ? `<div class="card" data-autosave="access" data-arg="${esc(m.id)}" data-label="${esc(m.name)} instructions"><h2>INSTRUCTIONS FOR AAC</h2>
-        <p>How AAC should use this module (sent along with its tools). Change it to your liking; empty or "Reset" = the module's own.</p>
+      ${m.has_tools ? `<div class="card" data-autosave="access" data-arg="${esc(m.id)}" data-label="${esc(m.name)} instructions"><h2>INSTRUCTIONS FOR AAC ${tip(`How AAC should use this module (sent along with its tools). Change it to your liking; empty or "Reset" = the module's own.`)}</h2>
         <textarea id="ma-instr" class="thin-scroll" placeholder="${esc(m.default_instructions)}">${esc(a.instructions || m.default_instructions)}</textarea>
         <div class="actions"><button class="btn" id="ma-reset">Reset to the module's instructions</button></div>
       </div>` : ""}
@@ -1586,8 +1607,7 @@ class AacPanel extends HTMLElement {
           <div class="actions">${x.id === current ? "" : `<button class="btn primary" data-skin="${esc(x.id)}">Use</button>`}</div>
         </div>`).join("")}
       </div>
-      <div class="card"><h2>OWN SKINS</h2>
-        <p>A skin is one CSS file with a short header (name, description, author). Put it into <code>${esc(sk.folder)}</code> and it shows up here; a file with the same name as a built-in skin replaces it. Downloading skins from inside AAC comes later.</p>
+      <div class="card"><h2>OWN SKINS ${tip(`A skin is one CSS file with a short header (name, description, author). Put it into <code>${esc(sk.folder)}</code> and it shows up here; a file with the same name as a built-in skin replaces it. Downloading skins from inside AAC comes later.`)}</h2>
       </div>`);
   }
 
@@ -1677,8 +1697,7 @@ class AacPanel extends HTMLElement {
     };
     const pool = (name) => {
       const roles = Object.keys(p.roles).filter((r) => p.roles[r].pool === name);
-      const extra = name !== "thinking" ? "" : `<div class="role"><h3>Requests</h3>
-        <p class="hint">Rules for when a model may be used (e.g. "my PC only while I am at work") are yours: tell AAC in a chat and it writes them down. Events and agents can ask for a kind of model instead of a fixed one, chosen among the master's models that answer right now. fast = measured speed, smart = biggest, small = smallest, plus your own tags (e.g. efficient for energy-saving hardware).</p>
+      const extra = name !== "thinking" ? "" : `<div class="role"><h3>Requests ${tip(`Rules for when a model may be used (e.g. "my PC only while I am at work") are yours: tell AAC in a chat and it writes them down. Events and agents can ask for a kind of model instead of a fixed one, chosen among the master's models that answer right now. fast = measured speed, smart = biggest, small = smallest, plus your own tags (e.g. efficient for energy-saving hardware).`)}</h3>
         <div class="kv">${Object.entries(p.by_tier || {}).map(([t, r]) => `<span class="k">${esc(t)}</span><span class="v">${r ? esc(this._resourceLabel(r)) : "—"}</span>`).join("")}</div>
         <div class="actions"><button class="btn" id="pool-measure">Measure speed</button></div></div>`;
       return `<div class="card"><h2>${esc(name.toUpperCase())} POOL</h2><p>${esc(p.pools[name])}. Each role uses the first entry that answers: put a fast machine that is not always on (a PC) first and an always-on one after it; when the first does not answer, the next takes over and the first is tried again a minute later.</p>${roles.map(role).join("") || '<p class="hint">Nothing here yet.</p>'}${extra}</div>`;
@@ -1696,8 +1715,7 @@ class AacPanel extends HTMLElement {
     const st = this._state;
     if (!st) return this._page("MASTER AGENT", "", "");
     const m = st.master;
-    return this._page("MASTER AGENT", st.agent_entity_id ? esc(st.agent_entity_id) : "", `<div class="card" data-autosave="master" data-label="Master agent"><h2>MASTER AGENT</h2>
-        <p>The persistent agent that answers, decides and acts. Which model thinks for it is the master role in the thinking pool (SETTINGS → Compute).</p>
+    return this._page("MASTER AGENT", st.agent_entity_id ? esc(st.agent_entity_id) : "", `<div class="card" data-autosave="master" data-label="Master agent"><h2>MASTER AGENT ${tip(`The persistent agent that answers, decides and acts. Which model thinks for it is the master role in the thinking pool (SETTINGS → Compute).`)}</h2>
         <div class="form-grid">
           <div>
             <label>Model</label>${this._roleSummary("master")}
@@ -1737,26 +1755,21 @@ class AacPanel extends HTMLElement {
         </div>`).join("");
     return this._page("MEMORY", `${stats.total ?? "…"} memories${stats.unconfirmed ? ` · ${stats.unconfirmed} unconfirmed` : ""}`, `
       <div class="cards">
-        <div class="card" data-autosave="memory" data-label="Memory"><h2>SETTINGS</h2>
-          <p>One local file in Home Assistant's config folder (included in HA backups). Search uses keywords and, with an embedding model, meaning ("cellar" finds "basement"). The master always has remember / recall / forget.</p>
+        <div class="card" data-autosave="memory" data-label="Memory"><h2>SETTINGS ${tip(`One local file in Home Assistant's config folder (included in HA backups). Search uses keywords and, with an embedding model, meaning ("cellar" finds "basement"). The master always has remember / recall / forget.`)}</h2>
           <label class="check"><input type="checkbox" id="mem-enabled" ${mem.enabled ? "checked" : ""}>Memory on</label>
-          <label>Embedding model</label>${this._roleSummary("memory")}
-          <p class="hint" style="margin-top:.5em">A multilingual one is best (e.g. bge-m3 via llama-server <code>--embeddings</code>). Without one: keywords only.</p>
+          <label>Embedding model ${tip(`A multilingual one is best (e.g. bge-m3 via llama-server <code>--embeddings</code>). Without one: keywords only.`)}</label>${this._roleSummary("memory")}
           <div class="kv"><span class="k">Stored</span><span class="v">${esc(stats.total ?? "…")}</span><span class="k">With vectors</span><span class="v">${esc(stats.embedded ?? "…")}</span><span class="k">Unconfirmed</span><span class="v">${esc(stats.unconfirmed ?? "…")}</span></div>
           <div class="actions"><button class="btn" id="mem-reembed">Re-embed all</button></div>
           ${this._flashHtml()}
         </div>
-        <div class="card"><h2>REMEMBER</h2>
-          <p>Tell AAC something directly. "agent believes" entries are AAC's own conclusions; they count as facts only once you confirm them.</p>
+        <div class="card"><h2>REMEMBER ${tip(`Tell AAC something directly. "agent believes" entries are AAC's own conclusions; they count as facts only once you confirm them.`)}</h2>
           <label for="mem-text">Text</label><textarea id="mem-text" class="thin-scroll" style="min-height:5em" placeholder="e.g. Oat milk from brand X was good."></textarea>
-          <label for="mem-kind">Kind</label>
+          <label for="mem-kind">Kind ${tip(`"plan" = something you want to achieve or do; AAC keeps it in mind when it looks around on its own.`)}</label>
           <select id="mem-kind">${["note", "fact", "preference", "event", "plan"].map((k) => `<option>${k}</option>`).join("")}</select>
-          <p class="hint" style="margin-top:.5em">"plan" = something you want to achieve or do; AAC keeps it in mind when it looks around on its own.</p>
           <div class="actions"><button class="btn primary" id="mem-add">Remember</button></div>
         </div>
       </div>
-      <div class="card"><h2>FACTS</h2>
-        <p>Things with a value (measurements, places, ratings), stored with fields so they can be compared exactly. Each one is also a text memory below.</p>
+      <div class="card"><h2>FACTS ${tip(`Things with a value (measurements, places, ratings), stored with fields so they can be compared exactly. Each one is also a text memory below.`)}</h2>
         ${!this._facts ? '<p class="hint">Loading…</p>' : !this._facts.keys.length ? '<p class="hint">No facts yet.</p>' :
           this._facts.keys.map((k) => {
             const sm = k.summary || {};
@@ -1797,10 +1810,9 @@ class AacPanel extends HTMLElement {
     const lines = (a.transcript || []).slice().sort((x, y) => end(x) - end(y))
       .map((l) => this._bufferLine(l)).join("");
     return this._page("AUDIO PIPELINE", `${(a.connected || []).length} connected · separate from HA's Assist`, `
-      ${this._liveTimer ? "" : (setTimeout(() => this._liveTimer || this._liveTick(), 0), "")}<div class="card"><h2>LIVE</h2><p class="hint">What each microphone hears right now: the last 10 seconds of loudness; the bright part is what the speech detector cut out as speech, which then goes to speech to text.</p>
+      ${this._liveTimer ? "" : (setTimeout(() => this._liveTimer || this._liveTick(), 0), "")}<div class="card"><h2>LIVE ${tip(`What each microphone hears right now: the last 10 seconds of loudness; the bright part is what the speech detector cut out as speech, which then goes to speech to text.`)}</h2>
         <div id="audio-live">${this._liveHtml2()}</div>
-        <label style="margin-top:1em">Buffer</label>
-        <p class="hint" style="margin-top:0">Everything heard (RAM only, the last lines), oldest at the top. While someone talks, the words appear live and get corrected; the finished line is handed to the hearing modules that are on. Per line: start · length · language · loudness · how sure the recognizer was · which engine and how fast.</p>
+        <label style="margin-top:1em">Buffer ${tip(`Everything heard (RAM only, the last lines), oldest at the top. While someone talks, the words appear live and get corrected; the finished line is handed to the hearing modules that are on. Per line: start · length · language · loudness · how sure the recognizer was · which engine and how fast.`)}</label>
         <div class="buffer thin-scroll" id="audio-buffer">${lines || '<p class="hint">Nothing heard yet.</p>'}<div id="audio-partial">${this._partialHtml()}</div></div>
       </div>
       ${this._voicesCard()}
@@ -1813,21 +1825,16 @@ class AacPanel extends HTMLElement {
       <div class="split">
         <div class="card" data-autosave="audio" data-label="Audio settings"><h2>SETTINGS</h2>
           <label for="au-names">AAC's names (comma separated)</label><input id="au-names" value="${esc((set.names || []).join(", "))}">
-          <label for="au-lang">Language (empty = detect per sentence)</label><input id="au-lang" value="${esc(set.language || "")}" placeholder="en, de, …">
-          <p class="hint" style="margin-top:.3em">AAC always hears and transcribes; what it does with it is up to the hearing modules (SETTINGS → Modules: Wake word, …). ${(a.hearing || []).length ? `On now: ${esc(a.hearing.join(", "))}.` : "None is on: AAC only listens."}</p>
-          <label for="au-pause">Pause that ends a line (ms)</label>
+          <label for="au-lang">Language (empty = detect per sentence) ${tip(`AAC always hears and transcribes; what it does with it is up to the hearing modules (SETTINGS → Modules: Wake word, …). ${(a.hearing || []).length ? `On now: ${esc(a.hearing.join(", "))}.` : "None is on: AAC only listens."}`)}</label><input id="au-lang" value="${esc(set.language || "")}" placeholder="en, de, …">
+          <label for="au-pause">Pause that ends a line (ms) ${tip(`Shorter = shorter lines (snappier, but the recognizer gets less context); longer = whole thoughts. Watch the LIVE meter while you try.`)}</label>
           <input id="au-pause" type="number" min="200" max="3000" step="100" value="${esc(set.pause_ms ?? 800)}" inputmode="numeric">
-          <p class="hint" style="margin-top:.2em">Shorter = shorter lines (snappier, but the recognizer gets less context); longer = whole thoughts. Watch the LIVE meter while you try.</p>
-          <label for="au-volume">AAC's voice volume: <span id="au-volume-val">${esc(set.volume ?? 40)}</span> %</label>
+          <label for="au-volume">AAC's voice volume: <span id="au-volume-val">${esc(set.volume ?? 40)}</span> % ${tip(`Saved when you let go, with a short test sentence. 0 = AAC never speaks aloud (answers still appear in the Voice chat). The speaker's own buttons still work on top.`)}</label>
           <input id="au-volume" data-nosave type="range" min="0" max="100" step="5" value="${esc(set.volume ?? 40)}" style="width:100%">
-          <p class="hint" style="margin-top:.2em">Saved when you let go, with a short test sentence. 0 = AAC never speaks aloud (answers still appear in the Voice chat). The speaker's own buttons still work on top.</p>
           <label>Speech to text</label>${this._roleSummary("stt", eng.stt)}
-          <label>Voice (text to speech)</label>${this._roleSummary("tts", eng.tts)}
-          <p class="hint">Engines come from the voice pool below: speech models from Compute (e.g. a multilingual whisper; without a language it detects German, English, … per sentence) or HA's engines, in your order, with fallback. HA's own voice assistants stay as they are.</p>
+          <label>Voice (text to speech) ${tip(`Engines come from the voice pool below: speech models from Compute (e.g. a multilingual whisper; without a language it detects German, English, … per sentence) or HA's engines, in your order, with fallback. HA's own voice assistants stay as they are.`)}</label>${this._roleSummary("tts", eng.tts)}
           ${this._flashHtml()}
         </div>
-        <div class="card"><h2>PIPELINE</h2>
-          <p>Every source gets its own light pipeline; the heavy parts are shared.</p>
+        <div class="card"><h2>PIPELINE ${tip(`Every source gets its own light pipeline; the heavy parts are shared.`)}</h2>
           <div class="flow">${flow}</div>
         </div>
       </div>
@@ -1912,18 +1919,15 @@ class AacPanel extends HTMLElement {
     const known = (a.settings?.known || []).filter((k) => !live.has(k.id));
     return this._page("AUDIO SOURCES", `${(a.connected || []).length} connected`, `
       <div class="cards">
-        <div class="card"><h2>AAC SATELLITES</h2>
-          <p>A satellite streams one microphone to AAC and plays its answers. The same program runs on a PC or next to a USB/Bluetooth headset.</p>
+        <div class="card"><h2>AAC SATELLITES ${tip(`A satellite streams one microphone to AAC and plays its answers. The same program runs on a PC or next to a USB/Bluetooth headset.`)}</h2>
           ${this._liveSources(a.connected || [])}
           ${known.map((k) => `<div class="src">${icon("mic")}<div style="flex:1"><div class="n">${esc(k.name)}</div><div class="m">seen before</div></div><span class="tag">OFFLINE</span></div>`).join("")}
         </div>
-        <div class="card"><h2>HOME ASSISTANT APP</h2>
-          <p>For a microphone/speaker attached to the Home Assistant machine itself (USB, or Bluetooth through a dongle): install the app "AAC satellite" (in this project's <code>addons/</code> folder) and let AAC give it access. AAC makes a local-only HA user "AAC satellite" with a token the app reads from <code>config/aac/satellite.json</code>; you can revoke it in HA's user list.</p>
+        <div class="card"><h2>HOME ASSISTANT APP ${tip(`For a microphone/speaker attached to the Home Assistant machine itself (USB, or Bluetooth through a dongle): install the app "AAC satellite" (in this project's <code>addons/</code> folder) and let AAC give it access. AAC makes a local-only HA user "AAC satellite" with a token the app reads from <code>config/aac/satellite.json</code>; you can revoke it in HA's user list.`)}</h2>
           <div class="actions"><button class="btn primary" id="sat-app">Set up the Home Assistant app</button></div>
           ${this._flashHtml()}
         </div>
-        <div class="card"><h2>FROM HOME ASSISTANT</h2>
-          <p>Devices with a mic that HA knows. Using them as sources is planned; for now they are only listed.</p>
+        <div class="card"><h2>FROM HOME ASSISTANT ${tip(`Devices with a mic that HA knows. Using them as sources is planned; for now they are only listed.`)}</h2>
           ${this._sourceList(a.candidates || [])}
         </div>
       </div>`);
@@ -2024,6 +2028,7 @@ class AacPanel extends HTMLElement {
       this._render();
     });
     sr.querySelector("#dom-toggle")?.addEventListener("click", () => { this._domainMenu = !this._domainMenu; this._render(); });
+    sr.querySelectorAll(".qm").forEach((el) => el.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); el.focus(); }));
     sr.querySelectorAll("[data-mod-menu]").forEach((el) => el.addEventListener("click", (e) => {
       e.stopPropagation();  // not the tab under it
       this._modMenu = this._modMenu === el.dataset.modMenu ? null : el.dataset.modMenu;
@@ -2550,13 +2555,13 @@ class AacPanel extends HTMLElement {
   }
 
   async _runHeartbeat() {
-    this._flash = { ok: true, text: "Heartbeat running… (see CHATS → Auto)" };
-    this._autoOpen = true;
+    this._flash = { ok: true, text: "Heartbeat running…" };
     this._render();
     try {
       const r = await this._ws("aac/heartbeat/run");
+      await this._loadRuns();
       const run = this._runs.find((x) => x.id === r.run_id);
-      this._flash = { ok: true, text: run?.status === "silent" ? "Done: nothing worth saying." : "Done: AAC said something (see From AAC)." };
+      this._flash = { ok: true, text: run?.status === "silent" ? "Done: nothing worth saying." : run?.chat_id ? "Done: AAC opened a chat about it (see the list)." : `Done: ${run?.status || "finished"}.` };
     } catch (e) {
       this._flash = { ok: false, text: e.message || String(e) };
     }

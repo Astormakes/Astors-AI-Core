@@ -1,8 +1,8 @@
 """What wakes the master on its own: the heartbeat and triggers (spec/trigger.md).
 
-Automatic runs show up under WORKERS → AUTO. When the master has something
-to say it lands in the "From AAC" chat; otherwise it answers NOTHING and
-stays silent (little noise is a core principle).
+Automatic runs show up under CHATS → Auto (heartbeats also under SETTINGS → Heartbeat). When the
+master has something to say it lands in the "From AAC" chat, a heartbeat finding in a chat of its own;
+otherwise it answers NOTHING and stays silent (little noise is a core principle).
 """
 
 from __future__ import annotations
@@ -51,6 +51,12 @@ def in_quiet_hours(now: datetime, start: str, end: str) -> bool:
         return t_start <= current < t_end
     return current >= t_start or current < t_end
 
+
+
+def _short(text: str, n: int = 40) -> str:
+    """The start of a text for a title, cut at a word."""
+    text = " ".join(text.split())
+    return text if len(text) <= n else text[:n].rsplit(" ", 1)[0] + "…"
 
 class TriggerEngine:
     """Schedules the heartbeat and listens for event triggers."""
@@ -335,9 +341,14 @@ class TriggerEngine:
             domain=self.domain,
         )
         if result is not None and run.status == "done" and run.result:
-            run.chat_id = AAC_CHAT_ID
+            # A heartbeat finding gets a chat of its own (owner, 2026-10-20): a reply is about that one
+            # thing, and findings don't pile up as context in one long chat. Silent ones stay in the run list.
+            chat_id = f"hb_{dt_util.utcnow().strftime('%Y%m%d%H%M%S')}" if trigger == "heartbeat" else AAC_CHAT_ID
+            if chat_id != AAC_CHAT_ID:
+                self.domain.chats.create(f"Heartbeat · {_short(run.result)}", chat_id)
+            run.chat_id = chat_id
             self.domain.chats.add_message(
-                AAC_CHAT_ID, "aac", run.result, proactive=True, run_id=run.id, trigger=title
+                chat_id, "aac", run.result, proactive=True, run_id=run.id, trigger=title
             )
         LOGGER.debug("Automatic run %s (%s): %s", run.id, trigger, run.status)
         return run

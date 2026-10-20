@@ -117,7 +117,7 @@ def setup_steps(hass: HomeAssistant, store: AACStore, domain: DomainSettings | N
             "id": "heartbeat",
             "title": "Let AAC think on its own",
             "hint": "A heartbeat wakes the master now and then; it only speaks up when it matters.",
-            "target": "settings/triggers",
+            "target": "settings/heartbeat",
             "optional": True,
             "done": bool(domain.heartbeat["enabled"]),
         },

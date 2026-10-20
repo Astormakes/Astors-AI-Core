@@ -34,7 +34,7 @@ with what information (the audit log).
 | `input` | the message the agent got |
 | `context` | everything added on top of its instructions (the [context recipe](context-recipe.md) output, offered memories) |
 | `result` | the final answer, also kept when silent (so it can be checked) |
-| `chat_id` | where the result was posted, if anywhere (`aac` = the "From AAC" chat) |
+| `chat_id` | where the result was posted, if anywhere (`aac` = the "From AAC" chat, `hb_…` = a heartbeat finding's own chat) |
 | `allow_tools` | `false` = the agent could only look at its context, not act |
 | `steps` | in order: `text` (the model's words next to tool calls), `tool_call`, `tool_result` (`data` truncated to 500 chars) |
 

@@ -88,7 +88,7 @@ async def test_chat_records_tool_steps(
 async def test_heartbeat_silent_and_speaking(
     hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured
 ):
-    """NOTHING stays silent; anything else lands in the 'From AAC' chat."""
+    """NOTHING stays silent; anything else opens a chat of its own (not 'From AAC')."""
     await setup_aac(hass, mock_entry)
     payloads = _replies(aioclient_mock, _reply("NOTHING"), _reply("The window is still open."))
     ws = await hass_ws_client(hass)
@@ -101,10 +101,12 @@ async def test_heartbeat_silent_and_speaking(
     assert mock_entry.runtime_data.chats.get("aac") is None
 
     await ws.send_json_auto_id({"type": "aac/heartbeat/run"})
-    await ws.receive_json()
-    chat = mock_entry.runtime_data.chats.get("aac")
+    run = mock_entry.runtime_data.runs.get((await ws.receive_json())["result"]["run_id"])
+    chat = mock_entry.runtime_data.chats.get(run.chat_id)
+    assert run.chat_id.startswith("hb_") and chat["title"] == "Heartbeat · The window is still open."
     assert chat["messages"][-1]["text"] == "The window is still open."
     assert chat["unread"] == 1
+    assert mock_entry.runtime_data.chats.get("aac") is None
 
 
 async def test_heartbeat_schedule(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
@@ -277,7 +279,7 @@ async def test_heartbeat_json_decision(hass: HomeAssistant, hass_ws_client, aioc
     await ws.send_json_auto_id({"type": "aac/heartbeat/run"})
     run = runs.get((await ws.receive_json())["result"]["run_id"])
     assert run.status == "done" and run.result == "Water leak in the bathroom."
-    assert mock_entry.runtime_data.chats.get("aac")["messages"][-1]["text"] == "Water leak in the bathroom."
+    assert mock_entry.runtime_data.chats.get(run.chat_id)["messages"][-1]["text"] == "Water leak in the bathroom."
 
 
 def test_snapshot_says_what_binary_sensors_mean(hass: HomeAssistant):
