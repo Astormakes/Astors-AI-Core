@@ -438,8 +438,8 @@ button.menu-btn { display: none; }
 /* ---------- workers: chats + automatic runs ---------- */
 .seg-title .acts { margin-left: auto; display: flex; gap: .2em; }
 .fold { cursor: pointer; user-select: none; }
-.fold .ico { width: 1em; height: 1em; transition: transform .15s; }
-.fold.open .ico { transform: rotate(90deg); }
+.fold > .ico { width: 1em; height: 1em; transition: transform .15s; }
+.fold.open > .ico { transform: rotate(90deg); }
 .count { color: var(--amber); text-shadow: 0 0 .4em var(--amber); margin-left: .3em; letter-spacing: .05em; }
 .count.zero { color: var(--dim); text-shadow: none; }
 .unread { margin-left: auto; min-width: 1.6em; text-align: center; font-size: .75em; padding: .05em .4em; border: 1px solid var(--magenta);
