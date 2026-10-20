@@ -355,8 +355,10 @@ class AACConversationEntity(
         # small models rarely call recall on their own. Attached to the user message,
         # not the system prompt, so the server's prompt cache keeps working.
         memory_hint = None
-        if store.memory["enabled"] and self.domain.memory and user_input.text:
-            found = await self.domain.memory.async_context(user_input.text)
+        # What the person said themselves (a voice line comes with the room's lines; those are not theirs)
+        own_words = (run.own_words if run and run.own_words else None) or user_input.text
+        if store.memory["enabled"] and self.domain.memory and own_words:
+            found = await self.domain.memory.async_context(own_words)
             if found:
                 memory_hint = "Memories that may help (from your long-term memory):\n" + "\n".join(
                     f"- {m.text} ({m.source}{'' if m.confirmed else ', unconfirmed'}, {m.created[:10]})"
@@ -518,7 +520,7 @@ class AACConversationEntity(
 
         # Memory write path: keep what was worth keeping, in the background
         memory = self.domain.memory
-        if store.memory["enabled"] and memory and user_input.text and (not run or run.kind == "chat"):
+        if store.memory["enabled"] and memory and own_words and (not run or run.kind == "chat"):
             stored_now = [
                 str(call.tool_args.get("text", ""))
                 for c in chat_log.content[first_new:]
@@ -528,7 +530,7 @@ class AACConversationEntity(
             ]
             self.entry.async_create_background_task(
                 self.hass,
-                async_extract(memory, provider, endpoint.model, user_input.text, stored_now),
+                async_extract(memory, provider, endpoint.model, own_words, stored_now),
                 "aac memory extract",
             )
 

@@ -54,6 +54,9 @@ class Run:
     tier: str = "master"  # pool request: master (the owner's order), fast, smart, small or an own tag
     steps: list[dict[str, Any]] = field(default_factory=list)
     request: bool = False  # what the model got is recorded (RunRegistry.request)
+    # The person's own words when the input carries more (a voice line with the room's lines before it):
+    # memory reads only these, never what a video or others said around them
+    own_words: str | None = None
     # The chat so far ({role, text}); used when HA forgot the conversation (it does after 5 idle minutes)
     history: list[dict[str, Any]] = field(default_factory=list, repr=False)
 

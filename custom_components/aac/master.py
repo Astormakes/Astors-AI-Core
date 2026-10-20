@@ -52,6 +52,7 @@ async def async_run_master(
     tier: str = "master",
     domain: Domain | None = None,
     history: list[dict[str, Any]] | None = None,
+    own_words: str | None = None,
 ) -> tuple[Run, conversation.ConversationResult | None]:
     """Run a domain's master once and record it as a run (steps come from the agent)."""
     domain = domain or entry.runtime_data.domain()
@@ -66,6 +67,7 @@ async def async_run_master(
         allow_tools=allow_tools,
         tier=tier,
         history=history or [],
+        own_words=own_words,
     )
     token = current_run.set(run)
     try:

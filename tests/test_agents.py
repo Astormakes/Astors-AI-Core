@@ -480,3 +480,19 @@ async def test_archive_a_chat(hass: HomeAssistant, hass_ws_client, aioclient_moc
     await ws.send_json_auto_id({"type": "aac/chat", "text": "back", "chat_id": chat_id})
     await ws.receive_json()
     assert "archived" not in chats.get(chat_id)
+
+
+async def test_memory_reads_only_the_own_words(hass: HomeAssistant, aioclient_mock, mock_entry, configured):
+    """A voice line comes with the room's lines (a video, others): memory learns from the line only."""
+    from custom_components.aac import conversation as conv
+    from custom_components.aac.master import async_run_master
+
+    await setup_aac(hass, mock_entry)
+    _replies(aioclient_mock, _reply("Done."))
+    said = ("The last lines in the room:\n- (0 %) voice #3: we renovate the room before the drywallers come\n\n"
+            "Now to you, spoken at the microphone 'PC': turn on the bed light")
+    run, _ = await async_run_master(hass, mock_entry, said, kind="chat", trigger="voice: PC", title="Voice",
+                                    chat_id="voice_pc", own_words="turn on the bed light")
+    await hass.async_block_till_done()
+    assert run.input == said
+    assert conv.async_extract.call_args.args[3] == "turn on the bed light"

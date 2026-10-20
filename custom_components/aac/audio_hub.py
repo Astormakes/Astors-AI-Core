@@ -568,6 +568,7 @@ class AudioHub:
             user_id=None,
             domain=data,
             history=data.chats.history(chat_id),
+            own_words=text,  # memory learns from this line only, not from the room's lines around it
         )
         if result is not None:
             data.chats.set_conversation(chat_id, result.conversation_id)
