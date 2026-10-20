@@ -510,6 +510,7 @@ async def test_tools_as_a_menu(hass: HomeAssistant, hass_ws_client, aioclient_mo
     payloads = _replies(aioclient_mock, call("aac-menu__open_area", {"area": "home"}),
                         call("aac-menu__use_tool", {"tool": "aac-home__list_entities", "arguments": {}}),
                         call("aac-menu__use_tool", {"tool": "aac-home__nonsense"}),
+                        call("aac-menu__use_tool", {"tool": "aac-home__list_entities", "arguments": {}}),
                         _reply("You have no devices I can see."))
     ws = await hass_ws_client(hass)
     await ws.send_json_auto_id({"type": "aac/chat", "text": "what devices do I have?"})
@@ -526,4 +527,5 @@ async def test_tools_as_a_menu(hass: HomeAssistant, hass_ws_client, aioclient_mo
     assert "error" in json.loads(payloads[3]["messages"][-1]["content"])["data"]  # an unknown tool: told to open first
     assert [(s["type"], s.get("tool") or s.get("text")) for s in message["steps"]][:3] == [
         ("note", "opened home"), ("tool_call", "aac-home__list_entities"), ("tool_result", "aac-home__list_entities")]
+    assert "already made exactly this call" in json.loads(payloads[4]["messages"][-1]["content"])["data"]["error"]
     assert payloads[0]["tools"] == payloads[3]["tools"]  # the tool list never changes (the prompt cache holds)

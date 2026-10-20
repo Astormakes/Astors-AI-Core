@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import json
 import re
 from typing import Any
 
@@ -49,6 +50,7 @@ class Menu:
     prefix: str  # the menu's own namespace (its tools are not an area)
     instructions: dict[str, str]  # area → its instructions
     tools: dict[str, dict[str, Any]]  # full tool name → {name, description, parameters}
+    called: set[str] = field(default_factory=set)  # tool + arguments already called in this request
 
 
 # The menu of the request in progress (set around the model loop; tools run in the same task)
@@ -122,6 +124,12 @@ class UseToolTool(llm.Tool):
         tool = next((t for t in menu.api.tools if t.name == name), None)
         if tool is None or name.startswith(f"{menu.prefix}__"):
             return llm.ToolResult(data={"error": f'No tool "{name}". Open the area first and use the full name it lists.'})
+        # Live test 2026-10-20: the 35B ran the same two searches again and again until the rounds ran out
+        key = f"{name} {json.dumps(args, sort_keys=True, default=str)}"
+        if key in menu.called:
+            return llm.ToolResult(data={"error": "You already made exactly this call; its result is above and has not "
+                                        "changed. Try something different, or answer now with what you know."})
+        menu.called.add(key)
         try:
             args = tool.parameters(args)
             result = await menu.api.async_call_tool(llm.ToolInput(tool_name=name, tool_args=args, id=tool_input.id))

@@ -184,8 +184,9 @@ def _steps(contents: list[conversation.Content]) -> list[dict[str, Any]]:
         # before calling tools (shown in the answer, between the steps); the final answer is the result
         if isinstance(content, conversation.AssistantContent) and content.thinking_content:
             steps.append({"type": "thinking", "text": content.thinking_content})
-        if isinstance(content, conversation.AssistantContent) and content.content and content.tool_calls:
-            steps.append({"type": "say", "text": content.content})
+        if isinstance(content, conversation.AssistantContent) and content.content and content.tool_calls and \
+                content.content.strip() not in [s["text"].strip() for s in steps if s["type"] == "say"]:
+            steps.append({"type": "say", "text": content.content})  # a model stuck in a loop repeats itself
         if isinstance(content, conversation.AssistantContent) and content.tool_calls:
             for call in content.tool_calls:
                 if call.tool_name.endswith("__use_tool"):

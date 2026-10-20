@@ -17,11 +17,13 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+import difflib
 import io
 import math
 import re
 import sys
 import time
+import unicodedata
 from typing import TYPE_CHECKING, Any
 import wave
 
@@ -84,6 +86,30 @@ def pcm_to_wav(pcm: bytes) -> bytes:
 
 def _norm(text: str) -> str:
     return " ".join(re.sub(r"[^\w\s]", " ", text.lower()).split())
+
+
+def _fold(text: str) -> str:
+    """Letters only, accents and umlauts folded (Kompüter → komputer)."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if c.isalpha())
+
+
+NAME_SIMILARITY = 0.8  # Komputer / Kompjuter count as computer; Kopie or Komponente do not
+
+
+def name_in(text: str, name: str) -> bool:
+    """A name in a sentence as whole words, or written a little differently (owner, 2026-10-20: the
+    recognizer writes "computer" said in a German sentence in all sorts of ways). Short names must match."""
+    said, wanted = _norm(text).split(), _norm(name).split()
+    if not wanted:
+        return False
+    n = len(wanted)
+    windows = [" ".join(said[i:i + n]) for i in range(len(said) - n + 1)]
+    if " ".join(wanted) in windows:
+        return True
+    target = _fold(name)
+    return len(target) >= 5 and any(
+        not (heard := _fold(w)).startswith(target)  # computers, computerspiel: another word
+        and difflib.SequenceMatcher(None, heard, target).ratio() >= NAME_SIMILARITY for w in windows)
 
 
 class EnergyVad:
@@ -294,8 +320,7 @@ class AudioHub:
     # ------------------------------------------------------------ hearing
     def mentions(self, text: str) -> bool:
         """One of AAC's names in a sentence (whole words, case and punctuation ignored)."""
-        said = f" {_norm(text)} "
-        return any(f" {_norm(name)} " in said for name in self.entry.runtime_data.store.audio["names"] if _norm(name))
+        return any(name_in(text, name) for name in self.entry.runtime_data.store.audio["names"])
 
     async def _async_partial(self, source: Source, stage) -> None:
         """The open segment so far, by a stage that can (speech to text): only for the live view."""

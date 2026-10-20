@@ -66,23 +66,43 @@ class ListEntitiesTool(_HomeTool):
     async def async_call(self, hass, tool_input, llm_context):
         args = tool_input.tool_args
         found = []
-        for e in domain_view(hass, self._domain.settings):
+        view = domain_view(hass, self._domain.settings)
+        for e in view:
             if args.get("only_accessible") and e["level"] == "hidden":
                 continue
             if args.get("area") and (e["area"] or "").lower() != args["area"].lower():
                 continue
-            if args.get("type") and e["domain"] != args["type"] and e.get("device_class") != args["type"]:
+            if args.get("type") and not _is_type(e, args["type"].lower()):
                 continue
             if args.get("integration") and args["integration"].lower() not in (
                 (e.get("integration") or "").lower(), (e.get("integration_title") or "").lower()):
                 continue
-            haystack = f"{e['name']} {e['entity_id']} {e.get('integration') or ''} {e.get('integration_title') or ''}".lower()
+            haystack = (f"{e['name']} {e['entity_id']} {e['area'] or ''} {e.get('integration') or ''} "
+                        f"{e.get('integration_title') or ''}").lower()
             if (word := (args.get("search") or "").lower()) and word not in haystack:
                 continue
             if e["level"] != "hidden" and (state := hass.states.get(e["entity_id"])):
                 e = {**e, "state": _state_text(state)}
             found.append({k: v for k, v in e.items() if v not in (None, "")})
-        return llm.ToolResult(data={"entities": found[:150], "more": max(0, len(found) - 150)})
+        data: dict[str, Any] = {"entities": found[:150], "more": max(0, len(found) - 150)}
+        if not found and view:
+            # Live test 2026-10-20: asked in German, the model searched "Schlafzimmer" nine times for a room named
+            # "Bedroom" (and a bed light that is a switch); the rooms that exist let it try the right words
+            rooms = sorted({e["area"] for e in view if e["area"]})
+            data["hint"] = (f"Nothing matched. Rooms here: {', '.join(rooms) or 'none set'}. Names are in the language "
+                            "they were set up in, so translate your words to match. Many lights are switches (smart "
+                            "plugs): type light includes switches named like a light; or leave the type out.")
+        return llm.ToolResult(data=data)
+
+
+# Words in a switch's name that make it a light (smart plugs that switch a lamp)
+_LIGHT_WORDS = ("light", "lamp", "licht", "lampe", "leuchte")
+
+
+def _is_type(e: dict[str, Any], wanted: str) -> bool:
+    if e["domain"] == wanted or e.get("device_class") == wanted:
+        return True
+    return wanted == "light" and e["domain"] == "switch" and any(w in e["name"].lower() for w in _LIGHT_WORDS)
 
 
 class OverviewTool(_HomeTool):

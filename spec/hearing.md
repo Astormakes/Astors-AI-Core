@@ -41,7 +41,7 @@ ctx.add_hearing(Hearing(id="wakeword", title="Wake word", heard=heard))
 async def heard(source, line, earlier):  # earlier: the source's previous lines, oldest first
     ...
 ```
-Helpers on `ctx.audio`: `mentions(text)` (one of AAC's names), `async_stt(pcm)` (the voice pool's speech
+Helpers on `ctx.audio`: `mentions(text)` (one of AAC's names, as whole words or written a little differently: similarity ≥ 0.8, names of 5+ letters, not a longer word starting with it), `async_stt(pcm)` (the voice pool's speech
 engines), `async_answer(source, text, before)`,
 `async_say(source, text)`, `changed()` (the panel shows a marked line).
 

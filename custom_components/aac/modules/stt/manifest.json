@@ -27,6 +27,12 @@
       "default": true,
       "help": "What was said just before keeps short pieces in the right language and topic."
     },
+    "names": {
+      "type": "bool",
+      "title": "Tell the recognizer AAC's names",
+      "default": true,
+      "help": "So a name like \"Computer\" is written correctly in a German sentence too (the wake word needs it spelled right)."
+    },
     "filter": {
       "type": "bool",
       "title": "Drop typical made-up lines",

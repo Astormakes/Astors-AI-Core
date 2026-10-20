@@ -33,7 +33,7 @@ Per domain the effective level is where both meet: invisible · hidden (seen, no
 "expose to Assist" setting stays HA's; until the owner chooses, AAC starts from it (migration and defaults read
 HA's exposure settings, not states, which are incomplete during startup). Home tools (LLM API `aac_home`):
 `home_overview` (every installed integration with its entity count and how many the domain can see: AAC knows
-what exists without seeing the details), `list_entities` (only visible ones), `get_state`, `control` (locks, alarms, covers, valves, sirens only with the
+what exists without seeing the details), `list_entities` (only visible ones; type `light` includes switches named like a light; an empty result names the rooms that exist, so a model asking in another language can translate), `get_state`, `control` (locks, alarms, covers, valves, sirens only with the
 owner in the chat), `request_access` (only for visible entities; approval sets read/write). The home snapshot for
 automatic runs uses the same levels. If the master also has HA's own Assist tools, those follow HA's exposure,
 not these lists (the Entities page warns and offers to switch them off).

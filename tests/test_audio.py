@@ -90,7 +90,8 @@ async def test_mentions(hass: HomeAssistant, mock_entry, configured):
     await setup_aac(hass, mock_entry)
     hub = mock_entry.runtime_data.audio
     assert hub.mentions("Hey, Computer! Lights off.")
-    assert not hub.mentions("computers are fun")
+    assert hub.mentions("Komputer, mach das Licht an") and hub.mentions("Hey Kompjuter")  # said in German
+    assert not hub.mentions("computers are fun") and not hub.mentions("Kopie davon bitte") and not hub.mentions("Herr Kempten")
     await mock_entry.runtime_data.store.async_update_audio({"names": ["GLaDOS"]})
     assert hub.mentions("glados, are you there?") and not hub.mentions("Computer?")
 
@@ -447,7 +448,7 @@ async def test_a_split_segment_gets_a_voice_per_sentence(hass: HomeAssistant, ha
     assert [x["text"] for x in speech] == ["First sentence here.", "Second one there."]
     assert [x["speaker"]["name"] for x in speech] == ["voice #1", "voice #2"]
     assert speech[0]["time"] < speech[1]["time"] and speech[0]["seconds"] > 1
-    assert prompts[0] is None
+    assert prompts[0] == "Computer."  # AAC's names, so the recognizer spells them right (no line before yet)
 
 
 def test_voices_that_sound_the_same_are_merged():

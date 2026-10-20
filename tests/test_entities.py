@@ -153,3 +153,27 @@ async def test_search_finds_entities_by_integration(hass: HomeAssistant, mock_en
     await settings.async_set_visible([e.entity_id])
     found = [x for x in domain_view(hass, settings) if "steam" in f"{x['name']} {x['entity_id']} {x['integration']}".lower()]
     assert [(x["entity_id"], x["integration"], x["integration_title"]) for x in found] == [("sensor.astor", "steam_online", "Astor")]
+
+
+async def test_list_entities_hints_rooms_and_finds_light_switches(hass: HomeAssistant, mock_entry, configured):
+    """Asked in German, the model searched 'Schlafzimmer' for a room named 'Bedroom' and a bed light that is a
+    switch (live, 2026-10-20): an empty result names the rooms; type light includes switches named like a light."""
+    from homeassistant.helpers import area_registry as ar, entity_registry as er, llm
+
+    from custom_components.aac.home_api import ListEntitiesTool
+
+    bedroom = ar.async_get(hass).async_create("Bedroom")
+    e = er.async_get(hass).async_get_or_create("switch", "test", "bed", suggested_object_id="bed_light")
+    er.async_get(hass).async_update_entity(e.entity_id, area_id=bedroom.id)
+    hass.states.async_set(e.entity_id, "off", {"friendly_name": "Bed light"})
+    await setup_aac(hass, mock_entry)
+    await mock_entry.runtime_data.store.default_domain.async_set_visible([e.entity_id])
+    tool = ListEntitiesTool(mock_entry, mock_entry.runtime_data.domain())
+
+    async def ask(**args):
+        return (await tool.async_call(hass, llm.ToolInput(tool_name="list_entities", tool_args=args), None)).data
+
+    missed = await ask(area="Schlafzimmer", type="light")
+    assert missed["entities"] == [] and "Rooms here: Bedroom." in missed["hint"]
+    assert [x["entity_id"] for x in (await ask(area="bedroom", type="light"))["entities"]] == [e.entity_id]
+    assert "hint" not in await ask(search="bedroom")  # the room is searched too

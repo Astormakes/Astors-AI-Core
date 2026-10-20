@@ -108,7 +108,8 @@ Per model, `traits.tool_mode` (`aac/pool/tool_mode {resource, mode}`, model page
   tool set, arguments checked against its schema). The tool list stays the same for the whole chat,
   so the server's prompt cache holds; what an area brings is appended as a tool result. A model that
   calls a real tool directly still gets it run. Runs show the real tools (`use_tool` unwrapped,
-  `open_area` as a note "opened …").
+  `open_area` as a note "opened …"). The same tool with the same arguments a second time in one request
+  is not run again; the model is told to try something else or answer.
 - `all`: every tool and every API's instructions up front.
 
 Bench 2026-10-20 (12 questions, made-up results): 35B all 11/12 (~10 s to read 8k tokens cold),
