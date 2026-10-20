@@ -335,6 +335,18 @@ textarea { min-height: 10em; resize: vertical; }
 .work:not(.open) .row.fold { display: block; overflow: hidden; animation: fold 1.1s cubic-bezier(.5, 0, .2, 1) forwards; }
 .work .row b { color: var(--cyan); font-weight: normal; }
 .txt.said { margin-bottom: .5em; }
+.runlog { min-height: 0; }
+.runlog .bubble { max-width: 100%; }
+.txt.pre { white-space: pre-wrap; font: inherit; font-size: .85em; margin: 0; max-height: 22em; overflow: auto; }
+.why { margin-top: .6em; padding-top: .5em; border-top: 1px dashed var(--line); font-size: .85em; }
+.why details { margin: .4em 0; }
+.why summary { cursor: pointer; color: var(--cyan); letter-spacing: .08em; }
+.why pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28em; overflow: auto; font-size: .9em; margin: .3em 0 .6em; }
+.why .wm { margin: .5em 0 0 .6em; }
+.why .wm b { color: var(--magenta); font-weight: normal; letter-spacing: .1em; text-transform: uppercase; font-size: .85em; }
+.prefwrap { position: relative; display: inline-flex; }
+.chatprefs { left: auto; right: 0; top: 100%; width: 13em; padding: .3em .9em .8em; }
+.chatprefs label { margin-top: .6em; }
 .work .steprow { letter-spacing: .1em; opacity: .85; }
 .work.thought .work-head { font-style: italic; }
 .work .row.err b { color: var(--red); }
@@ -1067,7 +1079,10 @@ class AacPanel extends HTMLElement {
   }
 
   _thoughtHtml(text, key) {
-    return `<div class="work thought ${this._openWork?.has(key) ? "open" : ""}" data-work="${esc(key)}"><div class="work-head" role="button" tabindex="0">💭 thought</div><div class="row">${esc(String(text).trim())}</div></div>`;
+    const pref = this._chatPrefs().thinking;
+    if (pref === "hidden") return "";
+    const open = !!this._openWork?.has(key) !== (pref === "open");
+    return `<div class="work thought ${open ? "open" : ""}" data-work="${esc(key)}"><div class="work-head" role="button" tabindex="0">💭 thought</div><div class="row">${esc(String(text).trim())}</div></div>`;
   }
 
   _stepRow(s) {
@@ -1087,7 +1102,83 @@ class AacPanel extends HTMLElement {
     const tools = steps.filter((s) => s.type === "tool_call").map((s) => s.tool.split("__").pop());
     const n = steps.filter((s) => s.type !== "tool_result").length;
     const full = steps.some((s) => this._stepKind(s) === "note" && /^Context full/.test(s.text));
-    return `<div class="work ${this._openWork?.has(key) ? "open" : ""}" data-work="${esc(key)}">${this._workHead(n, tools, full)}${steps.map((s) => this._stepRow(s)).join("")}</div>`;
+    const open = !!this._openWork?.has(key) !== (this._chatPrefs().steps === "open");
+    return `<div class="work ${open ? "open" : ""}" data-work="${esc(key)}">${this._workHead(n, tools, full)}${steps.map((s) => this._stepRow(s)).join("")}</div>`;
+  }
+
+  // ---------------------------------------------------------------- the chat view
+  // Shared by chats, run details and the heartbeat's runs (later modules too). One message; opts:
+  // editable (edit / rerun), details (a link to the run), key (unique per view, for the folds)
+  _bubbleHtml(m, i, msgs, opts = {}) {
+    const key = `${opts.key || "m"}${i}`;
+    const editing = opts.editable && this._editing === i;
+    const prevUser = m.role === "aac" ? msgs.slice(0, i).map((x) => x.role).lastIndexOf("user") : -1;
+    const editBtn = `<button class="icon-btn" data-msg-edit="${i}" title="${m.role === "user" ? "Edit and send again (the chat continues from here)" : "Change what AAC said (the model takes it as its own words)"}">✎ Edit</button>`;
+    const why = m.role === "aac" && m.run_id ? `<button class="icon-btn" data-why="${esc(m.run_id)}" aria-expanded="${!!this._why?.[m.run_id]}" title="Everything this answer was based on: instructions, chat history, tools">🔍 What the model got</button>` : "";
+    const own = !opts.editable || m.error ? "" : m.role === "user" ? editBtn
+      : `${editBtn}${prevUser >= 0 ? `<button class="icon-btn" data-msg-rerun="${i}" title="Answer again (this answer is replaced)">↻ Rerun</button>` : ""}`;
+    const acts = this._busy || editing || !(own || why) ? "" : `<div class="msg-acts">${own}${why}</div>`;
+    const editHint = m.role === "user" ? "Everything after this message is removed; AAC answers from here."
+      : "AAC takes the changed text as its own words from now on; the rest of the chat stays. Putting words in a model's mouth can make it act oddly, so keep it plausible.";
+    return `<div class="bubble ${m.role} ${m.error ? "err" : ""}">
+      ${m.trigger ? `<div class="trig">⚡ ${esc(m.trigger)}</div>` : `<div class="who">${m.role === "user" ? (m.who || "YOU") : "AAC"}${m.via === "voice" ? `<span class="edited" title="${m.role === "user" ? "spoken at" : "said aloud at"} ${esc(m.mic || "")}">🎤 ${esc((m.mic || "VOICE").toUpperCase())}</span>` : ""}${m.edited ? `<span class="edited">EDITED</span>` : ""}</div>`}
+      ${m.role === "aac" && (editing || m.error) ? this._stepsHtml(m.steps, key) : ""}
+      ${editing ? `<textarea id="msg-edit" class="thin-scroll">${esc(this._editText ?? m.text)}</textarea>
+        <div class="actions" style="margin-top:.5em"><button class="btn primary" id="msg-edit-send">${m.role === "user" ? "Send" : "Save"}</button><button class="btn" id="msg-edit-cancel">Cancel</button></div>
+        <div class="hint" style="margin:.3em 0 0">${editHint}</div>`
+      : m.role === "aac" && !m.error ? this._answerHtml(m.steps, m.text ? `<div class="txt md">${md(m.text)}</div>` : "", key)
+      : m.pre ? `<pre class="txt pre">${esc(m.text)}</pre>` : `<div class="txt">${esc(m.text)}</div>`}
+      ${m.run_id && opts.details ? `<div class="steps"><span tabindex="0" role="button" data-go="run/${esc(m.run_id)}" style="cursor:pointer">details ›</span></div>` : ""}
+      ${acts}
+      ${m.run_id && this._why?.[m.run_id] ? this._whyHtml(this._why[m.run_id]) : ""}
+    </div>`;
+  }
+
+  // What one answer was based on: the last request of its run (system prompt, messages, tools)
+  _whyHtml(w) {
+    if (w === "loading") return '<div class="why"><span class="hint">Loading…</span></div>';
+    if (w.error) return `<div class="why"><span class="hint">${esc(w.error)}</span></div>`;
+    const sec = (title, body, open = false) => `<details ${open ? "open" : ""}><summary>${title}</summary>${body}</details>`;
+    const msgs = w.messages.map((m) => `<div class="wm"><b>${esc(m.role === "tool" ? "tool result" : m.role)}</b>${m.tool_calls ? ` → ${esc(m.tool_calls.map((c) => c.name.split("__").pop()).join(", "))}` : ""}
+      ${m.content ? `<pre>${esc(m.content)}</pre>` : ""}</div>`).join("");
+    return `<div class="why">
+      <div class="hint">${esc(this._resourceLabel(w.model))} · about ${esc(w.tokens ?? "?")} tokens${w.n_ctx ? ` of ${esc(w.n_ctx)}` : ""}${w.left_out ? ` · ${esc(w.left_out)} older messages left out` : ""} · ${esc(fmtTime(w.at))}</div>
+      ${sec(`Instructions <span class="tag">${esc(w.system.length)} chars</span>`, `<pre>${esc(w.system)}</pre>`)}
+      ${sec(`Messages <span class="tag">${w.messages.length}</span>`, msgs)}
+      ${sec(`Tools offered <span class="tag">${w.tools.length}</span>`, `<div class="hint">${w.tools.length ? esc(w.tools.map((t) => t.split("__").pop()).join(", ")) : "none"}</div>`)}
+    </div>`;
+  }
+
+  async _toggleWhy(runId) {
+    this._why = this._why || {};
+    if (this._why[runId]) { delete this._why[runId]; return this._render(); }
+    this._why[runId] = "loading";
+    this._render();
+    try { this._why[runId] = await this._ws("aac/run/request", { run_id: runId }); }
+    catch (e) { this._why[runId] = { error: e.message || String(e) }; }
+    this._render();
+  }
+
+  // How the chat view shows things (per browser): steps folded or open, thinking folded / open / hidden
+  _chatPrefs() {
+    if (!this._prefs) {
+      try { this._prefs = JSON.parse(localStorage.getItem("aac.chatPrefs") || "{}"); } catch (e) { this._prefs = {}; }
+    }
+    return { steps: "folded", thinking: "folded", ...this._prefs };
+  }
+
+  _setChatPref(key, value) {
+    this._prefs = { ...this._chatPrefs(), [key]: value };
+    try { localStorage.setItem("aac.chatPrefs", JSON.stringify(this._prefs)); } catch (e) { /* private mode */ }
+    this._openWork = new Set();
+    this._render();
+  }
+
+  _chatPrefsHtml() {
+    const p = this._chatPrefs();
+    const sel = (key, opts) => `<select data-chat-pref="${key}">${opts.map(([v, l]) => `<option value="${v}" ${p[key] === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+    return `<div class="dmenu chatprefs"><label>Steps</label>${sel("steps", [["folded", "Folded"], ["open", "Open"]])}
+      <label>Thinking</label>${sel("thinking", [["folded", "Folded"], ["open", "Open"], ["hidden", "Hidden"]])}</div>`;
   }
 
   _renderChat() {
@@ -1096,32 +1187,14 @@ class AacPanel extends HTMLElement {
     const msgs = chat?.messages || [];
     const isAac = chat?.id === "aac";
     const log = msgs.length
-      ? msgs.map((m, i) => {
-          const editing = this._editing === i && !isAac;
-          const prevUser = m.role === "aac" ? msgs.slice(0, i).map((x) => x.role).lastIndexOf("user") : -1;
-          const editBtn = `<button class="icon-btn" data-msg-edit="${i}" title="${m.role === "user" ? "Edit and send again (the chat continues from here)" : "Change what AAC said (the model takes it as its own words)"}">✎ Edit</button>`;
-          const acts = isAac || this._busy || editing || m.error ? "" : m.role === "user"
-            ? `<div class="msg-acts">${editBtn}</div>`
-            : `<div class="msg-acts">${editBtn}${prevUser >= 0 ? `<button class="icon-btn" data-msg-rerun="${i}" title="Answer again (this answer is replaced)">↻ Rerun</button>` : ""}</div>`;
-          const editHint = m.role === "user" ? "Everything after this message is removed; AAC answers from here."
-            : "AAC takes the changed text as its own words from now on; the rest of the chat stays. Putting words in a model's mouth can make it act oddly, so keep it plausible.";
-          return `<div class="bubble ${m.role} ${m.error ? "err" : ""}">
-          ${m.trigger ? `<div class="trig">⚡ ${esc(m.trigger)}</div>` : `<div class="who">${m.role === "user" ? "YOU" : "AAC"}${m.via === "voice" ? `<span class="edited" title="${m.role === "user" ? "spoken at" : "said aloud at"} ${esc(m.mic || "")}">🎤 ${esc((m.mic || "VOICE").toUpperCase())}</span>` : ""}${m.edited ? `<span class="edited">EDITED</span>` : ""}</div>`}
-          ${m.role === "aac" && (editing || m.error) ? this._stepsHtml(m.steps, `m${i}`) : ""}
-          ${editing ? `<textarea id="msg-edit" class="thin-scroll">${esc(this._editText ?? m.text)}</textarea>
-            <div class="actions" style="margin-top:.5em"><button class="btn primary" id="msg-edit-send">${m.role === "user" ? "Send" : "Save"}</button><button class="btn" id="msg-edit-cancel">Cancel</button></div>
-            <div class="hint" style="margin:.3em 0 0">${editHint}</div>`
-          : m.role === "aac" && !m.error ? this._answerHtml(m.steps, `<div class="txt md">${md(m.text)}</div>`, `m${i}`) : `<div class="txt">${esc(m.text)}</div>`}
-          ${m.run_id && isAac ? `<div class="steps"><span tabindex="0" role="button" data-go="run/${esc(m.run_id)}" style="cursor:pointer">details ›</span></div>` : ""}
-          ${acts}
-        </div>`;
-        }).join("")
+      ? msgs.map((m, i) => this._bubbleHtml(m, i, msgs, { editable: !isAac, details: isAac, key: "m" })).join("")
       : `<div class="welcome"><div class="big">AAC</div>${!master ? "No master model yet. Open SETUP to choose one."
           : this._state?.pools?.roles?.master?.active ? "Ask me anything." : "No master model is reachable right now (see Compute)."}</div>`;
     const busy = this._busy ? `<div class="bubble aac busy"><div class="who">AAC</div>${this._streamHtml()}</div>` : "";
     const title = chat ? chat.title : "NEW CHAT";
     const del = chat ? `<button class="icon-btn" id="chat-delete" title="Delete chat">${icon("trash")}</button>` : "";
-    return `${this._header(title, `model: ${esc(this._modelLabel(master))}`, del)}
+    const prefs = `<span class="prefwrap"><button class="icon-btn" id="chat-prefs" title="How this view shows steps and thinking" aria-expanded="${!!this._prefsOpen}">${icon("settings")}</button>${this._prefsOpen ? this._chatPrefsHtml() : ""}</span>`;
+    return `${this._header(title, `model: ${esc(this._modelLabel(master))}`, prefs + del)}
       <div class="chat">
         <div class="log thin-scroll" aria-live="polite"><div class="log-inner">${log}${busy}</div></div>
         <div class="composer"><div class="composer-inner">
@@ -1135,24 +1208,21 @@ class AacPanel extends HTMLElement {
     const r = this._run;
     if (!r) return this._page("RUN", "", '<div class="card"><p>Loading…<span class="cursor"></span></p></div>');
     if (r.error) return this._page("RUN", "", `<div class="card"><h2>NOT FOUND</h2><p>${esc(r.error)}</p></div>`);
-    const rows = [["Trigger", r.trigger], ["Started", fmtTime(r.started)], ["Finished", r.finished ? fmtTime(r.finished) : "—"], ["Kind", r.kind === "auto" ? "automatic" : "chat"]];
+    const rows = [["Trigger", r.trigger], ["Started", fmtTime(r.started)], ["Finished", r.finished ? fmtTime(r.finished) : "—"],
+      ["Kind", r.kind === "auto" ? "automatic" : "chat"], ["Model", r.model ? this._resourceLabel(r.model) : "—"]];
+    // the run as a short conversation, in the same view as the chats
+    const msgs = [
+      { role: "user", who: r.kind === "auto" ? r.title.toUpperCase() : "YOU", text: r.input, pre: r.kind === "auto" },
+      { role: "aac", text: r.status === "silent" ? `*Stayed silent* (answered: ${r.result || "NOTHING"})` : r.result || (r.status === "running" ? "working…" : "—"),
+        steps: r.steps, run_id: r.request ? r.id : null, error: r.status === "failed" },
+    ];
     return this._page(r.title, `<span class="status ${esc(r.status)}">${esc(r.status.toUpperCase())}</span>`, `
-      <div class="cards">
-        <div class="card"><h2>${icon("bolt")} RUN</h2>
-          <div class="kv">${rows.map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span>`).join("")}</div>
-          <label>Input</label><pre>${esc(r.input)}</pre>
-          ${r.context ? `<details class="steps"><summary>CONTEXT GIVEN TO THE MODEL</summary><pre>${esc(r.context)}</pre></details>` : ""}
-          <label>Result</label><pre>${esc(r.result || (r.status === "running" ? "working…" : "—"))}</pre>
-          ${r.chat_id ? `<div class="actions"><button class="btn" data-go="chat/${esc(r.chat_id)}">Open chat</button></div>` : ""}
-        </div>
-        <div class="card"><h2>STEPS</h2>
-          ${r.steps.length ? `<div class="timeline">${r.steps.map((s, k = this._stepKind(s)) => k === "say" || k === "thinking" || k === "note"
-            ? `<div class="st said"><b>${k === "say" ? "💬 said" : k === "thinking" ? "💭 thought" : "ℹ AAC"}</b><pre>${esc(s.text)}</pre></div>`
-            : s.type === "tool_call"
-            ? `<div class="st"><b>→ ${esc(s.tool)}</b><pre>${esc(JSON.stringify(s.args, null, 1))}</pre></div>`
-            : `<div class="st ${s.error ? "err" : ""}"><b>← ${esc(s.tool)}${s.error ? " (error)" : ""}</b><pre>${esc(s.data)}</pre></div>`).join("")}</div>`
-            : '<p class="hint">No tool calls.</p>'}
-        </div>
+      <div class="card"><div class="log-inner runlog">${msgs.map((m, i) => this._bubbleHtml(m, i, msgs, { key: `r${r.id}` })).join("")}</div>
+        ${r.request ? "" : '<p class="hint">What the model got is kept only for the newest runs (from v0.38 on).</p>'}</div>
+      <div class="card"><h2>${icon("bolt")} RUN</h2>
+        <div class="kv">${rows.map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span>`).join("")}</div>
+        ${r.context ? `<details class="steps"><summary>CONTEXT ADDED FOR THIS RUN</summary><pre>${esc(r.context)}</pre></details>` : ""}
+        ${r.chat_id ? `<div class="actions"><button class="btn" data-go="chat/${esc(r.chat_id)}">Open chat</button></div>` : ""}
       </div>`);
   }
 
@@ -2317,11 +2387,15 @@ class AacPanel extends HTMLElement {
       this._editText = null;
       this._render();
     });
+    sr.querySelectorAll("[data-why]").forEach((el) => el.addEventListener("click", () => this._toggleWhy(el.dataset.why)));
+    sr.querySelector("#chat-prefs")?.addEventListener("click", () => { this._prefsOpen = !this._prefsOpen; this._render(); });
+    sr.querySelectorAll("[data-chat-pref]").forEach((el) => el.addEventListener("change", () => this._setChatPref(el.dataset.chatPref, el.value)));
     sr.querySelectorAll("[data-work] .work-head").forEach((el) => {
       const toggle = () => {
         const box = el.parentElement, key = box.dataset.work;
         this._openWork = this._openWork || new Set();
-        box.classList.toggle("open") ? this._openWork.add(key) : this._openWork.delete(key);
+        box.classList.toggle("open");
+        this._openWork.has(key) ? this._openWork.delete(key) : this._openWork.add(key);  // flipped from the default
       };
       el.addEventListener("click", toggle);
       el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });

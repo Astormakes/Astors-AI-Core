@@ -468,6 +468,8 @@ class AACConversationEntity(
                 broker.record_speed(model_id, (reply.get("_stats") or {}).get("tokens_per_second"))
                 if run:
                     run.model = model_id
+                    self.domain.runs.record_request(run, model_id, messages, offered, left_out=left_out,
+                                                    tokens=estimate(messages, offered), n_ctx=n_ctx)
                 break
 
             async for _tool_result in chat_log.async_add_assistant_content(

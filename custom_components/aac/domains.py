@@ -85,6 +85,7 @@ async def async_remove_domain_data(hass: HomeAssistant, dom: Domain) -> None:
             await hass.async_add_executor_job(lambda p=path.with_name(path.name + suffix): p.unlink(missing_ok=True))
     await dom.chats.store.async_remove()
     await dom.runs.store.async_remove()
+    await dom.runs.request_store.async_remove()
     # Modules keep their data per domain as .storage/aac.mod.<module>.<name>.<domain>
     storage = Path(hass.config.path(".storage"))
 

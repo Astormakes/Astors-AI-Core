@@ -61,6 +61,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_chat_delete,
         ws_runs,
         ws_run_get,
+        ws_run_request,
         ws_heartbeat_update,
         ws_heartbeat_run,
         ws_trigger_save,
@@ -493,6 +494,19 @@ def ws_run_get(hass: HomeAssistant, connection, msg) -> None:
         connection.send_error(msg["id"], "not_found", "Run not found")
         return
     connection.send_result(msg["id"], run.as_dict())
+
+
+@aac_command({vol.Required("type"): "aac/run/request", vol.Required("run_id"): str})
+@websocket_api.require_admin
+@callback
+def ws_run_request(hass: HomeAssistant, connection, msg) -> None:
+    """What the model got in a run's last call (recorded for the newest runs)."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    if (req := _d(entry, msg).runs.request(msg["run_id"])) is None:
+        connection.send_error(msg["id"], "not_found", "Not recorded (only the newest runs keep it)")
+        return
+    connection.send_result(msg["id"], req)
 
 
 @aac_command(

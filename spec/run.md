@@ -27,6 +27,10 @@ with what information (the audit log).
 }
 ```
 
+What the model got in a run's last call (system prompt, messages, tools offered, token estimate) is kept
+apart for the newest 40 runs (`aac.requests`, system prompts stored once by hash); `request: true` on the run
+says it is there; `aac/run/request {run_id}` returns it.
+
 Step types: `say` (what the model wrote for the reader before calling tools; shown in the answer between
 the steps), `thinking` (its hidden reasoning, folded), `tool_call`, `tool_result`, `note` (AAC's own remark:
 context full, model switched, decision). Runs before v0.38 have `text` for both say and note.
