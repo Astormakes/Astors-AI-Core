@@ -464,3 +464,19 @@ async def test_answers_without_tools_when_they_do_not_fit(hass: HomeAssistant, h
     assert message["text"] == "Plain answer."
     assert len(payloads) == 3 and not payloads[2].get("tools")
     assert any("without them" in (s.get("text") or "") for s in message["steps"])
+
+
+async def test_archive_a_chat(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """Archiving keeps the chat (marked); a new message takes it out of the archive."""
+    await setup_aac(hass, mock_entry)
+    _replies(aioclient_mock, _reply("hi"), _reply("again"))
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "hello"})
+    chat_id = (await ws.receive_json())["result"]["chat_id"]
+    await ws.send_json_auto_id({"type": "aac/chat/archive", "chat_id": chat_id})
+    assert (await ws.receive_json())["success"]
+    chats = mock_entry.runtime_data.chats
+    assert chats.get(chat_id)["archived"] and len(chats.get(chat_id)["messages"]) == 2
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "back", "chat_id": chat_id})
+    await ws.receive_json()
+    assert "archived" not in chats.get(chat_id)

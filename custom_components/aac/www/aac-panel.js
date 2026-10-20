@@ -166,6 +166,7 @@ nav {
 .dlg textarea { min-height: 8em; }
 .update-banner { display: flex; align-items: center; gap: 1em; padding: .5em 1.7em; background: rgba(255, 176, 0, .12); color: var(--amber); border-bottom: 1px solid var(--amber); font-size: .9em; }
 .tab .chatdel { margin-left: .3em; padding: 0 .3em; font-size: .85em; line-height: 1; opacity: 0; }
+.tab .chatdel .ico { width: 1em; height: 1em; filter: none; }
 .tab:hover .chatdel, .tab:focus-within .chatdel, .tab.active .chatdel { opacity: .6; }
 @media (hover: none) { .tab .chatdel { opacity: .5; } }
 .tab .modmore { margin-left: auto; padding: 0 .3em; font-size: 1.1em; line-height: 1; opacity: .6; }
@@ -501,6 +502,8 @@ class AacPanel extends HTMLElement {
       this._loaded = true;
       try {
         this._showAll = localStorage.getItem("aac.showAll") === "1";
+        this._archOpen = localStorage.getItem("aac.archOpen") === "1";
+        this._archHidden = localStorage.getItem("aac.archHidden") === "1";
         this._autoOpen = localStorage.getItem("aac.autoOpen") === "1";
       } catch (e) { /* ignore */ }
       this._render();
@@ -936,10 +939,20 @@ class AacPanel extends HTMLElement {
         }).join("")}
       </div>`;
 
-    const chats = this._chats.length
-      ? this._chats.map((c) => this._tab(`chat/${c.id}`, c.title, c.id === "aac" ? icon("bolt") : "",
-          c.id === "aac" ? "" : "", `${c.unread ? `<span class="unread">${c.unread}</span>` : ""}<button class="icon-btn chatdel" data-chat-del="${esc(c.id)}" title="Delete chat">✕</button>`)).join("")
+    const live = this._chats.filter((c) => !c.archived), archived = this._chats.filter((c) => c.archived);
+    const chats = live.length
+      ? live.map((c) => this._tab(`chat/${c.id}`, c.title, c.id === "aac" ? icon("bolt") : "",
+          "", `${c.unread ? `<span class="unread">${c.unread}</span>` : ""}<button class="icon-btn chatdel" data-chat-archive="${esc(c.id)}" title="Archive">${icon("trash")}</button>`)).join("")
       : '<div class="empty">no chats yet</div>';
+    // The archive: chats put away (not deleted); its own eye hides the section, the eye at the top shows it again
+    const archive = !archived.length || (this._archHidden && !this._showAll) ? "" : `
+      <div class="tab fold ${this._archOpen ? "open" : ""} ${this._archHidden ? "hidden-mod" : ""}" id="arch-fold" tabindex="0" role="button" aria-expanded="${!!this._archOpen}">
+        ${icon("chev")}<span class="grow">Archived<span class="count">(${archived.length})</span></span>
+        <button class="icon-btn chatdel" id="arch-clear" title="Delete all archived chats permanently">${icon("trash")}</button>
+        <button class="icon-btn chatdel" id="arch-hide" title="${this._archHidden ? "Show this section again" : "Hide this section (the eye at the top shows it)"}">${icon(this._archHidden ? "eye" : "eyeOff")}</button>
+      </div>
+      ${this._archOpen ? archived.map((c) => this._tab(`chat/${c.id}`, c.title, "", "deep",
+        `<button class="icon-btn chatdel" data-chat-del="${esc(c.id)}" title="Delete permanently">${icon("trash")}</button>`)).join("") : ""}`;
     const running = this._runs.filter((r) => r.status === "running").length;
     const openRequests = this._state?.requests_open || 0;
     // Only there while something waits (or the eye shows everything); a new request drops in to be noticed
@@ -964,6 +977,7 @@ class AacPanel extends HTMLElement {
           <div class="seg-title">${icon("workers")}CHATS<span class="acts"><button class="icon-btn" data-go="chat/new" title="New chat">${icon("plus")}</button></span></div>
           <div class="seg-line"></div>
           ${chats}
+          ${archive}
           ${requestsTab}
           <div class="tab fold ${this._autoOpen ? "open" : ""}" id="auto-fold" tabindex="0" role="button" aria-expanded="${this._autoOpen}">
             ${icon("chev")}<span class="grow">Auto<span class="count ${running ? "" : "zero"}">(${running})</span>${this._jobs?.waiting?.length ? `<span class="count" title="waiting for a model">+${this._jobs.waiting.length} waiting</span>` : ""}</span>
@@ -1192,7 +1206,9 @@ class AacPanel extends HTMLElement {
           : this._state?.pools?.roles?.master?.active ? "Ask me anything." : "No master model is reachable right now (see Compute)."}</div>`;
     const busy = this._busy ? `<div class="bubble aac busy"><div class="who">AAC</div>${this._streamHtml()}</div>` : "";
     const title = chat ? chat.title : "NEW CHAT";
-    const del = chat ? `<button class="icon-btn" id="chat-delete" title="Delete chat">${icon("trash")}</button>` : "";
+    const del = !chat?.id ? "" : chat.archived
+      ? `<button class="btn" id="chat-restore">Restore</button><button class="icon-btn" id="chat-delete" title="Delete permanently">${icon("trash")}</button>`
+      : `<button class="icon-btn" id="chat-archive" title="Archive">${icon("trash")}</button>`;
     const prefs = `<span class="prefwrap"><button class="icon-btn" id="chat-prefs" title="How this view shows steps and thinking" aria-expanded="${!!this._prefsOpen}">${icon("settings")}</button>${this._prefsOpen ? this._chatPrefsHtml() : ""}</span>`;
     return `${this._header(title, `model: ${esc(this._modelLabel(master))}`, prefs + del)}
       <div class="chat">
@@ -2103,6 +2119,10 @@ class AacPanel extends HTMLElement {
     return this._toastMsg ? `<div class="toast ${this._toastMsg.ok ? "ok" : "err"}" role="status">${esc(this._toastMsg.text)}</div>` : "";
   }
 
+  _savePref(key, on) {
+    try { localStorage.setItem(key, on ? "1" : "0"); } catch (e) { /* private mode */ }
+  }
+
   _flashHtml() {
     return this._flash ? `<div class="msg ${this._flash.ok ? "ok" : "err"}">${esc(this._flash.text)}</div>` : "";
   }
@@ -2405,16 +2425,42 @@ class AacPanel extends HTMLElement {
       const u = msgs.slice(0, i).map((x) => x.role).lastIndexOf("user");
       if (u >= 0) this._resend(u, msgs[u].text);
     }));
+    const archiveChat = async (id, archived = true) => {
+      await this._ws("aac/chat/archive", { chat_id: id, archived });
+      if (archived && this._chat?.id === id) { this._chat = null; this._view = "chat/new"; }
+      await this._loadChats();
+      if (archived) this._toast("Archived · under CHATS → Archived", true);
+      else await this._openChat(id);
+    };
+    sr.querySelectorAll("[data-chat-archive]").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); archiveChat(el.dataset.chatArchive); }));
     sr.querySelectorAll("[data-chat-del]").forEach((el) => el.addEventListener("click", async (e) => {
       e.stopPropagation();
       const chat = this._chats.find((c) => c.id === el.dataset.chatDel);
-      if (!(await this._confirm(`Delete the chat "${chat?.title || ""}"?`, "Delete", true))) return;
+      if (!(await this._confirm(`Delete "${chat?.title || ""}" permanently? It cannot be restored.`, "Delete", true))) return;
       await this._ws("aac/chat/delete", { chat_id: el.dataset.chatDel });
       if (this._chat?.id === el.dataset.chatDel) { this._chat = null; this._view = "chat/new"; }
       await this._loadChats();
     }));
+    sr.querySelector("#chat-archive")?.addEventListener("click", () => this._chat?.id && archiveChat(this._chat.id));
+    sr.querySelector("#chat-restore")?.addEventListener("click", () => this._chat?.id && archiveChat(this._chat.id, false));
+    sr.querySelector("#arch-fold")?.addEventListener("click", () => { this._archOpen = !this._archOpen; this._savePref("aac.archOpen", this._archOpen); this._render(); });
+    sr.querySelector("#arch-clear")?.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const gone = this._chats.filter((c) => c.archived);
+      if (!gone.length || !(await this._confirm(`Delete all ${gone.length} archived chat${gone.length === 1 ? "" : "s"} permanently? They cannot be restored.`, "Delete all", true))) return;
+      for (const c of gone) await this._ws("aac/chat/delete", { chat_id: c.id });
+      if (gone.some((c) => c.id === this._chat?.id)) { this._chat = null; this._view = "chat/new"; }
+      await this._loadChats();
+      this._toast(`${gone.length} archived chat${gone.length === 1 ? "" : "s"} deleted`, true);
+    });
+    sr.querySelector("#arch-hide")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._archHidden = !this._archHidden;
+      this._savePref("aac.archHidden", this._archHidden);
+      this._render();
+    });
     sr.querySelector("#chat-delete")?.addEventListener("click", async () => {
-      if (!this._chat || !(await this._confirm("Delete this chat?", "Delete", true))) return;
+      if (!this._chat || !(await this._confirm(`Delete "${this._chat.title}" permanently? It cannot be restored.`, "Delete", true))) return;
       await this._ws("aac/chat/delete", { chat_id: this._chat.id });
       this._chat = null;
       this._view = "chat/new";

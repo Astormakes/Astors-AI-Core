@@ -83,6 +83,7 @@ class ChatStore:
             title = "From AAC" if chat_id == AAC_CHAT_ID else "Chat"
             chat = self.create(title, chat_id)
         message = {"role": role, "text": text, "ts": dt_util.utcnow().isoformat(), **extra}
+        chat.pop("archived", None)  # a new message brings an archived chat back
         chat["messages"] = [*chat["messages"], message][-MAX_MESSAGES:]
         chat["updated"] = message["ts"]
         if role == "user" and chat["title"] == "New chat":
@@ -133,6 +134,18 @@ class ChatStore:
         if chat := self.chats.get(chat_id):
             chat["conversation_id"] = conversation_id
             self._save()
+
+    @callback
+    def archive(self, chat_id: str, archived: bool = True) -> None:
+        """Move a chat into the archive (the owner's bin: kept, out of the way) or back."""
+        if (chat := self.chats.get(chat_id)) is None:
+            return
+        if archived:
+            chat["archived"] = True
+        else:
+            chat.pop("archived", None)
+        self._save()
+        async_notify(self.hass, "chats", domain=self.domain_id)
 
     @callback
     def delete(self, chat_id: str) -> None:

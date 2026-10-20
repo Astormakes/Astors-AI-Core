@@ -583,7 +583,8 @@ class AudioHub:
         and old mistakes do not pile up as examples in the model's context."""
         current = self.voice_chats.get(source.id) or f"voice_{source.id}"
         chat = data.chats.get(current)
-        if chat and chat["messages"] and (dt_util.utcnow() - datetime.fromisoformat(chat["updated"])) > VOICE_SESSION_GAP:
+        if chat and chat["messages"] and (chat.get("archived")  # put away by the owner: a new session
+                                          or (dt_util.utcnow() - datetime.fromisoformat(chat["updated"])) > VOICE_SESSION_GAP):
             current = f"voice_{source.id}_{dt_util.utcnow().strftime('%Y%m%d%H%M')}"
         self.voice_chats[source.id] = current
         return current

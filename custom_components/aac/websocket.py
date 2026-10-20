@@ -59,6 +59,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_chat_get,
         ws_chat_new,
         ws_chat_delete,
+        ws_chat_archive,
         ws_runs,
         ws_run_get,
         ws_run_request,
@@ -459,6 +460,16 @@ def ws_chat_new(hass: HomeAssistant, connection, msg) -> None:
     """Start an empty chat."""
     if entry := _entry(hass, connection, msg):
         connection.send_result(msg["id"], _d(entry, msg).chats.create())
+
+
+@aac_command({vol.Required("type"): "aac/chat/archive", vol.Required("chat_id"): str, vol.Optional("archived", default=True): bool})
+@websocket_api.require_admin
+@callback
+def ws_chat_archive(hass: HomeAssistant, connection, msg) -> None:
+    """Archive a chat (or take it out of the archive)."""
+    if entry := _entry(hass, connection, msg):
+        _d(entry, msg).chats.archive(msg["chat_id"], msg["archived"])
+        connection.send_result(msg["id"])
 
 
 @aac_command({vol.Required("type"): "aac/chat/delete", vol.Required("chat_id"): str})
