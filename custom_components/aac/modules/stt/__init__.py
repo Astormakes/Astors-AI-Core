@@ -34,9 +34,10 @@ async def async_setup_module(ctx: ModuleContext) -> None:
     async def run(source, pcm: bytes, line: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
         prompt = last.get(source.id) if ctx.setting(domain_id(), "context") else None
-        if ctx.setting(domain_id(), "names") and (names := ctx.entry.runtime_data.store.audio["names"]):
-            # Whisper writes words it saw in the prompt the same way: "Computer" in a German sentence
-            # came out as "Herr Kempüller" without it (2026-10-20)
+        if ctx.setting(domain_id(), "names") and (names := ctx.entry.runtime_data.store.audio["names"]) \
+                and ctx.entry.runtime_data.capabilities.module_enabled(domain_id(), "wakeword"):
+            # Whisper writes words it saw in the prompt the same way, so the wake word is spelled right
+            # (only with the wake word on: otherwise the names would just bend what is heard)
             prompt = " ".join(filter(None, [", ".join(n.capitalize() for n in names) + ".", prompt]))
         heard = await ctx.audio.async_stt(pcm, prompt) or {}
         text = (heard.get("text") or "").strip()

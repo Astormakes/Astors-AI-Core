@@ -31,7 +31,7 @@
       "type": "bool",
       "title": "Tell the recognizer AAC's names",
       "default": true,
-      "help": "So a name like \"Computer\" is written correctly in a German sentence too (the wake word needs it spelled right)."
+      "help": "Only while the Wake word module is on: so a name like \"Computer\" is written correctly in a German sentence too."
     },
     "filter": {
       "type": "bool",

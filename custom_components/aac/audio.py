@@ -19,6 +19,8 @@ from homeassistant.helpers import (
     entity_registry as er,
 )
 
+from .audio_hub import tts_voices
+
 STAGES = [
     ("source", "Sources", "AAC satellites stream their mic (a PC, or an HA app next to a USB/Bluetooth headset).", "built"),
     ("buffer", "Ring buffer", "Last 30 s of raw audio, RAM only, never written to disk.", "built"),
@@ -80,6 +82,7 @@ def audio_overview(hass: HomeAssistant, hub=None, settings: dict | None = None) 
             "tts": live["tts"],
             "stt_options": sorted(hass.states.async_entity_ids("stt")),
             "tts_options": sorted(hass.states.async_entity_ids("tts")),
+            "tts_voices": tts_voices(hass, live["tts"]),
         },
         # HA devices with a mic; they become sources later (planned)
         "candidates": _sources(hass),

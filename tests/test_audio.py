@@ -5,6 +5,7 @@ from array import array
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.aac.audio_hub import EnergyVad, Segmenter
 from custom_components.aac.modules import async_set_access
@@ -448,7 +449,7 @@ async def test_a_split_segment_gets_a_voice_per_sentence(hass: HomeAssistant, ha
     assert [x["text"] for x in speech] == ["First sentence here.", "Second one there."]
     assert [x["speaker"]["name"] for x in speech] == ["voice #1", "voice #2"]
     assert speech[0]["time"] < speech[1]["time"] and speech[0]["seconds"] > 1
-    assert prompts[0] == "Computer."  # AAC's names, so the recognizer spells them right (no line before yet)
+    assert prompts[0] is None  # no line before; AAC's names only go in while the wake word module is on
 
 
 def test_voices_that_sound_the_same_are_merged():
@@ -639,3 +640,38 @@ async def test_mood_on_spoken_lines(hass: HomeAssistant, hass_client, mock_entry
     assert [mood_word(x) for x in speech] == ["sounds happy", None, None]
     message = {"role": "user", "via": "voice", "mic": "PC", "voice": "voice #1", "mood": "sounds happy", "text": "hi"}
     assert spoken(message) == "[spoken at the microphone 'PC' by voice #1, sounds happy] hi"
+
+
+async def test_answers_are_read_in_their_languages_voice(hass: HomeAssistant, mock_entry, configured):
+    """German answers were read by an English voice (2026-10-20): each answer gets the owner's voice for its language,
+    and the engine's default when that voice fails."""
+    from unittest.mock import MagicMock, patch
+
+    from custom_components.aac.audio_hub import guess_language
+
+    assert guess_language("Ja, das Licht im Schlafzimmer ist gerade an.") == "de"
+    assert guess_language("The bed light is on now.") == "en"
+    await setup_aac(hass, mock_entry)
+    hub = mock_entry.runtime_data.audio
+    await mock_entry.runtime_data.store.async_update_audio(
+        {"voices": {"de": {"language": "de_DE", "voice": "de_DE-thorsten-high"}}})
+    asked = []
+
+    def create(_hass, engine, language, options):
+        asked.append((language, options.get("voice")))
+        if options.get("voice") == "broken":
+            raise HomeAssistantError("no such voice")
+        stream = MagicMock()
+
+        async def result():
+            yield b"RIFF"
+        stream.async_stream_result = result
+        return stream
+
+    with patch.object(hub, "engine", return_value="tts.piper"), \
+            patch("custom_components.aac.audio_hub.tts.async_create_stream", side_effect=create):
+        assert await hub.async_tts("Das Licht ist an.") == b"RIFF"
+        assert await hub.async_tts("The light is on.") == b"RIFF"
+        await mock_entry.runtime_data.store.async_update_audio({"voices": {"en": {"language": "en_US", "voice": "broken"}}})
+        assert await hub.async_tts("The light is on.") == b"RIFF"
+    assert asked == [("de_DE", "de_DE-thorsten-high"), (None, None), ("en_US", "broken"), (None, None)]

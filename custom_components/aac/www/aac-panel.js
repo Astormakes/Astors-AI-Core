@@ -1959,6 +1959,14 @@ class AacPanel extends HTMLElement {
           <input id="au-volume" data-nosave type="range" min="0" max="100" step="5" value="${esc(set.volume ?? 40)}" style="width:100%">
           <label>Speech to text</label>${this._roleSummary("stt", eng.stt)}
           <label>Voice (text to speech) ${tip(`Engines come from the voice pool below: speech models from Compute (e.g. a multilingual whisper; without a language it detects German, English, … per sentence) or HA's engines, in your order, with fallback. HA's own voice assistants stay as they are.`)}</label>${this._roleSummary("tts", eng.tts)}
+          ${[["de", "German"], ["en", "English"]].map(([lang, title]) => {
+            const cur = (set.voices || {})[lang], opts = (eng.tts_voices || {})[lang] || [];
+            return `<label for="au-voice-${lang}">Voice for ${title} answers ${tip(`AAC looks at the language of each answer and reads it with this voice. Empty = the engine's default voice.`)}</label>
+              <select id="au-voice-${lang}"><option value="">(engine's default)</option>${opts.map((v) => {
+                const val = `${v.language}|${v.voice}`;
+                return `<option value="${esc(val)}" ${cur && `${cur.language}|${cur.voice}` === val ? "selected" : ""}>${esc(v.name || v.voice)}</option>`;
+              }).join("")}</select>`;
+          }).join("")}
           ${this._flashHtml()}
         </div>
         <div class="card"><h2>PIPELINE ${tip(`Every source gets its own light pipeline; the heavy parts are shared.`)}</h2>
@@ -2573,6 +2581,8 @@ class AacPanel extends HTMLElement {
       names: sr.querySelector("#au-names").value.split(",").map((n) => n.trim()).filter(Boolean),
       pause_ms: Number(sr.querySelector("#au-pause").value) || 800,
       language: sr.querySelector("#au-lang").value.trim() || null,
+      voices: Object.fromEntries(["de", "en"].map((lang) => [lang, sr.querySelector(`#au-voice-${lang}`)?.value])
+        .filter(([, v]) => v).map(([lang, v]) => { const [language, voice] = v.split("|"); return [lang, { language, voice }]; })),
     });
   }
 
