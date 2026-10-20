@@ -34,6 +34,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from .const import LOGGER
+from .languages import code_of, detect
 from .chats import strip_marks
 from .models import resolve_model
 from .pools import is_entity
@@ -93,32 +94,15 @@ def _fold(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if c.isalpha())
 
 
-# Words only one of the two languages uses a lot (for picking the voice of an answer)
-_WORDS = {
-    "de": re.compile(r"\b(ich|du|und|der|die|das|ist|nicht|ein|eine|ja|nein|bitte|habe|hast|wir|es|auf|mit|für|zu|"
-                     r"den|dem|noch|schon|gerade|jetzt|kann|sind|aus|an)\b"),
-    "en": re.compile(r"\b(i|you|and|the|is|not|a|an|yes|no|please|have|we|it|on|with|for|to|of|are|now|can|"
-                     r"just|still|off)\b"),
-}
-
-
-def guess_language(text: str) -> str:
-    """de or en, by common words (umlauts count for German)."""
-    low = text.lower()
-    de = len(_WORDS["de"].findall(low)) + 2 * sum(low.count(c) for c in "äöüß")
-    return "de" if de > len(_WORDS["en"].findall(low)) else "en"
-
-
-def tts_voices(hass: HomeAssistant, engine: str | None, languages=("de", "en")) -> dict[str, list[dict[str, str]]]:
+def tts_voices(hass: HomeAssistant, engine: str | None) -> dict[str, list[dict[str, str]]]:
     """The engine's voices per language (de → every de_* locale), for choosing one in the panel."""
-    found: dict[str, list[dict[str, str]]] = {lang: [] for lang in languages}
+    found: dict[str, list[dict[str, str]]] = {}
     if not engine or (instance := tts.get_engine_instance(hass, engine)) is None:
         return found
     for code in instance.supported_languages or []:
-        lang = code.replace("-", "_").split("_")[0].lower()
-        if lang in found:
+        if lang := code_of(code):
             for v in instance.async_get_supported_voices(code) or []:
-                found[lang].append({"language": code, "voice": v.voice_id, "name": v.name})
+                found.setdefault(lang, []).append({"language": code, "voice": v.voice_id, "name": v.name})
     return found
 
 
@@ -430,8 +414,24 @@ class AudioHub:
                                     "addressed": False, "seconds": round(seconds, 1), "loudness_db": loudness_db(pcm),
                                     "stage": stage.id, **item})
 
+    def saw_language(self, value: str | None) -> None:
+        """Count a language heard or spoken (the panel proposes voices for these); saved when it is new."""
+        if not (code := code_of(value)):
+            return
+        seen = self.entry.runtime_data.store.audio.setdefault("languages_seen", {})
+        seen[code] = seen.get(code, 0) + 1
+        if seen[code] == 1:
+            self.entry.async_create_background_task(
+                self.hass, self.entry.runtime_data.store.async_save(), "aac language seen")
+
+    def languages_in_use(self) -> list[str]:
+        """Languages heard or spoken more than a couple of times (one misheard line does not count)."""
+        return [c for c, n in (self.entry.runtime_data.store.audio.get("languages_seen") or {}).items() if n >= 3]
+
     def _add_line(self, source: Source, line: dict[str, Any]) -> None:
         """Into the buffer, and to the hearing modules (the core only hears; they decide what to do)."""
+        if line.get("kind", "speech") == "speech":
+            self.saw_language(line.get("language"))
         earlier = [x for x in self.transcript if x["source"] == source.id][-EARLIER_LINES:]
         self.transcript.append(line)
         async_notify(self.hass, "audio")
@@ -559,12 +559,15 @@ class AudioHub:
     # ------------------------------------------------------------ speaking
     async def async_tts(self, text: str) -> bytes | None:
         """Text to speech (WAV) with the chosen HA engine, in the owner's voice for the text's language
-        (owner, 2026-10-20: German answers were read by an English voice)."""
+        (owner, 2026-10-20: German answers were read by an English voice; any language, not only de/en)."""
         engine = self.engine("tts")
         if not engine:
             LOGGER.warning("AAC audio: no text-to-speech engine")
             return None
-        picked = (self.entry.runtime_data.store.audio.get("voices") or {}).get(guess_language(text))
+        voices = self.entry.runtime_data.store.audio.get("voices") or {}
+        lang = detect(text, [*voices, *self.languages_in_use()])
+        self.saw_language(lang)
+        picked = voices.get(lang)
         options = {tts.ATTR_PREFERRED_FORMAT: "wav", tts.ATTR_PREFERRED_SAMPLE_RATE: 22050,
                    tts.ATTR_PREFERRED_SAMPLE_CHANNELS: 1, tts.ATTR_PREFERRED_SAMPLE_BYTES: 2}
         tries = [(picked["language"], {**options, tts.ATTR_VOICE: picked["voice"]})] if picked else []

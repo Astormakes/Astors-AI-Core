@@ -1959,14 +1959,7 @@ class AacPanel extends HTMLElement {
           <input id="au-volume" data-nosave type="range" min="0" max="100" step="5" value="${esc(set.volume ?? 40)}" style="width:100%">
           <label>Speech to text</label>${this._roleSummary("stt", eng.stt)}
           <label>Voice (text to speech) ${tip(`Engines come from the voice pool below: speech models from Compute (e.g. a multilingual whisper; without a language it detects German, English, … per sentence) or HA's engines, in your order, with fallback. HA's own voice assistants stay as they are.`)}</label>${this._roleSummary("tts", eng.tts)}
-          ${[["de", "German"], ["en", "English"]].map(([lang, title]) => {
-            const cur = (set.voices || {})[lang], opts = (eng.tts_voices || {})[lang] || [];
-            return `<label for="au-voice-${lang}">Voice for ${title} answers ${tip(`AAC looks at the language of each answer and reads it with this voice. Empty = the engine's default voice.`)}</label>
-              <select id="au-voice-${lang}"><option value="">(engine's default)</option>${opts.map((v) => {
-                const val = `${v.language}|${v.voice}`;
-                return `<option value="${esc(val)}" ${cur && `${cur.language}|${cur.voice}` === val ? "selected" : ""}>${esc(v.name || v.voice)}</option>`;
-              }).join("")}</select>`;
-          }).join("")}
+          ${this._voicePicks(set, eng)}
           ${this._flashHtml()}
         </div>
         <div class="card"><h2>PIPELINE ${tip(`Every source gets its own light pipeline; the heavy parts are shared.`)}</h2>
@@ -1974,6 +1967,27 @@ class AacPanel extends HTMLElement {
         </div>
       </div>
       ${this._poolCard("voice")}`);
+  }
+
+  // A voice per language: the languages heard or spoken here (most first) and those with a voice are shown;
+  // every other language the engine has stays folded away
+  _voicePicks(set, eng) {
+    const avail = eng.tts_voices || {}, names = eng.language_names || {}, chosen = set.voices || {};
+    const seen = set.languages_seen || {};
+    const shown = [...new Set([...Object.keys(seen).sort((a, b) => seen[b] - seen[a]), ...Object.keys(chosen)])]
+      .filter((l) => avail[l]);
+    const rest = Object.keys(avail).filter((l) => !shown.includes(l)).sort((a, b) => (names[a] || a).localeCompare(names[b] || b));
+    const pick = (lang) => {
+      const cur = chosen[lang];
+      return `<label for="au-voice-${lang}">${esc(names[lang] || lang)}${seen[lang] ? ` <span class="hint">· heard or spoken ${seen[lang]}×</span>` : ""}</label>
+        <select id="au-voice-${lang}" data-voice-lang="${lang}"><option value="">(engine's default)</option>${avail[lang].map((v) => {
+          const val = `${v.language}|${v.voice}`;
+          return `<option value="${esc(val)}" ${cur && `${cur.language}|${cur.voice}` === val ? "selected" : ""}>${esc(v.name || v.voice)}</option>`;
+        }).join("")}</select>`;
+    };
+    return `<label>Voice per language ${tip(`AAC detects the language of each answer (any language) and reads it with the voice you pick for it. Shown: the languages heard or spoken here and those with a voice; the rest is folded away. Empty = the engine's default voice.`)}</label>
+      ${shown.map(pick).join("") || '<p class="hint">No language heard yet.</p>'}
+      ${rest.length ? `<details><summary class="hint" style="cursor:pointer">All languages (${rest.length})</summary>${rest.map(pick).join("")}</details>` : ""}`;
   }
 
   // The live view of the audio page (refreshed a few times a second while it is open)
@@ -2581,7 +2595,7 @@ class AacPanel extends HTMLElement {
       names: sr.querySelector("#au-names").value.split(",").map((n) => n.trim()).filter(Boolean),
       pause_ms: Number(sr.querySelector("#au-pause").value) || 800,
       language: sr.querySelector("#au-lang").value.trim() || null,
-      voices: Object.fromEntries(["de", "en"].map((lang) => [lang, sr.querySelector(`#au-voice-${lang}`)?.value])
+      voices: Object.fromEntries([...sr.querySelectorAll("[data-voice-lang]")].map((el) => [el.dataset.voiceLang, el.value])
         .filter(([, v]) => v).map(([lang, v]) => { const [language, voice] = v.split("|"); return [lang, { language, voice }]; })),
     });
   }

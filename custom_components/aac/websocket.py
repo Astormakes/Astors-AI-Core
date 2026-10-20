@@ -317,7 +317,7 @@ def ws_audio(hass: HomeAssistant, connection, msg) -> None:
         vol.Optional("names"): [vol.All(str, vol.Length(min=1))],
         vol.Optional("volume"): vol.All(vol.Coerce(int), vol.Range(0, 100)),
         vol.Optional("pause_ms"): vol.All(vol.Coerce(int), vol.Range(200, 3000)),
-        vol.Optional("voices"): {vol.In(["de", "en"]): {vol.Required("language"): str, vol.Required("voice"): str}},
+        vol.Optional("voices"): {str: {vol.Required("language"): str, vol.Required("voice"): str}},
     }
 )
 @websocket_api.require_admin

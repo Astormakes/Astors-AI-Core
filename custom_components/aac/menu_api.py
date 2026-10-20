@@ -23,6 +23,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
+from .const import DOMAIN
+
 MENU_API_ID = "aac_menu"
 
 # One line per area (by the tool namespace HA gives an API: its name, slugified)
@@ -91,6 +93,7 @@ def _area(menu: Menu, wanted: str) -> str | None:
 class OpenAreaTool(llm.Tool):
     """An area's instructions and tools."""
 
+    integration = DOMAIN
     name = "open_area"
     description = "Open an area of tools: you get how to use it and its tools (call them with use_tool)."
     parameters = vol.Schema({vol.Required("area"): str})
@@ -112,6 +115,7 @@ class OpenAreaTool(llm.Tool):
 class UseToolTool(llm.Tool):
     """Call a tool of an opened area."""
 
+    integration = DOMAIN
     name = "use_tool"
     description = "Call a tool of an area you opened, by its full name (e.g. aac-lists__lists), with its arguments."
     parameters = vol.Schema({vol.Required("tool"): str, vol.Optional("arguments", default={}): dict})

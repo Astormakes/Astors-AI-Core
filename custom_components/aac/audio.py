@@ -20,6 +20,7 @@ from homeassistant.helpers import (
 )
 
 from .audio_hub import tts_voices
+from .languages import NAMES
 
 STAGES = [
     ("source", "Sources", "AAC satellites stream their mic (a PC, or an HA app next to a USB/Bluetooth headset).", "built"),
@@ -82,7 +83,8 @@ def audio_overview(hass: HomeAssistant, hub=None, settings: dict | None = None) 
             "tts": live["tts"],
             "stt_options": sorted(hass.states.async_entity_ids("stt")),
             "tts_options": sorted(hass.states.async_entity_ids("tts")),
-            "tts_voices": tts_voices(hass, live["tts"]),
+            "tts_voices": (voices := tts_voices(hass, live["tts"])),
+            "language_names": {code: NAMES.get(code, code) for code in voices},
         },
         # HA devices with a mic; they become sources later (planned)
         "candidates": _sources(hass),

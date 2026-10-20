@@ -25,7 +25,7 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
-from . import websocket
+from . import languages, websocket
 from .const import (
     CONF_BASE_URL,
     CONF_MAX_TOKENS,
@@ -181,6 +181,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         CalendarProvider("core", "AAC's plans and timed triggers", plans, update=change_plan, delete=cancel_plan)
     )
     entry.runtime_data.audio = AudioHub(hass, entry)
+    try:
+        await hass.async_add_import_executor_job(languages.load)
+    except Exception as err:  # noqa: BLE001 - without it, answers use the engine's default voice
+        LOGGER.warning("AAC: language detection unavailable: %s", err)
 
     async def embed(texts: list[str]):
         if (picked := broker.endpoint("memory")) is None:

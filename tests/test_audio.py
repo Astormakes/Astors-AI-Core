@@ -647,10 +647,12 @@ async def test_answers_are_read_in_their_languages_voice(hass: HomeAssistant, mo
     and the engine's default when that voice fails."""
     from unittest.mock import MagicMock, patch
 
-    from custom_components.aac.audio_hub import guess_language
+    from custom_components.aac import languages
 
-    assert guess_language("Ja, das Licht im Schlafzimmer ist gerade an.") == "de"
-    assert guess_language("The bed light is on now.") == "en"
+    assert languages.detect("Ja, das Licht im Schlafzimmer ist gerade an.") == "de"
+    assert languages.detect("La luce della camera è accesa.") == "it"  # any language, not only de/en
+    assert languages.detect("Done.") != "en" and languages.detect("Done.", ["de", "en"]) == "en"  # short: among those in use
+    assert languages.code_of("german") == "de" and languages.code_of("de_DE") == "de"  # whisper.cpp / TTS locales
     await setup_aac(hass, mock_entry)
     hub = mock_entry.runtime_data.audio
     await mock_entry.runtime_data.store.async_update_audio(
@@ -675,3 +677,4 @@ async def test_answers_are_read_in_their_languages_voice(hass: HomeAssistant, mo
         await mock_entry.runtime_data.store.async_update_audio({"voices": {"en": {"language": "en_US", "voice": "broken"}}})
         assert await hub.async_tts("The light is on.") == b"RIFF"
     assert asked == [("de_DE", "de_DE-thorsten-high"), (None, None), ("en_US", "broken"), (None, None)]
+    assert mock_entry.runtime_data.store.audio["languages_seen"] == {"de": 1, "en": 2}  # proposed in the panel
