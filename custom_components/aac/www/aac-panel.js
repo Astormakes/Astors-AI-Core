@@ -2028,7 +2028,20 @@ class AacPanel extends HTMLElement {
       this._render();
     });
     sr.querySelector("#dom-toggle")?.addEventListener("click", () => { this._domainMenu = !this._domainMenu; this._render(); });
-    sr.querySelectorAll(".qm").forEach((el) => el.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); el.focus(); }));
+    sr.querySelectorAll(".qm").forEach((el) => {
+      el.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); el.focus(); });
+      // keep the tip inside the page (not under the sidebar or off the right edge)
+      const place = () => {
+        const t = el.querySelector(".tip"), box = sr.querySelector(".content")?.getBoundingClientRect();
+        if (!t || !box || innerWidth <= 700) return;
+        t.style.left = ""; t.style.display = "block";
+        const r = t.getBoundingClientRect();
+        const dx = r.left < box.left + 8 ? box.left + 8 - r.left : r.right > box.right - 8 ? box.right - 8 - r.right : 0;
+        t.style.left = `calc(50% + ${dx}px)`; t.style.display = "";
+      };
+      el.addEventListener("mouseenter", place);
+      el.addEventListener("focus", place);
+    });
     sr.querySelectorAll("[data-mod-menu]").forEach((el) => el.addEventListener("click", (e) => {
       e.stopPropagation();  // not the tab under it
       this._modMenu = this._modMenu === el.dataset.modMenu ? null : el.dataset.modMenu;
