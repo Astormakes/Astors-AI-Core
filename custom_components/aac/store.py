@@ -357,6 +357,10 @@ class AACStore:
         data["pools"].update({role: [r for r in items if r] for role, items in pools.items()})
         for key in ("stt", "tts"):
             data["audio"].pop(key, None)
+        # The Mood module was removed in 0.43 (owner: "not helping, just clutter"): its role and settings go too
+        data["pools"].pop("mood", None)
+        for per_domain in (*data["module_access"].values(), *data["module_settings"].values()):
+            per_domain.pop("mood", None)
         self.data = data
         self.domains = {d["id"]: DomainSettings(self, d) for d in data["domains"]}
 

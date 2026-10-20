@@ -14,7 +14,6 @@ from typing import Any
 
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from ...audio_hub import mood_word
 from ...capabilities import Hearing
 from ...const import LOGGER
 from ...provider import OpenAICompatProvider, ProviderError
@@ -110,6 +109,6 @@ async def async_setup_module(ctx: ModuleContext) -> None:
                   and datetime.fromisoformat(x["time"]) >= since and x.get("kind") == "speech"
                   # with voices known: only the same person (not a video or others in the room)
                   and (not voice or (x.get("speaker") or {}).get("id") == voice)]
-        await hub.async_answer(source, text, before, line.get("speaker"), mood=mood_word(line))
+        await hub.async_answer(source, text, before, line.get("speaker"))
 
     ctx.add_hearing(Hearing(id="wakeword", title="Wake word", heard=heard))

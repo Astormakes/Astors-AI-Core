@@ -1,8 +1,8 @@
 # AAC senses
 
 A small HTTP service for AAC's audio stages: a **sound tagger** (AudioSet, ~500 classes: music, laughter,
-a door, a motorbike …), **voice prints** (who is talking) and **moods** (how a voice sounds: neutral, happy,
-angry, sad). CPU is enough. Leave out what you don't use: `--no-tagger`, `--no-voices`, `--no-mood`.
+a door, a motorbike …), and **voice prints** (who is talking). CPU is enough. Leave out what you don't use: `--no-tagger`,
+`--no-voices`.
 
 ```
 python3 -m venv venv
@@ -12,11 +12,9 @@ python3 -m venv venv
 ```
 
 Then in AAC: Compute → Add model (base URL `http://<machine>:8083/v1`, model `aac-senses`) and put it into
-the voice pool's **Sound tagger**, **Voice prints** and **Mood** roles (Audio pipeline page). Modules: Sounds,
-Voices, Mood.
+the voice pool's **Sound tagger** and **Voice prints** roles (Audio pipeline page). Modules: Sounds, Voices.
 
-Endpoints: `GET /v1/models`, `POST /v1/audio/tags`, `POST /v1/audio/voiceprint`, `POST /v1/audio/mood`
+Endpoints: `GET /v1/models`, `POST /v1/audio/tags`, `POST /v1/audio/voiceprint`
 (16-bit mono WAV body).
-Models: `MIT/ast-finetuned-audioset-10-10-0.4593`, `microsoft/wavlm-base-plus-sv`,
-`superb/wav2vec2-base-superb-er` (or `--mood-model <any audio classification model>`). ~0.8 s per call on a
+Models: `MIT/ast-finetuned-audioset-10-10-0.4593`, `microsoft/wavlm-base-plus-sv`. ~0.8 s per call on a
 modern desktop CPU (4 threads); an old server CPU needs a lighter tagger.

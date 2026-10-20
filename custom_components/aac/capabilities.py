@@ -46,7 +46,7 @@ class Stage:
     """A module that works on the audio and adds what it finds to the buffer.
 
     kind "segment": run(source, pcm, line) for every speech segment, in `order`; returns fields for the line
-        (text, language, speaker, mood, …), {"drop": True} to throw the segment away, or None.
+        (text, language, speaker, …), {"drop": True} to throw the segment away, or None.
         partial(source, pcm) → the text so far while someone still talks (optional, for the live view).
     kind "window": run(source, pcm) every `window` seconds of all audio (speech or not); returns lines of
         their own, e.g. [{"text": "[beeping]", "labels": [...]}] (sound captions).

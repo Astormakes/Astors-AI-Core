@@ -256,14 +256,14 @@ async def test_stages_fill_the_buffer(hass: HomeAssistant, hass_client, mock_ent
     hub, caps = mock_entry.runtime_data.audio, mock_entry.runtime_data.capabilities
     seen: list[str] = []
 
-    async def mood(source, pcm, line):
+    async def tone(source, pcm, line):
         seen.append(line["text"])  # runs after speech to text (order)
-        return {"mood": "calm"}
+        return {"tone": "calm"}
 
     async def sounds(source, pcm):
         return [{"text": "[beeping]", "labels": [["Beep", 0.8]]}]
 
-    caps.add_stage(Stage(id="mood", title="Mood", kind="segment", run=mood, order=30))
+    caps.add_stage(Stage(id="tone", title="Tone", kind="segment", run=tone, order=30))
     caps.add_stage(Stage(id="sounds", title="Sounds", kind="window", run=sounds, window=1.0))
     client = await hass_client()
     with (
@@ -284,7 +284,7 @@ async def test_stages_fill_the_buffer(hass: HomeAssistant, hass_client, mock_ent
         await ws.close()
     await hass.async_block_till_done(wait_background_tasks=True)
     speech = [x for x in hub.transcript if x["kind"] == "speech"]
-    assert [(x["text"], x.get("mood")) for x in speech] == [("hello there", "calm"), ("", "calm")]
+    assert [(x["text"], x.get("tone")) for x in speech] == [("hello there", "calm"), ("", "calm")]
     assert seen == ["hello there", ""] and speech[0]["seconds"] > 0.5 and speech[0]["loudness_db"] < 0
     assert any(x["kind"] == "sound" and x["text"] == "[beeping]" for x in hub.transcript)
 
@@ -606,41 +606,6 @@ def test_only_the_same_voice_goes_along():
     line = {"kind": "speech", "text": "That was for you.", "speaker": me, "time": "2026-10-19T21:57:59+00:00"}
     assert same_voice(lines, line) == ["Hm."]
     assert same_voice(lines, {**line, "speaker": None}) == []
-
-
-async def test_mood_on_spoken_lines(hass: HomeAssistant, hass_client, mock_entry, configured):
-    """The Mood module gives spoken lines the mood the model hears; only a clear, not neutral one is passed on."""
-    from custom_components.aac.audio_hub import mood_word
-    from custom_components.aac.chats import spoken
-
-    await setup_aac(hass, mock_entry)
-    await async_set_access(mock_entry, "mood", "assistant", {"enabled": True})
-    hub = mock_entry.runtime_data.audio
-    moods = iter([[["happy", 0.82], ["neutral", 0.1]], [["neutral", 0.9]], [["sad", 0.4], ["neutral", 0.35]]])
-
-    async def senses(role, path, pcm):
-        return {"moods": next(moods)} if role == "mood" else None
-
-    client = await hass_client()
-    with (
-        patch("custom_components.aac.audio_hub.make_vad", return_value=EnergyVad()),
-        patch.object(hub, "async_stt", AsyncMock(return_value={"text": "hello there"})),
-        patch.object(hub, "async_senses", side_effect=senses),
-    ):
-        ws = await client.ws_connect("/api/aac/audio")
-        await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "rate": 16000})
-        await ws.receive_json()
-        for _ in range(3):
-            await ws.send_bytes(_audio((SILENCE, 0.3), (LOUD, 2.0), (SILENCE, 1)))
-            await hass.async_block_till_done(wait_background_tasks=True)
-            await asyncio.sleep(0.05)
-        await ws.close()
-    await hass.async_block_till_done(wait_background_tasks=True)
-    speech = [x for x in hub.transcript if x["kind"] == "speech"]
-    assert [x["mood"]["label"] for x in speech] == ["happy", "neutral", "sad"]
-    assert [mood_word(x) for x in speech] == ["sounds happy", None, None]
-    message = {"role": "user", "via": "voice", "mic": "PC", "voice": "voice #1", "mood": "sounds happy", "text": "hi"}
-    assert spoken(message) == "[spoken at the microphone 'PC' by voice #1, sounds happy] hi"
 
 
 async def test_answers_are_read_in_their_languages_voice(hass: HomeAssistant, mock_entry, configured):
