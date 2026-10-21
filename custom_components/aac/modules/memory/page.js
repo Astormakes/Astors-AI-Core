@@ -89,7 +89,8 @@ class AacMemoryPage extends HTMLElement {
     if (!m) { this.innerHTML = `<div class="card"><p>${this._error ? esc(this._error) : "Loading…"}</p></div>`; return; }
     const stats = m.stats || {};
     const role = this.panel?._state?.pools?.roles?.memory;
-    const model = role?.items?.length ? (role.items.find((i) => i.id === role.active) || role.items[0]).name || role.items[0].id : "none (keywords only)";
+    const id = role?.items?.length ? role.active || role.items[0].id : null;
+    const model = !id ? "none (keywords only)" : this.panel?._resourceLabel ? this.panel._resourceLabel(id) : id;
     const rows = !m.memories.length ? `<p class="hint">${this._query ? "Nothing found." : "Nothing remembered yet."}</p>` :
       m.memories.map((x) => `
         <div class="src">
