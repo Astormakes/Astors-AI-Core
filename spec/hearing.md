@@ -1,24 +1,33 @@
-# Hearing (contract 1)
+# Hearing (contract 2)
 
 What AAC's microphones hear is a shared interface, like the calendar: the core only hears,
-modules decide what to do with it. Owner decision 2026-10-19.
+modules decide what to do with it. Owner decision 2026-10-19. Since 0.46 it runs on the
+[stream bus](streams.md): the stages and the hearing modules are nodes (contract 2; contract 1 had
+`add_stage` / `add_hearing`).
 
 ## Core
 - Sources (satellites, the HA app, later the browser), RAM ring buffers, voice activity, speech to text
   (the voice pool), the transcript (RAM, last lines), speaking (`async_say`, at the owner's volume) and
   answering through the master (`async_answer`).
-- Every new transcript line is handed to each **hearing module that is on in the voice domain**.
+- The core's node `hearing` writes `audio.pcm` (to media readers), `audio.segment` (through the annotating
+  nodes) and every finished line as `text.line` to each **hearing module that is on in the voice domain**.
 
-## Audio stages (modules that fill the buffer)
+## Audio stages (nodes that fill the buffer)
 ```python
-ctx.add_stage(Stage(id="stt", title="Speech to text", kind="segment", run=run, partial=partial, order=10))
+seg = {"speech": "audio.segment"}
+ctx.add_node(Node(id="stt", title="Speech to text", inputs=seg, outputs=seg, adds=["text", "language"],
+                  order=10, annotate=run, partial=partial))
+ctx.add_node(Node(id="sounds", title="Sounds", inputs={"audio": "audio.pcm"}, outputs={"events": "sound.event"},
+                  listen=between, window=2.0))
 ```
-- **segment** stages run on every speech segment, in `order`: `run(source, pcm, line)` returns fields for the
-  line (`text`, `language`, `speaker`, …), `{"drop": True}` to throw it away, or None.
+- **annotating** nodes on `audio.segment` run on every speech segment as a chain, lowest `order` first:
+  `annotate(source, pcm, line)` returns fields for the line (`text`, `language`, `speaker`, …), `{"drop": True}`
+  to throw it away, `{"split": [...]}` (one line per sentence; the later nodes work on each part), or None.
   `partial(source, pcm)` gives the text so far while someone still talks (live view).
-- **window** stages run on all audio (speech or not) every `window` seconds: `run(source, pcm)` returns lines
-  of their own, kind `sound`, e.g. `[{"text": "[beeping]", "labels": [["Beep", 0.8]]}]`.
-- Only stages whose module is on in the voice domain run. Without any, a segment is still a speech line
+- **media readers** on `audio.pcm` get all audio (speech or not) every `window` seconds: `listen(source, pcm)`
+  returns records of their own, kind `sound`, e.g. `[{"text": "[beeping]", "labels": [["Beep", 0.8]]}]`: each
+  goes out on the node's output (`sound.event`) and into the buffer as a line.
+- Only nodes whose module is on in the voice domain run. Without any, a segment is still a speech line
   without text (length and loudness are measured by the core).
 
 AAC's own spoken answers are buffer lines too (kind `aac`), so modules see both sides of a conversation.
@@ -36,12 +45,14 @@ modules (speaker, loudness, media vs. live, room/position) — all optional, lik
 
 ## A hearing module
 ```python
-ctx.add_hearing(Hearing(id="wakeword", title="Wake word", heard=heard))
+ctx.add_node(Node(id="wakeword", title="Wake word", inputs={"lines": "text.line"}, run=on_line))
 
-async def heard(source, line, earlier):  # earlier: the source's previous lines, oldest first
+async def on_line(domain_id, port, line):  # the same object as in the buffer: marks show in the transcript
+    source, earlier = ctx.audio.source_of(line), ctx.audio.earlier(line)  # earlier: oldest first
     ...
 ```
-Helpers on `ctx.audio`: `mentions(text)` (one of AAC's names, as whole words or written a little differently: similarity ≥ 0.8, names of 5+ letters, not a longer word starting with it), `async_stt(pcm)` (the voice pool's speech
+Hearing modules get each line at the same time (one answering does not hold up the others).
+Helpers on `ctx.audio`: `source_of(line)`, `earlier(line)`, `mentions(text)` (one of AAC's names, as whole words or written a little differently: similarity ≥ 0.8, names of 5+ letters, not a longer word starting with it), `async_stt(pcm)` (the voice pool's speech
 engines), `async_answer(source, text, before)`,
 `async_say(source, text)`, `changed()` (the panel shows a marked line).
 

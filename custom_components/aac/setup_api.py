@@ -125,7 +125,7 @@ class SetupStatusTool(_SetupTool):
                     "text_to_speech_now": audio["engines"]["tts"], "ha_tts_engines": audio["engines"]["tts_options"],
                     "your_names": store.audio["names"],
                     "volume": store.audio.get("volume", 40),
-                    "hearing_modules_on": [h.title for h in data.capabilities.listeners(data.voice_domain.id)],
+                    "hearing_modules_on": data.audio.hearing(),
                     "how_to_add_a_source": "Run the AAC satellite program (satellite/ in the AAC repository) on the "
                     "machine with the microphone; see its README.",
                 },

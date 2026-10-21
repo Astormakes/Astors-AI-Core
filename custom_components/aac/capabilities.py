@@ -36,43 +36,8 @@ CalendarChange = Callable[[str, str, dict[str, Any], str | None], Awaitable[dict
 CalendarRemove = Callable[[str, str, str | None], Awaitable[bool]]
 
 
-# listener(source, line, earlier) → reacts to a heard line (source: audio_hub.Source, line: the transcript
-# record, which the listener may mark: line["addressed"] = True, line["note"] = "…"; earlier: the lines
-# heard on that source before it, oldest first)
-HearingListener = Callable[[Any, dict[str, Any], list[dict[str, Any]]], Awaitable[None]]
 # open_loops(domain_id) → lines for an automatic run's "open loops" (e.g. AAC's own plans, triggers module)
 OpenLoops = Callable[[str], Awaitable[list[str]]]
-
-
-@dataclass
-class Stage:
-    """A module that works on the audio and adds what it finds to the buffer.
-
-    kind "segment": run(source, pcm, line) for every speech segment, in `order`; returns fields for the line
-        (text, language, speaker, …), {"drop": True} to throw the segment away, or None.
-        partial(source, pcm) → the text so far while someone still talks (optional, for the live view).
-    kind "window": run(source, pcm) every `window` seconds of all audio (speech or not); returns lines of
-        their own, e.g. [{"text": "[beeping]", "labels": [...]}] (sound captions).
-    """
-
-    id: str
-    title: str
-    kind: str
-    run: Callable[..., Awaitable[Any]]
-    order: int = 50
-    partial: Callable[[Any, bytes], Awaitable[str | None]] | None = None
-    window: float = 1.0
-    module: str | None = None
-
-
-@dataclass
-class Hearing:
-    """A module that listens to what AAC's microphones hear (wake word, companion, …)."""
-
-    id: str
-    title: str
-    heard: HearingListener
-    module: str | None = None  # set by the loader; only modules on in the voice domain hear
 
 
 @dataclass
@@ -94,8 +59,6 @@ class Capabilities:
     def __init__(self) -> None:
         """Initialize."""
         self.calendar: dict[str, CalendarProvider] = {}
-        self.hearing: dict[str, Hearing] = {}
-        self.stages: dict[str, Stage] = {}
         self.open_loops: dict[str, tuple[OpenLoops, str | None]] = {}  # id → (provider, module)
         # Choices for module settings that change at runtime: name → fn(domain_id) → [(value, label)]
         self.options: dict[str, Callable[[str], list[tuple[str, str]]]] = {}
@@ -103,34 +66,6 @@ class Capabilities:
         self.writer_choice: Callable[[str], str | None] | None = None
         # Is a module on in a domain? fn(domain_id, module_id) → bool (set by the module loader)
         self.module_enabled: Callable[[str, str], bool] = lambda domain_id, module_id: True
-
-    def add_hearing(self, listener: Hearing) -> Callable[[], None]:
-        """Register a listener for heard lines; returns the function that removes it again."""
-        self.hearing[listener.id] = listener
-
-        def remove() -> None:
-            self.hearing.pop(listener.id, None)
-
-        return remove
-
-    def add_stage(self, stage: Stage) -> Callable[[], None]:
-        """Register an audio stage; returns the function that removes it again."""
-        self.stages[stage.id] = stage
-
-        def remove() -> None:
-            self.stages.pop(stage.id, None)
-
-        return remove
-
-    def active_stages(self, domain_id: str, kind: str) -> list[Stage]:
-        """The stages of a kind whose module is on in that domain (the voice domain), in order."""
-        found = [s for s in self.stages.values() if s.kind == kind
-                 and (not s.module or self.module_enabled(domain_id, s.module))]
-        return sorted(found, key=lambda s: s.order)
-
-    def listeners(self, domain_id: str) -> list[Hearing]:
-        """The listeners whose module is on in that domain (the voice domain)."""
-        return [h for h in self.hearing.values() if not h.module or self.module_enabled(domain_id, h.module)]
 
     def add_open_loops(self, provider_id: str, provider: OpenLoops, module: str | None = None) -> Callable[[], None]:
         """Register lines for the open loops of automatic runs; returns the function that removes it again."""

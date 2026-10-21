@@ -2,7 +2,8 @@
 
 A module is a folder here with a `manifest.json` and Python code exposing
 `async_setup_module(ctx)`. Through the context it adds what it provides: storage
-per AAC domain, calendar entries, nodes on the stream bus (spec/streams.md), tools
+per AAC domain, calendar entries, nodes on the stream bus (spec/streams.md; the audio stages and the
+hearing modules are nodes too since 0.46), tools
 for the agents (one LLM API per domain), WebSocket commands and its own panel page. The core stays generic; it only loads
 modules and hands them the shared interfaces. External and AAC-made modules come
 later through the same context.
@@ -23,7 +24,7 @@ from homeassistant.helpers import llm
 from homeassistant.helpers.storage import Store
 from homeassistant.loader import async_get_loaded_integration
 
-from ..capabilities import CalendarProvider, Hearing, Stage
+from ..capabilities import CalendarProvider
 from ..const import DOMAIN, LOGGER
 from ..streams import Node
 
@@ -101,16 +102,6 @@ class ModuleContext:
         """Provide (and maybe take) calendar entries (not in domains where the module is off)."""
         provider.module = self.module.id
         self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_calendar(provider))
-
-    def add_hearing(self, listener: Hearing) -> None:
-        """Hear what AAC's microphones hear (only while the module is on in the voice domain)."""
-        listener.module = self.module.id
-        self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_hearing(listener))
-
-    def add_stage(self, stage: Stage) -> None:
-        """Work on the audio and add to the buffer (only while the module is on in the voice domain)."""
-        stage.module = self.module.id
-        self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_stage(stage))
 
     def add_open_loops(self, provider) -> None:
         """Lines for the open loops of every automatic run: provider(domain_id) → ["- …"] (not where the module is off)."""

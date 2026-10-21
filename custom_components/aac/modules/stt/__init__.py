@@ -9,7 +9,7 @@ import re
 import time
 from typing import Any
 
-from ...capabilities import Stage
+from ...streams import Node
 from ...languages import code_of
 from ...pools import is_entity
 from .. import ModuleContext
@@ -71,7 +71,8 @@ async def async_setup_module(ctx: ModuleContext) -> None:
             return None  # HA's CPU engines are too slow to transcribe every second
         return ((await ctx.audio.async_stt(pcm)) or {}).get("text", "").strip() or None
 
-    ctx.add_stage(Stage(id="stt", title="Speech to text", kind="segment", run=run, partial=partial, order=10))
+    ctx.add_node(Node(id="stt", title="Speech to text", inputs={"speech": "audio.segment"}, outputs={"speech": "audio.segment"},
+                      adds=["text", "language", "confidence", "engine", "words"], order=10, annotate=run, partial=partial))
 
 
 MIN_PART = 1.2  # seconds: shorter sentences join their neighbour (too short for a voice print)

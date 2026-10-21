@@ -40,6 +40,7 @@ from .models import resolve_model
 from .pools import is_entity
 from .provider import OpenAICompatProvider, ProviderConnectionError, ProviderError
 from .runs import async_notify
+from .streams import Node
 
 if TYPE_CHECKING:
     from . import AACConfigEntry
@@ -263,10 +264,25 @@ class AudioHub:
         self.hass = hass
         self.entry = entry
         self.sources: dict[str, Source] = {}
+        self._gone: dict[str, Source] = {}  # sources that went offline (a line heard just before still gets its answer)
         self.transcript: deque[dict[str, Any]] = deque(maxlen=TRANSCRIPT_LINES)
         # per source id: when AAC last finished speaking there, and what it said
         self.spoke: dict[str, dict[str, Any]] = {}
         self.voice_chats: dict[str, str] = {}  # per source id: the voice chat of the current session
+        # The core's audio node on the stream bus (spec/streams.md): raw audio for media readers (sound
+        # captions), each speech segment through the annotating nodes (speech to text, sounds, voices), and
+        # every finished line to the hearing modules (wake word, companion) as text.line
+        self.node = Node(id="hearing", title="Hearing", outputs={
+            "audio": "audio.pcm", "segments": "audio.segment", "lines": "text.line"})
+        entry.async_on_unload(entry.runtime_data.bus.add_node(self.node))
+
+    @property
+    def _bus(self):
+        return self.entry.runtime_data.bus
+
+    @property
+    def _domain_id(self) -> str:
+        return self.entry.runtime_data.voice_domain.id
 
     # ------------------------------------------------------------ sources
     @callback
@@ -292,6 +308,7 @@ class AudioHub:
         """A source went away."""
         if self.sources.get(source.id) is source:
             del self.sources[source.id]
+            self._gone[source.id] = source
             async_notify(self.hass, "audio")
 
     @callback
@@ -301,13 +318,11 @@ class AudioHub:
             return  # AAC is speaking there; don't listen to itself
         source.ring.append(chunk)
         seg = source.segmenter
-        stages = self.entry.runtime_data.capabilities
-        domain_id = self.entry.runtime_data.voice_domain.id
         if seg.active and not source.partial_busy and seg.frames - source.partial_at >= PARTIAL_EVERY:
-            if live := next((st for st in stages.active_stages(domain_id, "segment") if st.partial), None):
+            if live := next((n for n in self._bus.annotators(self._domain_id, "audio.segment") if n.partial), None):
                 source.partial_busy, source.partial_at = True, seg.frames
                 self.entry.async_create_background_task(self.hass, self._async_partial(source, live), f"aac partial {source.id}")
-        for stage in stages.active_stages(domain_id, "window"):  # e.g. sound captions, on all audio
+        for stage in self._bus.media_readers(self._domain_id, "audio.pcm"):  # e.g. sound captions, on all audio
             buf = source.windows.setdefault(stage.id, bytearray())
             buf += chunk
             if len(buf) >= int(stage.window * SAMPLE_RATE * 2):
@@ -354,7 +369,7 @@ class AudioHub:
         ended = dt_util.utcnow()
         seconds = len(pcm) / (SAMPLE_RATE * 2)
         start = ended - timedelta(seconds=seconds)
-        stages = self.entry.runtime_data.capabilities.active_stages(self.entry.runtime_data.voice_domain.id, "segment")
+        stages = self._bus.annotators(self._domain_id, "audio.segment")
         source.transcribing += 1
         try:
             lines = await self._async_stages(source, pcm, self._segment_line(source, pcm, start), stages)
@@ -371,7 +386,7 @@ class AudioHub:
     async def _async_stages(self, source: Source, pcm: bytes, line: dict[str, Any], stages: list) -> list[dict[str, Any]]:
         for i, stage in enumerate(stages):
             try:
-                found = await stage.run(source, pcm, line)
+                found = await stage.annotate(source, pcm, line)
             except Exception:  # noqa: BLE001 - one broken stage must not stop hearing
                 LOGGER.exception("AAC audio: stage %s failed", stage.id)
                 continue
@@ -403,16 +418,19 @@ class AudioHub:
         if source.playing:
             return  # AAC's own voice
         try:
-            found = await stage.run(source, pcm) or []
+            found = await stage.listen(source, pcm) or []
         except Exception:  # noqa: BLE001
             LOGGER.exception("AAC audio: stage %s failed", stage.id)
             return
         seconds = len(pcm) / (SAMPLE_RATE * 2)
         start = (dt_util.utcnow() - timedelta(seconds=seconds)).isoformat()
         for item in found:
-            self._add_line(source, {"time": start, "source": source.id, "name": source.name, "kind": "sound",
-                                    "addressed": False, "seconds": round(seconds, 1), "loudness_db": loudness_db(pcm),
-                                    "stage": stage.id, **item})
+            line = {"time": start, "source": source.id, "name": source.name, "kind": "sound", "addressed": False,
+                    "seconds": round(seconds, 1), "loudness_db": loudness_db(pcm), "stage": stage.id, **item}
+            # Its own output (e.g. sound.event for whoever wants only sounds), and a line in the buffer
+            for port in stage.outputs:
+                await self._bus.emit(self._domain_id, stage.id, port, {k: v for k, v in line.items() if k != "time"})
+            self._add_line(source, line)
 
     def saw_language(self, value: str | None) -> None:
         """Count a language heard or spoken (the panel proposes adding heard ones to the home's list)."""
@@ -425,22 +443,32 @@ class AudioHub:
                 self.hass, self.entry.runtime_data.store.async_save(), "aac language seen")
 
     def _add_line(self, source: Source, line: dict[str, Any]) -> None:
-        """Into the buffer, and to the hearing modules (the core only hears; they decide what to do)."""
+        """Into the buffer, and onto the bus as text.line for the hearing modules (the core only hears;
+        they decide what to do)."""
         if line.get("kind", "speech") == "speech":
             self.saw_language(line.get("language"))
-        earlier = [x for x in self.transcript if x["source"] == source.id][-EARLIER_LINES:]
         self.transcript.append(line)
         async_notify(self.hass, "audio")
-        for listener in self.entry.runtime_data.capabilities.listeners(self.entry.runtime_data.voice_domain.id):
-            self.entry.async_create_background_task(
-                self.hass, self._async_tell(listener, source, line, earlier), f"aac hearing {listener.id}"
-            )
+        self.entry.async_create_background_task(
+            self.hass, self._bus.emit(self._domain_id, "hearing", "lines", line), f"aac hearing {source.id}")
 
-    async def _async_tell(self, listener, source: Source, line: dict[str, Any], earlier: list[dict[str, Any]]) -> None:
-        try:
-            await listener.heard(source, line, earlier)
-        except Exception:  # noqa: BLE001 - one broken listener must not stop hearing
-            LOGGER.exception("AAC audio: listener %s failed", listener.id)
+    def source_of(self, line: dict[str, Any]) -> Source | None:
+        """The source a heard line came from (also when it went offline since)."""
+        return self.sources.get(line.get("source")) or self._gone.get(line.get("source"))
+
+    def earlier(self, line: dict[str, Any]) -> list[dict[str, Any]]:
+        """What was heard on the same source before a line in the buffer, oldest first (for hearing modules)."""
+        before = []
+        for x in self.transcript:
+            if x is line:
+                break
+            if x["source"] == line["source"]:
+                before.append(x)
+        return before[-EARLIER_LINES:]
+
+    def hearing(self) -> list[str]:
+        """The hearing modules that are on (they read the heard lines)."""
+        return [n.title for n in self._bus.readers(self._domain_id, "text.line")] if self.entry.runtime_data.voice_domain else []
 
     def engine(self, kind: str) -> str | None:
         """What would serve STT/TTS now: the first usable resource of the pool role, else local first."""
@@ -665,10 +693,8 @@ class AudioHub:
 
     def overview(self) -> dict[str, Any]:
         """Live state for the panel and the setup tools."""
-        data = self.entry.runtime_data
-        hearing = [h.title for h in data.capabilities.listeners(data.voice_domain.id)] if data.voice_domain else []
         return {
-            "hearing": hearing,
+            "hearing": self.hearing(),
             "connected": [s.summary() for s in self.sources.values()],
             "transcript": list(self.transcript)[-30:],
             "stt": self.engine("stt"),

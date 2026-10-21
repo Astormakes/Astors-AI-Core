@@ -20,7 +20,7 @@ from homeassistant.helpers import llm
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from ...capabilities import Stage
+from ...streams import Node
 from ...const import DOMAIN
 from .. import ModuleContext
 
@@ -212,7 +212,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
 
     ctx.hass.data.setdefault(f"{DOMAIN}_voices", {})[ctx.entry.entry_id] = (voices, keep)
     ctx.add_ws_commands(ws_voices, ws_voice_change)
-    ctx.add_stage(Stage(id="voices", title="Voices", kind="segment", run=run, order=20))
+    ctx.add_node(Node(id="voices", title="Voices", inputs={"speech": "audio.segment"}, outputs={"speech": "audio.segment"}, adds=["speaker"], order=20, annotate=run))
     ctx.add_llm_api(lambda dom, api_id, name: VoicesAPI(hass=ctx.hass, id=api_id, name=name, voices=voices, keep=keep))
 
 

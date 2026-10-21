@@ -477,6 +477,20 @@ class AacPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
+    // A module's menu: right-click opens it too; a click elsewhere or Escape closes it
+    this.shadowRoot.addEventListener("contextmenu", (e) => {
+      const wrap = e.target.closest?.("[data-mod-wrap]");
+      if (!wrap) return;
+      e.preventDefault();
+      this._modMenu = wrap.dataset.modWrap;
+      this._render();
+    });
+    this.shadowRoot.addEventListener("click", (e) => {
+      if (this._modMenu && !e.target.closest?.(".modmenu, [data-mod-menu]")) { this._modMenu = null; this._render(); }
+    });
+    this.shadowRoot.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && this._modMenu) { this._modMenu = null; this._render(); }
+    });
     this._view = null;
     this._showAll = false;
     this._autoOpen = false;
@@ -984,7 +998,7 @@ class AacPanel extends HTMLElement {
             const cls = m.hidden ? "hidden-mod" : "";
             const tabs = !m.pages.length ? this._tab(`settings/module/${m.id}`, m.name, "", `${m.enabled ? "" : "soon"} ${cls}`, more)
               : m.pages.map((p, i) => this._tab(`mod/${m.id}/${p.id}`, p.title, "", cls, i === 0 ? more : "")).join("");
-            return `<div class="modwrap">${tabs}${menu}</div>`;
+            return `<div class="modwrap" data-mod-wrap="${esc(m.id)}">${tabs}${menu}</div>`;
           }).join("")}
           ${!this._showAll && this._state.modules.some((m) => m.hidden) ? `<div class="empty" title="The eye button at the top shows them">${this._state.modules.filter((m) => m.hidden).length} hidden</div>` : ""}
         </div>` : ""}

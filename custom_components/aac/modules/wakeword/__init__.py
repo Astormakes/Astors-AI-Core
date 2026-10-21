@@ -14,7 +14,7 @@ from typing import Any
 
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from ...capabilities import Hearing
+from ...streams import Node
 from ...const import LOGGER
 from ...provider import OpenAICompatProvider, ProviderError
 from .. import ModuleContext
@@ -111,4 +111,8 @@ async def async_setup_module(ctx: ModuleContext) -> None:
                   and (not voice or (x.get("speaker") or {}).get("id") == voice)]
         await hub.async_answer(source, text, before, line.get("speaker"))
 
-    ctx.add_hearing(Hearing(id="wakeword", title="Wake word", heard=heard))
+    async def on_line(domain_id: str, port: str, line: dict[str, Any]) -> None:
+        if source := ctx.audio.source_of(line):
+            await heard(source, line, ctx.audio.earlier(line))
+
+    ctx.add_node(Node(id="wakeword", title="Wake word", inputs={"lines": "text.line"}, run=on_line))

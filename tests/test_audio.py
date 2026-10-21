@@ -250,10 +250,10 @@ def test_volume_scales_the_voice():
 async def test_stages_fill_the_buffer(hass: HomeAssistant, hass_client, mock_entry, configured):
     """Segment stages add to a speech line in order; a window stage adds sound lines of its own;
     without the speech to text module a segment is still a (textless) speech line."""
-    from custom_components.aac.capabilities import Stage
+    from custom_components.aac.streams import Node
 
     await setup_aac(hass, mock_entry)
-    hub, caps = mock_entry.runtime_data.audio, mock_entry.runtime_data.capabilities
+    hub, bus = mock_entry.runtime_data.audio, mock_entry.runtime_data.bus
     seen: list[str] = []
 
     async def tone(source, pcm, line):
@@ -263,8 +263,10 @@ async def test_stages_fill_the_buffer(hass: HomeAssistant, hass_client, mock_ent
     async def sounds(source, pcm):
         return [{"text": "[beeping]", "labels": [["Beep", 0.8]]}]
 
-    caps.add_stage(Stage(id="tone", title="Tone", kind="segment", run=tone, order=30))
-    caps.add_stage(Stage(id="sounds", title="Sounds", kind="window", run=sounds, window=1.0))
+    seg = {"speech": "audio.segment"}
+    bus.add_node(Node(id="tone", title="Tone", inputs=seg, outputs=seg, adds=["tone"], order=30, annotate=tone))
+    bus.add_node(Node(id="sounds", title="Sounds", inputs={"audio": "audio.pcm"}, outputs={"events": "sound.event"},
+                      listen=sounds, window=1.0))
     client = await hass_client()
     with (
         patch("custom_components.aac.audio_hub.make_vad", return_value=EnergyVad()),
@@ -587,11 +589,11 @@ async def test_companion_steps_back_for_the_wake_word(hass: HomeAssistant, mock_
     await async_set_access(mock_entry, "companion", "assistant", {"enabled": True})
     await async_set_access(mock_entry, "wakeword", "assistant", {"enabled": True})
     hub = mock_entry.runtime_data.audio
-    companion = mock_entry.runtime_data.capabilities.hearing["companion"]
-    source = hub.connect("pc", "PC", None, AsyncMock())
+    companion = mock_entry.runtime_data.bus.nodes["companion"]
+    hub.connect("pc", "PC", None, AsyncMock())
     with patch.object(hub, "async_answer", AsyncMock()) as answer:
-        await companion.heard(source, {"kind": "speech", "text": "what time is it", "time": "2026-10-19T20:00:00+00:00",
-                                       "source": "pc"}, [])
+        await companion.run("assistant", "lines", {"kind": "speech", "text": "what time is it",
+                                                    "time": "2026-10-19T20:00:00+00:00", "source": "pc"})
     answer.assert_not_called()
 
 
@@ -690,8 +692,8 @@ async def test_a_line_outside_the_home_languages_is_heard_again(hass: HomeAssist
         calls.append(language)
         return {"text": "Mach het licht uit." if language is None else "Mach das Licht aus.", "language": language or "dutch"}
 
-    stage = mock_entry.runtime_data.capabilities.stages["stt"]
+    stage = mock_entry.runtime_data.bus.nodes["stt"]
     with patch.object(hub, "async_stt", side_effect=stt):
-        line = await stage.run(SimpleNamespace(id="pc"), SILENCE, {"seconds": 1.0})
+        line = await stage.annotate(SimpleNamespace(id="pc"), SILENCE, {"seconds": 1.0})
     assert calls == [None, "de"]  # no home language heard on this mic yet: the main one
     assert line["text"] == "Mach das Licht aus." and line["language"] == "de" and line["heard_as"] == "nl"

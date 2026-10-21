@@ -1,7 +1,9 @@
 # Streams — partial
 
 Built (0.44): the bus (`streams.py`: types, default wiring by type, recent records), the core's broker node
-(`broker.py`) and the first node module, the heartbeat. 0.45: the triggers module (a node writing `broker.request`). Not yet: own wiring, read rules, slots, audio on the bus.
+(`broker.py`) and the first node module, the heartbeat. 0.45: the triggers module (a node writing `broker.request`).
+0.46: audio on the bus (the core node `hearing`; speech to text, sounds and voices are annotating nodes on
+`audio.segment`, sound captions read `audio.pcm`, wake word and companion read `text.line`; [hearing.md](hearing.md)). Not yet: own wiring, read rules, slots, audio on the bus.
 
 The core is a **collection of streams**, like the calendar is a collection of the modules' entries
 (owner, 2026-10-21: "everything can be wired into anything", node-based almost). Modules are **nodes**:
@@ -67,9 +69,12 @@ broker builds the named parts itself, and modules may add lines to "open loops" 
 Rule for the rework: the core must not make this impossible later, and must not force it on anyone; a module
 can still do its job the short way.
 
-**Annotating.** Several nodes may add fields to the same record instead of writing a new one, in order
-(today's segment stages): STT gives `text`, Voices gives `speaker`, the attention check gives `addressed`.
-An annotating node has the same type in and out (`text.line → text.line`) and declares which fields it adds.
+**Annotating** (built 0.46). Several nodes may add fields to the same record instead of writing a new one, in order:
+STT gives `text`, Voices gives `speaker`. An annotating node has the same type in and out
+(`audio.segment → audio.segment`), declares which fields it adds (`adds`) and its place (`order`, lowest first).
+The wiring shows them as a chain: writers → first → … → last → the type's readers. Whoever writes such a
+type runs the chain (the audio hub, with the raw audio: `annotate(source, pcm, record)`). Readers of a
+record get the same object at the same time and may mark it (the wake word's `addressed`).
 
 ## A node
 
@@ -131,19 +136,21 @@ Without a provider the slot answers empty, and AAC works without memory. Candida
 |---|---|---|
 | Heartbeat | `time.tick` | `broker.request` (only when something matters) |
 | Triggers | `ha.event`, `time.tick` | `broker.request` |
-| Speech to text | `audio.segment` | `text.line` |
-| Voices | `text.line` (+pcm) | `text.line` (+speaker) |
-| Sounds | `audio.pcm` | `sound.event` |
-| Wake word | `text.line` | `broker.request`, `say` |
-| Companion | `text.line`, `sound.event` | `broker.request` |
+| Hearing (core) | — | `audio.pcm`, `audio.segment`, `text.line` (built) |
+| Speech to text | `audio.segment` | `audio.segment` (+text; built) |
+| Sounds behind speech | `audio.segment` | `audio.segment` (+sounds; built) |
+| Voices | `audio.segment` | `audio.segment` (+speaker; built) |
+| Sounds | `audio.pcm` | `sound.event` (built) |
+| Wake word | `text.line` | answers through the hub today; later `broker.request`, `say` |
+| Companion | `text.line` | the same |
 | Reminders (planning) | `time.tick` | `notify`, `broker.request` |
 
 ## Order of the rework
 
 1. This contract, reviewed with the owner.
 2. The bus in the core (types, buffers, wires, read rules) next to the old code; nothing moves yet.
-3. **Heartbeat** as the first node module (smallest; proves the pattern), then **Triggers**.
-4. Audio onto the bus (stages and hearing listeners become nodes; `hearing.md` folds into this).
+3. **Heartbeat** as the first node module (smallest; proves the pattern), then **Triggers**. ✅ 0.44 / 0.45
+4. Audio onto the bus (stages and hearing listeners become nodes). ✅ 0.46
 5. Memory as the first slot.
 6. The node view in the panel.
 

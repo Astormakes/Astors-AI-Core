@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ...capabilities import Stage
+from ...streams import Node
 from .. import ModuleContext
 
 # Speech and room tone are not news on their own: the speech to text stage covers speech
@@ -52,5 +52,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         return [{"text": f"[{', '.join(n.lower() for n in names[:3])}]", "labels": [[n, p] for n, p in labels[:5]]}]
 
     window = min(10.0, max(1.0, float(ctx.setting(ctx.entry.runtime_data.voice_domain.id, "window") or 2)))
-    ctx.add_stage(Stage(id="sounds_speech", title="Sounds behind speech", kind="segment", run=on_speech, order=15))
-    ctx.add_stage(Stage(id="sounds", title="Sounds", kind="window", run=between, window=window))
+    ctx.add_node(Node(id="sounds_speech", title="Sounds behind speech", inputs={"speech": "audio.segment"}, outputs={"speech": "audio.segment"},
+                      adds=["sounds"], order=15, annotate=on_speech))
+    ctx.add_node(Node(id="sounds", title="Sounds", inputs={"audio": "audio.pcm"}, outputs={"events": "sound.event"},
+                      listen=between, window=window))

@@ -18,7 +18,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from ...audio_hub import voice_label
-from ...capabilities import Hearing
+from ...streams import Node
 from ...const import LOGGER
 from ...provider import OpenAICompatProvider, ProviderError
 from .. import ModuleContext
@@ -102,8 +102,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         return ctx.setting(ctx.entry.runtime_data.voice_domain.id, key)
 
     def wakeword_on() -> bool:
-        return any(h.module == "wakeword" for h in ctx.entry.runtime_data.capabilities.listeners(
-            ctx.entry.runtime_data.voice_domain.id))
+        return ctx.entry.runtime_data.capabilities.module_enabled(ctx.entry.runtime_data.voice_domain.id, "wakeword")
 
     async def decide(source, line: dict[str, Any]) -> dict[str, Any] | None:
         pool = ctx.entry.runtime_data.pool
@@ -170,4 +169,8 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         finally:
             busy[source.id] = False
 
-    ctx.add_hearing(Hearing(id="companion", title="Companion", heard=heard))
+    async def on_line(domain_id: str, port: str, line: dict[str, Any]) -> None:
+        if source := ctx.audio.source_of(line):
+            await heard(source, line, ctx.audio.earlier(line))
+
+    ctx.add_node(Node(id="companion", title="Companion", inputs={"lines": "text.line"}, run=on_line))
