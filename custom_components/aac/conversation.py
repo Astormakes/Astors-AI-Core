@@ -349,8 +349,8 @@ class AACConversationEntity(
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),
                 api_ids or None,
-                # Charter first: the owner's values for every agent, stable (prompt cache)
-                f"{store.charter}\n\n{options.get(CONF_PROMPT) or ''}".strip(),
+                # Prompt parts first (the charter module: the owner's values), stable for the prompt cache
+                f"{self.entry.runtime_data.capabilities.prompt(self.domain.id)}\n\n{options.get(CONF_PROMPT) or ''}".strip(),
                 user_input.extra_system_prompt,
             )
         except conversation.ConverseError as err:

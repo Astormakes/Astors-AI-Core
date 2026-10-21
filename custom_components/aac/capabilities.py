@@ -60,12 +60,29 @@ class Capabilities:
         """Initialize."""
         self.calendar: dict[str, CalendarProvider] = {}
         self.open_loops: dict[str, tuple[OpenLoops, str | None]] = {}  # id → (provider, module)
+        # Prompt parts: stable text at the start of every agent's system prompt (the charter), by order
+        self.prompts: dict[str, tuple[Callable[[str], str], int, str | None]] = {}  # id → (fn, order, module)
         # Choices for module settings that change at runtime: name → fn(domain_id) → [(value, label)]
         self.options: dict[str, Callable[[str], list[tuple[str, str]]]] = {}
         # Where new calendar entries go: fn(domain_id) → provider id (None = the first writer)
         self.writer_choice: Callable[[str], str | None] | None = None
         # Is a module on in a domain? fn(domain_id, module_id) → bool (set by the module loader)
         self.module_enabled: Callable[[str, str], bool] = lambda domain_id, module_id: True
+
+    def add_prompt(self, part_id: str, part: Callable[[str], str], order: int = 50, module: str | None = None) -> Callable[[], None]:
+        """Register a prompt part: part(domain_id) → text; returns the function that removes it again."""
+        self.prompts[part_id] = (part, order, module)
+
+        def remove() -> None:
+            self.prompts.pop(part_id, None)
+
+        return remove
+
+    def prompt(self, domain_id: str) -> str:
+        """Every prompt part of a domain, lowest order first (modules switched off there are left out)."""
+        parts = sorted((order, part_id, fn) for part_id, (fn, order, module) in self.prompts.items()
+                       if not module or self.module_enabled(domain_id, module))
+        return "\n\n".join(text for _, _, fn in parts if (text := (fn(domain_id) or "").strip()))
 
     def add_open_loops(self, provider_id: str, provider: OpenLoops, module: str | None = None) -> Callable[[], None]:
         """Register lines for the open loops of automatic runs; returns the function that removes it again."""

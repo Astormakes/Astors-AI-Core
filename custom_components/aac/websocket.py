@@ -90,7 +90,6 @@ def async_register(hass: HomeAssistant) -> None:
         ws_pool_tags,
         ws_pool_measure,
         ws_pool_rule,
-        ws_charter,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -142,8 +141,6 @@ def _state(hass: HomeAssistant, entry, dom: Domain) -> dict[str, Any]:
         "modules": [m.summary(entry, dom.id) for m in entry.runtime_data.modules],
         "requests_open": len(entry.runtime_data.requests.pending(dom.id)),
         "pools": entry.runtime_data.pool.status(),
-        "charter": settings.charter,
-        "charter_is_default": not settings.data["charter"],
         "llm_apis": [{"id": api.id, "name": api.name} for api in llm.async_get_apis(hass)
                      if not api.id.startswith("aac_")],
     }
@@ -880,16 +877,3 @@ async def ws_pool_set(hass: HomeAssistant, connection, msg) -> None:
         return
     await async_set_role(hass, entry, msg["role"], msg["items"])
     connection.send_result(msg["id"], entry.runtime_data.pool.status())
-
-
-@aac_command(
-    {vol.Required("type"): "aac/charter", vol.Required("text"): vol.All(str, vol.Length(min=1))}
-)
-@websocket_api.require_admin
-@websocket_api.async_response
-async def ws_charter(hass: HomeAssistant, connection, msg) -> None:
-    """Set the charter (the owner's values). Only the owner, never an agent."""
-    if not (entry := _entry(hass, connection, msg)):
-        return
-    await _d(entry, msg).settings.async_set_charter(msg["text"])
-    connection.send_result(msg["id"], _state(hass, *_ctx(hass, msg)))

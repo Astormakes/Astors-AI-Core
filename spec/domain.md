@@ -41,13 +41,14 @@ Rules:
 
 ## Built (v0.15.0): domains inside one AAC
 
-- Config: `domains` = list of `{id, name, master, heartbeat, triggers, autonomy, charter, memory}`;
+- Config: `domains` = list of `{id, name, master, visible}` (0.44–0.48 moved heartbeat, triggers, autonomy,
+  memory and charter into their modules: `module_settings` / `module_access` per domain, module storage);
   `voice_domain` = the one the microphones talk to. Shared (above domains): models, pools,
   traits, audio, skins, setup. Settings from before 0.15 become the first domain "Assistant".
-- Per domain at runtime: chats (`aac.chats[.<id>]`), runs (`aac.runs[.<id>]`), memory file
-  (`memory[_<id>].db`), trigger engine, a conversation agent (`conversation.aac_<name>`; the first
-  domain keeps its entity), and its own LLM APIs (`aac_memory[_<id>]`, `aac_schedule[_<id>]`,
-  `aac_setup[_<id>]`), so an agent only sees its own memory and plans.
+- Per domain at runtime: chats (`aac.chats[.<id>]`), runs (`aac.runs[.<id>]`), the modules' data (memory file
+  `memory[_<id>].db`, `.storage/aac.mod.<module>.<name>[.<id>]`), a conversation agent (`conversation.aac_<name>`; the first
+  domain keeps its entity), and its own LLM APIs (core: `aac_home`, `aac_setup`, `aac_menu`; one per module: `aac_<module>`;
+  each `[_<id>]`), so an agent only sees its own memory and plans.
 - Every `aac/*` WebSocket command takes an optional `domain` (default: the first).
   `aac/domain/create` (name, optional `copy_from`: settings only, never memory or chats; agent plans
   are not copied), `aac/domain/rename`, `aac/domain/delete` (not the first; removes its memory,

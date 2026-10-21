@@ -4,7 +4,7 @@ Framework: once one model is wired in, AAC should aid in setting up everything
 else together with the owner. The panel stays the one place where settings
 live; these tools change the same settings, but only while the owner is in
 the conversation (an admin user in a chat run, never an automatic run).
-Policy stays owner-only: the charter is not offered here.
+Policy stays owner-only: modules marked owner_only (the charter) cannot be changed here.
 """
 
 from __future__ import annotations
@@ -381,6 +381,8 @@ class ModuleSettingTool(_SetupTool):
         if module is None:
             return llm.ToolResult(data={"error": f"No module {args['module']!r}",
                                         "modules": [m.id for m in entry.runtime_data.modules]}, error=True)
+        if module.manifest.get("owner_only"):  # the charter: the owner's values, never changed by an agent
+            return llm.ToolResult(data={"error": f"Only the owner changes {module.id}, in the panel (MODULES)."}, error=True)
         schema, values = module.manifest.get("settings", {}), {}
         for key, value in (args.get("settings") or {}).items():
             field = schema.get(key)

@@ -107,6 +107,11 @@ class ModuleContext:
         """Lines for the open loops of every automatic run: provider(domain_id) → ["- …"] (not where the module is off)."""
         self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_open_loops(self.module.id, provider, self.module.id))
 
+    def add_prompt(self, part, order: int = 50) -> None:
+        """Stable text at the start of every agent's system prompt: part(domain_id) → text (lowest order first;
+        keep it stable, the server's prompt cache depends on it). Not where the module is off."""
+        self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_prompt(self.module.id, part, order, self.module.id))
+
     def provide_slot(self, slot: str, provider) -> None:
         """Be the provider of a core slot (slots.py, e.g. "memory"); asked only where the module is on."""
         self.entry.async_on_unload(self.entry.runtime_data.slots.provide(slot, provider, self.module.id))

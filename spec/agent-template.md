@@ -20,8 +20,10 @@ needed and ended afterwards (framework, section 3).
 }
 ```
 
-Every agent's system prompt starts with the owner's **charter** (their values in plain
-words, editable only by the owner, see the framework design), then the template's prompt.
+Every agent's system prompt starts with the **prompt parts** of the modules that are on (lowest order first;
+stable, for the prompt cache): today the **charter** module (the owner's values in plain words; owner only:
+manifest `owner_only`, the setup tools refuse it; empty = the built-in draft; a module since 0.48, before that
+core), then the template's prompt. Modules add parts with `ctx.add_prompt(part, order)`.
 
 | Field | Meaning |
 |---|---|

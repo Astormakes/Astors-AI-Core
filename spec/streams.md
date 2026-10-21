@@ -65,7 +65,8 @@ writes `broker.answer` `{"run_id", "trigger", "status", "result", "chat_id"}` wh
 the bus) passes nodes that add context to it before the broker sends it: the charter adds the owner's values,
 memory adds what it recalls, the home adds its snapshot, the triggers module adds AAC's own plans. Each is a
 small module of the annotating kind (`broker.request → broker.request`, adds to `context`). Built so far: the
-broker builds the named parts itself, and modules may add lines to "open loops" (`capabilities.add_open_loops`).
+broker builds the named parts itself, modules may add lines to "open loops" (`capabilities.add_open_loops`), and
+prompt parts to the start of every system prompt (`add_prompt`; the charter module, 0.48).
 Rule for the rework: the core must not make this impossible later, and must not force it on anyone; a module
 can still do its job the short way.
 

@@ -34,7 +34,8 @@ async def test_create_chat_and_delete_a_domain(hass: HomeAssistant, hass_ws_clie
     assert work.settings.master["prompt"] == "You are a test."  # copied settings
 
     ws = await hass_ws_client(hass)  # the old connection survives a reload, but start clean
-    await ws.send_json_auto_id({"type": "aac/charter", "text": "Only work topics.", "domain": "work"})
+    await ws.send_json_auto_id({"type": "aac/module/settings", "module": "charter", "values": {"text": "Only work topics."},
+                                "domain": "work"})
     await ws.receive_json()
     payloads = _queue(aioclient_mock, _text("work answer"))
     await ws.send_json_auto_id({"type": "aac/chat", "text": "hi", "domain": "work"})
@@ -45,7 +46,7 @@ async def test_create_chat_and_delete_a_domain(hass: HomeAssistant, hass_ws_clie
     tools = {t["function"]["name"] for t in payloads[0]["tools"]}
     assert any(t.startswith("aac-memory-work") for t in tools), tools
     assert data.domains["assistant"].chats.list() == [] and len(work.chats.list()) == 1
-    assert data.domains["assistant"].settings.data["charter"] == ""
+    assert "charter" not in data.store.data["module_settings"].get("assistant", {})  # the other domain keeps the draft
 
     await ws.send_json_auto_id({"type": "aac/state", "domain": "work"})
     state = (await ws.receive_json())["result"]

@@ -831,6 +831,7 @@ class AacPanel extends HTMLElement {
   _go(view) {
     if (view === "settings/triggers") view = "mod/triggers/list"; // old links: the triggers are a module since 0.45
     if (view === "settings/memory") view = "mod/memory/browse"; // and memory since 0.47
+    if (view === "settings/charter") view = "settings/module/charter"; // and the charter since 0.48
     this._view = view;
     this._navOpen = false;
     this._flash = null;
@@ -997,7 +998,6 @@ class AacPanel extends HTMLElement {
         </div>` : ""}
         <div class="seg">
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
-          ${this._tab("settings/charter", "Charter")}
           ${this._tab("settings/appearance", "Appearance")}
           ${this._tab("settings/languages", "Languages", this._stepOpen("languages") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/master", "Master agent")}
@@ -1043,7 +1043,6 @@ class AacPanel extends HTMLElement {
     if (v === "domain/visible") return this._renderVisible();
     if (v === "requests") return this._renderRequests();
     if (v.startsWith("settings/module/")) return this._renderModuleSettings(v.slice(16));
-    if (v === "settings/charter") return this._renderCharter();
     if (v === "settings/languages") return this._renderLanguages();
     if (v === "settings/audio") return this._renderAudio();
     if (v === "settings/audio/sources") return this._renderSources();
@@ -1387,16 +1386,6 @@ class AacPanel extends HTMLElement {
       </div>`);
   }
 
-  // ---------------------------------------------------------------- settings: charter
-  _renderCharter() {
-    const st = this._state;
-    if (!st) return this._page("CHARTER", "", "");
-    return this._page("CHARTER", st.charter_is_default ? "built-in draft" : "your own", `<div class="card" data-autosave="charter" data-label="Charter"><h2>CHARTER ${tip(`Your values in plain words. Every AAC agent gets this first, before anything else, and no agent can change it; only you can, here. It is not a score to optimize: it tells AAC how to behave (honest, sparing, your decisions stay yours).`)}</h2>
-        <label for="ch-text">Charter ${tip(`Saved when you leave the field. Every agent follows it from the next message on.`)}</label>
-        <textarea id="ch-text" class="thin-scroll" style="min-height:20em">${esc(st.charter)}</textarea>
-      </div>`);
-  }
-
   // The home's languages (global): from HA until the owner sets them; first = main
   _renderLanguages() {
     const L = this._langs;
@@ -1456,7 +1445,7 @@ class AacPanel extends HTMLElement {
       return `<label for="${id}">${esc(f.title || key)}</label><select id="${id}" data-ms="${esc(m.id)}" data-key="${esc(key)}">${opts.map(([val, name]) => `<option value="${esc(val)}" ${val === v ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>${help}`;
     }
     const ph = f.placeholder ? ` placeholder="${esc(f.placeholder)}"` : "";
-    if (f.type === "longtext") return `<label for="${id}">${esc(f.title || key)}</label><textarea id="${id}" class="thin-scroll" data-ms="${esc(m.id)}" data-key="${esc(key)}"${ph}>${esc(v ?? "")}</textarea>${help}`;
+    if (f.type === "longtext") return `<label for="${id}">${esc(f.title || key)}</label><textarea id="${id}" class="thin-scroll" data-ms="${esc(m.id)}" data-key="${esc(key)}"${ph}${f.rows ? ` style="min-height:${Number(f.rows) * 1.4}em"` : ""}>${esc(v ?? "")}</textarea>${help}`;
     return `<label for="${id}">${esc(f.title || key)}</label><input id="${id}" data-ms="${esc(m.id)}" data-key="${esc(key)}" type="${f.type === "number" ? "number" : f.type === "time" ? "time" : "text"}" value="${esc(v ?? "")}"${ph}>${help}`;
   }
 
@@ -1964,7 +1953,6 @@ class AacPanel extends HTMLElement {
     if (key === "master") return this._saveMaster();
     if (key === "module") return this._saveModule(arg);
     if (key === "access") return this._saveModuleAccess(arg);
-    if (key === "charter") { this._state = await this._ws("aac/charter", { text: sr.querySelector("#ch-text").value }); return; }
     if (key === "queue") {
       this._jobs = await this._ws("aac/jobs/settings", {
         notify_no_model: sr.querySelector("#q-notify").checked,

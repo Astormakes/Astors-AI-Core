@@ -152,26 +152,33 @@ async def test_admin_only(hass: HomeAssistant, hass_ws_client, hass_read_only_ac
 
 
 async def test_charter_reaches_every_agent(
-    hass: HomeAssistant, hass_ws_client, aioclient_mock: AiohttpClientMocker, mock_entry, configured
+    hass: HomeAssistant, hass_ws_client, hass_storage, aioclient_mock: AiohttpClientMocker, mock_entry, configured
 ):
-    """The charter comes first in the system prompt; the draft is stored as default."""
-    from custom_components.aac.store import DEFAULT_CHARTER, STORAGE_KEY
+    """The charter module comes first in the system prompt (built-in draft when empty); 0.47's own text moves
+    over; the setup tools can neither change nor switch it."""
+    from custom_components.aac.store import STORAGE_KEY
 
+    hass_storage[STORAGE_KEY]["data"]["charter"] = "Be kind. Never lie."  # 0.47: core, flat config
     await setup_aac(hass, mock_entry)
-    ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/state"})
-    state = (await ws.receive_json())["result"]
-    assert state["charter"] == DEFAULT_CHARTER and state["charter_is_default"]
-
-    await ws.send_json_auto_id({"type": "aac/charter", "text": "Be kind. Never lie."})
-    assert (await ws.receive_json())["result"]["charter_is_default"] is False
+    data = mock_entry.runtime_data
+    assert data.store.data["module_settings"]["assistant"]["charter"] == {"text": "Be kind. Never lie."}
+    assert "charter" not in data.store.default_domain.data
     aioclient_mock.post(f"{BASE_URL}/chat/completions", json=_reply("ok"))
+    ws = await hass_ws_client(hass)
     await ws.send_json_auto_id({"type": "aac/chat", "text": "hi"})
     await ws.receive_json()
     system = aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
-    assert system.startswith("Be kind. Never lie.")
-    assert "You are a test." in system
-    assert mock_entry.runtime_data.store.default_domain.data["charter"] == "Be kind. Never lie."
+    assert system.startswith("Be kind. Never lie.") and "You are a test." in system
+
+    await ws.send_json_auto_id({"type": "aac/module/settings", "module": "charter", "values": {"text": ""}})
+    await ws.receive_json()
+    assert data.capabilities.prompt("assistant").startswith("Charter (the owner's values")
+
+    from custom_components.aac.setup_api import ModuleSettingTool
+
+    tool = ModuleSettingTool(mock_entry, data.domain())
+    result = await tool._async_run(hass, {"module": "charter", "on": False})
+    assert result.error and data.capabilities.prompt("assistant")
 
 
 async def test_single_model_server_counts_as_online(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):

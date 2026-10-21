@@ -27,19 +27,6 @@ from .const import (
 
 STORAGE_VERSION = 1
 
-# Draft from the framework design (section 3b); the owner edits it in the panel.
-DEFAULT_CHARTER = (
-    "Charter (the owner's values; you follow it and never change it):\n"
-    "- Honesty over comfort: never hide or soften facts to be liked, never fake progress, "
-    "say when you made a mistake.\n"
-    "- Nudge, don't nag: suggest something at most once, accept \"no\", no guilt, no fake urgency.\n"
-    "- My decisions stay mine: you advise, I decide. Ask before anything that cannot be "
-    "undone or leaves the house (buying, sending, unlocking).\n"
-    "- Little noise: speak up only when it matters.\n"
-    "- What you learn about me stays private.\n"
-    "- Help me manage without you: explain, don't only do.\n"
-    "- Limits are not puzzles: if a rule stops you, say so instead of working around it."
-)
 STORAGE_KEY = f"{DOMAIN}.config"
 
 CONF_MASTER_MODEL = "model"
@@ -96,15 +83,13 @@ DOMAIN_DEFAULTS: dict[str, Any] = {
         CONF_MAX_TOKENS: DEFAULT_MAX_TOKENS,
         CONF_THINKING: DEFAULT_THINKING,
     },
-    # The owner's values for every agent; "" = the built-in draft
-    "charter": "",
     # The entities this domain can see at all (the owner's tick list; entities.py). Read/write per
     # entity are global (entity_access). None = not chosen yet: what HA exposes to Assist
     "visible": None,
 }
 
 MASTER_KEYS = set(DOMAIN_DEFAULTS["master"])
-_PER_DOMAIN = ("master", "charter")
+_PER_DOMAIN = ("master",)
 
 
 def _domain_from(stored: dict[str, Any], domain_id: str, name: str) -> dict[str, Any]:
@@ -116,7 +101,6 @@ def _domain_from(stored: dict[str, Any], domain_id: str, name: str) -> dict[str,
     d["master"].update({k: v for k, v in master.items() if k in MASTER_KEYS})
     if stored.get("triggers"):  # up to 0.44: the triggers module moves them to its own storage on its first start
         d["triggers"] = list(stored["triggers"])
-    d["charter"] = stored.get("charter", "")
     if isinstance(stored.get("visible"), list):
         d["visible"] = list(stored["visible"])
     elif isinstance(stored.get("entities"), dict):  # 0.21 kept one level list per domain
@@ -161,16 +145,6 @@ class DomainSettings:
     async def async_update_master(self, changes: dict[str, Any]) -> None:
         """Change master settings (unknown keys are ignored)."""
         self.master.update({k: v for k, v in changes.items() if k in MASTER_KEYS})
-        await self.async_save()
-
-    @property
-    def charter(self) -> str:
-        """The effective charter."""
-        return self.data["charter"] or DEFAULT_CHARTER
-
-    async def async_set_charter(self, text: str) -> None:
-        """Change the charter (the built-in draft is stored as "")."""
-        self.data["charter"] = "" if text.strip() == DEFAULT_CHARTER.strip() else text.strip()
         await self.async_save()
 
     @property
@@ -247,6 +221,9 @@ class AACStore:
             # Up to 0.44 "AAC may plan on its own" was core (autonomy.schedule): now the triggers module's own_plans
             if (old_mode := (d.get("autonomy") or {}).get("schedule")) in ("off", "ask", "allowed"):
                 data["module_settings"].setdefault(d["id"], {}).setdefault("triggers", {}).setdefault("own_plans", old_mode)
+            # Up to 0.47 the charter was core: the owner's own text becomes the charter module's ("" = built-in)
+            if (old_charter := (d.get("charter") or "").strip()):
+                data["module_settings"].setdefault(d["id"], {}).setdefault("charter", {}).setdefault("text", old_charter)
             # Up to 0.46 memory was core (memory.enabled): now the memory module's switch
             if (d.get("memory") or {}).get("enabled") is False:
                 data["module_access"].setdefault(d["id"], {}).setdefault("memory", {})["enabled"] = False
@@ -334,15 +311,6 @@ class AACStore:
     async def async_update_master(self, changes: dict[str, Any]) -> None:
         """First domain."""
         await self.default_domain.async_update_master(changes)
-
-    @property
-    def charter(self) -> str:
-        """First domain."""
-        return self.default_domain.charter
-
-    async def async_set_charter(self, text: str) -> None:
-        """First domain."""
-        await self.default_domain.async_set_charter(text)
 
     # ------------------------------------------------------------ global
     @property
