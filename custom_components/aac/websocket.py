@@ -23,7 +23,7 @@ from .const import (
 )
 from .provider import ProviderAuthError, ProviderError, ProviderNotFoundError
 from .audio import audio_overview
-from .master import async_run_master
+from .broker import async_run_request
 from .memory import KINDS, SOURCES, summarize
 from .runs import SIGNAL_UPDATE, async_notify
 from .status import aac_agent_entity_id, setup_steps
@@ -153,7 +153,7 @@ def _state(hass: HomeAssistant, entry, dom: Domain) -> dict[str, Any]:
         "ui": store.data["ui"],
         "modules": [m.summary(entry, dom.id) for m in entry.runtime_data.modules],
         "requests_open": len(entry.runtime_data.requests.pending(dom.id)),
-        "pools": entry.runtime_data.broker.status(),
+        "pools": entry.runtime_data.pool.status(),
         "charter": settings.charter,
         "autonomy": settings.autonomy,
         "charter_is_default": not settings.data["charter"],
@@ -201,7 +201,7 @@ async def ws_models(hass: HomeAssistant, connection, msg) -> None:
     if loaded := _loaded(hass, connection, msg):
         overview = await async_overview(hass, loaded[0])
         if entry := _entry(hass, connection, msg):
-            entry.runtime_data.broker.learn_from_overview(overview)  # real sizes for "smart"
+            entry.runtime_data.pool.learn_from_overview(overview)  # real sizes for "smart"
         connection.send_result(msg["id"], overview)
 
 
@@ -407,7 +407,7 @@ async def ws_chat(hass: HomeAssistant, connection, msg) -> None:
     chats = _d(entry, msg).chats
     chat = chats.get(msg.get("chat_id") or "") or chats.create()
     chats.add_message(chat["id"], "user", msg["text"])
-    run, result = await async_run_master(
+    run, result = await async_run_request(
         hass,
         entry,
         msg["text"],
@@ -973,7 +973,7 @@ async def ws_skin_set(hass: HomeAssistant, connection, msg) -> None:
 def ws_pools(hass: HomeAssistant, connection, msg) -> None:
     """Pools: per role the ordered list with live state."""
     if entry := _entry(hass, connection, msg):
-        connection.send_result(msg["id"], entry.runtime_data.broker.status())
+        connection.send_result(msg["id"], entry.runtime_data.pool.status())
 
 
 @aac_command(
@@ -984,8 +984,8 @@ def ws_pools(hass: HomeAssistant, connection, msg) -> None:
 async def ws_pool_tags(hass: HomeAssistant, connection, msg) -> None:
     """The owner's own tags for a model (e.g. efficient)."""
     if entry := _entry(hass, connection, msg):
-        await entry.runtime_data.broker.async_set_tags(msg["resource"], msg["tags"])
-        connection.send_result(msg["id"], entry.runtime_data.broker.status())
+        await entry.runtime_data.pool.async_set_tags(msg["resource"], msg["tags"])
+        connection.send_result(msg["id"], entry.runtime_data.pool.status())
 
 
 @aac_command({vol.Required("type"): "aac/pool/tool_mode", vol.Required("resource"): str,
@@ -995,8 +995,8 @@ async def ws_pool_tags(hass: HomeAssistant, connection, msg) -> None:
 async def ws_pool_tool_mode(hass: HomeAssistant, connection, msg) -> None:
     """How a model gets its tools: menu (areas, opened on demand) or all (every tool up front)."""
     if entry := _entry(hass, connection, msg):
-        await entry.runtime_data.broker.async_set_tool_mode(msg["resource"], msg["mode"])
-        connection.send_result(msg["id"], entry.runtime_data.broker.status())
+        await entry.runtime_data.pool.async_set_tool_mode(msg["resource"], msg["mode"])
+        connection.send_result(msg["id"], entry.runtime_data.pool.status())
 
 
 @aac_command({vol.Required("type"): "aac/pool/rule", vol.Required("resource"): str,
@@ -1007,8 +1007,8 @@ async def ws_pool_tool_mode(hass: HomeAssistant, connection, msg) -> None:
 async def ws_pool_rule(hass: HomeAssistant, connection, msg) -> None:
     """Set or clear a model's availability rule (None = always usable)."""
     if entry := _entry(hass, connection, msg):
-        await entry.runtime_data.broker.async_set_rule(msg["resource"], msg["rule"])
-        connection.send_result(msg["id"], entry.runtime_data.broker.status())
+        await entry.runtime_data.pool.async_set_rule(msg["resource"], msg["rule"])
+        connection.send_result(msg["id"], entry.runtime_data.pool.status())
 
 
 @aac_command({vol.Required("type"): "aac/pool/measure"})
@@ -1018,11 +1018,11 @@ async def ws_pool_measure(hass: HomeAssistant, connection, msg) -> None:
     """Measure the speed of every reachable model of the master role."""
     if not (entry := _entry(hass, connection, msg)):
         return
-    broker = entry.runtime_data.broker
-    for resource in broker.candidates("master"):
-        if broker.usable(resource):
-            await broker.async_measure(resource)
-    connection.send_result(msg["id"], broker.status())
+    pool = entry.runtime_data.pool
+    for resource in pool.candidates("master"):
+        if pool.usable(resource):
+            await pool.async_measure(resource)
+    connection.send_result(msg["id"], pool.status())
 
 
 @aac_command(
@@ -1039,7 +1039,7 @@ async def ws_pool_set(hass: HomeAssistant, connection, msg) -> None:
     if not (entry := _entry(hass, connection, msg)):
         return
     await async_set_role(hass, entry, msg["role"], msg["items"])
-    connection.send_result(msg["id"], entry.runtime_data.broker.status())
+    connection.send_result(msg["id"], entry.runtime_data.pool.status())
 
 
 @aac_command({vol.Required("type"): "aac/memory/reembed"})

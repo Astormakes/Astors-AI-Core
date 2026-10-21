@@ -294,7 +294,7 @@ class OpenAICompatProvider:
             message = data["choices"][0]["message"]
         except (KeyError, IndexError, TypeError) as err:
             raise ProviderError(f"Unexpected response: {data}") from err
-        # Speed for the broker: llama.cpp reports generation speed exactly, else tokens / time
+        # Speed for the pool: llama.cpp reports generation speed exactly, else tokens / time
         tokens = (data.get("usage") or {}).get("completion_tokens")
         speed = (data.get("timings") or {}).get("predicted_per_second")
         if speed is None and tokens:

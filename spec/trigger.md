@@ -43,7 +43,7 @@ Common rules:
 - A trigger never fires while a run with the same trigger is still running.
 - Only `state` changes count, not attribute-only updates.
 - Whatever the agent decides to say goes to the "From AAC" chat (a heartbeat finding opens a chat of its own,
-  `hb_<utc time>`, "Heartbeat · …"; see `master.request` → `chat: "own"` in [streams.md](streams.md)). Silence is
+  `hb_<utc time>`, "Heartbeat · …"; see `broker.request` → `chat: "own"` in [streams.md](streams.md)). Silence is
   normal (the run list shows it).
 - `time` triggers usually *are* the message (a reminder): the agent is told to write
   it, and may stay silent only for "check whether …" instructions. `state` triggers
@@ -67,7 +67,7 @@ Heartbeat: module settings (`aac.config` → `module_settings.<domain>.heartbeat
 `quiet_end`, `tier`, `tools`, `instructions` ("" = built-in)); on/off = the module's switch per domain. 0.43's
 `domains[].heartbeat` is moved there on load.
 
-Code: `custom_components/aac/triggers.py`, `master_node.py` (shared: context, automatic run), `modules/heartbeat/`.
+Code: `custom_components/aac/triggers.py`, `broker.py` (shared: context, automatic run), `modules/heartbeat/`.
 
 ## More kinds of "when" (v0.24.0)
 

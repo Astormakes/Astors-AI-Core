@@ -444,7 +444,7 @@ class AudioHub:
 
     def engine(self, kind: str) -> str | None:
         """What would serve STT/TTS now: the first usable resource of the pool role, else local first."""
-        return self.entry.runtime_data.broker.pick(kind) or self.ha_engine(kind)
+        return self.entry.runtime_data.pool.pick(kind) or self.ha_engine(kind)
 
     def ha_engine(self, kind: str) -> str | None:
         """An HA engine, local first, else HA's default (None if HA has none)."""
@@ -475,14 +475,14 @@ class AudioHub:
         language = transcribe in this one (default: the home's only language, or detected among all).
 
         Returns {"text", "language", "confidence", "words", "engine"} (HA engines give only the text)."""
-        broker = self.entry.runtime_data.broker
+        pool = self.entry.runtime_data.pool
         tried: set[str] = set()
-        while (resource := broker.pick("stt")) is not None and resource not in tried:
+        while (resource := pool.pick("stt")) is not None and resource not in tried:
             tried.add(resource)
             if is_entity(resource):
                 return await self._async_stt_entity(resource, pcm, language)
             heard = await self._async_stt_model(resource, pcm, prompt, language)
-            if heard is not None or broker.usable(resource):
+            if heard is not None or pool.usable(resource):
                 return heard  # answered (or failed on this segment only)
         if (fallback := self.ha_engine("stt")) is None:
             LOGGER.warning("AAC audio: no speech-to-text engine")
@@ -517,7 +517,7 @@ class AudioHub:
 
     async def _async_stt_model(self, model_id: str, pcm: bytes, prompt: str | None = None,
                                language: str | None = None) -> dict[str, Any] | None:
-        broker = self.entry.runtime_data.broker
+        pool = self.entry.runtime_data.pool
         if (endpoint := resolve_model(self.hass, self.entry.runtime_data.store, model_id)) is None:
             return None
         provider = OpenAICompatProvider(
@@ -530,20 +530,20 @@ class AudioHub:
                 endpoint.model, pcm_to_wav(pcm), language or (home[0] if len(home) == 1 else None), prompt
             )
         except ProviderConnectionError as err:
-            # The machine may simply be off (e.g. a desktop PC): the broker skips it for a minute
+            # The machine may simply be off (e.g. a desktop PC): the pool skips it for a minute
             LOGGER.info("AAC audio: speech model %s unreachable (%s)", model_id, err)
-            broker.mark_down(model_id, str(err))
+            pool.mark_down(model_id, str(err))
             return None
         except ProviderError as err:
             LOGGER.warning("AAC audio: speech-to-text failed: %s", err)
             return None
-        broker.mark_up(model_id)
+        pool.mark_up(model_id)
         return heard | {"engine": model_id}
 
     async def async_senses(self, role: str, path: str, pcm: bytes) -> dict[str, Any] | None:
         """Ask the service of a voice-pool role (sounds / voices) about a piece of audio; None when none answers."""
-        broker = self.entry.runtime_data.broker
-        if (resource := broker.pick(role)) is None or is_entity(resource):
+        pool = self.entry.runtime_data.pool
+        if (resource := pool.pick(role)) is None or is_entity(resource):
             return None
         if (endpoint := resolve_model(self.hass, self.entry.runtime_data.store, resource)) is None:
             return None
@@ -551,12 +551,12 @@ class AudioHub:
         try:
             result = await provider.audio_post(path, pcm_to_wav(pcm))
         except ProviderConnectionError as err:
-            broker.mark_down(resource, str(err))
+            pool.mark_down(resource, str(err))
             return None
         except ProviderError as err:
             LOGGER.info("AAC audio: %s failed: %s", role, err)
             return None
-        broker.mark_up(resource)
+        pool.mark_up(resource)
         return result
 
     # ------------------------------------------------------------ speaking
@@ -604,7 +604,7 @@ class AudioHub:
         """The voice domain's master answers a spoken line; the answer goes back by voice.
         before = what was said just before it in the room (the wake word module's look-back);
         speaker = the line's voice (Voices module), so the model knows who talks ("that's me")."""
-        from .master import async_run_master  # noqa: PLC0415 - avoid an import cycle
+        from .broker import async_run_request  # noqa: PLC0415 - avoid an import cycle
 
         data = self.entry.runtime_data.voice_domain  # one domain owns the voice
         chat_id = self._voice_chat(data, source)
@@ -617,7 +617,7 @@ class AudioHub:
         if before:  # the room's last lines go with it, so "…, remind me of that, computer" works
             said = (f"{before_title}:\n" + "\n".join(f"- {b}" for b in before)
                     + f"\n\nNow to you, {where} (your answer is spoken aloud there): {text}")
-        run, result = await async_run_master(
+        run, result = await async_run_request(
             self.hass, self.entry, said,
             kind="chat", trigger=f"voice: {source.name}", title=chat["title"], chat_id=chat_id,
             conversation_id=chat["conversation_id"],

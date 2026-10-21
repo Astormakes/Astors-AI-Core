@@ -52,4 +52,4 @@ Rules:
 - The last 100 runs are kept (`.storage/aac.runs`).
 - Future: `parent` (the run that spawned this one, for sub-agents), `budget` (tokens/time used), `model` (which model answered).
 
-Code: `custom_components/aac/runs.py`, `master.py`.
+Code: `custom_components/aac/runs.py`, `broker.py`.

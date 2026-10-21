@@ -1,9 +1,15 @@
-"""The master as a node on the stream bus (spec/streams.md): `master.request` in, `master.answer` out.
+"""The broker: every request to a model goes through here (spec/streams.md).
 
-Any module (heartbeat, later triggers, companion, wake word) asks the master by writing a request;
-this node turns it into an automatic run: through the job queue (or at once with "now"), with the
-context built when the run really starts (so a request that had to wait sees the current home), and
-the result posted to a chat, or nothing when the master answers NOTHING (little noise is a core principle).
+Owner, 2026-10-21: "the master with pulling together context and all should be called the broker".
+It takes requests (a chat, a spoken line, a trigger, the heartbeat), builds their context, asks the pool
+for a model of the request's tier, lets the agent answer with its tools and records the run. It does
+not think; the model does. "Master" now means only the main model (the master role in the pool).
+
+On the stream bus it is the core's node "broker": `broker.request` in, `broker.answer` out. Any module
+(heartbeat, later triggers, companion, wake word) asks by writing a request; the node turns it into an
+automatic run: through the job queue (or at once with "now"), with the context built when the run really
+starts (so a request that had to wait sees the current home), and the result posted to a chat, or nothing
+when the model answers NOTHING (little noise is a core principle).
 
 A request (plain JSON):
     {"trigger": "heartbeat", "title": "Heartbeat", "text": "Check-in: anything I should know right now?",
@@ -18,10 +24,14 @@ A request (plain JSON):
 
 from __future__ import annotations
 
-from datetime import timedelta
+import re
+
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.core import HomeAssistant
+from datetime import timedelta
+
+from homeassistant.components import conversation
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .capabilities import parse_time
@@ -29,14 +39,92 @@ from .chats import AAC_CHAT_ID
 from .const import LOGGER
 from .context import home_snapshot
 from .jobs import Job
-from .master import async_run_master
 from .pools import role_configured
+from .runs import Run, current_run
 from .streams import Node
 
 if TYPE_CHECKING:
-    from . import AACConfigEntry
     from .domains import Domain
-    from .runs import Run
+    from . import AACConfigEntry
+
+SILENT = "NOTHING"
+
+
+# Small models often say "nothing" in other words instead of the exact NOTHING.
+# Interim heuristic until there is a real interjection gate (framework section 5).
+_NOTHING_RE = re.compile(
+    r"^\W*(nothing\b|none\W*$|n/?a\W*$|no\W*$|no (new |current |active )?(alerts?|issues?|problems?|updates?|news)\b"
+    r"|(there is |there's )?nothing (new |unusual |important )?to (report|say|mention)"
+    r"|all (systems )?(is |are |seems |look |looks )?(good|fine|normal|quiet|ok)\b"
+    r"|everything (is |seems |looks )?(fine|normal|ok|good)\b"
+    r"|no[,.!]? (everything|nothing|all)\b)",
+    re.IGNORECASE,
+)
+
+
+def is_silent(text: str) -> bool:
+    """The model answers NOTHING (or an obvious equivalent) when it has nothing to say."""
+    text = text.strip()
+    return not text or bool(_NOTHING_RE.match(text)) or text.strip(".!").upper() == SILENT
+
+
+async def async_run_request(
+    hass: HomeAssistant,
+    entry: AACConfigEntry,
+    text: str,
+    *,
+    kind: str,
+    trigger: str,
+    title: str,
+    chat_id: str | None = None,
+    conversation_id: str | None = None,
+    extra_system_prompt: str | None = None,
+    user_id: str | None = None,
+    allow_tools: bool = True,
+    tier: str = "master",
+    domain: Domain | None = None,
+    history: list[dict[str, Any]] | None = None,
+    own_words: str | None = None,
+) -> tuple[Run, conversation.ConversationResult | None]:
+    """One request to a domain's agent, recorded as a run (steps come from the agent)."""
+    domain = domain or entry.runtime_data.domain()
+    runs = domain.runs
+    run = runs.start(
+        kind,
+        trigger,
+        title,
+        input=text,
+        chat_id=chat_id,
+        context=extra_system_prompt or "",
+        allow_tools=allow_tools,
+        tier=tier,
+        history=history or [],
+        own_words=own_words,
+    )
+    token = current_run.set(run)
+    try:
+        result = await conversation.async_converse(
+            hass,
+            text,
+            conversation_id,
+            Context(user_id=user_id),
+            agent_id=domain.entity_id(hass, entry.entry_id) or entry.entry_id,
+            extra_system_prompt=extra_system_prompt,
+        )
+    except Exception as err:  # noqa: BLE001 - a failed run must not kill the caller
+        runs.finish(run, "failed", str(err))
+        return run, None
+    finally:
+        current_run.reset(token)
+
+    speech = result.response.speech.get("plain", {}).get("speech", "")
+    if result.response.response_type.value == "error":
+        runs.finish(run, "failed", speech)
+    elif kind == "auto" and is_silent(speech):
+        runs.finish(run, "silent", speech)
+    else:
+        runs.finish(run, "done", speech)
+    return run, result
 
 
 def short(text: str, n: int = 40) -> str:
@@ -83,8 +171,8 @@ async def async_auto_run(
     hass: HomeAssistant, entry: AACConfigEntry, domain: Domain, trigger: str, title: str, text: str, prompt: str,
     allow_tools: bool = True, tier: str = "master", chat: str = "aac", chat_prefix: str | None = None,
 ) -> Run:
-    """One automatic run; what the master says goes to a chat (chat "own": a chat of its own)."""
-    run, result = await async_run_master(
+    """One automatic run; what the model says goes to a chat (chat "own": a chat of its own)."""
+    run, result = await async_run_request(
         hass, entry, text, kind="auto", trigger=trigger, title=title,
         extra_system_prompt=prompt, allow_tools=allow_tools, tier=tier, domain=domain,
     )
@@ -100,15 +188,15 @@ async def async_auto_run(
     return run
 
 
-class MasterNode:
-    """The core's master node."""
+class BrokerNode:
+    """The core's broker node."""
 
     def __init__(self, hass: HomeAssistant, entry: AACConfigEntry) -> None:
         """Initialize."""
         self.hass = hass
         self.entry = entry
-        self.node = Node(id="master", title="Master", inputs={"requests": "master.request"},
-                         outputs={"answers": "master.answer"}, run=self._async_request)
+        self.node = Node(id="broker", title="Broker", inputs={"requests": "broker.request"},
+                         outputs={"answers": "broker.answer"}, run=self._async_request)
 
     def _busy(self, domain: Domain, trigger: str) -> bool:
         if any(j.domain is domain and trigger in j.tags for j in self.entry.runtime_data.jobs.waiting):
@@ -136,7 +224,7 @@ class MasterNode:
             run = await async_auto_run(self.hass, self.entry, domain, trigger, title, req.get("text") or "", prompt,
                                        allow_tools=bool(req.get("tools", True)), tier=tier, chat=req.get("chat") or "aac",
                                        chat_prefix=req.get("chat_prefix"))
-            await data.bus.emit(domain.id, "master", "answers", {
+            await data.bus.emit(domain.id, "broker", "answers", {
                 "run_id": run.id, "trigger": trigger, "status": run.status, "result": run.result, "chat_id": run.chat_id})
             return run
 

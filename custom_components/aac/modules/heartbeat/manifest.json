@@ -7,8 +7,8 @@
   "enabled_by_default": false,
   "description": "Wakes the master every few minutes to look at the situation, without any chat history: it sees only the home right now and its open plans. When something matters it opens a new chat just for that (a reply is about that one thing); otherwise it stays silent.",
   "instructions": "",
-  "provides": {"nodes": {"heartbeat": {"outputs": {"requests": "master.request"}}}},
-  "uses": {"streams": ["master.request"]},
+  "provides": {"nodes": {"heartbeat": {"outputs": {"requests": "broker.request"}}}},
+  "uses": {"streams": ["broker.request"]},
   "settings": {
     "interval": {"type": "number", "title": "Every (minutes)", "default": 30, "help": "1–1440."},
     "quiet_start": {"type": "time", "title": "Quiet from", "default": "22:00"},

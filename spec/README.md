@@ -16,7 +16,7 @@ some of it exists, **planned** = spec only, nothing in the code yet.
 | [Context recipe](context-recipe.md) | what an agent gets to see before it starts | partial |
 | [Agent template](agent-template.md) | a reusable kind of agent: prompt, tools, model, output | partial |
 | [Memory](memory.md) | text memories + structured facts, search, write path | built (v1) |
-| [Model provider](model-provider.md) | talking to models; broker requests | partial |
+| [Model provider](model-provider.md) | talking to models; the pool; broker requests | partial |
 | [Audio source](audio-source.md) | a microphone streaming to AAC and AAC's spoken answers | partial |
 | [Event](event.md) | everything that happens, on one bus | partial |
 | [Module manifest](module.md) | a bundle of the above, installable and shareable | partial |

@@ -66,7 +66,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         return found
 
     async def partial(source, pcm: bytes) -> str | None:
-        resource = ctx.entry.runtime_data.broker.pick("stt")
+        resource = ctx.entry.runtime_data.pool.pick("stt")
         if not ctx.setting(domain_id(), "live") or resource is None or is_entity(resource):
             return None  # HA's CPU engines are too slow to transcribe every second
         return ((await ctx.audio.async_stt(pcm)) or {}).get("text", "").strip() or None

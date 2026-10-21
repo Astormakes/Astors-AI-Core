@@ -1,7 +1,7 @@
 """The stream bus (spec/streams.md): the core as a collection of typed streams.
 
 Owner design (2026-10-21): like the calendar is a collection of the modules' entries, audio, video,
-timers and requests to the master are streams the modules write and read; "everything can be wired
+timers and requests to the broker are streams the modules write and read; "everything can be wired
 into anything", node-based. The core only knows the stream types, keeps the last records of every
 output in RAM and delivers each record to the inputs wired to it. Default wiring is by type: an input
 gets every output of its type (except the node's own), in domains where the reading node's module is on.
@@ -27,8 +27,8 @@ STREAM_TYPES: dict[str, str] = {
     "sound.event": "record",
     "ha.event": "record",
     "time.tick": "record",
-    "master.request": "record",
-    "master.answer": "record",
+    "broker.request": "record",
+    "broker.answer": "record",
     "say": "record",
     "notify": "record",
     "video.frame": "continuous",
@@ -99,7 +99,7 @@ class Bus:
 
     async def emit(self, domain_id: str, node_id: str, port: str, item: dict[str, Any]) -> list[Any]:
         """A node writes a record to one of its outputs: kept in RAM and handed to every input wired
-        to it; returns what the readers' run gave back (e.g. the master's run)."""
+        to it; returns what the readers' run gave back (e.g. the broker's run)."""
         node = self.nodes.get(node_id)
         if node is None or port not in node.outputs:
             raise ValueError(f"{node_id}.{port} is not an output")

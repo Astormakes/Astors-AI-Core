@@ -24,7 +24,7 @@ their pipelines detect becomes one.
 | `voice.heard` | text, speaker, room, confidence | planned (audio pipeline) |
 | `vision.seen` | what, who, source, confidence | planned |
 | `presence.changed` | person, room | planned |
-| `node.free` / `node.busy` | node id | planned (broker) |
+| `node.free` / `node.busy` | node id | planned (pool) |
 
 Rules:
 - `type` is `<area>.<what>`; modules use their module id as area (`shopping.list_changed`).

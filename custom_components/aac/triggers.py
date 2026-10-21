@@ -17,10 +17,9 @@ from homeassistant.helpers.event import (
 )
 from homeassistant.util import dt as dt_util
 
+from .broker import SILENT, async_auto_run, async_open_loops
 from .context import home_snapshot
 from .jobs import Job
-from .master import SILENT
-from .master_node import async_auto_run, async_open_loops
 from .pools import role_configured
 
 if TYPE_CHECKING:

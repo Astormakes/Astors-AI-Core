@@ -63,7 +63,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
               "voices": {},  # language (de, en, …) → {"language": the engine's code, "voice": its voice id}
               "languages_seen": {}},  # language → how often it was heard or spoken
     # Pools (thinking / voice / vision, above domains): role → ordered list of model ids
-    # or HA engine entity ids; the broker uses the first reachable one (pools.py)
+    # or HA engine entity ids; the pool uses the first reachable one (pools.py)
     "pools": {"master": [], "memory": [], "stt": [], "tts": []},
     # Per resource: measured speed (tokens/s, moving average), size (billions of parameters),
     # the owner's own tags (e.g. "efficient"): {resource: {speed, samples, params_b, tags}}

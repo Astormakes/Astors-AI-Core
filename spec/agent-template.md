@@ -27,11 +27,11 @@ words, editable only by the owner, see the framework design), then the template'
 |---|---|
 | `prompt` | the template's instructions (the owner can override them) |
 | `recipe` | which [context recipe](context-recipe.md) builds what it sees |
-| `model` | `{"use": "master"}` · `{"model_id": "m_…"}` · later `{"tier": "big"}` (broker decides, see [model-provider.md](model-provider.md)) |
+| `model` | `{"use": "master"}` · `{"model_id": "m_…"}` · later `{"tier": "big"}` (the pool decides, see [model-provider.md](model-provider.md)) |
 | `tools` | LLM API ids it may use (`assist`, `aac_memory`, …). Empty = look only |
 | `output` | `text` (an answer) or `decision` (see below) |
 | `limits.tool_rounds` | max model ↔ tool round trips; after that one last call **without** tools forces an answer |
-| `privacy` | the highest tier of data it may send out (the broker enforces it) |
+| `privacy` | the highest tier of data it may send out (the broker enforces it, [streams.md](streams.md)) |
 | `speaks_to` | where a spoken result goes: `aac` ("From AAC" chat), later `voice`, `phone` |
 
 ## Output `decision`

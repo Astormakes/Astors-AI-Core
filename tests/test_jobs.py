@@ -21,7 +21,7 @@ async def test_heartbeat_waits_and_is_told_it_was_late(hass: HomeAssistant, aioc
     data = mock_entry.runtime_data
     await set_heartbeat(mock_entry, enabled=True, quiet_start="00:00", quiet_end="00:00")
     data.store.data["queue"]["postpone_notice"] = 0
-    data.broker.mark_down(MODEL_CFG["id"], "off")
+    data.pool.mark_down(MODEL_CFG["id"], "off")
     from custom_components.aac.modules.heartbeat import async_queue
 
     await async_queue(hass)
@@ -31,7 +31,7 @@ async def test_heartbeat_waits_and_is_told_it_was_late(hass: HomeAssistant, aioc
     assert len(told) == 1 and "no model available" in told[0]["text"]
 
     payloads = _queue(aioclient_mock, _text("NOTHING"), _text('{"speak": false, "message": ""}'))
-    data.broker.mark_up(MODEL_CFG["id"])
+    data.pool.mark_up(MODEL_CFG["id"])
     await data.jobs._tick()  # noqa: SLF001
     await hass.async_block_till_done(wait_background_tasks=True)
     assert data.jobs.waiting == [] and data.jobs.history[0].status == "done"
@@ -42,7 +42,7 @@ async def test_time_critical_job_reaches_the_owner_without_a_model(hass: HomeAss
     """A reminder that found no model before its due time becomes a plain notification; others expire."""
     await setup_aac(hass, mock_entry)
     data = mock_entry.runtime_data
-    data.broker.mark_down(MODEL_CFG["id"], "off")
+    data.pool.mark_down(MODEL_CFG["id"], "off")
     dom = data.domain()
     start = AsyncMock()
     past = dt_util.utcnow() - timedelta(minutes=1)
@@ -86,7 +86,7 @@ async def test_waiting_jobs_are_saved(hass: HomeAssistant, hass_storage, mock_en
     """Trigger jobs that wait are written to storage (heartbeats are not)."""
     await setup_aac(hass, mock_entry)
     data = mock_entry.runtime_data
-    data.broker.mark_down(MODEL_CFG["id"], "off")
+    data.pool.mark_down(MODEL_CFG["id"], "off")
     trig = await data.store.async_save_trigger(
         {"name": "Door", "enabled": True, "cooldown": 0, "quiet_hours": None,
          "when": {"type": "state", "entity_id": "binary_sensor.door", "to": "on"},

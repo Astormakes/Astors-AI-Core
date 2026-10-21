@@ -277,14 +277,14 @@ class AACConversationEntity(
 
         return send
 
-    async def _context_of(self, broker, model_id: str, provider: OpenAICompatProvider) -> tuple[int | None, float]:
+    async def _context_of(self, pool, model_id: str, provider: OpenAICompatProvider) -> tuple[int | None, float]:
         """The model's context size (asked once from its server, else learned from errors) and token factor."""
-        traits = broker.traits(model_id)
+        traits = pool.traits(model_id)
         if traits["n_ctx"] is None and model_id not in _CONTEXT_ASKED:
             _CONTEXT_ASKED.add(model_id)
             if n_ctx := await provider.context_size():
-                broker.learn_context(model_id, n_ctx)
-                traits = broker.traits(model_id)
+                pool.learn_context(model_id, n_ctx)
+                traits = pool.traits(model_id)
         return traits["n_ctx"], traits["token_factor"]
 
     def _label(self, model_id: str) -> str:
@@ -316,12 +316,12 @@ class AACConversationEntity(
     ) -> conversation.ConversationResult:
         """Answer one user message, running tool calls as needed."""
         store = self.domain.settings  # this domain's settings (models and pools are shared)
-        broker = self.entry.runtime_data.broker
+        pool = self.entry.runtime_data.pool
         options = store.master
         run = current_run.get()
         tier = run.tier if run else "master"
         background = bool(run and run.kind == "auto")  # owner's availability rules apply
-        picked = broker.endpoint_for(tier, background)
+        picked = pool.endpoint_for(tier, background)
         if picked is None:
             response = intent.IntentResponse(language=user_input.language)
             response.async_set_error(
@@ -349,7 +349,7 @@ class AACConversationEntity(
             if await owner_present(self.hass, user_input.context.user_id):
                 api_ids.append(self.domain.api_id(SETUP_API_ID))  # with the owner present it helps set itself up
         # Tools as a menu (per model): areas first, an area's tools when the model opens it
-        menu_mode = bool(api_ids) and broker.traits(model_id)["tool_mode"] == "menu"
+        menu_mode = bool(api_ids) and pool.traits(model_id)["tool_mode"] == "menu"
         if menu_mode:
             api_ids.append(self.domain.api_id(MENU_API_ID))
         try:
@@ -446,7 +446,7 @@ class AACConversationEntity(
             while True:
                 offered = None if final or no_tools else tools
                 # Only as much of the chat as the model holds: the oldest turns go first
-                n_ctx, factor = await self._context_of(broker, model_id, provider)
+                n_ctx, factor = await self._context_of(pool, model_id, provider)
                 messages = full
                 if n_ctx:
                     messages, dropped, _ = fit(full, offered,
@@ -485,12 +485,12 @@ class AACConversationEntity(
                             "model's server a bigger context (llama.cpp: -c)."
                         ) from err
                     context_retry = 1
-                    broker.learn_context(model_id, err.n_ctx, err.n_prompt / sent if err.n_prompt and sent else None)
+                    pool.learn_context(model_id, err.n_ctx, err.n_prompt / sent if err.n_prompt and sent else None)
                     continue
                 except ProviderConnectionError as err:
                     # Its machine did not answer (e.g. a PC that is off): next in the pool
-                    broker.mark_down(model_id, str(err))
-                    if (picked := broker.endpoint_for(tier, background)) is None:
+                    pool.mark_down(model_id, str(err))
+                    if (picked := pool.endpoint_for(tier, background)) is None:
                         raise HomeAssistantError(f"{NO_MODEL}: {err}") from err
                     LOGGER.info("Master model %s unreachable, using %s", model_id, picked[0])
                     if run:
@@ -501,8 +501,8 @@ class AACConversationEntity(
                 except ProviderError as err:
                     LOGGER.error("Model request failed: %s", err)
                     raise HomeAssistantError(f"Model request failed: {err}") from err
-                broker.mark_up(model_id)
-                broker.record_speed(model_id, (reply.get("_stats") or {}).get("tokens_per_second"))
+                pool.mark_up(model_id)
+                pool.record_speed(model_id, (reply.get("_stats") or {}).get("tokens_per_second"))
                 if run:
                     run.model = model_id
                     self.domain.runs.record_request(run, model_id, messages, offered, left_out=left_out,

@@ -83,7 +83,7 @@ deleting unless it is read-only or says destructive=false, HA's default is destr
 `GuardedAPI`, which wraps every module's tools each time an agent asks for them. Setup steps from the
 manifest are built (see above; ids `<domain>/mod/<module>/<step>`), e.g. the calendar module's "Connect a calendar".
 
-Modules so far: `heartbeat` (0.44: a source node writing `master.request`; off by default; page with its last
+Modules so far: `heartbeat` (0.44: a source node writing `broker.request`; off by default; page with its last
 runs and "Run once now"), `lists` (lists of anything: tree entries with free fields; tools; calendar provider;
 page; setting "show dated entries in the calendar") and `calendar` (HA calendars adapter; where new
 entries go; agenda page; setting "show the calendar page"). Still planned: external modules, AAC-made modules, sandbox for code modules.

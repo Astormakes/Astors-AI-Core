@@ -1,4 +1,4 @@
-"""Pools: ordered lists per role, the broker falls back when a machine is off."""
+"""Pools: ordered lists per role, the pool falls back when a machine is off."""
 
 import aiohttp
 
@@ -39,7 +39,7 @@ async def test_master_falls_back_when_pc_is_off(hass: HomeAssistant, hass_ws_cli
     message = await _chat(ws, "hi")
     assert message["text"] == "from the server"
     assert any("switched to m_test0001" in s.get("text", "") for s in message["steps"])
-    status = mock_entry.runtime_data.broker.status()["roles"]["master"]
+    status = mock_entry.runtime_data.pool.status()["roles"]["master"]
     assert status["active"] == MODEL_CFG["id"] and status["fallback"]
     assert status["items"][0]["state"] == "down"
     pc_calls = sum(1 for c in aioclient_mock.mock_calls if "pc.test" in str(c[1]))
@@ -86,20 +86,20 @@ async def test_tiers_fast_smart_and_own_tags(hass: HomeAssistant, hass_ws_client
     hass_storage[STORAGE_KEY]["data"]["models"].append(dict(PC) | {"model": "qwen-35b-a3b"})
     hass_storage[STORAGE_KEY]["data"]["pools"] = {"master": [MODEL_CFG["id"], PC["id"]]}
     await setup_aac(hass, mock_entry)
-    broker = mock_entry.runtime_data.broker
-    broker.record_speed(MODEL_CFG["id"], 12.0)
-    broker.record_speed(PC["id"], 80.0)
-    broker.learn_params(MODEL_CFG["id"], 8.19e9)
-    assert broker.pick_tier("fast") == PC["id"] and broker.pick_tier("smart") == PC["id"]
-    assert broker.pick_tier("small") == MODEL_CFG["id"] and broker.pick_tier("master") == MODEL_CFG["id"]
+    pool = mock_entry.runtime_data.pool
+    pool.record_speed(MODEL_CFG["id"], 12.0)
+    pool.record_speed(PC["id"], 80.0)
+    pool.learn_params(MODEL_CFG["id"], 8.19e9)
+    assert pool.pick_tier("fast") == PC["id"] and pool.pick_tier("smart") == PC["id"]
+    assert pool.pick_tier("small") == MODEL_CFG["id"] and pool.pick_tier("master") == MODEL_CFG["id"]
     ws = await hass_ws_client(hass)
     await ws.send_json_auto_id({"type": "aac/pool/tags", "resource": MODEL_CFG["id"], "tags": ["Efficient"]})
     status = (await ws.receive_json())["result"]
     assert status["by_tier"]["fast"] == PC["id"]
-    assert broker.pick_tier("efficient") == MODEL_CFG["id"]
-    broker.mark_down(PC["id"], "off")
-    assert broker.pick_tier("fast") == MODEL_CFG["id"] and broker.pick_tier("smart") == MODEL_CFG["id"]
-    assert broker.pick_tier("nonsense") == MODEL_CFG["id"]  # unknown tier → the master's first
+    assert pool.pick_tier("efficient") == MODEL_CFG["id"]
+    pool.mark_down(PC["id"], "off")
+    assert pool.pick_tier("fast") == MODEL_CFG["id"] and pool.pick_tier("smart") == MODEL_CFG["id"]
+    assert pool.pick_tier("nonsense") == MODEL_CFG["id"]  # unknown tier → the master's first
 
 
 async def test_speed_is_measured_from_calls(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
@@ -119,7 +119,7 @@ async def test_speed_is_measured_from_calls(hass: HomeAssistant, hass_ws_client,
     run_id = (await ws.receive_json())["result"]["run_id"]
     run = mock_entry.runtime_data.runs.get(run_id)
     assert run.tier == "fast" and run.model == MODEL_CFG["id"]
-    assert mock_entry.runtime_data.broker.traits(MODEL_CFG["id"])["speed"] == 42.0
+    assert mock_entry.runtime_data.pool.traits(MODEL_CFG["id"])["speed"] == 42.0
 
 
 async def test_availability_rule_for_background_jobs(hass: HomeAssistant, hass_ws_client, hass_storage, aioclient_mock, mock_entry, configured, freezer):
@@ -128,40 +128,40 @@ async def test_availability_rule_for_background_jobs(hass: HomeAssistant, hass_w
     freezer.move_to("2026-10-20 10:00:00+00:00")  # a Tuesday
     _with_pc(hass_storage)
     await setup_aac(hass, mock_entry)
-    broker = mock_entry.runtime_data.broker
+    pool = mock_entry.runtime_data.pool
     hass.states.async_set("person.owner", "home")
-    await broker.async_set_rule(PC["id"], {"applies_to": "background", "note": "only while I am at work", "when": [
+    await pool.async_set_rule(PC["id"], {"applies_to": "background", "note": "only while I am at work", "when": [
         {"type": "state", "entity_id": "person.owner", "state": ["not_home", "work"]},
         {"type": "time", "after": "08:00", "before": "17:00", "weekdays": [0, 1, 2, 3, 4]}]})
-    assert broker.pick("master") == PC["id"]  # the owner's chat may still use the PC
-    assert broker.pick("master", background=True) == MODEL_CFG["id"]  # the heartbeat may not
+    assert pool.pick("master") == PC["id"]  # the owner's chat may still use the PC
+    assert pool.pick("master", background=True) == MODEL_CFG["id"]  # the heartbeat may not
     hass.states.async_set("person.owner", "not_home")
-    assert broker.pick("master", background=True) == PC["id"]
+    assert pool.pick("master", background=True) == PC["id"]
     freezer.move_to("2026-10-20 18:30:00+00:00")
-    assert broker.pick("master", background=True) == MODEL_CFG["id"]  # after work hours
+    assert pool.pick("master", background=True) == MODEL_CFG["id"]  # after work hours
     hass.states.async_set("person.owner", "unknown")
     freezer.move_to("2026-10-20 10:00:00+00:00")
-    assert broker.pick("master", background=True) == MODEL_CFG["id"]  # presence not working = not met
-    assert broker.status()["roles"]["master"]["items"][0]["rule"]["note"] == "only while I am at work"
+    assert pool.pick("master", background=True) == MODEL_CFG["id"]  # presence not working = not met
+    assert pool.status()["roles"]["master"]["items"][0]["rule"]["note"] == "only while I am at work"
 
 
 async def test_rule_can_name_unknown_and_negate(hass: HomeAssistant, hass_storage, mock_entry, configured):
     """'Only when I am not gaming': an empty 'now playing' sensor is unknown; the rule can say so, or use not."""
     _with_pc(hass_storage)
     await setup_aac(hass, mock_entry)
-    broker = mock_entry.runtime_data.broker
+    pool = mock_entry.runtime_data.pool
     hass.states.async_set("sensor.now_playing", "unknown")
-    await broker.async_set_rule(PC["id"], {"applies_to": "all", "when": [
+    await pool.async_set_rule(PC["id"], {"applies_to": "all", "when": [
         {"type": "state", "entity_id": "sensor.now_playing", "state": ["", "unknown", "unavailable"]}]})
-    assert broker.pick("master") == PC["id"]
+    assert pool.pick("master") == PC["id"]
     hass.states.async_set("sensor.now_playing", "Portal 2")
-    assert broker.pick("master") == MODEL_CFG["id"]
-    await broker.async_set_rule(PC["id"], {"applies_to": "all", "when": [
+    assert pool.pick("master") == MODEL_CFG["id"]
+    await pool.async_set_rule(PC["id"], {"applies_to": "all", "when": [
         {"type": "state", "entity_id": "person.owner", "state": "home", "not": True}]})
     hass.states.async_set("person.owner", "home")
-    assert broker.pick("master") == MODEL_CFG["id"]
+    assert pool.pick("master") == MODEL_CFG["id"]
     hass.states.async_set("person.owner", "not_home")
-    assert broker.pick("master") == PC["id"]
+    assert pool.pick("master") == PC["id"]
 
 
 async def test_setup_tool_writes_the_rule(hass: HomeAssistant, hass_ws_client, hass_storage, aioclient_mock, mock_entry, configured):
@@ -180,5 +180,5 @@ async def test_setup_tool_writes_the_rule(hass: HomeAssistant, hass_ws_client, h
     first = await _chat(ws, "Use my PC for heavy stuff only while I am at work.")
     assert next(s for s in first["steps"] if s["type"] == "tool_result")["error"]
     await _chat(ws, "Use the phone tracker.")
-    saved = mock_entry.runtime_data.broker.rule(PC["id"])
+    saved = mock_entry.runtime_data.pool.rule(PC["id"])
     assert saved["applies_to"] == "background" and saved["when"][1]["weekdays"] == [0, 1, 2, 3, 4]

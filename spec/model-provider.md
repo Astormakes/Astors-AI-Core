@@ -1,4 +1,4 @@
-# Model provider and broker — partial
+# Model provider and pool — partial
 
 ## Provider (built)
 
@@ -61,12 +61,12 @@ The home's compute, shared by all domains (pools stand above domains). Three poo
 | **vision** | detectors, vision LLM |
 
 Per resource: capability, machine, privacy tier, availability (`always` for a server,
-`sometimes` for a desktop PC), priority. The broker picks the best reachable resource
+`sometimes` for a desktop PC), priority. The pool picks the best reachable resource
 that fits the request, falls back down the list, and makes a fallback visible.
 
 Built (v0.12.0, `pools.py`): `store.pools` = role → ordered list of model ids / HA engine ids.
 Roles: `master` (thinking), `memory` (thinking, one model: vectors do not mix), `stt`, `tts`
-(voice). The broker hands out the first usable entry; a resource whose machine did not answer
+(voice). The pool (`Pool`, called the broker until 0.45) hands out the first usable entry; a resource whose machine did not answer
 (connect timeout 3 s) is marked down for 60 s and the next one is used (master: within the
 same message; speech: per segment, HA's local engine last). WebSocket `aac/pools`,
 `aac/pool/set`; setup tool `use_model(role, id, position first|last, remove)`. Old single
@@ -142,7 +142,7 @@ like models have traits (`jobs.py`):
 | `critical` | if no model came before `due`, the `fallback` text reaches the owner anyway (HA notification + "From AAC"), without a model |
 | `tags` | e.g. `heartbeat`, `reminder`, `event`, `own plan` |
 
-A job runs at once when the broker has an allowed model (background rules apply), else it waits,
+A job runs at once when the pool has an allowed model (background rules apply), else it waits,
 highest priority first, checked every 30 s. Owner settings (`store.queue`): `notify_no_model` (tell
 once per outage), `postpone_notice` (minutes; a job that waited longer is told so when it runs). The
 owner's chats and voice never queue. Triggers may override the classes in `do`: `priority`,
@@ -151,7 +151,8 @@ owner's chats and voice never queue. Triggers may override the classes in `do`: 
 
 ## Broker request (planned)
 
-Agents never grab hardware; they ask the broker:
+Agents never grab hardware; they ask the broker ([streams.md](streams.md): the step that takes
+requests, builds their context and records the run), which asks the pool:
 
 ```json
 {

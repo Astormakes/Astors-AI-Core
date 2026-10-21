@@ -47,9 +47,9 @@ from .capabilities import CalendarProvider, Capabilities, parse_time, plan_occur
 from .home_api import AACHomeAPI, apply_entities, apply_visibility
 from .jobs import JobQueue
 from .requests import Requests
-from .master_node import MasterNode
+from .broker import BrokerNode
 from .modules import MODULES_DIR, MODULES_URL, LoadedModule, async_load_modules
-from .pools import TIERS, Broker
+from .pools import TIERS, Pool
 from .skins import USER_URL as USER_SKINS_URL, user_dir
 from .memory import MemoryStore, memory_path
 from .memory_api import AACMemoryAPI
@@ -77,7 +77,7 @@ class AACData:
     version: str
     domains: dict[str, Domain] = field(default_factory=dict)
     audio: AudioHub | None = None
-    broker: Broker | None = None
+    pool: Pool | None = None
     jobs: JobQueue | None = None
     capabilities: Capabilities = field(default_factory=Capabilities)
     bus: Bus = field(default_factory=Bus)
@@ -142,7 +142,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     await store.async_load()
     version = str((await async_get_integration(hass, DOMAIN)).version)
     entry.runtime_data = AACData(store, version)
-    broker = entry.runtime_data.broker = Broker(hass, store)
+    pool = entry.runtime_data.pool = Pool(hass, store)
     entry.runtime_data.jobs = JobQueue(hass, entry)
     entry.runtime_data.requests = Requests(hass, entry)
     entry.runtime_data.requests.register_kind("entities", apply_entities)
@@ -190,7 +190,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         LOGGER.warning("AAC: language detection unavailable: %s", err)
 
     async def embed(texts: list[str]):
-        if (picked := broker.endpoint("memory")) is None:
+        if (picked := pool.endpoint("memory")) is None:
             return None  # keywords only
         model_id, endpoint = picked
         provider = OpenAICompatProvider(
@@ -199,9 +199,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         try:
             vectors = await provider.embed(endpoint.model, texts)
         except ProviderConnectionError as err:
-            broker.mark_down(model_id, str(err))
+            pool.mark_down(model_id, str(err))
             raise
-        broker.mark_up(model_id)
+        pool.mark_up(model_id)
         return vectors, endpoint.model
 
     for i, settings in enumerate(store.domains.values()):
@@ -219,8 +219,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         ):
             entry.async_on_unload(llm.async_register_api(hass, api))
 
-    # The master is the core's node on the stream bus: modules ask it through master.request
-    entry.async_on_unload(entry.runtime_data.bus.add_node(MasterNode(hass, entry).node))
+    # The broker is the core's node on the stream bus: modules ask it through broker.request
+    entry.async_on_unload(entry.runtime_data.bus.add_node(BrokerNode(hass, entry).node))
     entry.runtime_data.capabilities.options["tiers"] = lambda domain_id: [
         (t, t) for t in dict.fromkeys([*TIERS, *(tag for tr in store.data["traits"].values() for tag in tr.get("tags", []))])]
 

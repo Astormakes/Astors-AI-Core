@@ -37,7 +37,7 @@ Rules:
 - Never in a package: API keys, tokens, HA URLs. Those are filled in on import.
 - **Pools stand above domains** (see [model-provider.md](model-provider.md)): machines and models
   belong to the home, not to a domain. A domain names the capabilities it needs (`{"tier": "master"}`,
-  "speech to text, multilingual"), never a machine; on import the broker maps them to the local pools.
+  "speech to text, multilingual"), never a machine; on import they are mapped to the local pools.
 
 ## Built (v0.15.0): domains inside one AAC
 

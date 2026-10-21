@@ -42,8 +42,8 @@ def describe(line: dict[str, Any]) -> str:
 async def async_attention(ctx: ModuleContext, text: str, earlier: list[str], just_said: str | None = None,
                           about: str = "") -> bool:
     """Is someone talking to AAC, or is the name just part of other speech (TV, a video, a talk)?"""
-    broker = ctx.entry.runtime_data.broker
-    if (picked := broker.endpoint_for("fast")) is None:
+    pool = ctx.entry.runtime_data.pool
+    if (picked := pool.endpoint_for("fast")) is None:
         return True  # nothing to judge with: the name decides
     model_id, endpoint = picked
     provider = OpenAICompatProvider(
@@ -66,7 +66,7 @@ async def async_attention(ctx: ModuleContext, text: str, earlier: list[str], jus
     except (ProviderError, ValueError) as err:
         LOGGER.info("AAC wake word: attention check failed (%s), the name decides", err)
         return True
-    broker.mark_up(model_id)
+    pool.mark_up(model_id)
     return bool(answer.get("to_assistant", True))
 
 

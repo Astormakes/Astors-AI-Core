@@ -166,7 +166,7 @@ async def test_heartbeat_settings_move_into_the_module(hass: HomeAssistant, hass
 
 def test_silence_heuristic():
     """NOTHING and its obvious paraphrases are silence; real news is not."""
-    from custom_components.aac.master import is_silent
+    from custom_components.aac.broker import is_silent
 
     for text in ["NOTHING", "Nothing.", "I have no alerts or issues to report.", "No issues.",
                  "All good.", "Everything is fine.", "Nothing to report.", "There is nothing new to report.", ""]:
@@ -457,7 +457,7 @@ async def test_too_long_chat_is_fitted_and_retried(hass: HomeAssistant, hass_ws_
     assert len(payloads) == 2 and len(payloads[1]["messages"]) < len(payloads[0]["messages"])
     assert payloads[1]["messages"][-1]["content"] == "and now?"
     assert any("Context full" in (s.get("text") or "") for s in message["steps"])
-    assert mock_entry.runtime_data.broker.traits(mock_entry.runtime_data.store.pools["master"][0])["n_ctx"] == 4096
+    assert mock_entry.runtime_data.pool.traits(mock_entry.runtime_data.store.pools["master"][0])["n_ctx"] == 4096
 
 
 async def test_answers_without_tools_when_they_do_not_fit(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
@@ -501,13 +501,13 @@ async def test_archive_a_chat(hass: HomeAssistant, hass_ws_client, aioclient_moc
 async def test_memory_reads_only_the_own_words(hass: HomeAssistant, aioclient_mock, mock_entry, configured):
     """A voice line comes with the room's lines (a video, others): memory learns from the line only."""
     from custom_components.aac import conversation as conv
-    from custom_components.aac.master import async_run_master
+    from custom_components.aac.broker import async_run_request
 
     await setup_aac(hass, mock_entry)
     _replies(aioclient_mock, _reply("Done."))
     said = ("The last lines in the room:\n- (0 %) voice #3: we renovate the room before the drywallers come\n\n"
             "Now to you, spoken at the microphone 'PC': turn on the bed light")
-    run, _ = await async_run_master(hass, mock_entry, said, kind="chat", trigger="voice: PC", title="Voice",
+    run, _ = await async_run_request(hass, mock_entry, said, kind="chat", trigger="voice: PC", title="Voice",
                                     chat_id="voice_pc", own_words="turn on the bed light")
     await hass.async_block_till_done()
     assert run.input == said

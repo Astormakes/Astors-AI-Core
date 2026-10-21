@@ -105,7 +105,7 @@ class JobQueue:
             self._unsub = None
 
     def _model_free(self, job: Job) -> bool:
-        return self.entry.runtime_data.broker.endpoint_for(job.tier, background=True) is not None
+        return self.entry.runtime_data.pool.endpoint_for(job.tier, background=True) is not None
 
     async def async_submit(self, job: Job) -> None:
         """Run now if a model is free, else wait."""

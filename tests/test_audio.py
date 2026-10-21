@@ -199,7 +199,7 @@ async def test_stt_falls_back_when_machine_is_off(hass: HomeAssistant, aioclient
     ):
         heard = await hub.async_stt(SILENCE * 100)
         assert heard["text"] == "lights off" and heard["engine"] == "stt.local"
-        stt_role = mock_entry.runtime_data.broker.status()["roles"]["stt"]
+        stt_role = mock_entry.runtime_data.pool.status()["roles"]["stt"]
         assert stt_role["items"][0]["state"] == "down" and stt_role["fallback"]
         calls = aioclient_mock.call_count
         await hub.async_stt(SILENCE * 100)

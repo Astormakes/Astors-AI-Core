@@ -101,12 +101,12 @@ class SetupStatusTool(_SetupTool):
                 ],
                 "domain": self._domain.name,
                 "pools": {
-                    name: {"list": [f"{i['id']} ({i['state']})" for i in data.broker.status()["roles"][role]["items"]],
-                           "in_use_now": data.broker.status()["roles"][role]["active"]}
+                    name: {"list": [f"{i['id']} ({i['state']})" for i in data.pool.status()["roles"][role]["items"]],
+                           "in_use_now": data.pool.status()["roles"][role]["active"]}
                     for name, role in _ROLE_NAMES.items()
                 },
-                "requests_now": data.broker.status()["by_tier"],
-                "availability_rules": {r: data.broker.rule(r) for r in data.broker.candidates("master") if data.broker.rule(r)},
+                "requests_now": data.pool.status()["by_tier"],
+                "availability_rules": {r: data.pool.rule(r) for r in data.pool.candidates("master") if data.pool.rule(r)},
                 "presence_entities": [
                     {"entity_id": st.entity_id, "name": st.attributes.get("friendly_name", st.entity_id),
                      "kind": "zone" if st.domain == "zone" else "person" if st.domain == "person"
@@ -236,7 +236,7 @@ class UseModelTool(_SetupTool):
                 return llm.ToolResult(data={"error": "Unknown model id (use list_models); voice takes HA engines."}, error=True)
             items = [*items, resource] if args.get("position") == "last" else [resource, *items]
         await async_set_role(hass, self._entry, role, items)
-        status = data.broker.status()["roles"][role]
+        status = data.pool.status()["roles"][role]
         return llm.ToolResult(data={"role": args["role"], "pool": [i["id"] for i in status["items"]],
                                     "in_use_now": status["active"]})
 
@@ -254,11 +254,11 @@ class TagModelTool(_SetupTool):
     parameters = probatio.Schema({probatio.Required("model_id"): str, probatio.Required("tags"): [str]})
 
     async def _async_run(self, hass, args):
-        broker = self._entry.runtime_data.broker
-        if args["model_id"] not in broker.candidates("master"):
+        pool = self._entry.runtime_data.pool
+        if args["model_id"] not in pool.candidates("master"):
             return llm.ToolResult(data={"error": "Tags are for models in the master pool."}, error=True)
-        await broker.async_set_tags(args["model_id"], args["tags"])
-        return llm.ToolResult(data={"traits": broker.traits(args["model_id"]), "by_tier": broker.status()["by_tier"]})
+        await pool.async_set_tags(args["model_id"], args["tags"])
+        return llm.ToolResult(data={"traits": pool.traits(args["model_id"]), "by_tier": pool.status()["by_tier"]})
 
 
 _CONDITION = probatio.Any(
@@ -298,12 +298,12 @@ class AvailabilityTool(_SetupTool):
     )
 
     async def _async_run(self, hass, args):
-        broker = self._entry.runtime_data.broker
+        pool = self._entry.runtime_data.pool
         resource = args["model_id"]
         if resolve_model(hass, self._entry.runtime_data.store, resource) is None:
             return llm.ToolResult(data={"error": "Unknown model id; use list_models."}, error=True)
         if args.get("clear"):
-            await broker.async_set_rule(resource, None)
+            await pool.async_set_rule(resource, None)
             return llm.ToolResult(data={"cleared": resource})
         conditions = []
         for cond in args.get("conditions") or []:
@@ -319,8 +319,8 @@ class AvailabilityTool(_SetupTool):
         if not conditions:
             return llm.ToolResult(data={"error": "Give at least one condition (or clear=true)."}, error=True)
         rule = {"applies_to": args.get("applies_to", "background"), "when": conditions, "note": args.get("note", "")}
-        await broker.async_set_rule(resource, rule)
-        now = {"chats": broker.allowed(resource, False), "background_jobs": broker.allowed(resource, True)}
+        await pool.async_set_rule(resource, rule)
+        now = {"chats": pool.allowed(resource, False), "background_jobs": pool.allowed(resource, True)}
         states = {c["entity_id"]: (st.state if (st := hass.states.get(c["entity_id"])) else None)
                   for c in conditions if c["type"] == "state"}
         data = {"rule": rule, "allowed_now": now, "entity_states_now": states}
@@ -340,9 +340,9 @@ class MeasureModelsTool(_SetupTool):
     annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=True)
 
     async def _async_run(self, hass, args):
-        broker = self._entry.runtime_data.broker
-        speeds = {r: await broker.async_measure(r) for r in broker.candidates("master") if broker.usable(r)}
-        return llm.ToolResult(data={"tokens_per_second": speeds, "by_tier": broker.status()["by_tier"]})
+        pool = self._entry.runtime_data.pool
+        speeds = {r: await pool.async_measure(r) for r in pool.candidates("master") if pool.usable(r)}
+        return llm.ToolResult(data={"tokens_per_second": speeds, "by_tier": pool.status()["by_tier"]})
 
 
 def _modules_overview(entry: AACConfigEntry, domain_id: str) -> list[dict]:

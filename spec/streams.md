@@ -1,7 +1,7 @@
 # Streams — partial
 
-Built (0.44): the bus (`streams.py`: types, default wiring by type, recent records), the core's master node
-(`master_node.py`) and the first node module, the heartbeat. Not yet: own wiring, read rules, slots, audio on the bus.
+Built (0.44): the bus (`streams.py`: types, default wiring by type, recent records), the core's broker node
+(`broker.py`) and the first node module, the heartbeat. Not yet: own wiring, read rules, slots, audio on the bus.
 
 The core is a **collection of streams**, like the calendar is a collection of the modules' entries
 (owner, 2026-10-21: "everything can be wired into anything", node-based almost). Modules are **nodes**:
@@ -12,6 +12,10 @@ the companion, video) is a module.
 Last shippable version before this rework: tag `v0.43.1-shippable`.
 
 ## Words
+
+Owner, 2026-10-21: the **broker** takes every request to a model (a chat, a spoken line, a trigger, the
+heartbeat), builds its context, asks the **pool** for a model of the request's tier and records the run.
+The **pool** only picks (the ordered lists per role). **Master** means only the main model (the master role).
 
 | Word | Meaning |
 |---|---|
@@ -39,8 +43,8 @@ Two classes:
 | `sound.event` | record | `{"labels": [["Beep", 0.8]], "text": "[beeping]"}` | Sounds |
 | `ha.event` | record | HA's event: `type`, `data` ([event.md](event.md)) | the core (HA bus) |
 | `time.tick` | record | `{"at": "…", "name": "every 30 min"}` | a timer node |
-| `master.request` | record | see below | heartbeat (built); triggers, companion, wake word (planned) |
-| `master.answer` | record | the finished [run](run.md) (result, chat_id) | the master node |
+| `broker.request` | record | see below | heartbeat (built); triggers, companion, wake word (planned) |
+| `broker.answer` | record | the finished [run](run.md) (result, chat_id) | the broker node |
 | `say` | record | `{"text", "language", "room"}` → spoken | answers, announcements |
 | `notify` | record | `{"title", "text", "to"}` → phone/panel | reminders, findings |
 | `video.frame` | continuous | frames + source | planned (cameras) |
@@ -49,11 +53,11 @@ Two classes:
 New types are added to this table (contract change); a module may also declare its own type under its
 id (`lists.item_changed`), readable by any node that names it.
 
-**`master.request`** (built): `{"trigger", "title", "text", "intro", "context": ["time", "home", "open_loops"],
+**`broker.request`** (built): `{"trigger", "title", "text", "intro", "context": ["time", "home", "open_loops"],
 "instructions", "tier", "tools", "priority", "due_minutes", "tags", "coalesce", "chat": "aac" | "own", "chat_prefix",
-"now"}`. The master node queues it as a job (or runs it at once with `now`, and the writer gets the run back),
+"now"}`. The broker node queues it as a job (or runs it at once with `now`, and the writer gets the run back),
 builds the context when the run starts, skips it while one with the same trigger waits or runs (`coalesce`), and
-writes `master.answer` `{"run_id", "trigger", "status", "result", "chat_id"}` when done.
+writes `broker.answer` `{"run_id", "trigger", "status", "result", "chat_id"}` when done.
 
 **Annotating.** Several nodes may add fields to the same record instead of writing a new one, in order
 (today's segment stages): STT gives `text`, Voices gives `speaker`, the attention check gives `addressed`.
@@ -75,8 +79,8 @@ ctx.add_node(Node(          # built: Node(id, title, inputs, outputs, run, adds)
 ```
 
 Kinds by ports: **source** (only outputs: a mic, a timer, HA's events), **transform** (in and out),
-**sink** (only inputs: speak, notify, memory, the master). The master is a node like the others:
-`master.request` in, `master.answer` out; it stays core because every domain has one.
+**sink** (only inputs: speak, notify, memory, the broker). The broker is a node like the others:
+`broker.request` in, `broker.answer` out; it stays core because every domain has one.
 
 ## Wiring
 
@@ -112,14 +116,14 @@ Without a provider the slot answers empty, and AAC works without memory. Candida
 
 | Part | Inputs | Outputs |
 |---|---|---|
-| Heartbeat | `time.tick` | `master.request` (only when something matters) |
-| Triggers | `ha.event`, `time.tick` | `master.request` |
+| Heartbeat | `time.tick` | `broker.request` (only when something matters) |
+| Triggers | `ha.event`, `time.tick` | `broker.request` |
 | Speech to text | `audio.segment` | `text.line` |
 | Voices | `text.line` (+pcm) | `text.line` (+speaker) |
 | Sounds | `audio.pcm` | `sound.event` |
-| Wake word | `text.line` | `master.request`, `say` |
-| Companion | `text.line`, `sound.event` | `master.request` |
-| Reminders (planning) | `time.tick` | `notify`, `master.request` |
+| Wake word | `text.line` | `broker.request`, `say` |
+| Companion | `text.line`, `sound.event` | `broker.request` |
+| Reminders (planning) | `time.tick` | `notify`, `broker.request` |
 
 ## Order of the rework
 

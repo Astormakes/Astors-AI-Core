@@ -1,11 +1,14 @@
-"""Pools and the broker: which model or engine serves which role, with fallback.
+"""The pool: which model or engine serves which role, with fallback.
 
 Framework section 7 + owner decision 2026-10-19: three pools (thinking, voice,
 vision) that stand above domains. Each role holds an ordered list of resources
-(model ids from Models, or HA speech engines). The broker hands out the first
+(model ids from Models, or HA speech engines). The pool hands out the first
 one that is usable; a resource whose machine did not answer (e.g. a desktop PC
 that is off) is skipped for a minute and the next one is used. Fallbacks are
 visible in the panel and to the setup tools.
+
+Owner, 2026-10-21: this was called the broker; the broker is now the step in front of it that takes
+requests, builds their context and records the run (broker.py), and the pool only picks.
 """
 
 from __future__ import annotations
@@ -76,7 +79,7 @@ def role_configured(hass: HomeAssistant, store: AACStore, role: str) -> bool:
     )
 
 
-class Broker:
+class Pool:
     """Hands out resources per role and remembers which machines did not answer."""
 
     def __init__(self, hass: HomeAssistant, store: AACStore) -> None:

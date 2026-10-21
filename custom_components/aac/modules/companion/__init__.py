@@ -106,8 +106,8 @@ async def async_setup_module(ctx: ModuleContext) -> None:
             ctx.entry.runtime_data.voice_domain.id))
 
     async def decide(source, line: dict[str, Any]) -> dict[str, Any] | None:
-        broker = ctx.entry.runtime_data.broker
-        if (picked := broker.endpoint_for("fast")) is None:
+        pool = ctx.entry.runtime_data.pool
+        if (picked := pool.endpoint_for("fast")) is None:
             return None
         model_id, endpoint = picked
         minutes = min(30.0, max(1.0, float(setting("minutes") or 5)))
@@ -138,7 +138,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         except (ProviderError, ValueError) as err:
             LOGGER.info("AAC companion: decision failed: %s", err)
             return None
-        broker.mark_up(model_id)
+        pool.mark_up(model_id)
         related = {int(r["line"]): max(0, min(100, int(r["percent"]))) for r in answer.get("related") or []
                    if isinstance(r, dict) and isinstance(r.get("line"), int) and isinstance(r.get("percent"), (int, float))}
         return {"respond": bool(answer.get("respond")), "why": str(answer.get("why", ""))[:120],

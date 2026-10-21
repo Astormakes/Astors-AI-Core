@@ -2,7 +2,7 @@
 
 The first module on the stream bus (owner, 2026-10-21: "the heartbeat should be a module"). It is a
 source node: a clock checks every minute whether a domain's interval has passed (outside its quiet
-hours) and writes a `master.request`; the core's master node queues the run (low priority, pointless
+hours) and writes a `broker.request`; the core's broker node queues the run (low priority, pointless
 once the next heartbeat is due, one waiting at a time) and opens a chat of its own for a finding.
 Tested instructions (Qwen3-8B and Qwen3.6-35B): alarms reported 12/12, quiet home silent; stating the
 NOTHING rule several times made both models swallow real alarms.
@@ -56,13 +56,13 @@ async def async_run_now(hass: HomeAssistant, domain_id: str | None = None):
     or None (no master model, or one is already running)."""
     ctx: ModuleContext = hass.data[_CTX]
     domain_id = domain_id or ctx.entry.runtime_data.domain().id
-    # Straight to the master node, so it works while the module is off in this domain
-    return await ctx.entry.runtime_data.bus.nodes["master"].run(domain_id, "requests", request(ctx, domain_id, now=True))
+    # Straight to the broker node, so it works while the module is off in this domain
+    return await ctx.entry.runtime_data.bus.nodes["broker"].run(domain_id, "requests", request(ctx, domain_id, now=True))
 
 
 async def async_setup_module(ctx: ModuleContext) -> None:
     """The node, its clock, the "Run once now" command and the page."""
-    ctx.add_node(Node(id=NODE, title="Heartbeat", outputs={"requests": "master.request"}))
+    ctx.add_node(Node(id=NODE, title="Heartbeat", outputs={"requests": "broker.request"}))
     ctx.hass.data[_CTX] = ctx
     started = dt_util.utcnow()
     last: dict[str, datetime] = {}
