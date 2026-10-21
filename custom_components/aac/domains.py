@@ -1,4 +1,4 @@
-"""AAC domains at runtime: each domain's own chats, runs, memory and triggers.
+"""AAC domains at runtime: each domain's own chats, runs and memory (modules keep their own data per domain).
 
 A domain is a whole AAC setup (the default "Assistant", a work helper, …). Models,
 pools, audio and skins are shared (they stand above domains); everything a domain
@@ -21,9 +21,6 @@ from .memory import MemoryStore
 from .runs import RunRegistry
 from .store import DomainSettings
 
-if TYPE_CHECKING:
-    from .triggers import TriggerEngine
-
 
 @dataclass
 class Domain:
@@ -34,7 +31,6 @@ class Domain:
     runs: RunRegistry
     first: bool
     memory: MemoryStore | None = None
-    triggers: TriggerEngine | None = None
 
     @property
     def id(self) -> str:

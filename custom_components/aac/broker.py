@@ -19,6 +19,9 @@ A request (plain JSON):
      "coalesce": true,          # skip while one of this trigger waits or runs
      "chat": "own",             # "aac" = the From AAC chat (default), "own" = a chat of its own per finding
      "chat_prefix": "hb",       # its id starts with this (default: the trigger)
+     "critical": false,         # still reach the owner when no model came before it was due …
+     "fallback": "…",           # … with this text (a plain notification, no model)
+     "keep": false,             # wait across a restart (saved with the queue)
      "now": false}              # true: no queue, emit returns the run (the owner pressed "Run once now")
 """
 
@@ -134,23 +137,20 @@ def short(text: str, n: int = 40) -> str:
 
 
 async def async_open_loops(entry: AACConfigEntry, domain: Domain) -> str:
-    """Open plans (memory kind 'plan'), AAC's own schedules and what is coming up, for automatic runs."""
+    """Open plans (memory kind 'plan'), what modules add (AAC's own schedules) and what is coming up,
+    for automatic runs."""
     settings = domain.settings
     lines = []
     if (memory := domain.memory) and settings.memory["enabled"]:
         lines += [f"- plan: {m.text} (since {m.created[:10]})" for m in await memory.async_plans()]
-    lines += [
-        f"- your own scheduled check-in: {t['name']} ({t['when'].get('date') or 'repeating'} at {t['when'].get('at')})"
-        for t in settings.triggers
-        if t.get("created_by") == "agent" and t.get("enabled") and t["when"]["type"] == "time"
-    ]
+    lines += await entry.runtime_data.capabilities.async_open_loops(domain.id)
     # Coming up: everything the calendar providers know for the next 24 hours
     now = dt_util.now()
     upcoming = await entry.runtime_data.capabilities.async_calendar(domain.id, now, now + timedelta(hours=24))
     lines += [
         f"- coming up: {e['name']}" + (f" ({dt_util.as_local(parse_time(e['start'])).strftime('%a %H:%M')})" if parse_time(e.get('start')) else "")
         + f" [{e['source']}]"
-        for e in upcoming if (e.get("ref") or {}).get("module") != "core"  # own plans are listed above
+        for e in upcoming if not (e.get("ref") or {}).get("open_loop")  # listed above by their module
     ][:15]
     return ("\n\nOpen loops (what the user wants to achieve, your own plans, what is coming up):\n" + "\n".join(lines)) if lines else ""
 
@@ -229,11 +229,29 @@ class BrokerNode:
             return run
 
         if req.get("now"):
-            return await start()
-        due = req.get("due_minutes")
-        await data.jobs.async_submit(Job(
-            domain, title, tier, req.get("priority") or "normal", start,
-            due=dt_util.utcnow() + timedelta(minutes=int(due)) if due else None,
-            tags=list(dict.fromkeys([trigger, *(req.get("tags") or [])])),
-        ))
+            return await start(req.get("_note") or "")
+        await data.jobs.async_submit(self._job(domain, req, start))
         return None
+
+    def _job(self, domain: Domain, req: dict[str, Any], start) -> Job:
+        trigger = req.get("trigger") or "request"
+        due = req.get("due_minutes")
+        return Job(
+            domain, req.get("title") or trigger, req.get("tier") or "master", req.get("priority") or "normal", start,
+            due=dt_util.utcnow() + timedelta(minutes=int(due)) if due else None,
+            critical=bool(req.get("critical")), fallback=req.get("fallback") or "",
+            tags=list(dict.fromkeys([trigger, *(req.get("tags") or [])])),
+            saved={"kind": "request", "title": req.get("title") or trigger, "request": {**req, "now": False}} if req.get("keep") else None,
+        )
+
+    def restore(self, domain: Domain, item: dict[str, Any]) -> Job | None:
+        """A request that waited before a restart, queued again (the job queue keeps its times)."""
+        req = item.get("request") or {}
+
+        async def start(note: str = "") -> Run | None:
+            # The same path as a fresh request, at once (it already waited its turn)
+            return await self._async_request(domain.id, "requests", {**req, "now": True, "coalesce": False, "_note": note})
+
+        job = self._job(domain, req, start)
+        job.reason = "waited before Home Assistant restarted"
+        return job

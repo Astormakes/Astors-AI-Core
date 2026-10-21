@@ -96,11 +96,6 @@ DOMAIN_DEFAULTS: dict[str, Any] = {
         CONF_MAX_TOKENS: DEFAULT_MAX_TOKENS,
         CONF_THINKING: DEFAULT_THINKING,
     },
-    # Triggers in the contract format (spec/trigger.md):
-    # {id, name, enabled, when: {type, ...}, do: {template, instruction}, cooldown, quiet_hours}
-    "triggers": [],
-    # What AAC may do on its own (owner-only). schedule: "off" | "ask" | "allowed"
-    "autonomy": {"schedule": "allowed"},
     # The owner's values for every agent; "" = the built-in draft
     "charter": "",
     # Long-term memory (its embedding model is the pool role "memory"; none = keywords only)
@@ -111,24 +106,7 @@ DOMAIN_DEFAULTS: dict[str, Any] = {
 }
 
 MASTER_KEYS = set(DOMAIN_DEFAULTS["master"])
-_PER_DOMAIN = ("master", "triggers", "autonomy", "charter", "memory")
-
-
-def _trigger_v1(trig: dict[str, Any]) -> dict[str, Any]:
-    """0.4/0.5 stored flat state triggers; convert them to the contract format."""
-    if "when" in trig:
-        return trig
-    return {
-        "id": trig["id"],
-        "name": trig.get("name", ""),
-        "enabled": trig.get("enabled", True),
-        "when": {"type": "state", "entity_id": trig.get("entity_id", ""), "to": trig.get("to", "")},
-        "do": {"template": "event-reaction", "instruction": trig.get("instruction", "")},
-        "cooldown": trig.get("cooldown", 300),
-        "quiet_hours": None,
-        "created_by": "owner",
-        "proposed": False,
-    }
+_PER_DOMAIN = ("master", "charter", "memory")
 
 
 def _domain_from(stored: dict[str, Any], domain_id: str, name: str) -> dict[str, Any]:
@@ -138,8 +116,8 @@ def _domain_from(stored: dict[str, Any], domain_id: str, name: str) -> dict[str,
     if "worker" in master:  # 0.4 and older
         master.setdefault(CONF_MASTER_MODEL, master.pop("worker"))
     d["master"].update({k: v for k, v in master.items() if k in MASTER_KEYS})
-    d["triggers"] = [_trigger_v1(t) for t in stored.get("triggers", [])]
-    d["autonomy"].update(stored.get("autonomy", {}))
+    if stored.get("triggers"):  # up to 0.44: the triggers module moves them to its own storage on its first start
+        d["triggers"] = list(stored["triggers"])
     d["charter"] = stored.get("charter", "")
     d["memory"].update({k: v for k, v in stored.get("memory", {}).items() if k != "embed_model"})
     if isinstance(stored.get("visible"), list):
@@ -186,39 +164,6 @@ class DomainSettings:
     async def async_update_master(self, changes: dict[str, Any]) -> None:
         """Change master settings (unknown keys are ignored)."""
         self.master.update({k: v for k, v in changes.items() if k in MASTER_KEYS})
-        await self.async_save()
-
-    @property
-    def triggers(self) -> list[dict[str, Any]]:
-        """Event triggers."""
-        return self.data["triggers"]
-
-    async def async_save_trigger(self, trigger: dict[str, Any]) -> dict[str, Any]:
-        """Add or update a trigger (contract format)."""
-        existing = next((t for t in self.triggers if t["id"] == trigger.get("id")), None)
-        if existing is None:
-            existing = {"id": f"t_{uuid.uuid4().hex[:8]}"}
-            self.triggers.append(existing)
-        for key in ("name", "enabled", "when", "do", "cooldown", "quiet_hours"):
-            existing[key] = trigger.get(key)
-        existing["created_by"] = trigger.get("created_by", existing.get("created_by", "owner"))
-        existing["proposed"] = bool(trigger.get("proposed", False))
-        await self.async_save()
-        return existing
-
-    async def async_delete_trigger(self, trigger_id: str) -> None:
-        """Remove an event trigger."""
-        self.data["triggers"] = [t for t in self.triggers if t["id"] != trigger_id]
-        await self.async_save()
-
-    @property
-    def autonomy(self) -> dict[str, Any]:
-        """What AAC may do on its own."""
-        return self.data["autonomy"]
-
-    async def async_set_autonomy(self, changes: dict[str, Any]) -> None:
-        """Owner-only."""
-        self.autonomy.update({k: v for k, v in changes.items() if k in self.autonomy})
         await self.async_save()
 
     @property
@@ -312,6 +257,9 @@ class AACStore:
                 data["module_settings"].setdefault(d["id"], {}).setdefault("heartbeat", {
                     k: old[k] for k in ("interval", "quiet_start", "quiet_end", "instructions", "tools", "tier") if k in old})
                 data["module_access"].setdefault(d["id"], {}).setdefault("heartbeat", {})["enabled"] = bool(old.get("enabled"))
+            # Up to 0.44 "AAC may plan on its own" was core (autonomy.schedule): now the triggers module's own_plans
+            if (old_mode := (d.get("autonomy") or {}).get("schedule")) in ("off", "ask", "allowed"):
+                data["module_settings"].setdefault(d["id"], {}).setdefault("triggers", {}).setdefault("own_plans", old_mode)
         data["domains"] = [_domain_from(d, d["id"], d.get("name") or d["id"]) for d in domains]
         ids = [d["id"] for d in data["domains"]]
         data["voice_domain"] = stored.get("voice_domain") if stored.get("voice_domain") in ids else ids[0]
@@ -355,7 +303,6 @@ class AACStore:
         while domain_id in self.domains:
             domain_id, n = f"{slug}_{n}", n + 1
         data = _domain_from(base, domain_id, name.strip() or domain_id)
-        data["triggers"] = [t for t in data["triggers"] if t.get("created_by") != "agent"]
         if not base:
             data["visible"] = []  # a new domain sees nothing until the owner ticks entities
         self.data["domains"].append(data)
@@ -393,28 +340,6 @@ class AACStore:
     async def async_update_master(self, changes: dict[str, Any]) -> None:
         """First domain."""
         await self.default_domain.async_update_master(changes)
-
-    @property
-    def triggers(self) -> list[dict[str, Any]]:
-        """First domain."""
-        return self.default_domain.triggers
-
-    async def async_save_trigger(self, trigger: dict[str, Any]) -> dict[str, Any]:
-        """First domain."""
-        return await self.default_domain.async_save_trigger(trigger)
-
-    async def async_delete_trigger(self, trigger_id: str) -> None:
-        """First domain."""
-        await self.default_domain.async_delete_trigger(trigger_id)
-
-    @property
-    def autonomy(self) -> dict[str, Any]:
-        """First domain."""
-        return self.default_domain.autonomy
-
-    async def async_set_autonomy(self, changes: dict[str, Any]) -> None:
-        """First domain."""
-        await self.default_domain.async_set_autonomy(changes)
 
     @property
     def charter(self) -> str:

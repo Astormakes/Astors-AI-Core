@@ -18,7 +18,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+import re
+from datetime import datetime, time
 from typing import Any
 
 from homeassistant.util import dt as dt_util
@@ -39,6 +40,8 @@ CalendarRemove = Callable[[str, str, str | None], Awaitable[bool]]
 # record, which the listener may mark: line["addressed"] = True, line["note"] = "…"; earlier: the lines
 # heard on that source before it, oldest first)
 HearingListener = Callable[[Any, dict[str, Any], list[dict[str, Any]]], Awaitable[None]]
+# open_loops(domain_id) → lines for an automatic run's "open loops" (e.g. AAC's own plans, triggers module)
+OpenLoops = Callable[[str], Awaitable[list[str]]]
 
 
 @dataclass
@@ -93,6 +96,7 @@ class Capabilities:
         self.calendar: dict[str, CalendarProvider] = {}
         self.hearing: dict[str, Hearing] = {}
         self.stages: dict[str, Stage] = {}
+        self.open_loops: dict[str, tuple[OpenLoops, str | None]] = {}  # id → (provider, module)
         # Choices for module settings that change at runtime: name → fn(domain_id) → [(value, label)]
         self.options: dict[str, Callable[[str], list[tuple[str, str]]]] = {}
         # Where new calendar entries go: fn(domain_id) → provider id (None = the first writer)
@@ -127,6 +131,27 @@ class Capabilities:
     def listeners(self, domain_id: str) -> list[Hearing]:
         """The listeners whose module is on in that domain (the voice domain)."""
         return [h for h in self.hearing.values() if not h.module or self.module_enabled(domain_id, h.module)]
+
+    def add_open_loops(self, provider_id: str, provider: OpenLoops, module: str | None = None) -> Callable[[], None]:
+        """Register lines for the open loops of automatic runs; returns the function that removes it again."""
+        self.open_loops[provider_id] = (provider, module)
+
+        def remove() -> None:
+            self.open_loops.pop(provider_id, None)
+
+        return remove
+
+    async def async_open_loops(self, domain_id: str) -> list[str]:
+        """Every provider's lines (modules switched off in that domain are left out)."""
+        lines: list[str] = []
+        for provider_id, (provider, module) in list(self.open_loops.items()):
+            if module and not self.module_enabled(domain_id, module):
+                continue
+            try:
+                lines += await provider(domain_id)
+            except Exception as err:  # noqa: BLE001 - one broken provider must not hide the others
+                LOGGER.warning("Open loops provider %s failed: %s", provider_id, err)
+        return lines
 
     def add_calendar(self, provider: CalendarProvider) -> Callable[[], None]:
         """Register a provider; returns the function that removes it again."""
@@ -208,35 +233,57 @@ def in_period(entry_start: Any, start: datetime, end: datetime) -> bool:
     return when is not None and start <= when < end
 
 
-def plan_occurrences(triggers: list[dict[str, Any]], start: datetime, end: datetime, limit: int = 200) -> list[dict[str, Any]]:
-    """AAC's plans and the owner's time triggers as calendar entries (repeating ones once per occurrence)."""
-    from datetime import timedelta  # noqa: PLC0415
+def parse_hhmm(value: str) -> time | None:
+    """'HH:MM' → time (None when it isn't one)."""
+    try:
+        hour, minute = value.split(":")
+        return time(int(hour), int(minute))
+    except (ValueError, AttributeError):
+        return None
 
-    entries: list[dict[str, Any]] = []
-    for trig in triggers:
-        when = trig.get("when") or {}
-        if not trig.get("enabled") or when.get("type") != "time" or not when.get("at"):
+
+def in_quiet_hours(now: datetime, start: str, end: str) -> bool:
+    """True between start and end (local time, may wrap midnight; the same time twice = never)."""
+    t_start, t_end = parse_hhmm(start), parse_hhmm(end)
+    if t_start is None or t_end is None or t_start == t_end:
+        return False
+    current = now.time()
+    if t_start < t_end:
+        return t_start <= current < t_end
+    return current >= t_start or current < t_end
+
+
+_DAY_NAMES = {
+    **{n: i for i, n in enumerate(["mon", "tue", "wed", "thu", "fri", "sat", "sun"])},
+    **{n: i for i, n in enumerate(["mo", "di", "mi", "do", "fr", "sa", "so"])},
+}
+_DAY_GROUPS = {"weekdays": [0, 1, 2, 3, 4], "workdays": [0, 1, 2, 3, 4], "weekend": [5, 6], "daily": [], "every day": []}
+
+
+def parse_weekdays(values) -> list[int]:
+    """[0, 4], ["mon", "fri"], ["weekdays"], "Mo-Fr" → sorted day numbers (0 = Monday).
+
+    Small models get number-coded weekdays wrong ("weekdays" became Mo/We/Fr/Su),
+    so names and groups are accepted too."""
+    if isinstance(values, str):
+        values = re.split(r"[,\s]+", values)
+    days: set[int] = set()
+    for value in values or []:
+        if isinstance(value, int) and 0 <= value <= 6:
+            days.add(value)
             continue
-        hour, minute = (int(x) for x in when["at"].split(":"))
-        day = dt_util.as_local(start).date()
-        while len(entries) < limit:
-            moment = dt_util.start_of_local_day(day).replace(hour=hour, minute=minute)
-            if moment >= end:
-                break
-            if moment >= start and (
-                (when.get("date") and day.isoformat() == when["date"])
-                or (not when.get("date") and (not when.get("weekdays") or day.weekday() in when["weekdays"]))
-            ):
-                entries.append({
-                    "name": trig.get("name") or "Plan", "start": moment.isoformat(), "all_day": False,
-                    "key": trig["id"], **({} if when.get("date") else {"recurrence_id": day.isoformat()}),
-                    "ref": {"module": "core", "trigger": trig["id"]},
-                    "data": {"instruction": (trig.get("do") or {}).get("instruction", ""),
-                             "by": trig.get("created_by", "owner"), "repeating": not when.get("date")},
-                    "tags": ["plan" if trig.get("created_by") == "agent" else "trigger"],
-                })
-            if when.get("date"):
-                if day.isoformat() >= when["date"]:
-                    break
-            day += timedelta(days=1)
-    return entries
+        text = str(value).strip().lower()
+        if text.isdigit() and 0 <= int(text) <= 6:
+            days.add(int(text))
+        elif text in _DAY_GROUPS:
+            days.update(_DAY_GROUPS[text])
+        elif "-" in text and all(p[:3] in _DAY_NAMES or p[:2] in _DAY_NAMES for p in text.split("-", 1)):
+            a, b = (
+                _DAY_NAMES.get(p[:3], _DAY_NAMES.get(p[:2])) for p in text.split("-", 1)
+            )
+            days.update(range(a, b + 1) if a <= b else [*range(a, 7), *range(0, b + 1)])
+        elif text[:3] in _DAY_NAMES:
+            days.add(_DAY_NAMES[text[:3]])
+        elif text[:2] in _DAY_NAMES:
+            days.add(_DAY_NAMES[text[:2]])
+    return sorted(days)

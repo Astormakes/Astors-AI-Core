@@ -67,8 +67,6 @@ def async_register(hass: HomeAssistant) -> None:
         ws_run_get,
         ws_run_request,
         ws_pool_tool_mode,
-        ws_trigger_save,
-        ws_trigger_delete,
         ws_subscribe,
         ws_memory_list,
         ws_memory_save,
@@ -99,8 +97,6 @@ def async_register(hass: HomeAssistant) -> None:
         ws_pool_rule,
         ws_memory_reembed,
         ws_charter,
-        ws_autonomy,
-        ws_trigger_approve,
         ws_facts,
     ):
         websocket_api.async_register_command(hass, command)
@@ -155,9 +151,7 @@ def _state(hass: HomeAssistant, entry, dom: Domain) -> dict[str, Any]:
         "requests_open": len(entry.runtime_data.requests.pending(dom.id)),
         "pools": entry.runtime_data.pool.status(),
         "charter": settings.charter,
-        "autonomy": settings.autonomy,
         "charter_is_default": not settings.data["charter"],
-        "triggers": settings.triggers,
         "llm_apis": [{"id": api.id, "name": api.name} for api in llm.async_get_apis(hass)
                      if not api.id.startswith("aac_")],
     }
@@ -547,73 +541,6 @@ def ws_run_request(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], req)
 
 
-_TIME = vol.Match(r"^\d{1,2}:\d{2}$")
-_WHEN = vol.Any(
-    {
-        vol.Required("type"): "state",
-        vol.Required("entity_id"): vol.All(str, vol.Length(min=3)),
-        vol.Optional("attribute", default=""): str,
-        vol.Optional("to", default=""): str,
-    },
-    {
-        vol.Required("type"): "event",
-        vol.Required("event_type"): vol.All(str, vol.Length(min=2)),
-        vol.Optional("event_data", default={}): {str: vol.Any(str, int, float, bool)},
-    },
-    {
-        vol.Required("type"): "time",
-        vol.Required("at"): _TIME,
-        vol.Optional("weekdays", default=[]): [vol.All(int, vol.Range(0, 6))],
-    },
-)
-
-
-@aac_command(
-    {
-        vol.Required("type"): "aac/trigger/save",
-        vol.Optional("trigger_id"): str,
-        vol.Required("name"): str,
-        vol.Required("when"): _WHEN,
-        vol.Optional("instruction", default=""): str,
-        vol.Optional("tier", default="master"): vol.All(str, vol.Length(min=1)),
-        vol.Optional("cooldown", default=300): vol.All(vol.Coerce(int), vol.Range(0, 86400)),
-        vol.Optional("quiet_hours", default=None): vol.Any(None, {vol.Required("start"): _TIME, vol.Required("end"): _TIME}),
-        vol.Optional("enabled", default=True): bool,
-    }
-)
-@websocket_api.require_admin
-@websocket_api.async_response
-async def ws_trigger_save(hass: HomeAssistant, connection, msg) -> None:
-    """Add or change a trigger (contract format, spec/trigger.md)."""
-    if not (entry := _entry(hass, connection, msg)):
-        return
-    trig = {
-        "name": msg["name"],
-        "enabled": msg["enabled"],
-        "when": msg["when"],
-        "do": {"template": "event-reaction", "instruction": msg["instruction"], "tier": msg["tier"]},
-        "cooldown": msg["cooldown"],
-        "quiet_hours": msg["quiet_hours"],
-    }
-    if "trigger_id" in msg:
-        trig["id"] = msg["trigger_id"]
-    saved = await _d(entry, msg).settings.async_save_trigger(trig)
-    _d(entry, msg).triggers.async_start()
-    connection.send_result(msg["id"], saved)
-
-
-@aac_command({vol.Required("type"): "aac/trigger/delete", vol.Required("trigger_id"): str})
-@websocket_api.require_admin
-@websocket_api.async_response
-async def ws_trigger_delete(hass: HomeAssistant, connection, msg) -> None:
-    """Remove an event trigger."""
-    if not (entry := _entry(hass, connection, msg)):
-        return
-    await _d(entry, msg).settings.async_delete_trigger(msg["trigger_id"])
-    _d(entry, msg).triggers.async_start()
-    connection.send_result(msg["id"])
-
-
 @aac_command({vol.Required("type"): "aac/subscribe"})
 @websocket_api.require_admin
 @callback
@@ -718,7 +645,7 @@ async def ws_domain_create(hass: HomeAssistant, connection, msg) -> None:
         return
     created = await entry.runtime_data.store.async_create_domain(msg["name"], msg.get("copy_from"))
     connection.send_result(msg["id"], {"domain": created.id})
-    hass.config_entries.async_schedule_reload(entry.entry_id)  # its agent, tools and triggers
+    hass.config_entries.async_schedule_reload(entry.entry_id)  # its agent, tools and modules
 
 
 @aac_command({vol.Required("type"): "aac/domain/rename", vol.Required("domain_id"): str,
@@ -749,7 +676,6 @@ async def ws_domain_delete(hass: HomeAssistant, connection, msg) -> None:
         connection.send_error(msg["id"], "not_allowed", "The first domain cannot be deleted")
         return
     await entry.runtime_data.store.async_delete_domain(dom.id)
-    dom.triggers.async_stop()
     await async_remove_domain_data(hass, dom)
     if entity_id := dom.entity_id(hass, entry.entry_id):
         er.async_get(hass).async_remove(entity_id)
@@ -1062,36 +988,6 @@ async def ws_charter(hass: HomeAssistant, connection, msg) -> None:
     if not (entry := _entry(hass, connection, msg)):
         return
     await _d(entry, msg).settings.async_set_charter(msg["text"])
-    connection.send_result(msg["id"], _state(hass, *_ctx(hass, msg)))
-
-
-@aac_command(
-    {vol.Required("type"): "aac/autonomy", vol.Required("schedule"): vol.In(["off", "ask", "allowed"])}
-)
-@websocket_api.require_admin
-@websocket_api.async_response
-async def ws_autonomy(hass: HomeAssistant, connection, msg) -> None:
-    """What AAC may do on its own. Owner-only (agents have no tool for this)."""
-    if not (entry := _entry(hass, connection, msg)):
-        return
-    await _d(entry, msg).settings.async_set_autonomy({"schedule": msg["schedule"]})
-    connection.send_result(msg["id"], _state(hass, *_ctx(hass, msg)))
-
-
-@aac_command({vol.Required("type"): "aac/trigger/approve", vol.Required("trigger_id"): str})
-@websocket_api.require_admin
-@websocket_api.async_response
-async def ws_trigger_approve(hass: HomeAssistant, connection, msg) -> None:
-    """Approve a plan AAC proposed (reject = aac/trigger/delete)."""
-    if not (entry := _entry(hass, connection, msg)):
-        return
-    settings = _d(entry, msg).settings
-    trig = next((t for t in settings.triggers if t["id"] == msg["trigger_id"]), None)
-    if trig is None:
-        connection.send_error(msg["id"], "not_found", "Trigger not found")
-        return
-    await settings.async_save_trigger({**trig, "enabled": True, "proposed": False})
-    _d(entry, msg).triggers.async_start()
     connection.send_result(msg["id"], _state(hass, *_ctx(hass, msg)))
 
 

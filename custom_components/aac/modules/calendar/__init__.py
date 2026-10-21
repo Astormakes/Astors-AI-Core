@@ -23,6 +23,7 @@ from homeassistant.util import dt as dt_util
 from ...capabilities import CalendarProvider, parse_time
 from ...const import DOMAIN, LOGGER
 from .. import ModuleContext, setting
+from .tools import CalendarAPI
 
 
 def _foreign(hass: HomeAssistant) -> list[str]:
@@ -155,6 +156,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         caps.writer_choice = None
 
     ctx.entry.async_on_unload(_reset)
+    ctx.add_llm_api(lambda dom, api_id, name: CalendarAPI(hass=hass, id=api_id, name=name, entry=ctx.entry, domain=dom))
     ctx.add_ws_commands(ws_agenda)
     ctx.add_panel_page("agenda", "Calendar", "aac-calendar-page", "page.js", visible_setting="show_page")
 

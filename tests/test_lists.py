@@ -6,9 +6,9 @@ import json
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.capabilities import plan_occurrences
+from custom_components.aac.modules.triggers import plan_occurrences
 
-from .conftest import setup_aac
+from .conftest import setup_aac, triggers_of
 from .test_planning import _chat, _queue, _text, _tool_reply
 
 
@@ -46,8 +46,8 @@ async def test_dates_in_lists_reach_the_calendar(hass: HomeAssistant, hass_ws_cl
     payloads = _queue(
         aioclient_mock,
         _call("aac-lists__add_items", {"list": "Projects", "items": [{"text": "Drone parts arrive", "fields": {"when": soon[:10]}}]}),
-        _call("aac-planning__add_to_calendar", {"name": "Dentist", "start": soon}),
-        _call("aac-planning__calendar", {}),
+        _call("aac-calendar__add_to_calendar", {"name": "Dentist", "start": soon}),
+        _call("aac-calendar__calendar", {}),
         _text("You have two things."),
     )
     ws = await hass_ws_client(hass)
@@ -139,7 +139,7 @@ async def test_ha_calendars_and_module_settings(hass: HomeAssistant, hass_ws_cli
 
         await ws.send_json_auto_id({"type": "aac/module/settings", "module": "calendar", "values": {"new_entries": "calendar.work"}})
         assert (await ws.receive_json())["result"]["values"]["new_entries"] == "calendar.work"
-        _queue(aioclient_mock, _call("aac-planning__add_to_calendar", {"name": "Dentist", "start": day.strftime("%Y-%m-%dT14:00")}), _text("Done."))
+        _queue(aioclient_mock, _call("aac-calendar__add_to_calendar", {"name": "Dentist", "start": day.strftime("%Y-%m-%dT14:00")}), _text("Done."))
         await _chat(ws, "Put the dentist on my calendar tomorrow at 14:00.")
         assert created and created[0]["summary"] == "Dentist" and created[0]["dtstart"].hour == 14
 
@@ -188,17 +188,17 @@ async def test_calendar_entries_have_uids_and_change_in_their_home(hass: HomeAss
     assert calls == [("update", "abc/1", "Dentist", 11), ("delete", "abc/1")]
 
     # an own plan moves; the owner's trigger is refused
-    store = mock_entry.runtime_data.store
+    store = triggers_of(hass)
     own = await store.async_save_trigger({"name": "Stretch", "enabled": True, "cooldown": 0, "quiet_hours": None, "created_by": "agent",
                                           "when": {"type": "time", "at": "10:00", "date": day.date().isoformat(), "weekdays": []},
                                           "do": {"instruction": "Remind me."}})
     owner = await store.async_save_trigger({"name": "Pills", "enabled": True, "cooldown": 0, "quiet_hours": None,
                                             "when": {"type": "time", "at": "08:00", "weekdays": []}, "do": {"instruction": "Pills."}})
-    await caps.async_change("assistant", f"core:{own['id']}", {"start": day.replace(hour=15).isoformat()})
+    await caps.async_change("assistant", f"triggers:{own['id']}", {"start": day.replace(hour=15).isoformat()})
     assert store.triggers[0]["when"]["at"] == "15:00"
     import pytest
     with pytest.raises(LookupError):
-        await caps.async_remove("assistant", f"core:{owner['id']}")
+        await caps.async_remove("assistant", f"triggers:{owner['id']}")
     with pytest.raises(LookupError):
         await caps.async_remove("assistant", "nonsense:1")
     patcher.stop()

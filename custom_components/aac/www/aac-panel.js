@@ -568,7 +568,6 @@ class AacPanel extends HTMLElement {
         if (this._view.startsWith("settings/audio") && !this._typing()) this._render();
       }, 300);
     } else if (ev.what === "chat" || ev.what === "chats") {
-      if (ev.chat_id === "aac") this._loadState(); // AAC may have planned something (Triggers)
       clearTimeout(this._chatTimer);
       this._chatTimer = setTimeout(async () => {
         await this._loadChats();
@@ -823,6 +822,7 @@ class AacPanel extends HTMLElement {
   }
 
   _go(view) {
+    if (view === "settings/triggers") view = "mod/triggers/list"; // old links: the triggers are a module since 0.45
     this._view = view;
     this._navOpen = false;
     this._flash = null;
@@ -832,19 +832,9 @@ class AacPanel extends HTMLElement {
       const m = (this._models?.manual || []).find((x) => x.id === view.slice(11));
       this._form = m ? { id: m.id, name: m.name, base_url: m.base_url, api_key: "", has_key: m.has_key, model: m.model, models: [m.model], msg: null } : null;
     }
-    if (view === "trigger/new") this._form = { type: "state", name: "", entity_id: "", attribute: "", to: "", event_type: "", event_data: "", at: "07:30", weekdays: [], instruction: "", cooldown: 300, enabled: true, quiet: null, msg: null };
-    if (view.startsWith("trigger/edit/")) {
-      const t = (this._state?.triggers || []).find((x) => x.id === view.slice(13));
-      this._form = t ? {
-        id: t.id, name: t.name, enabled: t.enabled, cooldown: t.cooldown, quiet: t.quiet_hours,
-        type: t.when.type, entity_id: t.when.entity_id || "", attribute: t.when.attribute || "", to: t.when.to || "", at: t.when.at || "07:30",
-        event_type: t.when.event_type || "", event_data: Object.entries(t.when.event_data || {}).map(([k, v]) => `${k}=${v}`).join(", "),
-        weekdays: t.when.weekdays || [], instruction: t.do?.instruction || "", msg: null,
-      } : null;
-    }
     if (view.startsWith("settings/audio")) this._loadAudio();
     if (view === "settings/audio" && !this._liveTimer) this._liveTick();
-    if (view === "settings/triggers") this._loadJobs();
+    if (view === "models") this._loadJobs();
     if (view === "settings/entities") this._loadEntities();
     if (view === "domain/visible") this._loadVisible();
     if (view === "requests") this._loadRequests();
@@ -1005,7 +995,6 @@ class AacPanel extends HTMLElement {
           ${this._tab("settings/languages", "Languages", this._stepOpen("languages") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/master", "Master agent")}
           ${this._tab("settings/entities", "Entities", this._stepOpen("entities") ? '<span class="dot open"></span>' : "")}
-          ${this._tab("settings/triggers", "Triggers")}
           ${this._tab("models", "Compute", ["models", "master", "memory"].some((x) => this._stepOpen(x)) ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/audio", "Audio pipeline")}
           ${this._tab("settings/audio/sources", "Sources", "", "deep")}
@@ -1050,8 +1039,6 @@ class AacPanel extends HTMLElement {
     if (v.startsWith("settings/module/")) return this._renderModuleSettings(v.slice(16));
     if (v === "settings/charter") return this._renderCharter();
     if (v === "settings/languages") return this._renderLanguages();
-    if (v === "settings/triggers") return this._renderTriggers();
-    if (v === "trigger/new" || v.startsWith("trigger/edit/")) return this._renderTriggerForm();
     if (v === "settings/audio") return this._renderAudio();
     if (v === "settings/audio/sources") return this._renderSources();
     if (v === "settings/mcp") return this._renderSoon("MCP",
@@ -1270,36 +1257,7 @@ class AacPanel extends HTMLElement {
       </div>` : ""}`);
   }
 
-  // ---------------------------------------------------------------- settings: triggers
-  _renderTriggers() {
-    const st = this._state;
-    if (!st) return this._page("TRIGGERS", "", "");
-    const triggers = st.triggers || [];
-    return this._page("TRIGGERS", "what wakes the master on its own", `
-      <div class="cards">
-        <div class="card"><h2>AAC'S OWN PLANS ${tip(`AAC may set itself reminders and check-ins (e.g. following up on something you want to achieve). It can never change your triggers, and every plan it makes is posted in "From AAC".`)}</h2>
-          <label for="aut-schedule">AAC may plan on its own</label>
-          <select id="aut-schedule">
-            ${[["allowed", "Yes, and tell me"], ["ask", "Only with my approval"], ["off", "No"]].map(([v, l]) => `<option value="${v}" ${st.autonomy?.schedule === v ? "selected" : ""}>${l}</option>`).join("")}
-          </select>
-        </div>
-        <div class="card"><h2>TRIGGERS ${tip(`Wake the master when something changes in Home Assistant, or at a time (reminders, routines), with your instruction.`)}</h2>
-          ${triggers.length ? triggers.map((t) => `
-            <div class="wrow">
-              <span><span class="dot ${t.proposed ? "open" : t.enabled ? "ok" : ""}"></span> ${esc(t.name || t.when.entity_id || t.when.at)}
-                ${t.created_by === "agent" ? '<span class="tag aac">AAC</span>' : ""}${t.proposed ? ' <span class="tag plan">PROPOSED</span>' : ""}
-                <span class="hint">· ${esc(this._whenText(t.when))}</span>
-                ${t.created_by === "agent" ? `<div class="hint" style="margin:.2em 0 0 1.1em">${esc(t.do?.instruction || "")}</div>` : ""}</span>
-              <span class="actions">
-                ${t.proposed ? `<button class="btn primary" data-approve="${esc(t.id)}">Approve</button><button class="btn danger" data-reject="${esc(t.id)}">Reject</button>` : `<button class="btn" data-go="trigger/edit/${esc(t.id)}">Edit</button>`}
-              </span>
-            </div>`).join("") : '<p class="hint">No triggers yet.</p>'}
-          <div class="actions"><button class="btn primary" data-go="trigger/new">${icon("plus")} New trigger</button></div>
-        </div>
-        ${this._renderQueueCard()}
-      </div>`);
-  }
-
+  // ---------------------------------------------------------------- the queue (the broker's, shown on Compute)
   _renderQueueCard() {
     const q = this._jobs;
     if (!q) return "";
@@ -1313,61 +1271,6 @@ class AacPanel extends HTMLElement {
       <h3 style="margin-top:1em">Waiting</h3>${q.waiting.length ? q.waiting.map(row).join("") : '<p class="hint">Nothing waits.</p>'}
       ${recent.length ? `<h3>Recently expired or sent without a model</h3>${recent.map(row).join("")}` : ""}
     </div>`;
-  }
-
-  _whenText(when) {
-    if (when.type === "time") {
-      const days = when.date ? `once on ${when.date}` : (when.weekdays || []).length ? when.weekdays.map((d) => WEEKDAYS[d]).join(" ") : "every day";
-      return `${days} at ${when.at}`;
-    }
-    if (when.type === "event") {
-      const filter = Object.entries(when.event_data || {}).map(([k, v]) => `${k}=${v}`).join(", ");
-      return `HA event ${when.event_type}${filter ? ` (${filter})` : ""}`;
-    }
-    return `${when.entity_id}${when.attribute ? ` · ${when.attribute}` : ""}${when.to ? ` → ${when.to}` : " changes"}`;
-  }
-
-  _renderTriggerForm() {
-    const f = this._form;
-    if (!f) return this._renderTriggers();
-    const ids = Object.keys(this._hass.states).sort();
-    const isTime = f.type === "time", isEvent = f.type === "event";
-    return this._page(f.id ? "EDIT TRIGGER" : "NEW TRIGGER", "", `<div class="card"><h2>TRIGGER</h2>
-        <div class="form-grid">
-          <div>
-            <label for="t-name">Name</label><input id="t-name" value="${esc(f.name)}" placeholder="${isTime ? "e.g. Pills" : "e.g. Front door"}">
-            <label for="t-type">When</label>
-            <select id="t-type"><option value="state" ${f.type === "state" ? "selected" : ""}>An entity changes (state or attribute)</option>
-              <option value="event" ${isEvent ? "selected" : ""}>A Home Assistant event happens</option>
-              <option value="time" ${isTime ? "selected" : ""}>At a time</option></select>
-            ${isEvent ? `
-              <label for="t-event">Event type</label><input id="t-event" value="${esc(f.event_type)}" placeholder="e.g. zha_event, mobile_app_notification_action, tag_scanned">
-              <label for="t-edata">Only when its data has (optional)</label><input id="t-edata" value="${esc(f.event_data)}" placeholder="e.g. command=on, device_id=…">
-              <label for="t-cool">Cooldown (seconds)</label><input id="t-cool" type="number" min="0" max="86400" value="${esc(f.cooldown)}" inputmode="numeric">
-            ` : isTime ? `
-              <label for="t-at">Time</label><input id="t-at" type="time" value="${esc(f.at)}">
-              <label>Days (none = every day)</label>
-              <div class="row" style="gap:.3em">${WEEKDAYS.map((d, i) => `<label class="check" style="flex:none;min-width:0;margin:0 .6em 0 0"><input type="checkbox" class="t-day" value="${i}" ${f.weekdays.includes(i) ? "checked" : ""}>${d}</label>`).join("")}</div>
-            ` : `
-              <label for="t-entity">Entity</label><input id="t-entity" list="t-entities" value="${esc(f.entity_id)}" placeholder="binary_sensor.front_door" autocomplete="off">
-              <datalist id="t-entities">${ids.map((i) => `<option value="${esc(i)}">${esc(this._hass.states[i].attributes.friendly_name || "")}</option>`).join("")}</datalist>
-              <label for="t-attr">Attribute instead of the state (optional)</label><input id="t-attr" value="${esc(f.attribute)}" placeholder="e.g. game (Steam), brightness, temperature">
-              <label for="t-to">Only when it becomes (optional)</label><input id="t-to" value="${esc(f.to)}" placeholder="e.g. on, open, home">
-              <label for="t-cool">Cooldown (seconds)</label><input id="t-cool" type="number" min="0" max="86400" value="${esc(f.cooldown)}" inputmode="numeric">
-            `}
-            <label class="check"><input type="checkbox" id="t-quiet" ${f.quiet ? "checked" : ""}>Quiet hours</label>
-            ${f.quiet ? `<div class="row"><div><label for="t-qs">From</label><input id="t-qs" type="time" value="${esc(f.quiet.start)}"></div><div><label for="t-qe">Until</label><input id="t-qe" type="time" value="${esc(f.quiet.end)}"></div></div>` : ""}
-            <label class="check"><input type="checkbox" id="t-enabled" ${f.enabled ? "checked" : ""}>Enabled</label>
-          </div>
-          <div><label for="t-instr">Instruction for the master</label><textarea id="t-instr" class="thin-scroll" placeholder="${isTime ? "e.g. Remind me to take my pills." : "e.g. If nobody is home, tell me."}">${esc(f.instruction)}</textarea></div>
-        </div>
-        ${f.msg ? `<div class="msg ${f.msg.ok ? "ok" : "err"}">${esc(f.msg.text)}</div>` : ""}
-        <div class="actions">
-          <button class="btn primary" id="t-save">${f.id ? "Save trigger" : "Create trigger"}</button>
-          ${f.id ? `<button class="btn danger" id="t-delete">Delete</button>` : ""}
-          <button class="btn" data-go="settings/triggers">Cancel</button>
-        </div>
-      </div>`);
   }
 
   // ---------------------------------------------------------------- settings: models
@@ -1410,7 +1313,8 @@ class AacPanel extends HTMLElement {
     return this._page("COMPUTE", "the machines AAC thinks with", `
       ${machines || '<div class="card"><p>No machines yet. Add a model server: any OpenAI-compatible one (llama.cpp, Ollama, vLLM, LM Studio, cloud APIs).</p></div>'}
       <div class="actions"><button class="btn primary" data-go="models/new">${icon("plus")} Add model</button>${tip(`Found on their own: model servers set up in Home Assistant (only read, never changed) and everything the servers of your models offer. Speech and voice engines are ordered under Audio pipeline, vision under Video.`)}</div>
-      ${this._poolCard("thinking")}`,
+      ${this._poolCard("thinking")}
+      ${this._renderQueueCard()}`,
       `<button class="icon-btn" id="refresh-models" title="Scan again">${icon("refresh")}</button>`);
   }
 
@@ -2531,22 +2435,6 @@ class AacPanel extends HTMLElement {
       try { await this._ws("aac/audio/say", { source_id: el.dataset.say, text }); if (input) input.value = ""; }
       catch (e) { this._flash = { ok: false, text: e.message || String(e) }; this._render(); }
     }));
-    sr.querySelector("#t-save")?.addEventListener("click", () => this._saveTrigger());
-    sr.querySelector("#aut-schedule")?.addEventListener("change", async (e) => {
-      this._state = await this._ws("aac/autonomy", { schedule: e.target.value });
-      this._render();
-    });
-    sr.querySelectorAll("[data-approve]").forEach((el) => el.addEventListener("click", async () => {
-      this._state = await this._ws("aac/trigger/approve", { trigger_id: el.dataset.approve });
-      this._render();
-    }));
-    sr.querySelectorAll("[data-reject]").forEach((el) => el.addEventListener("click", async () => {
-      await this._ws("aac/trigger/delete", { trigger_id: el.dataset.reject });
-      await this._loadState();
-    }));
-    sr.querySelector("#t-type")?.addEventListener("change", (e) => { this._readTriggerForm(); this._form.type = e.target.value; this._renderedView = null; this._render(); });
-    sr.querySelector("#t-quiet")?.addEventListener("change", (e) => { this._readTriggerForm(); this._form.quiet = e.target.checked ? { start: "22:00", end: "08:00" } : null; this._renderedView = null; this._render(); });
-    sr.querySelector("#t-delete")?.addEventListener("click", () => this._deleteTrigger());
 
     // memory
     const memSearch = () => { this._memQuery = sr.querySelector("#mem-q").value.trim(); this._memOpenOnly = false; this._loadMemory(); };
@@ -2729,57 +2617,6 @@ class AacPanel extends HTMLElement {
       max_tokens: parseInt(sr.querySelector("#m-max").value, 10),
       thinking: sr.querySelector("#m-think").checked,
     });
-  }
-
-  _readTriggerForm() {
-    const sr = this.shadowRoot, f = this._form;
-    const val = (id) => sr.querySelector(id)?.value;
-    f.name = val("#t-name").trim();
-    f.instruction = val("#t-instr").trim();
-    f.enabled = sr.querySelector("#t-enabled").checked;
-    if (f.type === "time") {
-      f.at = val("#t-at") || f.at;
-      f.weekdays = [...sr.querySelectorAll(".t-day:checked")].map((el) => parseInt(el.value, 10));
-    } else if (f.type === "event") {
-      f.event_type = val("#t-event").trim();
-      f.event_data = val("#t-edata").trim();
-      f.cooldown = parseInt(val("#t-cool"), 10) || 0;
-    } else {
-      f.entity_id = val("#t-entity").trim();
-      f.attribute = val("#t-attr").trim();
-      f.to = val("#t-to").trim();
-      f.cooldown = parseInt(val("#t-cool"), 10) || 0;
-    }
-    if (f.quiet) f.quiet = { start: val("#t-qs") || f.quiet.start, end: val("#t-qe") || f.quiet.end };
-  }
-
-  async _saveTrigger() {
-    this._readTriggerForm();
-    const f = this._form;
-    const data_ = Object.fromEntries((f.event_data || "").split(",").map((p) => p.split("=").map((x) => x.trim())).filter(([k, v]) => k && v !== undefined));
-    const when = f.type === "time"
-      ? { type: "time", at: f.at, weekdays: f.weekdays }
-      : f.type === "event" ? { type: "event", event_type: f.event_type, event_data: data_ }
-      : { type: "state", entity_id: f.entity_id, attribute: f.attribute || "", to: f.to };
-    if (f.type === "event" && !f.event_type) { f.msg = { ok: false, text: "Give an event type." }; return this._render(); }
-    if (f.type === "state" && !this._hass.states[f.entity_id]) { f.msg = { ok: false, text: "Unknown entity." }; return this._render(); }
-    const data = { name: f.name, when, instruction: f.instruction, cooldown: f.type === "time" ? 0 : f.cooldown, quiet_hours: f.quiet, enabled: f.enabled };
-    if (f.id) data.trigger_id = f.id;
-    try {
-      await this._ws("aac/trigger/save", data);
-      this._view = "settings/triggers";
-      await this._loadState();
-    } catch (e) {
-      f.msg = { ok: false, text: e.message || String(e) };
-      this._render();
-    }
-  }
-
-  async _deleteTrigger() {
-    if (!this._form?.id || !(await this._confirm("Delete this trigger?", "Delete", true))) return;
-    await this._ws("aac/trigger/delete", { trigger_id: this._form.id });
-    this._view = "settings/triggers";
-    await this._loadState();
   }
 }
 

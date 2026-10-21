@@ -39,7 +39,6 @@ from .extractor import async_extract
 from .home_api import API_ID as HOME_API_ID
 from .memory_api import API_ID as MEMORY_API_ID
 from .menu_api import AREA_INFO, MENU_API_ID, build_menu, current_menu
-from .schedule_api import API_ID as SCHEDULE_API_ID
 from .setup_api import API_ID as SETUP_API_ID, owner_present
 from .domains import Domain
 from .jobs import NO_MODEL
@@ -339,8 +338,6 @@ class AACConversationEntity(
             api_ids.append(self.domain.api_id(HOME_API_ID))  # the home, within the owner's access list
             if store.memory["enabled"]:
                 api_ids.append(self.domain.api_id(MEMORY_API_ID))  # the master always has its own memory
-            if store.autonomy.get("schedule", "allowed") != "off":
-                api_ids.append(self.domain.api_id(SCHEDULE_API_ID))  # and may plan for itself
             for module in self.entry.runtime_data.modules:  # tools the modules bring (lists, …)
                 if (api_id := module.api_ids.get(self.domain.id)) and module_access(
                     self.entry, module.id, self.domain.id

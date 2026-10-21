@@ -4,7 +4,7 @@ Framework: once one model is wired in, AAC should aid in setting up everything
 else together with the owner. The panel stays the one place where settings
 live; these tools change the same settings, but only while the owner is in
 the conversation (an admin user in a chat run, never an automatic run).
-Policy stays owner-only: the charter and autonomy are not offered here.
+Policy stays owner-only: the charter is not offered here.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from .provider import ProviderError, ProviderNotFoundError
 from .runs import current_run
 from .status import setup_steps
 from .pools import async_set_role, is_entity
-from .schedule_api import parse_weekdays
+from .capabilities import parse_weekdays
 
 if TYPE_CHECKING:
     from .domains import Domain
@@ -117,7 +117,6 @@ class SetupStatusTool(_SetupTool):
                 "languages": {"list": home_languages(hass, store), "set_by_owner": store.data["languages"] is not None,
                               "heard": store.audio.get("languages_seen") or {}},
                 "modules": _modules_overview(self._entry, self._domain.id),
-                "triggers": len(store.triggers),
                 "audio": {
                     "connected_sources": [{"id": c["id"], "name": c["name"], "area": c["area"]} for c in audio["connected"]],
                     "sources_seen_before": [k["name"] for k in store.audio["known"]],

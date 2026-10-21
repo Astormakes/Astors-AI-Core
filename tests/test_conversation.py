@@ -54,14 +54,14 @@ async def test_simple_answer(
     assert payload["messages"][-1] == {"role": "user", "content": "hi"}
     # No HA tools, only AAC's own memory and planning
     assert sorted(t["function"]["name"] for t in payload["tools"]) == [
+        "aac-calendar__add_to_calendar", "aac-calendar__calendar", "aac-calendar__change_calendar_entry",
         "aac-home__control", "aac-home__get_state", "aac-home__home_overview", "aac-home__list_entities",
         "aac-home__request_access", "aac-home__request_visibility", "aac-home__set_voice_volume",
         # no owner in this chat: the deleting list tools are held back
         "aac-lists__add_items", "aac-lists__create_list", "aac-lists__lists",
         "aac-lists__read_list", "aac-lists__update_item",
         "aac-memory__forget", "aac-memory__lookup_facts", "aac-memory__recall", "aac-memory__remember",
-        "aac-planning__add_to_calendar", "aac-planning__calendar", "aac-planning__cancel_schedule",
-        "aac-planning__change_calendar_entry", "aac-planning__list_schedules", "aac-planning__remove_calendar_entry", "aac-planning__schedule", "aac-planning__watch",
+        "aac-triggers__cancel_schedule", "aac-triggers__list_schedules", "aac-triggers__schedule", "aac-triggers__watch",
         # forget_voice deletes: held back without the owner
         "aac-voices__list_voices", "aac-voices__name_voice",
     ]

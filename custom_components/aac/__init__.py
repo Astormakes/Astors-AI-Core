@@ -43,7 +43,7 @@ from .audio_hub import AudioHub
 from .audio_view import AACAudioView
 from .chats import ChatStore
 from .domains import Domain, async_load_domain
-from .capabilities import CalendarProvider, Capabilities, parse_time, plan_occurrences
+from .capabilities import Capabilities
 from .home_api import AACHomeAPI, apply_entities, apply_visibility
 from .jobs import JobQueue
 from .requests import Requests
@@ -54,13 +54,11 @@ from .skins import USER_URL as USER_SKINS_URL, user_dir
 from .memory import MemoryStore, memory_path
 from .memory_api import AACMemoryAPI
 from .menu_api import MENU_API_ID, AACMenuAPI
-from .schedule_api import AACScheduleAPI
 from .setup_api import AACSetupAPI
 from .provider import OpenAICompatProvider, ProviderConnectionError
 from .runs import RunRegistry
 from .store import AACStore
 from .streams import Bus
-from .triggers import TriggerEngine
 
 PLATFORMS = (Platform.CONVERSATION, Platform.CALENDAR)
 PANEL_URL = "aac"
@@ -109,10 +107,6 @@ class AACData:
         """First domain."""
         return self.domain().memory
 
-    @property
-    def triggers(self) -> TriggerEngine | None:
-        """First domain."""
-        return self.domain().triggers
 
 
 type AACConfigEntry = ConfigEntry[AACData]
@@ -148,41 +142,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     entry.runtime_data.requests.register_kind("entities", apply_entities)
     entry.runtime_data.requests.register_kind("visibility", apply_visibility)
 
-    async def plans(domain_id: str, start, end):
-        dom = entry.runtime_data.domain(domain_id)
-        return plan_occurrences(dom.settings.triggers, start, end) if dom else []
-
-    def _own_plan(domain_id: str, key: str):
-        dom = entry.runtime_data.domain(domain_id)
-        trig = next((t for t in dom.settings.triggers if t["id"] == key), None) if dom else None
-        if trig is None:
-            raise LookupError("That plan no longer exists")
-        if trig.get("created_by") != "agent":
-            raise LookupError("That is the owner's trigger; change it in the panel")  # agents organize tasks, not rules
-        return dom, trig
-
-    async def change_plan(domain_id: str, key: str, changes: dict, recurrence_id: str | None = None):
-        # A repeating plan moves as a whole (single occurrences are not kept apart yet)
-        dom, trig = _own_plan(domain_id, key)
-        when = dict(trig["when"])
-        if start := parse_time(changes.get("start")):
-            local = dt_util.as_local(start)
-            when["at"] = local.strftime("%H:%M")
-            if when.get("date"):
-                when["date"] = local.date().isoformat()
-        saved = await dom.settings.async_save_trigger({**trig, "when": when, "name": changes.get("name") or trig["name"]})
-        dom.triggers.async_start()
-        return {"name": saved["name"], "when": saved["when"]}
-
-    async def cancel_plan(domain_id: str, key: str, recurrence_id: str | None = None) -> bool:
-        dom, trig = _own_plan(domain_id, key)
-        await dom.settings.async_delete_trigger(trig["id"])
-        dom.triggers.async_start()
-        return True
-
-    entry.runtime_data.capabilities.add_calendar(
-        CalendarProvider("core", "AAC's plans and timed triggers", plans, update=change_plan, delete=cancel_plan)
-    )
     entry.runtime_data.audio = AudioHub(hass, entry)
     try:
         await hass.async_add_import_executor_job(languages.load)
@@ -212,7 +171,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         label = "" if dom.first else f" ({dom.name})"
         for api in (
             AACMemoryAPI(hass=hass, id=dom.api_id("aac_memory"), name=f"AAC memory{label}", memory=dom.memory),
-            AACScheduleAPI(hass=hass, id=dom.api_id("aac_schedule"), name=f"AAC planning{label}", entry=entry, domain=dom),
             AACSetupAPI(hass=hass, id=dom.api_id("aac_setup"), name=f"AAC setup{label}", entry=entry, domain=dom),
             AACHomeAPI(hass=hass, id=dom.api_id("aac_home"), name=f"AAC home{label}", entry=entry, domain=dom),
             AACMenuAPI(hass=hass, id=dom.api_id(MENU_API_ID), name=f"AAC menu{label}"),
@@ -220,7 +178,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
             entry.async_on_unload(llm.async_register_api(hass, api))
 
     # The broker is the core's node on the stream bus: modules ask it through broker.request
-    entry.async_on_unload(entry.runtime_data.bus.add_node(BrokerNode(hass, entry).node))
+    broker = BrokerNode(hass, entry)
+    entry.async_on_unload(entry.runtime_data.bus.add_node(broker.node))
+    entry.runtime_data.jobs.restorers["request"] = broker.restore
     entry.runtime_data.capabilities.options["tiers"] = lambda domain_id: [
         (t, t) for t in dict.fromkeys([*TIERS, *(tag for tr in store.data["traits"].values() for tag in tr.get("tags", []))])]
 
@@ -243,17 +203,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Event triggers (one engine per domain) start once HA is up (entities exist)
-    for dom in entry.runtime_data.domains.values():
-        dom.triggers = TriggerEngine(hass, entry, dom)
-        entry.async_on_unload(dom.triggers.async_stop)
-
     entry.async_on_unload(entry.runtime_data.jobs.async_stop)
 
     @callback
     def _start(_event: Event | None = None) -> None:
-        for dom in entry.runtime_data.domains.values():
-            dom.triggers.async_start()
         entry.async_create_background_task(hass, entry.runtime_data.jobs.async_start(), "aac jobs restore")
 
     if hass.is_running:

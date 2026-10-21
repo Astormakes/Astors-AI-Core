@@ -1,4 +1,4 @@
-"""AAC planning for itself: own schedules, autonomy, open loops."""
+"""AAC planning for itself (triggers module): own schedules, own_plans, open loops."""
 
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
@@ -6,7 +6,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .conftest import BASE_URL, heartbeat_now, setup_aac
+from .conftest import BASE_URL, heartbeat_now, setup_aac, triggers_of
 
 URL = f"{BASE_URL}/chat/completions"
 
@@ -41,13 +41,13 @@ async def test_master_schedules_itself(hass: HomeAssistant, hass_ws_client, aioc
     await setup_aac(hass, mock_entry)
     _queue(
         aioclient_mock,
-        _tool_reply("aac-planning__schedule",
+        _tool_reply("aac-triggers__schedule",
                     '{"name": "Walk check", "instruction": "Ask how the walk went.", "at": "18:30", "weekdays": [0, 2, 4]}'),
         _text("I'll check in on Monday, Wednesday and Friday evening."),
     )
     ws = await hass_ws_client(hass)
     await _chat(ws, "Check in on my evening walks, please.")
-    trig = mock_entry.runtime_data.store.triggers[0]
+    trig = triggers_of(hass).triggers[0]
     assert trig["created_by"] == "agent" and trig["enabled"] and not trig["proposed"]
     assert trig["when"] == {"type": "time", "weekdays": [0, 2, 4], "at": "18:30"}
     told = mock_entry.runtime_data.chats.get("aac")["messages"][-1]["text"]
@@ -58,23 +58,23 @@ async def test_ask_mode_needs_approval(hass: HomeAssistant, hass_ws_client, aioc
     """Ask: the plan waits, the owner approves it."""
     await setup_aac(hass, mock_entry)
     ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/autonomy", "schedule": "ask"})
-    assert (await ws.receive_json())["result"]["autonomy"]["schedule"] == "ask"
-    _queue(aioclient_mock, _tool_reply("aac-planning__schedule", '{"name": "Pills", "instruction": "Remind.", "in_minutes": 30}'), _text("ok"))
+    await ws.send_json_auto_id({"type": "aac/module/settings", "module": "triggers", "values": {"own_plans": "ask"}})
+    assert (await ws.receive_json())["success"]
+    _queue(aioclient_mock, _tool_reply("aac-triggers__schedule", '{"name": "Pills", "instruction": "Remind.", "in_minutes": 30}'), _text("ok"))
     await _chat(ws, "Remind me in half an hour.")
-    trig = mock_entry.runtime_data.store.triggers[0]
+    trig = triggers_of(hass).triggers[0]
     assert trig["proposed"] and not trig["enabled"]
     assert trig["when"]["date"]  # in_minutes = a one-off
     await ws.send_json_auto_id({"type": "aac/trigger/approve", "trigger_id": trig["id"]})
     await ws.receive_json()
-    assert mock_entry.runtime_data.store.triggers[0]["enabled"] is True
+    assert triggers_of(hass).triggers[0]["enabled"] is True
 
 
 async def test_off_mode_hides_tools(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
     """Off: the planning tools are not offered at all."""
     await setup_aac(hass, mock_entry)
     ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/autonomy", "schedule": "off"})
+    await ws.send_json_auto_id({"type": "aac/module/settings", "module": "triggers", "values": {"own_plans": "off"}})
     await ws.receive_json()
     payloads = _queue(aioclient_mock, _text("ok"))
     await _chat(ws, "hi")
@@ -84,17 +84,17 @@ async def test_off_mode_hides_tools(hass: HomeAssistant, hass_ws_client, aioclie
 async def test_cannot_touch_owner_triggers(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
     """Agents organize tasks, not rules: the owner's triggers are off-limits."""
     await setup_aac(hass, mock_entry)
-    owner = await mock_entry.runtime_data.store.async_save_trigger(
+    owner = await triggers_of(hass).async_save_trigger(
         {"name": "Door", "enabled": True, "cooldown": 0, "quiet_hours": None,
          "when": {"type": "state", "entity_id": "binary_sensor.door", "to": "on"},
          "do": {"template": "event-reaction", "instruction": "Tell me."}}
     )
-    _queue(aioclient_mock, _tool_reply("aac-planning__cancel_schedule", f'{{"id": "{owner["id"]}"}}'), _text("I can't."))
+    _queue(aioclient_mock, _tool_reply("aac-triggers__cancel_schedule", f'{{"id": "{owner["id"]}"}}'), _text("I can't."))
     ws = await hass_ws_client(hass)
     message = await _chat(ws, "Delete the door trigger.")
     result = next(s for s in message["steps"] if s["type"] == "tool_result")
     assert result["error"] and "owner" in result["data"]
-    assert mock_entry.runtime_data.store.triggers[0]["id"] == owner["id"]
+    assert triggers_of(hass).triggers[0]["id"] == owner["id"]
 
 
 async def test_one_off_fires_once_and_goes(hass: HomeAssistant, aioclient_mock, mock_entry, configured, freezer):
@@ -103,18 +103,17 @@ async def test_one_off_fires_once_and_goes(hass: HomeAssistant, aioclient_mock, 
     freezer.move_to("2026-10-19 09:59:00+00:00")
     await setup_aac(hass, mock_entry)
     payloads = _queue(aioclient_mock, _text("Time to stretch."), _text('{"speak": true, "message": "Time to stretch."}'))
-    await mock_entry.runtime_data.store.async_save_trigger(
+    await triggers_of(hass).async_save_trigger(
         {"name": "Stretch", "enabled": True, "cooldown": 0, "quiet_hours": None, "created_by": "agent",
          "when": {"type": "time", "at": "10:00", "date": "2026-10-19", "weekdays": []},
          "do": {"template": "event-reaction", "instruction": "Remind the user to stretch."}}
     )
-    mock_entry.runtime_data.triggers.async_start()
     freezer.move_to("2026-10-19 10:00:00+00:00")
     async_fire_time_changed(hass, dt_util.utcnow())
     await hass.async_block_till_done(wait_background_tasks=True)
     assert len(payloads) == 2
     assert "your own earlier instruction" in payloads[0]["messages"][0]["content"]
-    assert mock_entry.runtime_data.store.triggers == []
+    assert triggers_of(hass).triggers == []
 
 
 async def test_plans_are_open_loops(hass: HomeAssistant, aioclient_mock, mock_entry, configured):
@@ -132,7 +131,7 @@ async def test_plans_are_open_loops(hass: HomeAssistant, aioclient_mock, mock_en
 
 def test_weekday_names():
     """Names, groups and ranges, because small models get the numbers wrong."""
-    from custom_components.aac.schedule_api import parse_weekdays
+    from custom_components.aac.capabilities import parse_weekdays
 
     assert parse_weekdays(["weekdays"]) == [0, 1, 2, 3, 4]
     assert parse_weekdays(["mon", "Friday"]) == [0, 4]
@@ -155,18 +154,17 @@ async def test_attribute_and_event_triggers(hass: HomeAssistant, hass_ws_client,
     async_expose_entity(hass, "conversation", "sensor.astor", True)
     _queue(
         aioclient_mock,
-        _tool_reply("aac-planning__watch", json.dumps({"name": "Gaming", "instruction": "Free the PC.", "entity_id": "sensor.astor", "attribute": "game"})),
-        _tool_reply("aac-planning__watch", json.dumps({"name": "Bad", "instruction": "x", "event_type": "state_changed"})),
-        _tool_reply("aac-planning__watch", json.dumps({"name": "Hidden", "instruction": "x", "entity_id": "sensor.hidden"})),
-        _tool_reply("aac-planning__watch", json.dumps({"name": "Button", "instruction": "Toggle the lamp.", "event_type": "zha_event", "event_data": {"command": "on"}})),
+        _tool_reply("aac-triggers__watch", json.dumps({"name": "Gaming", "instruction": "Free the PC.", "entity_id": "sensor.astor", "attribute": "game"})),
+        _tool_reply("aac-triggers__watch", json.dumps({"name": "Bad", "instruction": "x", "event_type": "state_changed"})),
+        _tool_reply("aac-triggers__watch", json.dumps({"name": "Hidden", "instruction": "x", "entity_id": "sensor.hidden"})),
+        _tool_reply("aac-triggers__watch", json.dumps({"name": "Button", "instruction": "Toggle the lamp.", "event_type": "zha_event", "event_data": {"command": "on"}})),
         _text("Done."),
     )
     ws = await hass_ws_client(hass)
     message = await _chat(ws, "Free my PC when I start a game, and react to my button.")
     results = [s for s in message["steps"] if s["type"] == "tool_result"]
     assert [bool(r.get("error")) for r in results] == [False, True, True, False]
-    store = mock_entry.runtime_data.store
-    assert [t["when"]["type"] for t in store.triggers] == ["state", "event"]
+    assert [t["when"]["type"] for t in triggers_of(hass).triggers] == ["state", "event"]
 
     aioclient_mock.clear_requests()  # the first mock would still answer
     payloads = _queue(aioclient_mock, *[_text("NOTHING"), _text('{"speak": false, "message": ""}')] * 3)

@@ -77,6 +77,8 @@ class JobQueue:
         self._unsub: CALLBACK_TYPE | None = None
         self._outage_told = False
         self._store: Store[list[dict[str, Any]]] = Store(hass, 1, f"{DOMAIN}.jobs")
+        # kind → fn(domain, saved item) → the rebuilt job or None (the broker: "request"; modules for older kinds)
+        self.restorers: dict[str, Callable[[Domain, dict[str, Any]], Job | None]] = {}
 
     @property
     def settings(self) -> dict[str, Any]:
@@ -87,9 +89,12 @@ class JobQueue:
         """Bring back the jobs that waited before a restart, then check regularly."""
         for item in await self._store.async_load() or []:
             dom = self.entry.runtime_data.domain(item.get("domain"))
-            if dom is None or dom.id != item.get("domain") or item.get("kind") != "trigger" or dom.triggers is None:
+            restore = self.restorers.get(item.get("kind") or "")
+            if dom is None or dom.id != item.get("domain") or restore is None or (job := restore(dom, item)) is None:
                 continue
-            job = dom.triggers.trigger_job(item["trigger"], item["title"], item["text"], saved=item)
+            if item.get("id"):  # keep its original times
+                job.id, job.created = item["id"], dt_util.parse_datetime(item["created"])
+                job.due = dt_util.parse_datetime(item["due"]) if item.get("due") else None
             job.reason = "waited before Home Assistant restarted"
             self.waiting.append(job)
         self.waiting.sort(key=lambda j: (PRIORITIES.get(j.priority, 1), j.created))

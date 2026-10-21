@@ -22,7 +22,7 @@ from homeassistant.util import dt as dt_util
 
 from ...const import DOMAIN
 from ...streams import Node
-from ...triggers import in_quiet_hours
+from ...capabilities import in_quiet_hours
 from .. import ModuleContext
 
 NODE = "heartbeat"

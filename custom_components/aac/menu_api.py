@@ -31,7 +31,8 @@ MENU_API_ID = "aac_menu"
 AREA_INFO = {
     "aac-home": "The home: find devices and sensors, read their state, switch them, ask for access",
     "aac-memory": "Long-term memory: remember and recall facts, plans, measurements about the user",
-    "aac-planning": "Plans and calendar: reminders, check-ins, watching something, calendar entries",
+    "aac-triggers": "Your own plans: reminders, check-ins, watching something in the home",
+    "aac-calendar": "The calendar: what is coming up, add, move or remove entries",
     "aac-setup": "Setting AAC itself up: models, memory, heartbeat, audio, availability rules",
     "assist": "Home Assistant's own tools: live state, switching, timers, HA's to-do lists",
 }

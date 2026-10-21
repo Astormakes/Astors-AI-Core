@@ -10,11 +10,11 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (
     AiohttpClientMockResponse,
 )
 
-from custom_components.aac.triggers import in_quiet_hours
+from custom_components.aac.capabilities import in_quiet_hours
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .conftest import BASE_URL, set_heartbeat, setup_aac
+from .conftest import BASE_URL, set_heartbeat, setup_aac, triggers_of
 
 URL = f"{BASE_URL}/chat/completions"
 
@@ -335,12 +335,11 @@ async def test_time_trigger_weekdays(
         _reply("Time for your pills."),
         _reply('{"speak": true, "message": "Time for your pills."}'),
     )
-    await mock_entry.runtime_data.store.async_save_trigger(
+    await triggers_of(hass).async_save_trigger(
         {"name": "Pills", "enabled": True, "cooldown": 0, "quiet_hours": None,
          "when": {"type": "time", "at": "07:30", "weekdays": [0, 2, 4]},
          "do": {"template": "event-reaction", "instruction": "Remind me to take my pills."}}
     )
-    mock_entry.runtime_data.triggers.async_start()
 
     freezer.move_to("2026-10-19 07:30:00+00:00")
     async_fire_time_changed(hass, dt_util.utcnow())
@@ -357,7 +356,7 @@ async def test_time_trigger_weekdays(
 
 
 async def test_old_triggers_migrate(hass: HomeAssistant, hass_storage, mock_entry):
-    """0.4/0.5 flat state triggers load in the contract format."""
+    """0.4/0.5 flat state triggers load in the contract format, and move to the triggers module."""
     from custom_components.aac.store import STORAGE_KEY
 
     from .conftest import store_data
@@ -367,7 +366,9 @@ async def test_old_triggers_migrate(hass: HomeAssistant, hass_storage, mock_entr
                                  "to": "on", "instruction": "Tell me.", "cooldown": 60, "enabled": True}]
     hass_storage[STORAGE_KEY] = data
     await setup_aac(hass, mock_entry)
-    trig = mock_entry.runtime_data.store.triggers[0]
+    trig = triggers_of(hass).triggers[0]
+    assert "triggers" not in mock_entry.runtime_data.store.default_domain.data  # moved to the module's storage
+    assert hass_storage["aac.mod.triggers.triggers"]["data"]["triggers"][0]["id"] == "t_old"
     assert trig["when"] == {"type": "state", "entity_id": "binary_sensor.door", "to": "on"}
     assert trig["do"] == {"template": "event-reaction", "instruction": "Tell me."}
     assert trig["cooldown"] == 60

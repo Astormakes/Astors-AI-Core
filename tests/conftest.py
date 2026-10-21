@@ -121,6 +121,13 @@ async def set_heartbeat(entry: MockConfigEntry, enabled: bool | None = None, **s
         await async_set_settings(entry, next(m for m in data.modules if m.id == "heartbeat"), domain_id, settings)
 
 
+def triggers_of(hass: HomeAssistant, domain_id: str | None = None):
+    """A domain's triggers (the triggers module since 0.45): .triggers, .async_save_trigger, …"""
+    from custom_components.aac.modules.triggers import of
+
+    return of(hass, domain_id)
+
+
 async def heartbeat_now(hass: HomeAssistant):
     """One heartbeat at once ("Run once now"): the run, or None."""
     from custom_components.aac.modules.heartbeat import async_run_now

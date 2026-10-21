@@ -10,7 +10,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.jobs import Job
 
-from .conftest import MODEL_CFG, set_heartbeat, setup_aac
+from .conftest import MODEL_CFG, set_heartbeat, setup_aac, triggers_of
 from .test_planning import _queue, _text
 
 
@@ -87,13 +87,29 @@ async def test_waiting_jobs_are_saved(hass: HomeAssistant, hass_storage, mock_en
     await setup_aac(hass, mock_entry)
     data = mock_entry.runtime_data
     data.pool.mark_down(MODEL_CFG["id"], "off")
-    trig = await data.store.async_save_trigger(
+    triggers = triggers_of(hass)
+    trig = await triggers.async_save_trigger(
         {"name": "Door", "enabled": True, "cooldown": 0, "quiet_hours": None,
          "when": {"type": "state", "entity_id": "binary_sensor.door", "to": "on"},
          "do": {"template": "event-reaction", "instruction": "Tell me."}})
-    await data.jobs.async_submit(data.triggers.trigger_job(trig, "Door", "The door opened."))
+    await data.bus.emit("assistant", "triggers", "requests", triggers.request(trig, "Door", "The door opened."))
     freezer.tick(timedelta(seconds=2))
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
     saved = hass_storage["aac.jobs"]["data"]
-    assert [j["title"] for j in saved] == ["Door"] and saved[0]["trigger"]["id"] == trig["id"]
+    assert [j["title"] for j in saved] == ["Door"] and saved[0]["kind"] == "request"
+    assert saved[0]["request"]["trigger"] == f"event: {trig['id']}"
+
+
+async def test_waiting_request_survives_a_restart(hass: HomeAssistant, hass_storage, mock_entry, configured):
+    """A broker request saved before a restart comes back with its times; past due, a critical one reaches the owner."""
+    hass_storage["aac.jobs"] = {"version": 1, "key": "aac.jobs", "data": [
+        {"kind": "request", "request": {"trigger": "event: t_x", "title": "Bins", "text": "It is 19:00.", "critical": True,
+                                        "fallback": "Bins: put them out.", "due_minutes": 30, "keep": True},
+         "id": "j2", "domain": "assistant", "created": (dt_util.utcnow() - timedelta(hours=2)).isoformat(),
+         "due": (dt_util.utcnow() - timedelta(hours=1)).isoformat()}]}
+    await setup_aac(hass, mock_entry)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    data = mock_entry.runtime_data
+    assert data.jobs.history[0].title == "Bins" and data.jobs.history[0].status == "notified"
+    assert data.chats.get("aac")["messages"][-1]["text"] == "Bins: put them out."

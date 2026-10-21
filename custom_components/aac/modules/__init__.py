@@ -112,6 +112,10 @@ class ModuleContext:
         stage.module = self.module.id
         self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_stage(stage))
 
+    def add_open_loops(self, provider) -> None:
+        """Lines for the open loops of every automatic run: provider(domain_id) → ["- …"] (not where the module is off)."""
+        self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_open_loops(self.module.id, provider, self.module.id))
+
     def add_node(self, node: Node) -> None:
         """A node on the stream bus (it reads and writes only in domains where the module is on)."""
         node.module = self.module.id

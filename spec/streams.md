@@ -1,7 +1,7 @@
 # Streams — partial
 
 Built (0.44): the bus (`streams.py`: types, default wiring by type, recent records), the core's broker node
-(`broker.py`) and the first node module, the heartbeat. Not yet: own wiring, read rules, slots, audio on the bus.
+(`broker.py`) and the first node module, the heartbeat. 0.45: the triggers module (a node writing `broker.request`). Not yet: own wiring, read rules, slots, audio on the bus.
 
 The core is a **collection of streams**, like the calendar is a collection of the modules' entries
 (owner, 2026-10-21: "everything can be wired into anything", node-based almost). Modules are **nodes**:
@@ -43,7 +43,7 @@ Two classes:
 | `sound.event` | record | `{"labels": [["Beep", 0.8]], "text": "[beeping]"}` | Sounds |
 | `ha.event` | record | HA's event: `type`, `data` ([event.md](event.md)) | the core (HA bus) |
 | `time.tick` | record | `{"at": "…", "name": "every 30 min"}` | a timer node |
-| `broker.request` | record | see below | heartbeat (built); triggers, companion, wake word (planned) |
+| `broker.request` | record | see below | heartbeat, triggers (built); companion, wake word (planned) |
 | `broker.answer` | record | the finished [run](run.md) (result, chat_id) | the broker node |
 | `say` | record | `{"text", "language", "room"}` → spoken | answers, announcements |
 | `notify` | record | `{"title", "text", "to"}` → phone/panel | reminders, findings |
@@ -55,9 +55,17 @@ id (`lists.item_changed`), readable by any node that names it.
 
 **`broker.request`** (built): `{"trigger", "title", "text", "intro", "context": ["time", "home", "open_loops"],
 "instructions", "tier", "tools", "priority", "due_minutes", "tags", "coalesce", "chat": "aac" | "own", "chat_prefix",
-"now"}`. The broker node queues it as a job (or runs it at once with `now`, and the writer gets the run back),
+"critical", "fallback", "keep", "now"}`. The broker node queues it as a job (or runs it at once with `now`, and the writer gets the run back),
 builds the context when the run starts, skips it while one with the same trigger waits or runs (`coalesce`), and
 writes `broker.answer` `{"run_id", "trigger", "status", "result", "chat_id"}` when done.
+
+**Context on the way (owner, 2026-10-21).** Every request to a model (chats too, once they run through
+the bus) passes nodes that add context to it before the broker sends it: the charter adds the owner's values,
+memory adds what it recalls, the home adds its snapshot, the triggers module adds AAC's own plans. Each is a
+small module of the annotating kind (`broker.request → broker.request`, adds to `context`). Built so far: the
+broker builds the named parts itself, and modules may add lines to "open loops" (`capabilities.add_open_loops`).
+Rule for the rework: the core must not make this impossible later, and must not force it on anyone; a module
+can still do its job the short way.
 
 **Annotating.** Several nodes may add fields to the same record instead of writing a new one, in order
 (today's segment stages): STT gives `text`, Voices gives `speaker`, the attention check gives `addressed`.
@@ -91,6 +99,11 @@ Kinds by ports: **source** (only outputs: a mic, a timer, HA's events), **transf
 - Cycles are refused (a node can't feed itself through others).
 - Later: a node view in the panel (boxes and wires, drag to connect); the same actions as tools for AAC
   (list, connect, disconnect), owner present only.
+- The node view lays itself out (owner, 2026-10-21): a force-directed graph. Wires pull like springs, nodes
+  keep their distance, the whole thing floats into a stable shape. The owner can drag a node (it stays
+  pinned, or floats back when let go); a new wire, made in the graph or on a module's settings, pulls the
+  node toward its new partners and the rest settles around it. One view for every pipeline (audio stages,
+  triggers and heartbeat into the broker, later video).
 
 ## Who may read what (privacy)
 
