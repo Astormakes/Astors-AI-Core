@@ -1,6 +1,6 @@
 # Streams — partial
 
-Built (0.44): the bus (`streams.py`: types, default wiring by type, recent records), the core's broker node
+Built (0.47): the memory slot (`slots.py`, provider: the memory module). Built (0.44): the bus (`streams.py`: types, default wiring by type, recent records), the core's broker node
 (`broker.py`) and the first node module, the heartbeat. 0.45: the triggers module (a node writing `broker.request`).
 0.46: audio on the bus (the core node `hearing`; speech to text, sounds and voices are annotating nodes on
 `audio.segment`, sound captions read `audio.pcm`, wake word and companion read `text.line`; [hearing.md](hearing.md)). Not yet: own wiring, read rules, slots, audio on the bus.
@@ -125,7 +125,7 @@ One provider per domain, chosen in SETTINGS; the core and other modules ask the 
 
 | Slot | Asks | Default provider |
 |---|---|---|
-| `memory` | `recall(query)`, `remember(item)`, `context(request)` → text for a run | today's memory (memory.md) as a module |
+| `memory` | `async_context(domain, text)` → text for a run, `async_after_message(...)` (write path), `async_model_changed()`, `async_remove_domain(domain)` | the memory module ([memory.md](memory.md); built 0.47) |
 
 Without a provider the slot answers empty, and AAC works without memory. Candidates for later slots:
 `tts` (the voice), `presence` (who is where).
@@ -151,7 +151,7 @@ Without a provider the slot answers empty, and AAC works without memory. Candida
 2. The bus in the core (types, buffers, wires, read rules) next to the old code; nothing moves yet.
 3. **Heartbeat** as the first node module (smallest; proves the pattern), then **Triggers**. ✅ 0.44 / 0.45
 4. Audio onto the bus (stages and hearing listeners become nodes). ✅ 0.46
-5. Memory as the first slot.
+5. Memory as the first slot. ✅ 0.47
 6. The node view in the panel.
 
 ## Defaults taken (the owner can change them later)

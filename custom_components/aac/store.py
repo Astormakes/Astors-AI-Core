@@ -98,15 +98,13 @@ DOMAIN_DEFAULTS: dict[str, Any] = {
     },
     # The owner's values for every agent; "" = the built-in draft
     "charter": "",
-    # Long-term memory (its embedding model is the pool role "memory"; none = keywords only)
-    "memory": {"enabled": True},
     # The entities this domain can see at all (the owner's tick list; entities.py). Read/write per
     # entity are global (entity_access). None = not chosen yet: what HA exposes to Assist
     "visible": None,
 }
 
 MASTER_KEYS = set(DOMAIN_DEFAULTS["master"])
-_PER_DOMAIN = ("master", "charter", "memory")
+_PER_DOMAIN = ("master", "charter")
 
 
 def _domain_from(stored: dict[str, Any], domain_id: str, name: str) -> dict[str, Any]:
@@ -119,7 +117,6 @@ def _domain_from(stored: dict[str, Any], domain_id: str, name: str) -> dict[str,
     if stored.get("triggers"):  # up to 0.44: the triggers module moves them to its own storage on its first start
         d["triggers"] = list(stored["triggers"])
     d["charter"] = stored.get("charter", "")
-    d["memory"].update({k: v for k, v in stored.get("memory", {}).items() if k != "embed_model"})
     if isinstance(stored.get("visible"), list):
         d["visible"] = list(stored["visible"])
     elif isinstance(stored.get("entities"), dict):  # 0.21 kept one level list per domain
@@ -186,16 +183,6 @@ class DomainSettings:
         self.data["visible"] = sorted(set(entity_ids))
         await self.async_save()
 
-    @property
-    def memory(self) -> dict[str, Any]:
-        """Memory settings."""
-        return self.data["memory"]
-
-    async def async_update_memory(self, changes: dict[str, Any]) -> None:
-        """Change memory settings."""
-        self.memory.update({k: v for k, v in changes.items() if k in self.memory})
-        await self.async_save()
-
 
 class AACStore:
     """Loads, holds and saves the AAC settings."""
@@ -260,6 +247,9 @@ class AACStore:
             # Up to 0.44 "AAC may plan on its own" was core (autonomy.schedule): now the triggers module's own_plans
             if (old_mode := (d.get("autonomy") or {}).get("schedule")) in ("off", "ask", "allowed"):
                 data["module_settings"].setdefault(d["id"], {}).setdefault("triggers", {}).setdefault("own_plans", old_mode)
+            # Up to 0.46 memory was core (memory.enabled): now the memory module's switch
+            if (d.get("memory") or {}).get("enabled") is False:
+                data["module_access"].setdefault(d["id"], {}).setdefault("memory", {})["enabled"] = False
         data["domains"] = [_domain_from(d, d["id"], d.get("name") or d["id"]) for d in domains]
         ids = [d["id"] for d in data["domains"]]
         data["voice_domain"] = stored.get("voice_domain") if stored.get("voice_domain") in ids else ids[0]
@@ -307,6 +297,10 @@ class AACStore:
             data["visible"] = []  # a new domain sees nothing until the owner ticks entities
         self.data["domains"].append(data)
         self.domains[domain_id] = DomainSettings(self, data)
+        if base:  # a copy: its modules switched and set like the original's (their data stays with the original)
+            for key in ("module_settings", "module_access"):
+                if copy_from in self.data[key]:
+                    self.data[key][domain_id] = deepcopy(self.data[key][copy_from])
         await self.async_save()
         return self.domains[domain_id]
 
@@ -349,15 +343,6 @@ class AACStore:
     async def async_set_charter(self, text: str) -> None:
         """First domain."""
         await self.default_domain.async_set_charter(text)
-
-    @property
-    def memory(self) -> dict[str, Any]:
-        """First domain."""
-        return self.default_domain.memory
-
-    async def async_update_memory(self, changes: dict[str, Any]) -> None:
-        """First domain."""
-        await self.default_domain.async_update_memory(changes)
 
     # ------------------------------------------------------------ global
     @property

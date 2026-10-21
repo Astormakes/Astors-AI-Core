@@ -343,7 +343,6 @@ async def async_set_role(hass: HomeAssistant, entry: AACConfigEntry, role: str, 
     await store.async_set_pool(role, items)
     after = (store.pools.get(role) or [None])[0]
     if role == "memory" and after and after != before:
-        for dom in entry.runtime_data.domains.values():  # every domain's memory uses the shared model
-            if dom.memory:
-                entry.async_create_background_task(hass, dom.memory.async_reembed(), f"aac memory re-embed {dom.id}")
+        if memory := entry.runtime_data.slots.memory():  # every domain's memory uses the shared model
+            entry.async_create_background_task(hass, memory.async_model_changed(), "aac memory re-embed")
     async_notify(hass, "pools")

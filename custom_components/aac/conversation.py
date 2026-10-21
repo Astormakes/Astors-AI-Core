@@ -35,9 +35,7 @@ from .const import (
 from .context_fit import estimate, fit
 from .models import resolve_model
 from .provider import OpenAICompatProvider, ProviderConnectionError, ProviderContextError, ProviderError
-from .extractor import async_extract
 from .home_api import API_ID as HOME_API_ID
-from .memory_api import API_ID as MEMORY_API_ID
 from .menu_api import AREA_INFO, MENU_API_ID, build_menu, current_menu
 from .setup_api import API_ID as SETUP_API_ID, owner_present
 from .domains import Domain
@@ -237,9 +235,9 @@ class AACConversationEntity(
 
     @property
     def supported_features(self) -> conversation.ConversationEntityFeature:
-        """CONTROL while the master may use an HA API (settings change live)."""
+        """CONTROL while the master may use tools (an HA API, or AAC's own: always there; settings change live)."""
         settings = self.domain.settings
-        if settings.master.get(CONF_LLM_HASS_API) or settings.memory["enabled"]:
+        if settings.master.get(CONF_LLM_HASS_API) or self.entry.runtime_data.slots.memory(self.domain.id):
             return conversation.ConversationEntityFeature.CONTROL
         return conversation.ConversationEntityFeature(0)
 
@@ -336,9 +334,7 @@ class AACConversationEntity(
         if not run or run.allow_tools:
             api_ids = list(options.get(CONF_LLM_HASS_API) or [])
             api_ids.append(self.domain.api_id(HOME_API_ID))  # the home, within the owner's access list
-            if store.memory["enabled"]:
-                api_ids.append(self.domain.api_id(MEMORY_API_ID))  # the master always has its own memory
-            for module in self.entry.runtime_data.modules:  # tools the modules bring (lists, …)
+            for module in self.entry.runtime_data.modules:  # tools the modules bring (memory, lists, …)
                 if (api_id := module.api_ids.get(self.domain.id)) and module_access(
                     self.entry, module.id, self.domain.id
                 )["enabled"]:
@@ -377,20 +373,13 @@ class AACConversationEntity(
         # Context engine (first piece): hand over matching memories ourselves, because
         # small models rarely call recall on their own. Attached to the user message,
         # not the system prompt, so the server's prompt cache keeps working.
+        # The memory slot (spec/streams.md): its provider decides what goes along; none = no memory here.
         memory_hint = None
+        memory = self.entry.runtime_data.slots.memory(self.domain.id)
         # What the person said themselves (a voice line comes with the room's lines; those are not theirs)
         own_words = (run.own_words if run and run.own_words else None) or user_input.text
-        if store.memory["enabled"] and self.domain.memory and own_words:
-            found = await self.domain.memory.async_context(own_words)
-            if found:
-                memory_hint = "Memories that may help (from your long-term memory):\n" + "\n".join(
-                    f"- {m.text} ({m.source}{'' if m.confirmed else ', unconfirmed'}, {m.created[:10]})"
-                    for m in found
-                )
-                if series := await self.domain.memory.async_series_for(found):
-                    memory_hint += "\nExact values (structured facts):\n" + "\n".join(f"- {line}" for line in series)
-                if run:
-                    run.context = f"{run.context}\n\n{memory_hint}".strip()
+        if memory and own_words and (memory_hint := await memory.async_context(self.domain.id, own_words)) and run:
+            run.context = f"{run.context}\n\n{memory_hint}".strip()
 
         first_new = len(chat_log.content)
         tools = None
@@ -551,8 +540,7 @@ class AACConversationEntity(
                     pass
 
         # Memory write path: keep what was worth keeping, in the background
-        memory = self.domain.memory
-        if store.memory["enabled"] and memory and own_words and (not run or run.kind == "chat"):
+        if memory and own_words and (not run or run.kind == "chat"):
             stored_now = [
                 str(call.tool_args.get("text", ""))
                 for c in chat_log.content[first_new:]
@@ -562,7 +550,7 @@ class AACConversationEntity(
             ]
             self.entry.async_create_background_task(
                 self.hass,
-                async_extract(memory, provider, endpoint.model, own_words, stored_now),
+                memory.async_after_message(self.domain.id, own_words, stored_now, provider, endpoint.model),
                 "aac memory extract",
             )
 

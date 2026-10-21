@@ -13,8 +13,8 @@ import probatio
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm
 
-from .const import DOMAIN
-from .memory import KINDS, MemoryStore, summarize, summary_text
+from ...const import DOMAIN
+from .store import KINDS, MemoryStore, summarize, summary_text
 
 
 def parse_value(value):
@@ -34,7 +34,6 @@ def fact_args(args: dict) -> dict | None:
     return {"subject": args["subject"], "attribute": args["attribute"],
             "value": parse_value(args["value"]), "unit": args.get("unit")}
 
-API_ID = "aac_memory"
 
 API_PROMPT = (
     "You have a long-term memory. Use recall before answering questions about the "

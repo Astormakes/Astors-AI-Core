@@ -37,7 +37,6 @@ from .const import (
     LOGGER,
 )
 from homeassistant.helpers import llm
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .audio_hub import AudioHub
 from .audio_view import AACAudioView
@@ -51,13 +50,11 @@ from .broker import BrokerNode
 from .modules import MODULES_DIR, MODULES_URL, LoadedModule, async_load_modules
 from .pools import TIERS, Pool
 from .skins import USER_URL as USER_SKINS_URL, user_dir
-from .memory import MemoryStore, memory_path
-from .memory_api import AACMemoryAPI
 from .menu_api import MENU_API_ID, AACMenuAPI
 from .setup_api import AACSetupAPI
-from .provider import OpenAICompatProvider, ProviderConnectionError
 from .runs import RunRegistry
 from .store import AACStore
+from .slots import Slots
 from .streams import Bus
 
 PLATFORMS = (Platform.CONVERSATION, Platform.CALENDAR)
@@ -79,6 +76,7 @@ class AACData:
     jobs: JobQueue | None = None
     capabilities: Capabilities = field(default_factory=Capabilities)
     bus: Bus = field(default_factory=Bus)
+    slots: Slots = field(default_factory=Slots)
     modules: list[LoadedModule] = field(default_factory=list)
     requests: Requests | None = None
 
@@ -101,12 +99,6 @@ class AACData:
     def runs(self) -> RunRegistry:
         """First domain."""
         return self.domain().runs
-
-    @property
-    def memory(self) -> MemoryStore | None:
-        """First domain."""
-        return self.domain().memory
-
 
 
 type AACConfigEntry = ConfigEntry[AACData]
@@ -148,29 +140,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     except Exception as err:  # noqa: BLE001 - without it, answers use the engine's default voice
         LOGGER.warning("AAC: language detection unavailable: %s", err)
 
-    async def embed(texts: list[str]):
-        if (picked := pool.endpoint("memory")) is None:
-            return None  # keywords only
-        model_id, endpoint = picked
-        provider = OpenAICompatProvider(
-            async_get_clientsession(hass), endpoint.base_url, endpoint.api_key, connect_timeout=3
-        )
-        try:
-            vectors = await provider.embed(endpoint.model, texts)
-        except ProviderConnectionError as err:
-            pool.mark_down(model_id, str(err))
-            raise
-        pool.mark_up(model_id)
-        return vectors, endpoint.model
-
     for i, settings in enumerate(store.domains.values()):
         dom = await async_load_domain(hass, settings, first=i == 0)
         entry.runtime_data.domains[dom.id] = dom
-        dom.memory = MemoryStore(hass, memory_path(hass, dom.suffix), embed)
-        await dom.memory.async_open()
         label = "" if dom.first else f" ({dom.name})"
         for api in (
-            AACMemoryAPI(hass=hass, id=dom.api_id("aac_memory"), name=f"AAC memory{label}", memory=dom.memory),
             AACSetupAPI(hass=hass, id=dom.api_id("aac_setup"), name=f"AAC setup{label}", entry=entry, domain=dom),
             AACHomeAPI(hass=hass, id=dom.api_id("aac_home"), name=f"AAC home{label}", entry=entry, domain=dom),
             AACMenuAPI(hass=hass, id=dom.api_id(MENU_API_ID), name=f"AAC menu{label}"),
@@ -219,12 +193,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     """Unload a config entry."""
     frontend.async_remove_panel(hass, PANEL_URL, warn_if_unknown=False)
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unloaded:
-        for dom in entry.runtime_data.domains.values():
-            if dom.memory:
-                await dom.memory.async_close()
-    return unloaded
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)  # modules close their own files
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

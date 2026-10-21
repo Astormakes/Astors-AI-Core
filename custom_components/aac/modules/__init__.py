@@ -107,6 +107,10 @@ class ModuleContext:
         """Lines for the open loops of every automatic run: provider(domain_id) → ["- …"] (not where the module is off)."""
         self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_open_loops(self.module.id, provider, self.module.id))
 
+    def provide_slot(self, slot: str, provider) -> None:
+        """Be the provider of a core slot (slots.py, e.g. "memory"); asked only where the module is on."""
+        self.entry.async_on_unload(self.entry.runtime_data.slots.provide(slot, provider, self.module.id))
+
     def add_node(self, node: Node) -> None:
         """A node on the stream bus (it reads and writes only in domains where the module is on)."""
         node.module = self.module.id
@@ -254,6 +258,7 @@ async def async_load_modules(hass: HomeAssistant, entry: AACConfigEntry) -> list
     """Load every built-in module (a failing one is skipped, the rest keep working)."""
     entry.runtime_data.capabilities.module_enabled = lambda domain_id, module_id: access(entry, module_id, domain_id)["enabled"]
     entry.runtime_data.bus.set_module_enabled(entry.runtime_data.capabilities.module_enabled)
+    entry.runtime_data.slots.module_enabled = entry.runtime_data.capabilities.module_enabled
     loaded = []
     for manifest in await hass.async_add_executor_job(_manifests):
         module = LoadedModule(manifest)

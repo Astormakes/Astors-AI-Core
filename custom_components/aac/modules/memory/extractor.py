@@ -12,13 +12,13 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from .const import LOGGER
-from .memory import KINDS
-from .memory_api import fact_args
-from .provider import OpenAICompatProvider, ProviderError
+from ...const import LOGGER
+from .store import KINDS
+from .api import fact_args
+from ...provider import OpenAICompatProvider, ProviderError
 
 if TYPE_CHECKING:
-    from .memory import MemoryStore
+    from .store import MemoryStore
 
 EXTRACT_FORMAT = {
     "type": "json_schema",

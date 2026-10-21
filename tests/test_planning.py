@@ -6,7 +6,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .conftest import BASE_URL, heartbeat_now, setup_aac, triggers_of
+from .conftest import BASE_URL, heartbeat_now, setup_aac, triggers_of, memory_of
 
 URL = f"{BASE_URL}/chat/completions"
 
@@ -119,8 +119,8 @@ async def test_one_off_fires_once_and_goes(hass: HomeAssistant, aioclient_mock, 
 async def test_plans_are_open_loops(hass: HomeAssistant, aioclient_mock, mock_entry, configured):
     """Memories of kind 'plan' show up in the heartbeat's context, without any goal-specific code."""
     await setup_aac(hass, mock_entry)
-    await mock_entry.runtime_data.memory.async_remember("Wants to lose 4 kg by spring, feel fitter.", "plan")
-    await mock_entry.runtime_data.memory.async_remember("Weight 82.4 kg", "event")
+    await memory_of(hass).async_remember("Wants to lose 4 kg by spring, feel fitter.", "plan")
+    await memory_of(hass).async_remember("Weight 82.4 kg", "event")
     payloads = _queue(aioclient_mock, _text('{"speak": false, "message": ""}'))
     await heartbeat_now(hass)
     system = payloads[0]["messages"][0]["content"]

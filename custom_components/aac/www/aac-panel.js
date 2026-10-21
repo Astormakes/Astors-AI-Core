@@ -790,13 +790,6 @@ class AacPanel extends HTMLElement {
     try { this._runs = await this._ws("aac/runs", { kind: "auto" }); } catch (e) { this._runs = []; }
     this._render();
   }
-  async _loadMemory() {
-    try { this._facts = await this._ws("aac/facts"); } catch (e) { this._facts = { keys: [] }; }
-    try {
-      this._memory = await this._ws("aac/memory/list", this._memQuery ? { query: this._memQuery } : { unconfirmed: !!this._memOpenOnly });
-    } catch (e) { this._memory = { memories: [], stats: {}, error: e.message }; }
-    this._render();
-  }
   async _openChat(id, navigate = true) {
     if (this._chat?.id !== id) { this._editing = null; this._editText = null; }
     try {
@@ -837,6 +830,7 @@ class AacPanel extends HTMLElement {
 
   _go(view) {
     if (view === "settings/triggers") view = "mod/triggers/list"; // old links: the triggers are a module since 0.45
+    if (view === "settings/memory") view = "mod/memory/browse"; // and memory since 0.47
     this._view = view;
     this._navOpen = false;
     this._flash = null;
@@ -853,7 +847,6 @@ class AacPanel extends HTMLElement {
     if (view === "domain/visible") this._loadVisible();
     if (view === "requests") this._loadRequests();
     if (view === "settings/modules" || view.startsWith("settings/module/")) this._loadModuleSettings();
-    if (view === "settings/memory") this._loadMemory();
     if (view === "settings/languages") this._ws("aac/languages").then((r) => { this._langs = r; this._render(); }).catch(() => {});
     if (view === "settings/appearance") this._ws("aac/skins").then((r) => { this._skins = r; this._render(); }).catch(() => {});
     if (view.startsWith("chat/") && view !== "chat/new") { this._openChat(view.slice(5)); return; }
@@ -1009,13 +1002,12 @@ class AacPanel extends HTMLElement {
           ${this._tab("settings/languages", "Languages", this._stepOpen("languages") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/master", "Master agent")}
           ${this._tab("settings/entities", "Entities", this._stepOpen("entities") ? '<span class="dot open"></span>' : "")}
-          ${this._tab("models", "Compute", ["models", "master", "memory"].some((x) => this._stepOpen(x)) ? '<span class="dot open"></span>' : "")}
+          ${this._tab("models", "Compute", ["models", "master"].some((x) => this._stepOpen(x)) ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/audio", "Audio pipeline")}
           ${this._tab("settings/audio/sources", "Sources", "", "deep")}
           ${this._tab("settings/video", "Video")}
           ${this._tab("settings/modules", "Modules")}
           ${this._tab("settings/mcp", "MCP", "", "soon")}
-          ${this._tab("settings/memory", "Memory", this._stepOpen("memory") ? '<span class="dot open"></span>' : "")}
         </div>
       </div>
     </nav>`;
@@ -1057,7 +1049,6 @@ class AacPanel extends HTMLElement {
     if (v === "settings/audio/sources") return this._renderSources();
     if (v === "settings/mcp") return this._renderSoon("MCP",
       "AAC as an MCP server (memory, modules and tools for other clients) and as an MCP client (plug in outside tools). Home Assistant's own AI features (Assist API, HA's MCP server) can be plugged in here as tools; AAC never changes HA's own voice or AI setup.");
-    if (v === "settings/memory") return this._renderMemory();
     return this._page("AAC", "", '<div class="card"><p>Loading…<span class="cursor"></span></p></div>');
   }
 
@@ -1601,7 +1592,7 @@ class AacPanel extends HTMLElement {
     this._domain = id;
     try { localStorage.setItem("aac-domain", id); } catch (e) { /* private mode */ }
     this._domainMenu = false;
-    this._chat = null; this._run = null; this._memory = null; this._modEls = {};
+    this._chat = null; this._run = null; this._modEls = {};
     this._view = "chat/new";
     await this._loadAll();
   }
@@ -1622,7 +1613,7 @@ class AacPanel extends HTMLElement {
       if (kind === "new") {
         const name = await this._prompt("Name of the new domain (e.g. Work):");
         if (!name?.trim()) return;
-        const copy = await this._confirm(`Start with the settings of "${st.domain.name}" (charter, master, triggers)? Its memory and chats are never copied.`, "Copy settings", false, "Start empty");
+        const copy = await this._confirm(`Start with the settings of "${st.domain.name}" (charter, master, which modules are on and how they are set)? Its data (memory, lists, triggers, chats) is never copied.`, "Copy settings", false, "Start empty");
         const r = await this._ws("aac/domain/create", { name: name.trim(), copy_from: copy ? st.domain.id : null });
         await this._afterReload(r.domain);
       } else if (kind === "rename") {
@@ -1777,69 +1768,6 @@ class AacPanel extends HTMLElement {
           </div>
           <div><label for="m-prompt">Instructions</label><textarea id="m-prompt" class="thin-scroll">${esc(m.prompt)}</textarea></div>
         </div>
-      </div>`);
-  }
-
-  // ---------------------------------------------------------------- settings: memory
-  _renderMemory() {
-    const st = this._state;
-    if (!st) return this._page("MEMORY", "", "");
-    const mem = st.memory;
-    const m = this._memory;
-    const stats = m?.stats || {};
-    const rows = !m ? '<p class="hint">Loading…</p>' : !m.memories.length ? `<p class="hint">${this._memQuery ? "Nothing found." : "Nothing remembered yet."}</p>` :
-      m.memories.map((x) => `
-        <div class="src">
-          <span class="dot ${x.confirmed ? "ok" : "open"}"></span>
-          <div style="flex:1;min-width:0">
-            <div class="n">${esc(x.text)}</div>
-            <div class="m">${esc(x.kind)} · ${esc(x.source)} · ${esc(fmtTime(x.updated))}${x.embedded ? "" : " · no vector"}${x.confirmed ? "" : " · <b style='color:var(--amber)'>unconfirmed</b>"}</div>
-          </div>
-          <span class="actions" style="margin:0">
-            ${x.confirmed ? "" : `<button class="btn primary" data-mem-confirm="${esc(x.id)}">Confirm</button>`}
-            <button class="btn" data-mem-edit="${esc(x.id)}">Edit</button>
-            <button class="icon-btn" data-mem-delete="${esc(x.id)}" title="Forget">${icon("trash")}</button>
-          </span>
-        </div>`).join("");
-    return this._page("MEMORY", `${stats.total ?? "…"} memories${stats.unconfirmed ? ` · ${stats.unconfirmed} unconfirmed` : ""}`, `
-      <div class="cards">
-        <div class="card" data-autosave="memory" data-label="Memory"><h2>SETTINGS ${tip(`One local file in Home Assistant's config folder (included in HA backups). Search uses keywords and, with an embedding model, meaning ("cellar" finds "basement"). The master always has remember / recall / forget.`)}</h2>
-          <label class="check"><input type="checkbox" id="mem-enabled" ${mem.enabled ? "checked" : ""}>Memory on</label>
-          <label>Embedding model ${tip(`A multilingual one is best (e.g. bge-m3 via llama-server <code>--embeddings</code>). Without one: keywords only.`)}</label>${this._roleSummary("memory")}
-          <div class="kv"><span class="k">Stored</span><span class="v">${esc(stats.total ?? "…")}</span><span class="k">With vectors</span><span class="v">${esc(stats.embedded ?? "…")}</span><span class="k">Unconfirmed</span><span class="v">${esc(stats.unconfirmed ?? "…")}</span></div>
-          <div class="actions"><button class="btn" id="mem-reembed">Re-embed all</button></div>
-          ${this._flashHtml()}
-        </div>
-        <div class="card"><h2>REMEMBER ${tip(`Tell AAC something directly. "agent believes" entries are AAC's own conclusions; they count as facts only once you confirm them.`)}</h2>
-          <label for="mem-text">Text</label><textarea id="mem-text" class="thin-scroll" style="min-height:5em" placeholder="e.g. Oat milk from brand X was good."></textarea>
-          <label for="mem-kind">Kind ${tip(`"plan" = something you want to achieve or do; AAC keeps it in mind when it looks around on its own.`)}</label>
-          <select id="mem-kind">${["note", "fact", "preference", "event", "plan"].map((k) => `<option>${k}</option>`).join("")}</select>
-          <div class="actions"><button class="btn primary" id="mem-add">Remember</button></div>
-        </div>
-      </div>
-      <div class="card"><h2>FACTS ${tip(`Things with a value (measurements, places, ratings), stored with fields so they can be compared exactly. Each one is also a text memory below.`)}</h2>
-        ${!this._facts ? '<p class="hint">Loading…</p>' : !this._facts.keys.length ? '<p class="hint">No facts yet.</p>' :
-          this._facts.keys.map((k) => {
-            const sm = k.summary || {};
-            const open = this._factOpen === `${k.subject}|${k.attribute}`;
-            const val = sm.change !== undefined ? `${sm.first} → ${sm.latest}${sm.unit ? " " + sm.unit : ""} (${sm.change > 0 ? "+" : ""}${sm.change})` : `${sm.latest}${sm.unit ? " " + sm.unit : ""}`;
-            return `<div class="src" style="cursor:pointer" data-fact="${esc(k.subject)}|${esc(k.attribute)}" tabindex="0" role="button">
-              <span class="dot ok"></span>
-              <div style="flex:1;min-width:0">
-                <div class="n">${esc(k.subject)} · ${esc(k.attribute)}: <b>${esc(val)}</b></div>
-                <div class="m">${esc(k.count)} value(s) · last ${esc(fmtTime(k.last))}</div>
-                ${open && this._factSeries ? `<div class="m" style="margin-top:.4em">${this._factSeries.map((f) => `${esc(f.time.slice(0, 10))}: ${esc(f.value)}${f.unit ? " " + esc(f.unit) : ""}`).join(" · ")}</div>` : ""}
-              </div>
-            </div>`;
-          }).join("")}
-      </div>
-      <div class="card"><h2>BROWSE</h2>
-        <div class="row">
-          <div><input id="mem-q" value="${esc(this._memQuery || "")}" placeholder="Search by words or meaning…" aria-label="Search memories"></div>
-          <div style="flex:none" class="actions"><button class="btn" id="mem-search">Search</button></div>
-        </div>
-        <label class="check"><input type="checkbox" id="mem-open" ${this._memOpenOnly ? "checked" : ""}>Only unconfirmed</label>
-        ${rows}
       </div>`);
   }
 
@@ -2037,7 +1965,6 @@ class AacPanel extends HTMLElement {
     if (key === "module") return this._saveModule(arg);
     if (key === "access") return this._saveModuleAccess(arg);
     if (key === "charter") { this._state = await this._ws("aac/charter", { text: sr.querySelector("#ch-text").value }); return; }
-    if (key === "memory") { this._state = await this._ws("aac/memory/settings", { enabled: sr.querySelector("#mem-enabled").checked }); return; }
     if (key === "queue") {
       this._jobs = await this._ws("aac/jobs/settings", {
         notify_no_model: sr.querySelector("#q-notify").checked,
@@ -2450,48 +2377,6 @@ class AacPanel extends HTMLElement {
       catch (e) { this._flash = { ok: false, text: e.message || String(e) }; this._render(); }
     }));
 
-    // memory
-    const memSearch = () => { this._memQuery = sr.querySelector("#mem-q").value.trim(); this._memOpenOnly = false; this._loadMemory(); };
-    sr.querySelector("#mem-search")?.addEventListener("click", memSearch);
-    sr.querySelector("#mem-q")?.addEventListener("keydown", (e) => { if (e.key === "Enter") memSearch(); });
-    sr.querySelector("#mem-open")?.addEventListener("change", (e) => { this._memOpenOnly = e.target.checked; this._memQuery = ""; this._loadMemory(); });
-    sr.querySelector("#mem-reembed")?.addEventListener("click", async () => {
-      this._flash = { ok: true, text: "Embedding…" }; this._render();
-      try { const r = await this._ws("aac/memory/reembed"); this._flash = { ok: true, text: `Done: ${r.embedded} memories got vectors.` }; }
-      catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
-      await this._loadMemory();
-    });
-    sr.querySelector("#mem-add")?.addEventListener("click", async () => {
-      const text = sr.querySelector("#mem-text").value.trim();
-      if (!text) return;
-      await this._ws("aac/memory/save", { text, kind: sr.querySelector("#mem-kind").value });
-      sr.querySelector("#mem-text").value = "";
-      this._memQuery = "";
-      await this._loadMemory();
-    });
-    sr.querySelectorAll("[data-fact]").forEach((el) => el.addEventListener("click", async () => {
-      const [subject, attribute] = el.dataset.fact.split("|");
-      if (this._factOpen === el.dataset.fact) { this._factOpen = null; return this._render(); }
-      this._factOpen = el.dataset.fact;
-      this._factSeries = (await this._ws("aac/facts", { subject, attribute })).series;
-      this._render();
-    }));
-    sr.querySelectorAll("[data-mem-confirm]").forEach((el) => el.addEventListener("click", async () => {
-      await this._ws("aac/memory/save", { memory_id: el.dataset.memConfirm, confirmed: true });
-      await this._loadMemory();
-    }));
-    sr.querySelectorAll("[data-mem-edit]").forEach((el) => el.addEventListener("click", async () => {
-      const item = this._memory.memories.find((x) => x.id === el.dataset.memEdit);
-      const text = await this._prompt("Edit memory", item?.text || "");
-      if (text === null || !text.trim()) return;
-      await this._ws("aac/memory/save", { memory_id: el.dataset.memEdit, text: text.trim(), confirmed: true });
-      await this._loadMemory();
-    }));
-    sr.querySelectorAll("[data-mem-delete]").forEach((el) => el.addEventListener("click", async () => {
-      if (!(await this._confirm("Forget this memory?", "Forget", true))) return;
-      await this._ws("aac/memory/delete", { memory_id: el.dataset.memDelete });
-      await this._loadMemory();
-    }));
   }
 
   _typing() {

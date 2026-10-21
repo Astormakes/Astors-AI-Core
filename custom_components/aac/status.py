@@ -89,14 +89,6 @@ def setup_steps(hass: HomeAssistant, store: AACStore, domain: DomainSettings | N
             "done": store.data["languages"] is not None,
         },
         {
-            "id": "memory",
-            "title": "Give AAC a memory",
-            "hint": "Pick an embedding model so it finds memories by meaning, not only by words.",
-            "target": "models",
-            "optional": True,
-            "done": role_configured(hass, store, "memory"),
-        },
-        {
             "id": "audio",
             "title": "Give AAC ears and a voice",
             "hint": "Run the AAC satellite on a PC or next to a headset; it streams the mic to AAC and plays the answers.",

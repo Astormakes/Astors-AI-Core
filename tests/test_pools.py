@@ -26,7 +26,7 @@ async def test_old_single_choices_migrate(hass: HomeAssistant, hass_storage, moc
     await setup_aac(hass, mock_entry)
     store = mock_entry.runtime_data.store
     assert store.pools == {"master": [MODEL_CFG["id"]], "memory": ["m_x"], "stt": ["stt.whisper"], "tts": []}
-    assert "model" not in store.master and "embed_model" not in store.memory and "stt" not in store.audio
+    assert "model" not in store.master and "memory" not in store.default_domain.data and "stt" not in store.audio
 
 
 async def test_master_falls_back_when_pc_is_off(hass: HomeAssistant, hass_ws_client, hass_storage, aioclient_mock, mock_entry, configured):

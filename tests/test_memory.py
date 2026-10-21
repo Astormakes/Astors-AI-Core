@@ -6,10 +6,10 @@ import pytest
 
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
 
-from custom_components.aac.memory import MemoryStore, fuse
+from custom_components.aac.modules.memory.store import MemoryStore, fuse
 from homeassistant.core import HomeAssistant
 
-from .conftest import BASE_URL, heartbeat_now, setup_aac
+from .conftest import BASE_URL, heartbeat_now, setup_aac, memory_of
 
 # A tiny fake "embedding": counts of a few topic words, so meaning-like search is testable
 TOPICS = ["milk", "oat", "soy", "drill", "tool", "basement", "battery", "printer"]
@@ -143,7 +143,7 @@ async def test_embedding_model_setting(
     assert (await ws.receive_json())["result"]["roles"]["memory"]["active"] == "m_test0001"
     await ws.send_json_auto_id({"type": "aac/state"})
     state = (await ws.receive_json())["result"]
-    assert {s["id"]: s for s in state["setup"]}["memory"]["done"]
+    assert {s["id"]: s for s in state["setup"]}["assistant/mod/memory/embeddings"]["done"]
     await ws.send_json_auto_id({"type": "aac/memory/save", "text": "hello"})
     await ws.receive_json()
     await ws.send_json_auto_id({"type": "aac/memory/list"})
@@ -156,7 +156,7 @@ async def test_memories_handed_to_model(
 ):
     """Matching memories are attached to the user message (prompt cache stays intact)."""
     await setup_aac(hass, mock_entry)
-    await mock_entry.runtime_data.memory.async_remember("Oat milk from Alpro was really good.", "preference")
+    await memory_of(hass).async_remember("Oat milk from Alpro was really good.", "preference")
     payloads = []
 
     async def side_effect(method, url, data):
@@ -184,7 +184,7 @@ async def _last_chat(ws):
 
 def test_keyword_terms_skip_filler():
     """Filler words do not count as matches."""
-    from custom_components.aac.memory import _fts_query
+    from custom_components.aac.modules.memory.store import _fts_query
 
     assert _fts_query("Which plant-based milk should I buy again?") == '"plant"* OR "based"* OR "milk"* OR "buy"*'
     assert _fts_query("Was ist das?") == ""
@@ -196,7 +196,7 @@ async def test_extractor_keeps_what_matters(
 ):
     """After a message, a background call stores lasting things, skipping duplicates."""
     await setup_aac(hass, mock_entry)
-    await mock_entry.runtime_data.memory.async_remember("Wants to lose 4 kg by spring.", "plan")
+    await memory_of(hass).async_remember("Wants to lose 4 kg by spring.", "plan")
     payloads = []
     replies = [
         {"choices": [{"message": {"role": "assistant", "content": "Nice, 0.8 kg down!"}}]},
@@ -218,10 +218,10 @@ async def test_extractor_keeps_what_matters(
     extract_call = payloads[1]
     assert extract_call["response_format"]["json_schema"]["name"] == "memories"
     assert "Weighed myself: 81.6 kg." in extract_call["messages"][0]["content"]
-    texts = [m.text for m in await mock_entry.runtime_data.memory.async_list()]
+    texts = [m.text for m in await memory_of(hass).async_list()]
     assert "Weight 81.6 kg" in texts
     assert texts.count("Wants to lose 4 kg by spring.") == 1  # no duplicate
-    facts = await mock_entry.runtime_data.memory.async_facts("user", "weight")
+    facts = await memory_of(hass).async_facts("user", "weight")
     assert [f["value"] for f in facts] == [81.6]
 
 
@@ -246,7 +246,7 @@ async def test_extractor_not_for_automatic_runs(
 
 async def test_structured_facts(hass: HomeAssistant, tmp_path):
     """Facts with fields next to the text; series summaries; forget removes both."""
-    from custom_components.aac.memory import summarize, summary_text
+    from custom_components.aac.modules.memory.store import summarize, summary_text
 
     memory = MemoryStore(hass, tmp_path / "m.db", fake_embed)
     await memory.async_open()
@@ -274,7 +274,7 @@ async def test_remember_and_lookup_tools(
 ):
     """The master stores a structured fact and looks the series up; the context gets the summary."""
     await setup_aac(hass, mock_entry)
-    memory = mock_entry.runtime_data.memory
+    memory = memory_of(hass)
     await memory.async_remember("Weight 82.4 kg", "event", fact={"subject": "user", "attribute": "weight", "value": 82.4, "unit": "kg"})
     payloads = []
     replies = [
@@ -318,3 +318,14 @@ async def test_new_measurement_is_not_a_duplicate(hass: HomeAssistant, tmp_path)
     assert await memory.async_is_known("User weighs 82,4 kg!")  # same number, same thing
     assert await memory.async_is_known("user weighs 82.4 kg")
     await memory.async_close()
+
+
+async def test_memory_switched_off_is_gone(hass: HomeAssistant, hass_storage, aioclient_mock, mock_entry, configured):
+    """0.46's "memory off" becomes the memory module's switch: no slot, no tools, no hint in that domain."""
+    from custom_components.aac.store import STORAGE_KEY
+
+    hass_storage[STORAGE_KEY]["data"]["memory"] = {"enabled": False}
+    await setup_aac(hass, mock_entry)
+    data = mock_entry.runtime_data
+    assert data.store.data["module_access"]["assistant"]["memory"]["enabled"] is False
+    assert data.slots.memory("assistant") is None and data.slots.memory() is not None

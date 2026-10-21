@@ -137,13 +137,9 @@ def short(text: str, n: int = 40) -> str:
 
 
 async def async_open_loops(entry: AACConfigEntry, domain: Domain) -> str:
-    """Open plans (memory kind 'plan'), what modules add (AAC's own schedules) and what is coming up,
-    for automatic runs."""
-    settings = domain.settings
-    lines = []
-    if (memory := domain.memory) and settings.memory["enabled"]:
-        lines += [f"- plan: {m.text} (since {m.created[:10]})" for m in await memory.async_plans()]
-    lines += await entry.runtime_data.capabilities.async_open_loops(domain.id)
+    """What modules add (memory: open plans; triggers: AAC's own schedules) and what is coming up, for
+    automatic runs."""
+    lines = await entry.runtime_data.capabilities.async_open_loops(domain.id)
     # Coming up: everything the calendar providers know for the next 24 hours
     now = dt_util.now()
     upcoming = await entry.runtime_data.capabilities.async_calendar(domain.id, now, now + timedelta(hours=24))

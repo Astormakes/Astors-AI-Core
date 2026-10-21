@@ -14,7 +14,7 @@ from homeassistant.components import conversation
 from homeassistant.components.llm.llm import GetDateTimeTool
 from homeassistant.core import Context, HomeAssistant
 
-from .conftest import heartbeat_now, set_heartbeat, setup_aac, store_data
+from .conftest import heartbeat_now, set_heartbeat, setup_aac, store_data, memory_of
 
 LIVE_URL = os.environ.get("AAC_LIVE_URL", "http://127.0.0.1:8080/v1")
 
@@ -126,7 +126,7 @@ async def test_live_memory_round_trip(hass: HomeAssistant, hass_storage, mock_en
         hass, "Please remember: the oat milk from Alpro was great, the soy milk from Lidl was awful.",
         None, Context(), agent_id=mock_entry.entry_id,
     )
-    stats = await mock_entry.runtime_data.memory.async_count()
+    stats = await memory_of(hass).async_count()
     print(f"\nStored memories: {stats}")
     assert stats["total"] >= 1, "the model did not call remember"
     if EMBED_URL:
@@ -163,7 +163,7 @@ async def test_live_goal_emerges(hass: HomeAssistant, hass_storage, mock_entry, 
         "I want to lose about 4 kg by spring so I feel fitter. Today I weigh 82.4 kg. "
         "Could you check in with me on weekday mornings at 7:30?"
     )
-    memories = await rt.memory.async_list()
+    memories = await memory_of(hass).async_list()
     print("MEMORIES:", [(m.kind, m.text) for m in memories])
     print("TRIGGERS:", [(t["name"], t["when"], t["do"]["instruction"]) for t in rt.store.triggers])
     assert any(m.kind == "plan" for m in memories), "goal not remembered as a plan"
@@ -171,8 +171,8 @@ async def test_live_goal_emerges(hass: HomeAssistant, hass_storage, mock_entry, 
 
     # A week later, in a new conversation
     await say("Weighed myself this morning: 81.6 kg.")
-    print("MEMORIES:", [(m.kind, m.text) for m in await rt.memory.async_list()])
-    facts = await rt.memory.async_facts()
+    print("MEMORIES:", [(m.kind, m.text) for m in await memory_of(hass).async_list()])
+    facts = await memory_of(hass).async_facts()
     print("FACTS:", [(f["subject"], f["attribute"], f["value"], f["unit"]) for f in facts])
     assert any(f["attribute"] == "weight" and f["value"] == 81.6 for f in facts), "81.6 kg not stored as a fact"
     final = await say("How am I doing with my weight goal?")

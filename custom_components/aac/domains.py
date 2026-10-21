@@ -1,9 +1,9 @@
-"""AAC domains at runtime: each domain's own chats, runs and memory (modules keep their own data per domain).
+"""AAC domains at runtime: each domain's own chats and runs (modules keep their own data per domain: lists, triggers, memory).
 
 A domain is a whole AAC setup (the default "Assistant", a work helper, …). Models,
 pools, audio and skins are shared (they stand above domains); everything a domain
 learns, plans or says stays in it. The first domain keeps the storage names from
-before there were several (aac.chats, aac.runs, memory.db), so nothing moves.
+before there were several (aac.chats, aac.runs; the memory module: memory.db), so nothing moves.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from homeassistant.helpers import entity_registry as er
 
 from .chats import ChatStore
 from .const import DOMAIN
-from .memory import MemoryStore
 from .runs import RunRegistry
 from .store import DomainSettings
 
@@ -30,7 +29,6 @@ class Domain:
     chats: ChatStore
     runs: RunRegistry
     first: bool
-    memory: MemoryStore | None = None
 
     @property
     def id(self) -> str:
@@ -71,14 +69,9 @@ async def async_load_domain(hass: HomeAssistant, settings: DomainSettings, first
 
 
 async def async_remove_domain_data(hass: HomeAssistant, dom: Domain) -> None:
-    """Delete a domain's chats, runs and memory file for good (never the first domain's)."""
+    """Delete a domain's chats, runs and module data for good (never the first domain's; memory: its slot)."""
     if dom.first:
         return
-    if dom.memory:
-        path = dom.memory._path  # noqa: SLF001
-        await dom.memory.async_close()
-        for suffix in ("", "-wal", "-shm"):
-            await hass.async_add_executor_job(lambda p=path.with_name(path.name + suffix): p.unlink(missing_ok=True))
     await dom.chats.store.async_remove()
     await dom.runs.store.async_remove()
     await dom.runs.request_store.async_remove()

@@ -60,7 +60,8 @@ async def test_simple_answer(
         # no owner in this chat: the deleting list tools are held back
         "aac-lists__add_items", "aac-lists__create_list", "aac-lists__lists",
         "aac-lists__read_list", "aac-lists__update_item",
-        "aac-memory__forget", "aac-memory__lookup_facts", "aac-memory__recall", "aac-memory__remember",
+        # forget deletes: held back without the owner (memory is a module since 0.47, with the modules' rules)
+        "aac-memory__lookup_facts", "aac-memory__recall", "aac-memory__remember",
         "aac-triggers__cancel_schedule", "aac-triggers__list_schedules", "aac-triggers__schedule", "aac-triggers__watch",
         # forget_voice deletes: held back without the owner
         "aac-voices__list_voices", "aac-voices__name_voice",

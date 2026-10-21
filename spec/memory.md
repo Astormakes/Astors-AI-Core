@@ -4,6 +4,15 @@ Storing and finding things for the long term. **One interface, two stores** in
 one local SQLite file: text memories (searched by keywords and meaning) for
 concepts, and **structured facts** (fields) for values that must be exact.
 
+Since 0.47 memory is a module (`modules/memory`), the default provider of the core's **memory slot**
+([streams.md](streams.md) → Slots). The core only asks the slot: `async_context(domain, text)` (what goes
+along with a message), `async_after_message(domain, text, stored_now, provider, model)` (the write path),
+`async_model_changed()` (new embedding model → re-embed), `async_remove_domain(domain)`. The module brings
+the tools (`aac-memory__…`; `forget` only with the owner in the chat, like every module's deleting tools),
+adds open plans to the open loops, and has the page (MODULES → Memory). On/off = the module's switch per
+domain (0.46's `memory.enabled` moves there); setting `extract` = the write path after each message. Files
+unchanged: `aac/memory[.<domain>].db`.
+
 ## Item
 
 ```json
@@ -91,4 +100,4 @@ Timeline (what happened when, summaries), entities/people (stable IDs, links,
 provisional "unknown #17"), curator (nightly: merge duplicates, flag contradictions),
 privacy tier per item, per-person memory.
 
-Code: `custom_components/aac/memory.py`, `memory_api.py`.
+Code: `custom_components/aac/modules/memory/` (`store.py` the database, `api.py` the tools, `extractor.py` the write path, `__init__.py` slot, commands `aac/memory/*` and `aac/facts`, `page.js`); the slot: `slots.py`.

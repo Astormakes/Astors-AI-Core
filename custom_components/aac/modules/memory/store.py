@@ -24,7 +24,7 @@ import uuid
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import LOGGER
+from ...const import LOGGER
 
 try:  # numpy makes vector search fast; pure Python is fine for a few thousand items
     import numpy as np

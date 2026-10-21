@@ -63,7 +63,7 @@ rules for the machines, heartbeat) are declared the same way, so SETUP has one c
 ## Built (v0.18.0): built-in modules
 
 `custom_components/aac/modules/<id>/` with `manifest.json` and `async_setup_module(ctx)`. The context
-gives: `storage(domain, name)` (per AAC domain), `add_calendar(provider)`, `add_open_loops(provider)` (lines for automatic runs), `add_llm_api(factory)` (one
+gives: `storage(domain, name)` (per AAC domain), `add_calendar(provider)`, `add_open_loops(provider)` (lines for automatic runs), `provide_slot(slot, provider)` (be a core slot's provider, e.g. memory), `add_llm_api(factory)` (one
 LLM API per domain, offered to that domain's agent), `add_ws_commands(...)`, `add_node(node)` / `emit(domain, node, port, item)` / `enabled(domain)` (the [stream bus](streams.md),
 0.44), `add_panel_page(id, title,
 element, script, visible_setting)` (a web component without shadow DOM, so the panel's styles and skins
@@ -84,7 +84,7 @@ deleting unless it is read-only or says destructive=false, HA's default is destr
 manifest are built (see above; ids `<domain>/mod/<module>/<step>`), e.g. the calendar module's "Connect a calendar".
 
 Modules so far: `heartbeat` (0.44: a source node writing `broker.request`; off by default; page with its last
-runs and "Run once now"), `triggers` (0.45: the owner's triggers and AAC's own plans, a node writing
+runs and "Run once now"), `memory` (0.47: the memory slot's provider; tools, write path, page), `triggers` (0.45: the owner's triggers and AAC's own plans, a node writing
 `broker.request`; planning tools; calendar provider; open loops; page; setting `own_plans`), `lists` (lists of anything: tree entries with free fields; tools; calendar provider;
 page; setting "show dated entries in the calendar") and `calendar` (HA calendars adapter; the unified calendar's tools since 0.45; where new
 entries go; agenda page; setting "show the calendar page"). Still planned: external modules, AAC-made modules, sandbox for code modules.

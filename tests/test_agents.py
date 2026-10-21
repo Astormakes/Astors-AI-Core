@@ -501,8 +501,8 @@ async def test_archive_a_chat(hass: HomeAssistant, hass_ws_client, aioclient_moc
 
 async def test_memory_reads_only_the_own_words(hass: HomeAssistant, aioclient_mock, mock_entry, configured):
     """A voice line comes with the room's lines (a video, others): memory learns from the line only."""
-    from custom_components.aac import conversation as conv
     from custom_components.aac.broker import async_run_request
+    from custom_components.aac.modules import memory as mem
 
     await setup_aac(hass, mock_entry)
     _replies(aioclient_mock, _reply("Done."))
@@ -512,7 +512,7 @@ async def test_memory_reads_only_the_own_words(hass: HomeAssistant, aioclient_mo
                                     chat_id="voice_pc", own_words="turn on the bed light")
     await hass.async_block_till_done()
     assert run.input == said
-    assert conv.async_extract.call_args.args[3] == "turn on the bed light"
+    assert mem.async_extract.call_args.args[3] == "turn on the bed light"
 
 
 async def test_tools_as_a_menu(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured_menu):

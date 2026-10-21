@@ -38,7 +38,7 @@ async def setup_ha_core(hass: HomeAssistant) -> None:
 @pytest.fixture(autouse=True)
 def isolated_memory_db(tmp_path):
     """Each test gets its own memory database (HA's test config dir is shared)."""
-    with patch("custom_components.aac.memory_path", side_effect=lambda hass, suffix="": tmp_path / f"memory{suffix}.db"):
+    with patch("custom_components.aac.modules.memory.memory_path", side_effect=lambda hass, suffix="": tmp_path / f"memory{suffix}.db"):
         yield
 
 
@@ -48,7 +48,7 @@ def no_memory_extractor(request):
     if request.node.get_closest_marker("extractor"):
         yield
         return
-    with patch("custom_components.aac.conversation.async_extract", new=AsyncMock(return_value=[])):
+    with patch("custom_components.aac.modules.memory.async_extract", new=AsyncMock(return_value=[])):
         yield
 
 
@@ -119,6 +119,13 @@ async def set_heartbeat(entry: MockConfigEntry, enabled: bool | None = None, **s
         await async_set_access(entry, "heartbeat", domain_id, {"enabled": enabled})
     if settings:
         await async_set_settings(entry, next(m for m in data.modules if m.id == "heartbeat"), domain_id, settings)
+
+
+def memory_of(hass: HomeAssistant, domain_id: str | None = None):
+    """A domain's memory store (the memory module since 0.47)."""
+    from custom_components.aac.modules.memory import memory_of as of
+
+    return of(hass, domain_id)
 
 
 def triggers_of(hass: HomeAssistant, domain_id: str | None = None):
