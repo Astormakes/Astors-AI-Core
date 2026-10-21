@@ -326,7 +326,10 @@ class AacNodes extends HTMLElement {
         const d = Math.hypot(dx, dy);
         if (d >= reach) continue;
         const f = (reach - d) * .05, ux = d ? dx / d : 0, uy = d ? dy / d : 1;
-        p.vx += ux * f; p.vy += uy * f; // only the card moves: a counter-push pulled long wires' ends inward
+        p.vx += ux * f; p.vy += uy * f;
+        // the wire's ends get the counter-push, vertically only: without it the push drove a steady drift
+        // downwards, sideways it made long wires telescope chains together
+        P[w.a.id].vy -= uy * f / 2; P[w.b.id].vy -= uy * f / 2;
       }
     }
     // A node in the middle of a run is pulled onto the line between its neighbours: runs become straight rows
@@ -338,9 +341,14 @@ class AacNodes extends HTMLElement {
       P[n.id].vy += ((before.y + after.y) / 2 - mine) * .05;
     }
     // Nodes without wires (or switched off) settle in a strip below the pipelines, out of the way
-    const wired = nodes.filter((n) => ins[n.id] || outs[n.id]);
-    const floor = wired.length ? Math.max(...wired.map((n) => P[n.id].y + this._height(n) / 2)) + 140 : 0;
-    for (const n of nodes) if (!ins[n.id] && !outs[n.id]) P[n.id].vy += (floor - P[n.id].y) * .02;
+    // (set once per wiring: following the lowest card was a ratchet, the parked cards pushed it down and the
+    // strip followed, forever)
+    if (this._floorKey !== this._backKey) {
+      const wired = nodes.filter((n) => ins[n.id] || outs[n.id]);
+      this._floor = wired.length ? Math.max(...wired.map((n) => P[n.id].y + this._height(n) / 2)) + 140 : 0;
+      this._floorKey = this._backKey;
+    }
+    for (const n of nodes) if (!ins[n.id] && !outs[n.id]) P[n.id].vy += (this._floor - P[n.id].y) * .02;
     // Frames (owner): a gentle pull to the middle for members, a weak push off the border for everyone else
     // (within EDGE outside it, firmer when a node sits inside); the hand always wins while a node is held
     for (const f of this._frames) {
