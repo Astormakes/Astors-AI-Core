@@ -1,6 +1,6 @@
 // The node view (spec/streams.md): every node of the domain and how it is wired.
 // Owner idea (2026-10-21): it should feel physical, like a force field. With Physics on, nodes have inertia,
-// push each other apart through a soft field (the faint halo) and wires pull wired nodes together into a
+// push each other apart and wires pull wired nodes together into a
 // left-to-right flow; drag one and the others give way, let go and it floats into its place. Double-click
 // pins a node where it is. With Physics off, everything stays where it is and you place nodes by hand.
 // Switching Physics on saves the layout first; Undo goes back to it. Positions are kept per browser and
@@ -12,7 +12,7 @@ const SVG = "http://www.w3.org/2000/svg";
 const short = (t, n) => (t.length > n ? `${t.slice(0, n - 1)}…` : t); // the box is narrow; the details are below
 const W = 176, HEAD = 40, ROW = 17; // node box: width, title area, one port row
 const LINK = 90; // how far right of its source a wired node wants to sit
-const FIELD = 150; // reach of a node's push beyond its box (the halo)
+const FIELD = 150; // reach of a node's soft push beyond its box
 const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "#8ab4ff", "#ff8a65", "#c792ea", "#7fdbca"];
 const KIND = { source: "source", sink: "sink", transform: "transform", annotating: "adds to the record" };
 const UNDO_STEPS = 10;
@@ -55,7 +55,7 @@ class AacNodes extends HTMLElement {
     const first = this._loaded !== this._key;
     this._place();
     this._draw();
-    if (first) setTimeout(() => this._fit(), this._physics ? 1500 : 0);
+    if (first) { if (this._physics) this._fitWhenQuiet = true; else this._fit(); }
     if (!quiet) this._kick();
     this._info();
   }
@@ -84,14 +84,10 @@ class AacNodes extends HTMLElement {
     this._svg.setAttribute("width", "100%");
     this._svg.setAttribute("height", "100%");
     this._svg.style.display = "block";
-    this._svg.innerHTML = `<defs><radialGradient id="nv-halo"><stop offset="35%" stop-color="var(--cyan)" stop-opacity=".10"/>
-        <stop offset="100%" stop-color="var(--cyan)" stop-opacity="0"/></radialGradient></defs>
-      <style>
+    this._svg.innerHTML = `<style>
         .nv-wire { fill: none; stroke-width: 1.6; opacity: .55; }
         .nv-wire.flow { stroke-dasharray: 6 5; animation: nvflow 1.2s linear infinite; opacity: .95; stroke-width: 2.2; }
         @keyframes nvflow { to { stroke-dashoffset: -22; } }
-        .nv-halo { fill: url(#nv-halo); pointer-events: none; transition: opacity .4s; }
-        svg.still .nv-halo { opacity: 0; }
         .nv-node rect.box { fill: var(--bg2, #111); stroke: var(--line); stroke-width: 1.2; }
         .nv-node.sel rect.box { stroke: var(--cyan); stroke-width: 2.2; }
         .nv-node.off { opacity: .35; }
@@ -101,7 +97,7 @@ class AacNodes extends HTMLElement {
         .nv-node text { fill: var(--text); font-size: 12px; font-family: inherit; pointer-events: none; }
         .nv-node text.sub, .nv-node text.port { fill: var(--dim); font-size: 10px; }
         .nv-node { cursor: grab; }
-      </style><g class="nv-world"><g class="nv-halos"></g><g class="nv-wires"></g><g class="nv-nodes"></g></g>`;
+      </style><g class="nv-world"><g class="nv-wires"></g><g class="nv-nodes"></g></g>`;
     this._stage.appendChild(this._svg);
     this._world = this._svg.querySelector(".nv-world");
     this._bind();
@@ -208,7 +204,7 @@ class AacNodes extends HTMLElement {
     if (!this._physics || !this._data) { this._svg.classList.add("still"); this._layout(); return; }
     this._svg.classList.remove("still");
     const nodes = this._data.nodes, P = this._pos;
-    // The field: every node pushes the others away, strongly when their boxes touch, softly within FIELD
+    // Every node pushes the others away, strongly when their boxes touch, softly within FIELD
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         const a = P[nodes[i].id], b = P[nodes[j].id];
@@ -218,7 +214,7 @@ class AacNodes extends HTMLElement {
         const touch = (W + (this._height(nodes[i]) + this._height(nodes[j])) / 2) / 2 + 20;
         let f = 0;
         if (d < touch) f = (touch - d) * .09; // boxes in each other: a firm push
-        if (d < touch + FIELD) f += (1 - (d - Math.min(d, touch)) / FIELD) * .9; // the soft halo
+        if (d < touch + FIELD) f += (1 - (d - Math.min(d, touch)) / FIELD) * .9; // the soft push
         a.vx -= ux * f; a.vy -= uy * f; b.vx += ux * f; b.vy += uy * f;
         // and boxes that overlap are moved apart along the axis where they overlap least
         const ox = W + 24 - Math.abs(dx), oy = (this._height(nodes[i]) + this._height(nodes[j])) / 2 + 18 - Math.abs(dy);
@@ -240,8 +236,10 @@ class AacNodes extends HTMLElement {
     for (const n of nodes) {
       const p = P[n.id];
       p.vx -= p.x * .0015; p.vy -= p.y * .0025;
-      if (p.pinned || n.id === this._drag?.id) { p.vx = p.vy = 0; continue; }
-      p.vx *= .9; p.vy *= .9;
+      if (n.id === this._drag?.id) { // held on an elastic band: it follows the cursor, the field still pushes it
+        p.vx += (this._drag.tx - p.x) * .18; p.vy += (this._drag.ty - p.y) * .18;
+        p.vx *= .62; p.vy *= .62;
+      } else if (p.pinned) { p.vx = p.vy = 0; continue; } else { p.vx *= .82; p.vy *= .82; } // friction
       const v = Math.hypot(p.vx, p.vy);
       if (v > 25) { p.vx *= 25 / v; p.vy *= 25 / v; } // no node flies off
       p.x += p.vx; p.y += p.vy;
@@ -250,14 +248,16 @@ class AacNodes extends HTMLElement {
     this._layout();
     // Quiet: the field rests until something moves (no CPU for an open view)
     if (energy > .08 * nodes.length || this._drag) this._raf = requestAnimationFrame(() => this._step());
-    else { this._svg.classList.add("still"); this._save(); }
+    else {
+      this._svg.classList.add("still");
+      this._save();
+      if (this._fitWhenQuiet) { this._fitWhenQuiet = false; this._fit(); }
+    }
   }
 
   // ------------------------------------------------------------------ drawing
   _draw() {
     const nodesG = this._svg.querySelector(".nv-nodes"), wiresG = this._svg.querySelector(".nv-wires");
-    this._svg.querySelector(".nv-halos").innerHTML = this._data.nodes.map((n) =>
-      `<circle class="nv-halo" data-halo="${esc(n.id)}" r="${W / 2 + FIELD}"></circle>`).join("");
     nodesG.innerHTML = this._data.nodes.map((n) => {
       const h = this._height(n), ins = Object.entries(n.inputs), outs = Object.entries(n.outputs);
       const row = (i) => -h / 2 + HEAD + ROW * i + ROW / 2;
@@ -289,10 +289,6 @@ class AacNodes extends HTMLElement {
     for (const g of this._svg.querySelectorAll(".nv-node")) {
       const p = this._pos[g.dataset.node];
       if (p) g.setAttribute("transform", `translate(${p.x},${p.y})`);
-    }
-    for (const c of this._svg.querySelectorAll(".nv-halo")) {
-      const p = this._pos[c.dataset.halo];
-      if (p) { c.setAttribute("cx", p.x); c.setAttribute("cy", p.y); }
     }
     const wires = this._wires();
     for (const path of this._svg.querySelectorAll(".nv-wire")) {
@@ -335,7 +331,7 @@ class AacNodes extends HTMLElement {
       this._svg.setPointerCapture(e.pointerId);
       if (g) {
         const id = g.dataset.node, w = this._world2(e), p = this._pos[id];
-        this._drag = { id, dx: p.x - w.x, dy: p.y - w.y, moved: false, last: w, vx: 0, vy: 0 };
+        this._drag = { id, dx: p.x - w.x, dy: p.y - w.y, tx: p.x, ty: p.y, moved: false };
         this._sel = id;
         this._kick();
       } else {
@@ -345,10 +341,10 @@ class AacNodes extends HTMLElement {
     this._svg.addEventListener("pointermove", (e) => {
       if (this._drag) {
         const w = this._world2(e), p = this._pos[this._drag.id];
-        this._drag.vx = w.x - this._drag.last.x; this._drag.vy = w.y - this._drag.last.y; this._drag.last = w;
-        p.x = w.x + this._drag.dx; p.y = w.y + this._drag.dy;
+        this._drag.tx = w.x + this._drag.dx; this._drag.ty = w.y + this._drag.dy;
         this._drag.moved = true;
-        if (this._physics) this._kick(); else this._layout();
+        if (this._physics) this._kick();
+        else { p.x = this._drag.tx; p.y = this._drag.ty; this._layout(); } // Physics off: exactly where you put it
       } else if (this._pan) {
         this._view.x = e.clientX - this._pan.x; this._view.y = e.clientY - this._pan.y;
         this._layout();
@@ -357,8 +353,8 @@ class AacNodes extends HTMLElement {
     const up = () => {
       if (this._drag) {
         const p = this._pos[this._drag.id];
-        // Let go: with Physics on it keeps a little of the throw and floats into its place
-        if (this._drag.moved && this._physics && !p.pinned) { p.vx = this._drag.vx * .5; p.vy = this._drag.vy * .5; }
+        // Let go: with Physics on it keeps its swing and floats into its place
+        if (this._drag.moved && this._physics && p.pinned) { p.x = this._drag.tx; p.y = this._drag.ty; }
         this._drag = null;
         this._save();
         this._draw(); this._info(); this._kick();
