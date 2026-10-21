@@ -69,3 +69,19 @@ async def test_annotating_chain_and_concurrent_readers():
     await bus.emit("d", "mic", "lines", line)
     assert started == ["slow", "fast"] and line["addressed"] is True
     assert [n.id for n in bus.readers("d", "text.line")] == ["wake", "comp"]
+
+
+async def test_node_view_command(hass, hass_ws_client, mock_entry, configured):
+    """aac/nodes: the domain's nodes with kind, module name and flow counts, and the wires."""
+    from .conftest import setup_aac
+
+    await setup_aac(hass, mock_entry)
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/nodes"})
+    result = (await ws.receive_json())["result"]
+    nodes = {n["id"]: n for n in result["nodes"]}
+    assert nodes["broker"]["module_name"] == "Core" and nodes["broker"]["kind"] == "transform"
+    assert nodes["stt"]["kind"] == "annotating" and nodes["stt"]["order"] == 10
+    assert nodes["hearing"]["recent"] == {"audio": 0, "segments": 0, "lines": 0}
+    assert {"from": "hearing.segments", "to": "stt.speech"} in result["wires"]
+    assert "broker.request" in result["types"]

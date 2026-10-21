@@ -180,6 +180,11 @@ class Bus:
         """Nodes and wires of a domain (for the panel and later the node view)."""
         return {
             "nodes": [{"id": n.id, "title": n.title, "module": n.module, "inputs": n.inputs, "outputs": n.outputs,
-                       "adds": n.adds, "on": self._on(n, domain_id)} for n in self.nodes.values()],
+                       "adds": n.adds, "order": n.order if n.annotating else None, "on": self._on(n, domain_id),
+                       "kind": "annotating" if n.annotating else "source" if not n.inputs else "sink" if not n.outputs
+                       else "transform",
+                       # how many records each output carried in the last minutes (the view shows the flow)
+                       "recent": {p: len(self.recent(domain_id, n.id, p)) for p in n.outputs}}
+                      for n in self.nodes.values()],
             "wires": [{"from": f"{a}.{b}", "to": f"{c}.{d}"} for a, b, c, d in self.wires(domain_id)],
         }

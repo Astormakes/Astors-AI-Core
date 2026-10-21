@@ -564,6 +564,7 @@ class AacPanel extends HTMLElement {
     } else if (ev.what === "lists") {
       for (const [key, el] of Object.entries(this._modEls || {})) if (key.endsWith("|lists/lists") || key.endsWith("|calendar/agenda")) el.refresh?.();
     } else if (ev.what === "modules") {
+      for (const [key, el] of Object.entries(this._modEls || {})) if (key.endsWith("|core/nodes")) el.refresh?.();
       this._loadState();
     } else if (ev.what === "requests" || ev.what === "entities") {
       this._loadState();
@@ -1007,6 +1008,7 @@ class AacPanel extends HTMLElement {
           ${this._tab("settings/audio/sources", "Sources", "", "deep")}
           ${this._tab("settings/video", "Video")}
           ${this._tab("settings/modules", "Modules")}
+          ${this._tab("nodes", "Nodes", "", "deep")}
           ${this._tab("settings/mcp", "MCP", "", "soon")}
         </div>
       </div>
@@ -1038,6 +1040,7 @@ class AacPanel extends HTMLElement {
     if (v === "settings/video") return this._renderVideo();
     if (v === "settings/appearance") return this._renderAppearance();
     if (v.startsWith("mod/")) return this._renderModulePage(v);
+    if (v === "nodes") return this._page("NODES", "how the parts are wired", '<div id="modhost"></div>');
     if (v === "settings/modules") return this._renderModules();
     if (v === "settings/entities") return this._renderEntities();
     if (v === "domain/visible") return this._renderVisible();
@@ -1541,7 +1544,10 @@ class AacPanel extends HTMLElement {
   async _mountModule() {
     const host = this.shadowRoot.querySelector("#modhost");
     if (!host) return;
-    const page = this._modulePages().find((p) => `mod/${p.module}/${p.id}` === this._view);
+    // The node view is the core's own page element, kept alive like a module's (its layout survives re-renders)
+    const page = this._view === "nodes"
+      ? { module: "core", id: "nodes", element: "aac-nodes", url: new URL(`aac-nodes.js${new URL(import.meta.url).search}`, import.meta.url).href }
+      : this._modulePages().find((p) => `mod/${p.module}/${p.id}` === this._view);
     if (!page) return;
     const key = `${this._state?.domain?.id}|${page.module}/${page.id}`;
     this._modEls ||= {};

@@ -33,6 +33,7 @@ from .satellite_app import async_prepare as async_prepare_satellite
 from .skins import list_skins, user_dir
 from .domains import Domain, async_remove_domain_data
 from .store import AACStore
+from .streams import STREAM_TYPES
 from .models import async_list_models, async_overview
 
 
@@ -77,6 +78,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_requests,
         ws_request_decide,
         ws_modules,
+        ws_nodes,
         ws_module_settings,
         ws_module_access,
         ws_jobs,
@@ -645,6 +647,22 @@ def _module_view(hass: HomeAssistant, entry, module, domain_id: str) -> dict[str
             "default_name": module.manifest.get("name", module.id),
             "default_instructions": module.manifest.get("instructions", ""),
             "has_tools": bool(module.api_ids)}
+
+
+@aac_command({vol.Required("type"): "aac/nodes"})
+@websocket_api.require_admin
+@callback
+def ws_nodes(hass: HomeAssistant, connection, msg) -> None:
+    """The domain's nodes and wires on the stream bus (the node view; spec/streams.md)."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    dom = _d(entry, msg)
+    summary = entry.runtime_data.bus.summary(dom.id)
+    names = {m.id: m.manifest.get("name", m.id) for m in entry.runtime_data.modules}
+    for node in summary["nodes"]:
+        node["module_name"] = names.get(node["module"], "Core") if node["module"] else "Core"
+    summary["types"] = STREAM_TYPES
+    connection.send_result(msg["id"], summary)
 
 
 @aac_command({vol.Required("type"): "aac/modules"})
