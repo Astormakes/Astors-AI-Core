@@ -81,6 +81,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_nodes,
         ws_node_containers,
         ws_node_wires,
+        ws_node_instances,
         ws_module_settings,
         ws_module_access,
         ws_jobs,
@@ -666,6 +667,8 @@ def ws_nodes(hass: HomeAssistant, connection, msg) -> None:
     summary["types"] = STREAM_TYPES
     summary["containers"] = entry.runtime_data.store.data["node_view"].get(dom.id, {}).get("containers", [])
     summary["by_hand"] = entry.runtime_data.bus.wired_by_hand(dom.id)
+    caps = entry.runtime_data.capabilities
+    summary["options"] = {name: fn(dom.id) for name, fn in caps.options.items() if name == "tiers"}
     connection.send_result(msg["id"], summary)
 
 
@@ -694,7 +697,8 @@ async def ws_node_wires(hass: HomeAssistant, connection, msg) -> None:
     wires = msg["wires"]
     for wire in wires or []:
         (a, _, ap), (b, _, bp) = wire["from"].partition("."), wire["to"].partition(".")
-        src, dst = bus.nodes.get(a), bus.nodes.get(b)
+        nodes = bus.nodes_in(dom.id)
+        src, dst = nodes.get(a), nodes.get(b)
         if not src or not dst or a == b or not src.outputs.get(ap) or src.outputs.get(ap) != dst.inputs.get(bp):
             connection.send_error(msg["id"], "invalid", f"{wire['from']} → {wire['to']}: not an output and an input of the same type")
             return
@@ -706,6 +710,35 @@ async def ws_node_wires(hass: HomeAssistant, connection, msg) -> None:
     await entry.runtime_data.store.async_save()
     async_notify(hass, "modules", domain=dom.id)
     connection.send_result(msg["id"], {"by_hand": bus.wired_by_hand(dom.id)})
+
+
+@aac_command({vol.Required("type"): "aac/nodes/instances", vol.Required("instances"): {
+    vol.Match(r"^[a-z0-9_]{2,40}$"): {vol.Required("type"): str, vol.Optional("title", default=""): vol.All(str, vol.Length(max=60)),
+                                      vol.Optional("settings", default={}): dict}}})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_node_instances(hass: HomeAssistant, connection, msg) -> None:
+    """The domain's added node instances (all of them): only of types that can be added, settings kept to the
+    type's schema. An instance that goes away takes its stored wires along."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    bus, dom = entry.runtime_data.bus, _d(entry, msg)
+    instances = {}
+    for inst_id, spec in msg["instances"].items():
+        kind = bus.nodes.get(spec["type"])
+        if kind is None or kind.make is None or inst_id in bus.nodes:
+            connection.send_error(msg["id"], "invalid", f"{inst_id}: {spec['type']} cannot be added as a node")
+            return
+        instances[inst_id] = {"type": kind.id, "title": spec["title"].strip() or kind.title,
+                              "settings": {k: v for k, v in spec["settings"].items() if k in kind.settings_schema}}
+    view = entry.runtime_data.store.data["node_view"].setdefault(dom.id, {})
+    gone = set(view.get("instances") or {}) - set(instances)
+    view["instances"] = instances
+    if gone and view.get("wires") is not None:
+        view["wires"] = [w for w in view["wires"] if w["from"].split(".")[0] not in gone and w["to"].split(".")[0] not in gone]
+    await entry.runtime_data.store.async_save()
+    async_notify(hass, "modules", domain=dom.id)
+    connection.send_result(msg["id"], {"instances": instances})
 
 
 @aac_command({vol.Required("type"): "aac/nodes/containers", vol.Required("containers"): [_CONTAINER]})

@@ -280,6 +280,7 @@ async def async_load_modules(hass: HomeAssistant, entry: AACConfigEntry) -> list
     entry.runtime_data.slots.module_enabled = entry.runtime_data.capabilities.module_enabled
     view = entry.runtime_data.store.data["node_view"]
     entry.runtime_data.bus.set_wiring(lambda domain_id: view.get(domain_id, {}).get("wires"))
+    entry.runtime_data.bus.set_instances(lambda domain_id: view.get(domain_id, {}).get("instances") or {})
     loaded = []
     for manifest in await hass.async_add_executor_job(_manifests):
         module = LoadedModule(manifest)

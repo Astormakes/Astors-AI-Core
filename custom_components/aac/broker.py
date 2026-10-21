@@ -44,7 +44,7 @@ from .const import LOGGER
 from .context import home_snapshot
 from .jobs import Job
 from .pools import role_configured
-from .request import ModelRequest, async_prepare
+from .request import ANSWER, REQUEST, ModelRequest, async_prepare
 from .runs import Run, current_run
 from .streams import Node
 
@@ -71,6 +71,24 @@ def is_silent(text: str) -> bool:
     """The model answers NOTHING (or an obvious equivalent) when it has nothing to say."""
     text = text.strip()
     return not text or bool(_NOTHING_RE.match(text)) or text.strip(".!").upper() == SILENT
+
+
+# The settings of an added model node (the panel builds the form from them, like a manifest's settings)
+MODEL_SETTINGS = {
+    "tier": {"type": "select", "title": "Model (pool request)", "default": "master", "options_from": "tiers",
+             "help": "Which kind of model it asks the pool for."},
+    "prompt": {"type": "longtext", "title": "Extra instructions", "default": "",
+               "help": "Added to the system prompt after the chain's parts (e.g. how this model should work)."},
+}
+
+
+def answering_model(entry: AACConfigEntry, domain: Domain) -> Node | None:
+    """The model node wired at the end of the domain's request chain (the standard one, or an added one)."""
+    bus = entry.runtime_data.bus
+    tail = bus.chain(domain.id, "chat", "requests")[1]
+    nodes = bus.nodes_in(domain.id)
+    return next((nodes[b] for a, ap, b, bp in bus.wires(domain.id)
+                 if (a, ap) == tail and nodes[b].inputs.get(bp) == REQUEST), None)
 
 
 @dataclass
@@ -114,8 +132,17 @@ async def async_run_request(
     run = runs.start(kind, trigger, title, input=text, chat_id=chat_id, context=extra_system_prompt or "",
                      allow_tools=allow_tools, tier=tier, history=history or [], own_words=own_words)
     token = current_run.set(run)
+    model = None
     try:
         await async_prepare(hass, entry, request)
+        if (model := answering_model(entry, domain)) is None:
+            raise HomeAssistantError("No model node is wired at the end of the request chain (SETTINGS → Nodes).")
+        if model.type:  # an added model node: its own tier and instructions
+            request.tier = model.settings.get("tier") or request.tier
+            if prompt := (model.settings.get("prompt") or "").strip():
+                request.system.append(prompt)
+            run.tier = request.tier
+            run.steps.append({"type": "note", "text": f"answered by the model node \"{model.title}\""})
         if request.context:
             run.context = "\n\n".join(filter(None, [run.context, *request.context]))
         speech, extra = await entry.runtime_data.model_node.async_answer(request, run)
@@ -131,7 +158,7 @@ async def async_run_request(
     else:
         runs.finish(run, "done", speech)
     # The answer on the bus: e.g. memory keeps what was worth keeping (in the background, nobody waits)
-    entry.async_create_background_task(hass, entry.runtime_data.bus.emit(domain.id, "broker", "model_answers", {
+    entry.async_create_background_task(hass, entry.runtime_data.bus.emit(domain.id, model.id, "model_answers", {
         "request": request, "run": run, "text": speech, **extra}), f"aac answer {run.id}")
     return run, Answer(speech, request.conversation_id)
 
@@ -198,7 +225,14 @@ class BrokerNode:
         self.hass = hass
         self.entry = entry
         self.node = Node(id="broker", title="Model", inputs={"requests": "broker.request", "model": "model.request"},
-                         outputs={"answers": "broker.answer", "model_answers": "model.answer"}, run=self._async_request)
+                         outputs={"answers": "broker.answer", "model_answers": "model.answer"}, run=self._async_request,
+                         make=self._instance, settings_schema=MODEL_SETTINGS)
+
+    @staticmethod
+    def _instance(inst_id: str, title: str, settings: dict[str, Any]) -> Node:
+        """Another model node in a domain (spec/v1.md): its own tier and prompt; it answers the requests that
+        reach it, i.e. when it is wired at the end of the request chain instead of the standard one."""
+        return Node(id=inst_id, title=title, inputs={"model": REQUEST}, outputs={"model_answers": ANSWER}, settings=settings)
 
     def _busy(self, domain: Domain, trigger: str) -> bool:
         if any(j.domain is domain and trigger in j.tags for j in self.entry.runtime_data.jobs.waiting):

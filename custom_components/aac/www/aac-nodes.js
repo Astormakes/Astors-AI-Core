@@ -83,6 +83,7 @@ class AacNodes extends HTMLElement {
           <span style="flex:1"></span>
           <span class="hint nv-wiring"></span>
           <button class="btn" data-nv="auto" title="Forget the wires set by hand: everything wired by type again">Automatic wiring</button>
+          <button class="btn" data-nv="add" title="Add another node of a type that can exist more than once (e.g. a second model)">Add node</button>
           <button class="btn" data-nv="group" title="Put the nodes selected with Shift/Ctrl-click into a named container">Group</button>
           <button class="btn" data-nv="undo" title="Back to the layout saved when Physics went on">Undo</button>
           <button class="btn" data-nv="fit">Fit</button>
@@ -509,6 +510,9 @@ class AacNodes extends HTMLElement {
       if (b?.dataset.nv === "free") { for (const p of Object.values(this._pos)) p.pinned = false; this._save(); this._draw(); this._kick(); }
       if (b?.dataset.nv === "group") this._group();
       if (b?.dataset.nv === "auto") this._automatic();
+      if (b?.dataset.nv === "add") this._addNode();
+      if (b?.dataset.nv === "inst-save") this._saveInstance(b.dataset.node);
+      if (b?.dataset.nv === "inst-remove") this._removeInstance(b.dataset.node);
       if (b?.dataset.nv === "unwire") this._unwire(this._selWire);
       if (b?.dataset.nv === "rename") this._rename(b.dataset.frame);
       if (b?.dataset.nv === "ungroup") {
@@ -673,6 +677,73 @@ class AacNodes extends HTMLElement {
     if (ok) this._setWires(null);
   }
 
+  // ------------------------------------------------------------------ added nodes (types vs. instances)
+  _instances() {
+    return Object.fromEntries(this._data.nodes.filter((n) => n.type)
+      .map((n) => [n.id, { type: n.type, title: n.title, settings: { ...n.settings } }]));
+  }
+
+  async _setInstances(instances) {
+    try { await this.ws("aac/nodes/instances", { instances }); this._msg.textContent = ""; }
+    catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
+    await this.refresh();
+  }
+
+  async _addNode() {
+    const types = this._data.nodes.filter((n) => n.addable && !n.type);
+    if (!types.length) { this._msg.textContent = "No node type can be added more than once yet."; return; }
+    let type = types[0];
+    if (types.length > 1) {
+      const pick = await this._ask(`Which node? ${types.map((t) => t.title).join(", ")}`, types[0].title);
+      type = types.find((t) => t.title.toLowerCase() === String(pick || "").trim().toLowerCase());
+      if (!type) return;
+    }
+    const title = await this._ask(`Name of the new ${type.title.toLowerCase()} node`, `${type.title} 2`);
+    if (title === null || title === undefined || !String(title).trim()) return;
+    const base = String(title).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 30) || "node";
+    let id = base, k = 2;
+    while (this._data.nodes.some((n) => n.id === id) || id.length < 2) id = `${base}_${k++}`;
+    const settings = Object.fromEntries(Object.entries(type.settings_schema || {}).map(([key, f]) => [key, f.default ?? ""]));
+    this._sel = id;
+    await this._setInstances({ ...this._instances(), [id]: { type: type.id, title: String(title).trim(), settings } });
+    this._msg.textContent = `${String(title).trim()} added: wire it in (drag from an output to its input) to use it.`;
+  }
+
+  _saveInstance(id) {
+    const box = this.querySelector(".nv-info"), all = this._instances(), inst = all[id];
+    if (!inst) return;
+    inst.title = box.querySelector("[data-inst-title]")?.value.trim() || inst.title;
+    for (const el of box.querySelectorAll("[data-inst-key]")) inst.settings[el.dataset.instKey] = el.value;
+    this._setInstances(all);
+  }
+
+  async _removeInstance(id) {
+    const n = this._data.nodes.find((x) => x.id === id);
+    const ok = this.panel?._confirm ? await this.panel._confirm(`Remove the node "${n?.title || id}" and its wires?`, "Remove", true)
+      : window.confirm(`Remove ${id}?`);
+    if (!ok) return;
+    const all = this._instances();
+    delete all[id];
+    this._sel = null;
+    this._setInstances(all);
+  }
+
+  _settingsForm(n) {
+    const field = ([key, f]) => {
+      const v = n.settings?.[key] ?? f.default ?? "";
+      if (f.type === "select") {
+        const opts = (f.options_from ? this._data.options?.[f.options_from] : f.options) || [];
+        return `<label>${esc(f.title || key)}</label><select data-inst-key="${esc(key)}">${opts.map(([val, label]) =>
+          `<option value="${esc(val)}" ${val === v ? "selected" : ""}>${esc(label)}</option>`).join("")}</select>`;
+      }
+      if (f.type === "longtext") return `<label>${esc(f.title || key)}</label><textarea data-inst-key="${esc(key)}" class="thin-scroll" style="min-height:5em">${esc(v)}</textarea>`;
+      return `<label>${esc(f.title || key)}</label><input data-inst-key="${esc(key)}" value="${esc(v)}">`;
+    };
+    return `<label>Name</label><input data-inst-title value="${esc(n.title)}">${Object.entries(n.settings_schema || {}).map(field).join("")}
+      <div class="actions"><button class="btn primary" data-nv="inst-save" data-node="${esc(n.id)}">Save</button>
+        <button class="btn danger" data-nv="inst-remove" data-node="${esc(n.id)}">Remove node</button></div>`;
+  }
+
   // ------------------------------------------------------------------ frames
   _saveFrames() {
     this.ws?.("aac/nodes/containers", { containers: this._frames }).catch((e) => { this._msg.textContent = `Frames not saved: ${e.message || e}`; });
@@ -755,6 +826,8 @@ class AacNodes extends HTMLElement {
         <span class="k">Gives to</span><span class="v">${out}</span>
         <span class="k">Last 10 min</span><span class="v">${Object.entries(n.recent || {}).map(([p, c]) => `${esc(p)}: ${c}`).join(", ") || "—"}</span>
       </div>
+      ${n.type ? `<h3 style="margin-top:1em">THIS NODE</h3>${this._settingsForm(n)}`
+        : n.addable ? '<p class="hint">The standard one. "Add node" makes another with its own settings; the one wired at the end of the chain answers.</p>' : ""}
       ${n.module ? `<div class="actions"><button class="btn" data-go="settings/module/${esc(n.module)}">Module settings</button></div>` : ""}`;
   }
 }

@@ -133,3 +133,38 @@ async def test_wiring_by_hand(hass, hass_ws_client, mock_entry, configured):
     assert (await ws.receive_json())["result"]["by_hand"] is False
     request = await async_prepare(hass, mock_entry, ModelRequest(domain=data.domain(), text="Where is the drill?"))
     assert any("basement" in c for c in request.context)
+
+
+async def test_a_second_model_node(hass, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """Node types vs. instances: an added model node with its own tier and instructions answers once it is
+    wired at the end of the request chain; removing it takes its wires along."""
+    from .conftest import BASE_URL, setup_aac
+
+    await setup_aac(hass, mock_entry)
+    data = mock_entry.runtime_data
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {
+        "research": {"type": "broker", "title": "Research", "settings": {"tier": "smart", "prompt": "Dig deep.", "x": 1}}}})
+    saved = (await ws.receive_json())["result"]["instances"]
+    assert saved["research"]["settings"] == {"tier": "smart", "prompt": "Dig deep."}
+    await ws.send_json_auto_id({"type": "aac/nodes"})
+    view = (await ws.receive_json())["result"]
+    nodes = {n["id"]: n for n in view["nodes"]}
+    assert nodes["research"]["type"] == "broker" and not any("research" in w["to"] for w in view["wires"])  # wired by hand
+    # the end of the chain into Research instead of the standard model
+    tail = next(w for w in view["wires"] if w["to"] == "broker.model")
+    wires = [w for w in view["wires"] if w is not tail] + [{"from": tail["from"], "to": "research.model"}]
+    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": wires})
+    assert (await ws.receive_json())["success"]
+
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", json={"choices": [{"message": {"role": "assistant", "content": "Deep."}}]})
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "hi"})
+    reply = (await ws.receive_json())["result"]["message"]
+    assert reply["text"] == "Deep."
+    run = data.runs.runs[-1]
+    assert run.tier == "smart" and any("Research" in s.get("text", "") for s in run.steps)
+    assert "Dig deep." in aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
+
+    await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {}})
+    await ws.receive_json()
+    assert not any("research" in w["to"] for w in data.store.data["node_view"]["assistant"]["wires"])

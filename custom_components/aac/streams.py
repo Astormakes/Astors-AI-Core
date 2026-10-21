@@ -71,6 +71,13 @@ class Node:
     # Nodes reading raw media (audio.pcm) get it in windows of `window` seconds through `listen`
     listen: Listen | None = None
     window: float = 1.0
+    # Node types vs. instances (spec/v1.md): a type with `make` may be added to a domain more than once; each
+    # instance has its own id, title and settings (`settings_schema` like a manifest's settings) and is wired
+    # by hand (the automatic wiring leaves instances out)
+    make: Callable[[str, str, dict[str, Any]], Node] | None = None
+    settings_schema: dict[str, Any] = field(default_factory=dict)
+    settings: dict[str, Any] = field(default_factory=dict)
+    type: str | None = None  # an instance: the type it was made from
 
     @property
     def annotating(self) -> bool:
@@ -88,6 +95,23 @@ class Bus:
         self._recent: dict[tuple[str, str, str], deque[dict[str, Any]]] = {}
         # The owner's own wires per domain: fn(domain_id) → [{"from": "a.p", "to": "b.q"}] or None (automatic)
         self._stored: Callable[[str], list[dict[str, str]] | None] = lambda domain_id: None
+        # Added node instances per domain: fn(domain_id) → {instance id: {"type", "title", "settings"}}
+        self._instances: Callable[[str], dict[str, dict[str, Any]]] = lambda domain_id: {}
+
+    def set_instances(self, instances: Callable[[str], dict[str, dict[str, Any]]]) -> None:
+        """Where a domain's added node instances come from (the store)."""
+        self._instances = instances
+
+    def nodes_in(self, domain_id: str) -> dict[str, Node]:
+        """Every node of a domain: the registered ones and the domain's added instances."""
+        found = dict(self.nodes)
+        for inst_id, spec in (self._instances(domain_id) or {}).items():
+            kind = self.nodes.get(spec.get("type", ""))
+            if kind and kind.make and inst_id not in found:
+                node = kind.make(inst_id, spec.get("title") or kind.title, dict(spec.get("settings") or {}))
+                node.type, node.module = kind.id, kind.module
+                found[inst_id] = node
+        return found
 
     def set_wiring(self, stored: Callable[[str], list[dict[str, str]] | None]) -> None:
         """Where the owner's wires come from (the store)."""
@@ -118,19 +142,20 @@ class Bus:
 
     def annotators(self, domain_id: str, kind: str) -> list[Node]:
         """The annotating nodes of a type that are on in a domain, in their order."""
-        found = [n for n in self.nodes.values() if n.annotating and kind in n.inputs.values() and self._on(n, domain_id)]
+        found = [n for n in self.nodes_in(domain_id).values() if n.annotating and kind in n.inputs.values() and self._on(n, domain_id)]
         return sorted(found, key=lambda n: n.order)
 
     def chain(self, domain_id: str, node_id: str, port: str) -> tuple[list[Node], tuple[str, str]]:
         """The annotating nodes a record from an output runs through, by following the wires (automatic:
         by their order; wired by hand: as the owner wired them), and the output at the end of the chain."""
-        kind = self.nodes[node_id].outputs[port]
+        nodes = self.nodes_in(domain_id)
+        kind = nodes[node_id].outputs[port]
         wires = self.wires(domain_id)
         chain: list[Node] = []
         at = (node_id, port)
         while True:
-            nxt = next((self.nodes[b] for a, ap, b, bp in wires if (a, ap) == at and self.nodes[b].annotating
-                        and self.nodes[b].inputs.get(bp) == kind and self.nodes[b] not in chain), None)
+            nxt = next((nodes[b] for a, ap, b, bp in wires if (a, ap) == at and nodes[b].annotating
+                        and nodes[b].inputs.get(bp) == kind and nodes[b] not in chain), None)
             if nxt is None:
                 return chain, at
             chain.append(nxt)
@@ -138,9 +163,9 @@ class Bus:
 
     def wired_from(self, domain_id: str, node_id: str, port: str, listening: bool = False) -> list[tuple[Node, str]]:
         """The ordinary nodes (and their input) wired to an output; listening: those that read raw media."""
-        found = []
+        found, nodes = [], self.nodes_in(domain_id)
         for a, ap, b, bp in self.wires(domain_id):
-            reader = self.nodes[b]
+            reader = nodes[b]
             if (a, ap) == (node_id, port) and not reader.annotating and (reader.listen if listening else reader.run) \
                     and (reader, bp) not in found:
                 found.append((reader, bp))
@@ -152,10 +177,10 @@ class Bus:
         stored = self._stored(domain_id)
         if stored is None:
             return self.default_wires(domain_id)
-        found = []
+        found, nodes = [], self.nodes_in(domain_id)
         for wire in stored:
             (a, _, ap), (b, _, bp) = wire["from"].partition("."), wire["to"].partition(".")
-            src, dst = self.nodes.get(a), self.nodes.get(b)
+            src, dst = nodes.get(a), nodes.get(b)
             if src and dst and self._on(src, domain_id) and self._on(dst, domain_id) \
                     and src.outputs.get(ap) and src.outputs.get(ap) == dst.inputs.get(bp):
                 found.append((a, ap, b, bp))
@@ -164,7 +189,7 @@ class Bus:
     def default_wires(self, domain_id: str) -> list[tuple[str, str, str, str]]:
         """The automatic wiring by type. A type with annotating nodes runs through them as a chain in their
         order: writers → first → … → last → readers."""
-        found = []
+        found = []  # added instances are wired by hand
         for src in self.nodes.values():
             if not self._on(src, domain_id) or src.annotating:
                 continue
@@ -187,7 +212,7 @@ class Bus:
     async def emit(self, domain_id: str, node_id: str, port: str, item: dict[str, Any]) -> list[Any]:
         """A node writes a record to one of its outputs: kept in RAM and handed to every input wired
         to it; returns what the readers' run gave back (e.g. the broker's run)."""
-        node = self.nodes.get(node_id)
+        node = self.nodes_in(domain_id).get(node_id)
         if node is None or port not in node.outputs:
             raise ValueError(f"{node_id}.{port} is not an output")
         # A record that has its time already is handed on as it is: readers may mark it (the wake word
@@ -222,7 +247,9 @@ class Bus:
                        "kind": "annotating" if n.annotating else "source" if not n.inputs else "sink" if not n.outputs
                        else "transform",
                        # how many records each output carried in the last minutes (the view shows the flow)
-                       "recent": {p: len(self.recent(domain_id, n.id, p)) for p in n.outputs}}
-                      for n in self.nodes.values()],
+                       "recent": {p: len(self.recent(domain_id, n.id, p)) for p in n.outputs},
+                       "type": n.type, "settings": n.settings, "settings_schema": (self.nodes.get(n.type or n.id) or n).settings_schema,
+                       "addable": bool(n.make)}
+                      for n in self.nodes_in(domain_id).values()],
             "wires": [{"from": f"{a}.{b}", "to": f"{c}.{d}"} for a, b, c, d in self.wires(domain_id)],
         }
