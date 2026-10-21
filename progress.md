@@ -1,5 +1,7 @@
 # Progress
 
+**Branch `v1`** (owner, 2026-10-21): the v1 rewrite, plan in `spec/v1.md`; `main` keeps v0 (last: tag `v0.50.1-last-v0`), which the real HA runs until the switch. The deploy script refuses 1.x without `AAC_ALLOW_V1=1`.
+
 Running log for AAC. Read this first in a new session. Newest state on top.
 
 ## Working agreements

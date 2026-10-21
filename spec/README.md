@@ -22,6 +22,7 @@ some of it exists, **planned** = spec only, nothing in the code yet.
 | [Module manifest](module.md) | a bundle of the above, installable and shareable | partial |
 | [Requests](requests.md) | AAC asks, the owner decides outside the chat; entity access as the first kind | built |
 | [Streams](streams.md) | the core as a collection of typed streams; modules are nodes, wired like a flow chart; slots (memory) | partial |
+| [v1 plan](v1.md) | the v1 rewrite: core, node types and instances, phases | draft |
 | [Calendar](calendar.md) | one calendar over all modules: an interface, no table | built |
 | [Domain package](domain.md) | a whole AAC setup, exportable and importable | partial |
 
