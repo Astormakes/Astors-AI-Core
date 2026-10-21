@@ -27,15 +27,6 @@ from .const import (
 
 STORAGE_VERSION = 1
 
-# Tested with Qwen3-8B and Qwen3.6-35B: alarms reported 12/12, quiet home silent.
-# Stating the NOTHING rule several times made both models swallow real alarms.
-DEFAULT_HEARTBEAT = (
-    "Look through the states. If anything needs the user's attention now - an alarm "
-    "(smoke, gas, water leak, CO), a door or window OPEN that should not be, a device "
-    "that failed, a task due now - tell them in one short sentence. Normal states "
-    "(lights, closed doors, weather, time, values in normal ranges) are not worth "
-    "mentioning: then answer exactly NOTHING."
-)
 # Draft from the framework design (section 3b); the owner edits it in the panel.
 DEFAULT_CHARTER = (
     "Charter (the owner's values; you follow it and never change it):\n"
@@ -105,19 +96,6 @@ DOMAIN_DEFAULTS: dict[str, Any] = {
         CONF_MAX_TOKENS: DEFAULT_MAX_TOKENS,
         CONF_THINKING: DEFAULT_THINKING,
     },
-    # The master wakes up on its own every few minutes (off until the user turns it on)
-    "heartbeat": {
-        "enabled": False,
-        "interval": 30,
-        "quiet_start": "22:00",
-        "quiet_end": "08:00",
-        # "" = the built-in default (so improvements to it reach everyone)
-        "instructions": "",
-        # Small models explore every room with tools; the snapshot is usually enough
-        "tools": False,
-        # Which model checks in: a pool tier (master / fast / smart / small / an own tag)
-        "tier": "fast",
-    },
     # Triggers in the contract format (spec/trigger.md):
     # {id, name, enabled, when: {type, ...}, do: {template, instruction}, cooldown, quiet_hours}
     "triggers": [],
@@ -133,7 +111,7 @@ DOMAIN_DEFAULTS: dict[str, Any] = {
 }
 
 MASTER_KEYS = set(DOMAIN_DEFAULTS["master"])
-_PER_DOMAIN = ("master", "heartbeat", "triggers", "autonomy", "charter", "memory")
+_PER_DOMAIN = ("master", "triggers", "autonomy", "charter", "memory")
 
 
 def _trigger_v1(trig: dict[str, Any]) -> dict[str, Any]:
@@ -160,7 +138,6 @@ def _domain_from(stored: dict[str, Any], domain_id: str, name: str) -> dict[str,
     if "worker" in master:  # 0.4 and older
         master.setdefault(CONF_MASTER_MODEL, master.pop("worker"))
     d["master"].update({k: v for k, v in master.items() if k in MASTER_KEYS})
-    d["heartbeat"].update(stored.get("heartbeat", {}))
     d["triggers"] = [_trigger_v1(t) for t in stored.get("triggers", [])]
     d["autonomy"].update(stored.get("autonomy", {}))
     d["charter"] = stored.get("charter", "")
@@ -209,20 +186,6 @@ class DomainSettings:
     async def async_update_master(self, changes: dict[str, Any]) -> None:
         """Change master settings (unknown keys are ignored)."""
         self.master.update({k: v for k, v in changes.items() if k in MASTER_KEYS})
-        await self.async_save()
-
-    @property
-    def heartbeat(self) -> dict[str, Any]:
-        """Heartbeat settings, with the effective instructions filled in."""
-        hb = self.data["heartbeat"]
-        return {**hb, "instructions": hb["instructions"] or DEFAULT_HEARTBEAT}
-
-    async def async_update_heartbeat(self, changes: dict[str, Any]) -> None:
-        """Change heartbeat settings."""
-        hb = self.data["heartbeat"]
-        hb.update({k: v for k, v in changes.items() if k in hb})
-        if hb["instructions"].strip() == DEFAULT_HEARTBEAT.strip():
-            hb["instructions"] = ""
         await self.async_save()
 
     @property
@@ -343,6 +306,12 @@ class AACStore:
             data["entity_access"] = access
         # Up to 0.14 there was one implicit domain: its settings were at the top level
         domains = stored.get("domains") or [_domain_from(stored, DEFAULT_DOMAIN_ID, "Assistant")]
+        # Up to 0.43 the heartbeat was core: its settings move to the heartbeat module, on or off as it was
+        for d in stored.get("domains") or [{**stored, "id": DEFAULT_DOMAIN_ID}]:
+            if isinstance(old := d.get("heartbeat"), dict) and old:
+                data["module_settings"].setdefault(d["id"], {}).setdefault("heartbeat", {
+                    k: old[k] for k in ("interval", "quiet_start", "quiet_end", "instructions", "tools", "tier") if k in old})
+                data["module_access"].setdefault(d["id"], {}).setdefault("heartbeat", {})["enabled"] = bool(old.get("enabled"))
         data["domains"] = [_domain_from(d, d["id"], d.get("name") or d["id"]) for d in domains]
         ids = [d["id"] for d in data["domains"]]
         data["voice_domain"] = stored.get("voice_domain") if stored.get("voice_domain") in ids else ids[0]
@@ -424,15 +393,6 @@ class AACStore:
     async def async_update_master(self, changes: dict[str, Any]) -> None:
         """First domain."""
         await self.default_domain.async_update_master(changes)
-
-    @property
-    def heartbeat(self) -> dict[str, Any]:
-        """First domain."""
-        return self.default_domain.heartbeat
-
-    async def async_update_heartbeat(self, changes: dict[str, Any]) -> None:
-        """First domain."""
-        await self.default_domain.async_update_heartbeat(changes)
 
     @property
     def triggers(self) -> list[dict[str, Any]]:

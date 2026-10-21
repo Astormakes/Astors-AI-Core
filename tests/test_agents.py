@@ -14,7 +14,7 @@ from custom_components.aac.triggers import in_quiet_hours
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .conftest import BASE_URL, setup_aac
+from .conftest import BASE_URL, set_heartbeat, setup_aac
 
 URL = f"{BASE_URL}/chat/completions"
 
@@ -117,35 +117,51 @@ async def test_heartbeat_silent_and_speaking(
     assert mock_entry.runtime_data.chats.get("aac") is None
 
 
-async def test_heartbeat_schedule(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
-    """Enabled heartbeat fires on its interval and the setup step is done."""
+async def test_heartbeat_schedule(hass: HomeAssistant, aioclient_mock, mock_entry, configured, freezer):
+    """The heartbeat module, switched on, fires on its interval through the stream bus."""
     await setup_aac(hass, mock_entry)
     _replies(aioclient_mock, _reply("NOTHING"))
-    ws = await hass_ws_client(hass)
-    with patch("custom_components.aac.triggers.in_quiet_hours", return_value=False):
-        await ws.send_json_auto_id(
-            {"type": "aac/heartbeat/update", "enabled": True, "interval": 5}
-        )
-        state = (await ws.receive_json())["result"]
-        assert {s["id"]: s for s in state["setup"]}["heartbeat"]["done"]
-        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=6))
+    await set_heartbeat(mock_entry, enabled=True, interval=5)
+    with patch("custom_components.aac.modules.heartbeat.in_quiet_hours", return_value=False):
+        freezer.tick(timedelta(minutes=4))
+        async_fire_time_changed(hass)  # not yet
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert mock_entry.runtime_data.runs.runs == []
+        freezer.tick(timedelta(minutes=2))
+        async_fire_time_changed(hass)
         await hass.async_block_till_done(wait_background_tasks=True)
     runs = mock_entry.runtime_data.runs.runs
     assert [r.trigger for r in runs] == ["heartbeat"]
+    sent = mock_entry.runtime_data.bus.recent(mock_entry.runtime_data.domain().id, "heartbeat", "requests")
+    assert [r["trigger"] for r in sent] == ["heartbeat"]
 
 
-async def test_heartbeat_default_not_stored(hass: HomeAssistant, hass_ws_client, hass_storage, mock_entry, configured):
-    """Saving the default instructions keeps following the built-in default."""
-    from custom_components.aac.store import DEFAULT_HEARTBEAT, STORAGE_KEY
+async def test_heartbeat_default_not_stored(hass: HomeAssistant, mock_entry, configured):
+    """Empty instructions follow the built-in ones (so improvements reach everyone); own ones replace them."""
+    from custom_components.aac.modules.heartbeat import _CTX, request
 
     await setup_aac(hass, mock_entry)
-    ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/heartbeat/update", "instructions": DEFAULT_HEARTBEAT})
-    state = (await ws.receive_json())["result"]
-    assert state["heartbeat"]["instructions"] == DEFAULT_HEARTBEAT
-    assert hass_storage[STORAGE_KEY]["data"]["domains"][0]["heartbeat"]["instructions"] == ""
-    await ws.send_json_auto_id({"type": "aac/heartbeat/update", "instructions": "Mine."})
-    assert (await ws.receive_json())["result"]["heartbeat"]["instructions"] == "Mine."
+    ctx = hass.data[_CTX]
+    domain_id = mock_entry.runtime_data.domain().id
+    builtin = ctx.module.manifest["settings"]["instructions"]["placeholder"]
+    assert request(ctx, domain_id)["instructions"] == builtin
+    await set_heartbeat(mock_entry, instructions="Mine.")
+    assert request(ctx, domain_id)["instructions"] == "Mine."
+
+
+async def test_heartbeat_settings_move_into_the_module(hass: HomeAssistant, hass_storage, mock_entry, configured):
+    """0.43's core heartbeat settings become the module's, on or off as they were."""
+    from custom_components.aac.modules import access, setting
+    from custom_components.aac.store import STORAGE_KEY
+
+    hass_storage[STORAGE_KEY]["data"]["heartbeat"] = {"enabled": True, "interval": 12, "quiet_start": "23:00", "instructions": ""}
+    await setup_aac(hass, mock_entry)
+    module = next(m for m in mock_entry.runtime_data.modules if m.id == "heartbeat")
+    domain_id = mock_entry.runtime_data.domain().id
+    assert access(mock_entry, "heartbeat", domain_id)["enabled"]
+    assert setting(mock_entry, module.manifest, domain_id, "interval") == 12
+    assert setting(mock_entry, module.manifest, domain_id, "quiet_start") == "23:00"
+    assert "heartbeat" not in mock_entry.runtime_data.store.data["domains"][0]
 
 
 def test_silence_heuristic():
@@ -230,7 +246,7 @@ async def test_auto_run_forced_to_answer(
     """A model that keeps calling tools gets a last round without tools and must answer."""
     hass.states.async_set("light.desk", "on", {"friendly_name": "Desk"})
     await setup_aac(hass, mock_entry)
-    await mock_entry.runtime_data.store.async_update_heartbeat({"tools": True})
+    await set_heartbeat(mock_entry, tools=True)
     payloads: list[dict] = []
 
     async def side_effect(method, url, data):

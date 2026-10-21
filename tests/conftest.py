@@ -107,3 +107,22 @@ async def setup_aac(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
+
+
+async def set_heartbeat(entry: MockConfigEntry, enabled: bool | None = None, **settings: Any) -> None:
+    """The heartbeat module's switch and settings in the first domain (a module since 0.44)."""
+    from custom_components.aac.modules import async_set_access, async_set_settings
+
+    data = entry.runtime_data
+    domain_id = data.domain().id
+    if enabled is not None:
+        await async_set_access(entry, "heartbeat", domain_id, {"enabled": enabled})
+    if settings:
+        await async_set_settings(entry, next(m for m in data.modules if m.id == "heartbeat"), domain_id, settings)
+
+
+async def heartbeat_now(hass: HomeAssistant):
+    """One heartbeat at once ("Run once now"): the run, or None."""
+    from custom_components.aac.modules.heartbeat import async_run_now
+
+    return await async_run_now(hass)

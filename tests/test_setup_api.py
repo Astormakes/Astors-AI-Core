@@ -3,12 +3,12 @@
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 
-from .conftest import MODEL_CFG, setup_aac
+from .conftest import MODEL_CFG, set_heartbeat, setup_aac
 from .test_planning import _chat, _queue, _text, _tool_reply
 
 SETUP_TOOLS = {
     "aac-setup__setup_status", "aac-setup__list_models", "aac-setup__add_model",
-    "aac-setup__use_model", "aac-setup__set_heartbeat", "aac-setup__skip_setup_step",
+    "aac-setup__use_model", "aac-setup__module_setting", "aac-setup__skip_setup_step",
 }
 
 
@@ -22,7 +22,7 @@ async def test_owner_chat_sets_up_heartbeat(hass: HomeAssistant, hass_ws_client,
     payloads = _queue(
         aioclient_mock,
         _tool_reply("aac-setup__setup_status", "{}"),
-        _tool_reply("aac-setup__set_heartbeat", '{"enabled": true, "interval_minutes": 15, "quiet_start": "23:00"}'),
+        _tool_reply("aac-setup__module_setting", '{"module": "heartbeat", "on": true, "settings": {"interval": 15, "quiet_start": "23:00"}}'),
         _text("The heartbeat is on, every 15 minutes."),
     )
     ws = await hass_ws_client(hass)
@@ -30,8 +30,13 @@ async def test_owner_chat_sets_up_heartbeat(hass: HomeAssistant, hass_ws_client,
     assert SETUP_TOOLS <= _names(payloads[0])
     status = next(s for s in message["steps"] if s["type"] == "tool_result")
     assert '"steps"' in status["data"] and "Connect a model" in status["data"]  # (cut at 500 characters in the run)
-    hb = mock_entry.runtime_data.store.heartbeat
-    assert hb["enabled"] and hb["interval"] == 15 and hb["quiet_start"] == "23:00"
+    from custom_components.aac.modules import access, setting
+
+    module = next(m for m in mock_entry.runtime_data.modules if m.id == "heartbeat")
+    domain_id = mock_entry.runtime_data.domain().id
+    assert access(mock_entry, "heartbeat", domain_id)["enabled"]
+    assert setting(mock_entry, module.manifest, domain_id, "interval") == 15
+    assert setting(mock_entry, module.manifest, domain_id, "quiet_start") == "23:00"
 
 
 async def test_no_setup_tools_without_owner(hass: HomeAssistant, aioclient_mock, hass_admin_user, hass_read_only_user, mock_entry, configured):
@@ -49,7 +54,7 @@ async def test_no_setup_tools_without_owner(hass: HomeAssistant, aioclient_mock,
 async def test_no_setup_tools_in_automatic_runs(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
     """A heartbeat with tools still never gets the setup tools."""
     await setup_aac(hass, mock_entry)
-    await mock_entry.runtime_data.store.async_update_heartbeat({"tools": True})
+    await set_heartbeat(mock_entry, tools=True)
     payloads = _queue(aioclient_mock, _text("NOTHING"), _text('{"speak": false, "message": ""}'))
     ws = await hass_ws_client(hass)
     await ws.send_json_auto_id({"type": "aac/heartbeat/run"})

@@ -845,7 +845,6 @@ class AacPanel extends HTMLElement {
     if (view.startsWith("settings/audio")) this._loadAudio();
     if (view === "settings/audio" && !this._liveTimer) this._liveTick();
     if (view === "settings/triggers") this._loadJobs();
-    if (view === "settings/heartbeat") this._loadRuns().then(() => this._render());
     if (view === "settings/entities") this._loadEntities();
     if (view === "domain/visible") this._loadVisible();
     if (view === "requests") this._loadRequests();
@@ -1006,7 +1005,6 @@ class AacPanel extends HTMLElement {
           ${this._tab("settings/languages", "Languages", this._stepOpen("languages") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/master", "Master agent")}
           ${this._tab("settings/entities", "Entities", this._stepOpen("entities") ? '<span class="dot open"></span>' : "")}
-          ${this._tab("settings/heartbeat", "Heartbeat", this._stepOpen("heartbeat") ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/triggers", "Triggers")}
           ${this._tab("models", "Compute", ["models", "master", "memory"].some((x) => this._stepOpen(x)) ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/audio", "Audio pipeline")}
@@ -1053,7 +1051,6 @@ class AacPanel extends HTMLElement {
     if (v === "settings/charter") return this._renderCharter();
     if (v === "settings/languages") return this._renderLanguages();
     if (v === "settings/triggers") return this._renderTriggers();
-    if (v === "settings/heartbeat") return this._renderHeartbeat();
     if (v === "trigger/new" || v.startsWith("trigger/edit/")) return this._renderTriggerForm();
     if (v === "settings/audio") return this._renderAudio();
     if (v === "settings/audio/sources") return this._renderSources();
@@ -1123,7 +1120,7 @@ class AacPanel extends HTMLElement {
   }
 
   // ---------------------------------------------------------------- the chat view
-  // Shared by chats, run details and the heartbeat's runs (later modules too). One message; opts:
+  // Shared by chats and run details (later modules too). One message; opts:
   // editable (edit / rerun), details (a link to the run), key (unique per view, for the folds)
   // A model's traits (speed, size, tool mode …) from the pool status
   _traitsOf(id) {
@@ -1277,13 +1274,9 @@ class AacPanel extends HTMLElement {
   _renderTriggers() {
     const st = this._state;
     if (!st) return this._page("TRIGGERS", "", "");
-    const hb = st.heartbeat;
     const triggers = st.triggers || [];
     return this._page("TRIGGERS", "what wakes the master on its own", `
       <div class="cards">
-        <div class="card"><h2>HEARTBEAT ${tip(`A regular look at the home, without chat history. Settings and its last runs: SETTINGS → Heartbeat.`)}</h2>
-          <div class="actions"><button class="btn" data-go="settings/heartbeat">Heartbeat${hb.enabled ? ` · every ${esc(hb.interval)} min` : " · off"}</button></div>
-        </div>
         <div class="card"><h2>AAC'S OWN PLANS ${tip(`AAC may set itself reminders and check-ins (e.g. following up on something you want to achieve). It can never change your triggers, and every plan it makes is posted in "From AAC".`)}</h2>
           <label for="aut-schedule">AAC may plan on its own</label>
           <select id="aut-schedule">
@@ -1304,39 +1297,6 @@ class AacPanel extends HTMLElement {
           <div class="actions"><button class="btn primary" data-go="trigger/new">${icon("plus")} New trigger</button></div>
         </div>
         ${this._renderQueueCard()}
-      </div>`);
-  }
-
-  _renderHeartbeat() {
-    const st = this._state;
-    if (!st) return this._page("HEARTBEAT", "", "");
-    const hb = st.heartbeat;
-    const runs = (this._runs || []).filter((r) => r.trigger === "heartbeat").slice(0, 30);
-    const said = runs.filter((r) => r.status === "done").length;
-    const rows = runs.map((r) => `<div class="src">
-        <span class="dot ${STATUS_DOT[r.status] || ""}"></span>
-        <div style="flex:1;min-width:0"><div class="n">${esc(fmtTime(r.started))} · ${r.status === "silent" ? "nothing to report" : r.status === "done" ? "said something" : esc(r.status)}</div>
-          ${r.status !== "silent" && r.result ? `<div class="m">${esc(r.result.length > 220 ? r.result.slice(0, 220) + "…" : r.result)}</div>` : ""}</div>
-        <span class="actions" style="margin:0">${r.chat_id && (this._chats || []).some((c) => c.id === r.chat_id) ? `<button class="btn" data-go="chat/${esc(r.chat_id)}">Chat</button>` : ""}${r.chat_id && !(this._chats || []).some((c) => c.id === r.chat_id) ? '<span class="hint">chat deleted</span>' : ""}<button class="btn" data-go="run/${esc(r.id)}">Details</button></span>
-      </div>`).join("");
-    return this._page("HEARTBEAT", hb.enabled ? `every ${esc(hb.interval)} min` : "off", `
-      <div class="cards">
-        <div class="card" data-autosave="heartbeat" data-label="Heartbeat"><h2>HEARTBEAT ${tip(`Wakes the master every few minutes to look at the situation, without any chat history: it sees only the home right now and its open plans. When something matters it opens a new chat just for that (a reply is about that one thing); otherwise it stays silent.`)}</h2>
-          <label class="check"><input type="checkbox" id="hb-enabled" ${hb.enabled ? "checked" : ""}>Heartbeat on</label>
-          <div class="row">
-            <div><label for="hb-interval">Every (minutes)</label><input id="hb-interval" type="number" min="1" max="1440" value="${esc(hb.interval)}" inputmode="numeric"></div>
-            <div><label for="hb-qs">Quiet from</label><input id="hb-qs" type="time" value="${esc(hb.quiet_start)}"></div>
-            <div><label for="hb-qe">Quiet until</label><input id="hb-qe" type="time" value="${esc(hb.quiet_end)}"></div>
-          </div>
-          <label for="hb-tier">Model (pool request)</label><select id="hb-tier">${this._tierOptions(hb.tier || "fast")}</select>
-          <label class="check"><input type="checkbox" id="hb-tools" ${hb.tools ? "checked" : ""}>Allow tools (slower; it already gets a snapshot of the home, and small models tend to tour every room with tools)</label>
-          <label for="hb-instr">Instructions</label><textarea id="hb-instr" class="thin-scroll">${esc(hb.instructions)}</textarea>
-          <div class="actions"><button class="btn" id="hb-run">Run once now</button></div>
-          ${this._flashHtml()}
-        </div>
-        <div class="card"><h2>LAST RUNS <span class="tag">${runs.length}</span>${said ? ` <span class="tag aac">${said} SAID SOMETHING</span>` : ""} ${tip(`Silent runs only show up here. Details shows what it saw and thought.`)}</h2>
-          ${rows || '<p class="hint">No heartbeat yet.</p>'}
-        </div>
       </div>`);
   }
 
@@ -1586,7 +1546,9 @@ class AacPanel extends HTMLElement {
       const opts = f.options || [];
       return `<label for="${id}">${esc(f.title || key)}</label><select id="${id}" data-ms="${esc(m.id)}" data-key="${esc(key)}">${opts.map(([val, name]) => `<option value="${esc(val)}" ${val === v ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>${help}`;
     }
-    return `<label for="${id}">${esc(f.title || key)}</label><input id="${id}" data-ms="${esc(m.id)}" data-key="${esc(key)}" type="${f.type === "number" ? "number" : "text"}" value="${esc(v ?? "")}">${help}`;
+    const ph = f.placeholder ? ` placeholder="${esc(f.placeholder)}"` : "";
+    if (f.type === "longtext") return `<label for="${id}">${esc(f.title || key)}</label><textarea id="${id}" class="thin-scroll" data-ms="${esc(m.id)}" data-key="${esc(key)}"${ph}>${esc(v ?? "")}</textarea>${help}`;
+    return `<label for="${id}">${esc(f.title || key)}</label><input id="${id}" data-ms="${esc(m.id)}" data-key="${esc(key)}" type="${f.type === "number" ? "number" : f.type === "time" ? "time" : "text"}" value="${esc(v ?? "")}"${ph}>${help}`;
   }
 
   _renderModules() {
@@ -2151,7 +2113,6 @@ class AacPanel extends HTMLElement {
 
   async _saveCard(key, arg) {
     const sr = this.shadowRoot;
-    if (key === "heartbeat") return this._saveHeartbeat();
     if (key === "toolmode") { this._state.pools = await this._ws("aac/pool/tool_mode", { resource: arg, mode: sr.querySelector("#tm-mode").value }); return; }
     if (key === "audio") return this._saveAudio();
     if (key === "master") return this._saveMaster();
@@ -2570,7 +2531,6 @@ class AacPanel extends HTMLElement {
       try { await this._ws("aac/audio/say", { source_id: el.dataset.say, text }); if (input) input.value = ""; }
       catch (e) { this._flash = { ok: false, text: e.message || String(e) }; this._render(); }
     }));
-    sr.querySelector("#hb-run")?.addEventListener("click", () => this._runHeartbeat());
     sr.querySelector("#t-save")?.addEventListener("click", () => this._saveTrigger());
     sr.querySelector("#aut-schedule")?.addEventListener("change", async (e) => {
       this._state = await this._ws("aac/autonomy", { schedule: e.target.value });
@@ -2769,33 +2729,6 @@ class AacPanel extends HTMLElement {
       max_tokens: parseInt(sr.querySelector("#m-max").value, 10),
       thinking: sr.querySelector("#m-think").checked,
     });
-  }
-
-  async _saveHeartbeat() {
-    const sr = this.shadowRoot;
-    this._state = await this._ws("aac/heartbeat/update", {
-      enabled: sr.querySelector("#hb-enabled").checked,
-      interval: parseInt(sr.querySelector("#hb-interval").value, 10),
-      quiet_start: sr.querySelector("#hb-qs").value || "00:00",
-      quiet_end: sr.querySelector("#hb-qe").value || "00:00",
-      instructions: sr.querySelector("#hb-instr").value,
-      tools: sr.querySelector("#hb-tools").checked,
-      tier: sr.querySelector("#hb-tier").value,
-    });
-  }
-
-  async _runHeartbeat() {
-    this._flash = { ok: true, text: "Heartbeat running…" };
-    this._render();
-    try {
-      const r = await this._ws("aac/heartbeat/run");
-      await this._loadRuns();
-      const run = this._runs.find((x) => x.id === r.run_id);
-      this._flash = { ok: true, text: run?.status === "silent" ? "Done: nothing worth saying." : run?.chat_id ? "Done: AAC opened a chat about it (see the list)." : `Done: ${run?.status || "finished"}.` };
-    } catch (e) {
-      this._flash = { ok: false, text: e.message || String(e) };
-    }
-    this._render();
   }
 
   _readTriggerForm() {

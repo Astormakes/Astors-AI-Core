@@ -14,7 +14,7 @@ from homeassistant.components import conversation
 from homeassistant.components.llm.llm import GetDateTimeTool
 from homeassistant.core import Context, HomeAssistant
 
-from .conftest import setup_aac, store_data
+from .conftest import heartbeat_now, set_heartbeat, setup_aac, store_data
 
 LIVE_URL = os.environ.get("AAC_LIVE_URL", "http://127.0.0.1:8080/v1")
 
@@ -79,12 +79,11 @@ async def test_live_heartbeat(hass: HomeAssistant, hass_storage, mock_entry, soc
     data["data"]["models"][0].update(
         base_url=LIVE_URL, api_key=os.environ.get("AAC_LIVE_KEY"), model="any"
     )
-    data["data"]["heartbeat"] = {"tools": tools}
     hass_storage[STORAGE_KEY] = data
     hass.states.async_set("light.desk", "off", {"friendly_name": "Desk lamp"})
     await setup_aac(hass, mock_entry)
-    run_id = await mock_entry.runtime_data.triggers.async_heartbeat(force=True)
-    run = mock_entry.runtime_data.runs.get(run_id)
+    await set_heartbeat(mock_entry, tools=tools)
+    run = await heartbeat_now(hass)
     print(f"\nHeartbeat (tools={tools}): {run.status} after {len(run.steps)} steps: {run.result}")
     assert run.status == "silent", run.result
 
@@ -103,8 +102,7 @@ async def test_live_heartbeat_speaks_up(hass: HomeAssistant, hass_storage, mock_
 
     async_expose_entity(hass, "conversation", "binary_sensor.kitchen_smoke", True)
     await setup_aac(hass, mock_entry)
-    run_id = await mock_entry.runtime_data.triggers.async_heartbeat(force=True)
-    run = mock_entry.runtime_data.runs.get(run_id)
+    run = await heartbeat_now(hass)
     print(f"\nHeartbeat with smoke: {run.status}: {run.result}")
     assert "smoke" in run.context.lower(), "smoke detector not in the snapshot"
     assert run.status == "done" and "smoke" in run.result.lower()

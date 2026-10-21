@@ -122,14 +122,6 @@ def setup_steps(hass: HomeAssistant, store: AACStore, domain: DomainSettings | N
             "optional": True,
             "done": any(t.get("rule") for t in store.data["traits"].values()),
         },
-        {
-            "id": "heartbeat",
-            "title": "Let AAC think on its own",
-            "hint": "A heartbeat wakes the master now and then; it only speaks up when it matters.",
-            "target": "settings/heartbeat",
-            "optional": True,
-            "done": bool(domain.heartbeat["enabled"]),
-        },
     ]
     steps += module_steps(hass, entry, domain)
     for step in steps:

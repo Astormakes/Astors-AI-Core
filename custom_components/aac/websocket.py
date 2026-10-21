@@ -67,8 +67,6 @@ def async_register(hass: HomeAssistant) -> None:
         ws_run_get,
         ws_run_request,
         ws_pool_tool_mode,
-        ws_heartbeat_update,
-        ws_heartbeat_run,
         ws_trigger_save,
         ws_trigger_delete,
         ws_subscribe,
@@ -151,7 +149,6 @@ def _state(hass: HomeAssistant, entry, dom: Domain) -> dict[str, Any]:
         "agent_entity_id": dom.entity_id(hass, entry.entry_id),
         "master": settings.master,
         "setup": setup_steps(hass, store, settings, entry),
-        "heartbeat": settings.heartbeat,
         "memory": settings.memory,
         "ui": store.data["ui"],
         "modules": [m.summary(entry, dom.id) for m in entry.runtime_data.modules],
@@ -548,45 +545,6 @@ def ws_run_request(hass: HomeAssistant, connection, msg) -> None:
         connection.send_error(msg["id"], "not_found", "Not recorded (only the newest runs keep it)")
         return
     connection.send_result(msg["id"], req)
-
-
-@aac_command(
-    {
-        vol.Required("type"): "aac/heartbeat/update",
-        vol.Optional("enabled"): bool,
-        vol.Optional("interval"): vol.All(vol.Coerce(int), vol.Range(1, 1440)),
-        vol.Optional("quiet_start"): vol.Match(r"^\d{1,2}:\d{2}$"),
-        vol.Optional("quiet_end"): vol.Match(r"^\d{1,2}:\d{2}$"),
-        vol.Optional("instructions"): vol.All(str, vol.Length(min=1)),
-        vol.Optional("tools"): bool,
-        vol.Optional("tier"): vol.All(str, vol.Length(min=1)),
-    }
-)
-@websocket_api.require_admin
-@websocket_api.async_response
-async def ws_heartbeat_update(hass: HomeAssistant, connection, msg) -> None:
-    """Change heartbeat settings (applies immediately)."""
-    if not (entry := _entry(hass, connection, msg)):
-        return
-    await _d(entry, msg).settings.async_update_heartbeat(
-        {k: v for k, v in msg.items() if k not in ("id", "type", "domain")}
-    )
-    _d(entry, msg).triggers.async_start()
-    connection.send_result(msg["id"], _state(hass, *_ctx(hass, msg)))
-
-
-@aac_command({vol.Required("type"): "aac/heartbeat/run"})
-@websocket_api.require_admin
-@websocket_api.async_response
-async def ws_heartbeat_run(hass: HomeAssistant, connection, msg) -> None:
-    """Run one heartbeat now (ignores quiet hours and the on/off switch)."""
-    if not (entry := _entry(hass, connection, msg)):
-        return
-    run_id = await _d(entry, msg).triggers.async_heartbeat(force=True)
-    if run_id is None:
-        connection.send_error(msg["id"], "skipped", "No master model, or a heartbeat is already running")
-        return
-    connection.send_result(msg["id"], {"run_id": run_id})
 
 
 _TIME = vol.Match(r"^\d{1,2}:\d{2}$")

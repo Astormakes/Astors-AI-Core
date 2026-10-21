@@ -1,8 +1,8 @@
-"""What wakes the master on its own: the heartbeat and triggers (spec/trigger.md).
+"""What wakes the master on its own: the owner's and AAC's own triggers (spec/trigger.md).
 
-Automatic runs show up under CHATS → Auto (heartbeats also under SETTINGS → Heartbeat). When the
-master has something to say it lands in the "From AAC" chat, a heartbeat finding in a chat of its own;
-otherwise it answers NOTHING and stays silent (little noise is a core principle).
+Automatic runs show up under CHATS → Auto. When the master has something to say it lands in the
+"From AAC" chat; otherwise it answers NOTHING and stays silent (little noise is a core principle).
+The heartbeat is a module now (modules/heartbeat, on the stream bus); triggers follow it there.
 """
 
 from __future__ import annotations
@@ -14,16 +14,13 @@ from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, Home
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_change,
-    async_track_time_interval,
 )
 from homeassistant.util import dt as dt_util
 
-from .chats import AAC_CHAT_ID
 from .context import home_snapshot
-from .const import LOGGER
-from .capabilities import parse_time
 from .jobs import Job
-from .master import SILENT, async_run_master
+from .master import SILENT
+from .master_node import async_auto_run, async_open_loops
 from .pools import role_configured
 
 if TYPE_CHECKING:
@@ -53,13 +50,8 @@ def in_quiet_hours(now: datetime, start: str, end: str) -> bool:
 
 
 
-def _short(text: str, n: int = 40) -> str:
-    """The start of a text for a title, cut at a word."""
-    text = " ".join(text.split())
-    return text if len(text) <= n else text[:n].rsplit(" ", 1)[0] + "…"
-
 class TriggerEngine:
-    """Schedules the heartbeat and listens for event triggers."""
+    """Listens for event and time triggers."""
 
     def __init__(self, hass: HomeAssistant, entry: AACConfigEntry, domain: Domain) -> None:
         """Initialize (one engine per AAC domain)."""
@@ -73,40 +65,10 @@ class TriggerEngine:
     def _store(self):
         return self.domain.settings
 
-    async def _async_open_loops(self) -> str:
-        """Open plans (memory kind 'plan') and AAC's own schedules, for automatic runs."""
-        lines = []
-        if (memory := self.domain.memory) and self._store.memory["enabled"]:
-            lines += [f"- plan: {m.text} (since {m.created[:10]})" for m in await memory.async_plans()]
-        lines += [
-            f"- your own scheduled check-in: {t['name']} ({t['when'].get('date') or 'repeating'} at {t['when'].get('at')})"
-            for t in self._store.triggers
-            if t.get("created_by") == "agent" and t.get("enabled") and t["when"]["type"] == "time"
-        ]
-        # Coming up: everything the calendar providers know for the next 24 hours
-        now = dt_util.now()
-        upcoming = await self.entry.runtime_data.capabilities.async_calendar(self.domain.id, now, now + timedelta(hours=24))
-        lines += [
-            f"- coming up: {e['name']}" + (f" ({dt_util.as_local(parse_time(e['start'])).strftime('%a %H:%M')})" if parse_time(e.get('start')) else "")
-            + f" [{e['source']}]"
-            for e in upcoming if (e.get("ref") or {}).get("module") != "core"  # own plans are listed above
-        ][:15]
-        return ("\n\nOpen loops (what the user wants to achieve, your own plans, what is coming up):\n" + "\n".join(lines)) if lines else ""
-
     @callback
     def async_start(self) -> None:
         """(Re)subscribe according to the current settings."""
         self.async_stop()
-        heartbeat = self._store.heartbeat
-        if heartbeat["enabled"]:
-            self._unsubs.append(
-                async_track_time_interval(
-                    self.hass,
-                    self._async_heartbeat_tick,
-                    timedelta(minutes=max(1, int(heartbeat["interval"]))),
-                    name="AAC heartbeat",
-                )
-            )
         active = [t for t in self._store.triggers if t.get("enabled")]
         entity_ids = sorted(
             {t["when"]["entity_id"] for t in active if t["when"]["type"] == "state" and t["when"].get("entity_id")}
@@ -139,47 +101,7 @@ class TriggerEngine:
         return role_configured(self.hass, self.entry.runtime_data.store, "master")
 
     def _busy(self, trigger: str) -> bool:
-        if any(j.domain is self.domain and trigger == "heartbeat" and "heartbeat" in j.tags
-               for j in self.entry.runtime_data.jobs.waiting):
-            return True  # one waiting heartbeat is enough
         return any(r.trigger == trigger for r in self.domain.runs.running("auto"))
-
-    async def _async_heartbeat_tick(self, _now: datetime) -> None:
-        await self.async_heartbeat()
-
-    async def async_heartbeat(self, force: bool = False) -> str | None:
-        """One heartbeat. Returns the run id, or None if skipped."""
-        hb = self._store.heartbeat
-        now = dt_util.now()
-        if not force and in_quiet_hours(now, hb["quiet_start"], hb["quiet_end"]):
-            return None
-        if not self._master_ready() or self._busy("heartbeat"):
-            return None
-
-        async def start(note: str = ""):
-            # Built when it really runs, so a postponed heartbeat sees the current home
-            prompt = (
-                "Heartbeat: a scheduled check-in, nobody asked you anything.\n"
-                f"Local time: {dt_util.now().strftime('%A %Y-%m-%d %H:%M')}.\n"
-                "Current state of the home (area | name | state):\n"
-                f"{home_snapshot(self.hass, self.domain.settings)}"
-                f"{await self._async_open_loops()}\n\n"
-                f"{hb['instructions']}"
-                f"{chr(10) * 2 + note if note else ''}"
-            )
-            return await self._async_auto_run(
-                "heartbeat", "Heartbeat", "Check-in: anything I should know right now?", prompt,
-                allow_tools=bool(hb["tools"]), tier=hb.get("tier") or "fast",
-            )
-
-        if force:  # the owner pressed "Run once now": no queue
-            return (await start()).id
-        # Low priority; pointless once the next heartbeat is due
-        await self.entry.runtime_data.jobs.async_submit(Job(
-            self.domain, "Heartbeat", hb.get("tier") or "fast", "low", start,
-            due=dt_util.utcnow() + timedelta(minutes=int(hb["interval"])), tags=["heartbeat"],
-        ))
-        return None
 
     def _may_fire(self, trig: dict) -> bool:
         """Cooldown, quiet hours, master ready, not already running."""
@@ -228,12 +150,12 @@ class TriggerEngine:
                 f"Local time: {dt_util.now().strftime('%A %Y-%m-%d %H:%M')}.\n"
                 "Current state of the home (area | name | state):\n"
                 f"{home_snapshot(self.hass, self.domain.settings)}"
-                f"{await self._async_open_loops()}\n\n"
+                f"{await async_open_loops(self.entry, self.domain)}\n\n"
                 f"Instruction ({who}): {instruction}\n"
                 f"{rule}"
                 f"{chr(10) + note if note else ''}"
             )
-            return await self._async_auto_run(f"event: {trig['id']}", name, text, prompt, tier=tier)
+            return await async_auto_run(self.hass, self.entry, self.domain, f"event: {trig['id']}", name, text, prompt, tier=tier)
 
         # Job classes: reminders/appointments (time triggers) are high and time-critical: if no model
         # comes in time, the instruction reaches the owner as a plain notification. Events are normal.
@@ -324,32 +246,4 @@ class TriggerEngine:
     async def _async_remove(self, trigger_id: str) -> None:
         await self._store.async_delete_trigger(trigger_id)
         self.async_start()
-
-    async def _async_auto_run(
-        self, trigger: str, title: str, text: str, prompt: str, allow_tools: bool = True, tier: str = "master"
-    ) -> str:
-        run, result = await async_run_master(
-            self.hass,
-            self.entry,
-            text,
-            kind="auto",
-            trigger=trigger,
-            title=title,
-            extra_system_prompt=prompt,
-            allow_tools=allow_tools,
-            tier=tier,
-            domain=self.domain,
-        )
-        if result is not None and run.status == "done" and run.result:
-            # A heartbeat finding gets a chat of its own (owner, 2026-10-20): a reply is about that one
-            # thing, and findings don't pile up as context in one long chat. Silent ones stay in the run list.
-            chat_id = f"hb_{dt_util.utcnow().strftime('%Y%m%d%H%M%S')}" if trigger == "heartbeat" else AAC_CHAT_ID
-            if chat_id != AAC_CHAT_ID:
-                self.domain.chats.create(f"Heartbeat · {_short(run.result)}", chat_id)
-            run.chat_id = chat_id
-            self.domain.chats.add_message(
-                chat_id, "aac", run.result, proactive=True, run_id=run.id, trigger=title
-            )
-        LOGGER.debug("Automatic run %s (%s): %s", run.id, trigger, run.status)
-        return run
 

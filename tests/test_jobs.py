@@ -10,7 +10,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.jobs import Job
 
-from .conftest import MODEL_CFG, setup_aac
+from .conftest import MODEL_CFG, set_heartbeat, setup_aac
 from .test_planning import _queue, _text
 
 
@@ -19,11 +19,13 @@ async def test_heartbeat_waits_and_is_told_it_was_late(hass: HomeAssistant, aioc
     freezer.move_to("2026-10-20 12:00:00+00:00")
     await setup_aac(hass, mock_entry)
     data = mock_entry.runtime_data
-    await data.store.async_update_heartbeat({"quiet_start": "00:00", "quiet_end": "00:00"})
+    await set_heartbeat(mock_entry, enabled=True, quiet_start="00:00", quiet_end="00:00")
     data.store.data["queue"]["postpone_notice"] = 0
     data.broker.mark_down(MODEL_CFG["id"], "off")
-    await data.triggers.async_heartbeat()
-    await data.triggers.async_heartbeat()  # a second one does not pile up
+    from custom_components.aac.modules.heartbeat import async_queue
+
+    await async_queue(hass)
+    await async_queue(hass)  # a second one does not pile up
     assert [j.title for j in data.jobs.waiting] == ["Heartbeat"]
     told = data.chats.get("aac")["messages"]
     assert len(told) == 1 and "no model available" in told[0]["text"]

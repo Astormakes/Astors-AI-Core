@@ -2,8 +2,8 @@
 
 A module is a folder here with a `manifest.json` and Python code exposing
 `async_setup_module(ctx)`. Through the context it adds what it provides: storage
-per AAC domain, calendar entries, tools for the agents (one LLM API per domain),
-WebSocket commands and its own panel page. The core stays generic; it only loads
+per AAC domain, calendar entries, nodes on the stream bus (spec/streams.md), tools
+for the agents (one LLM API per domain), WebSocket commands and its own panel page. The core stays generic; it only loads
 modules and hands them the shared interfaces. External and AAC-made modules come
 later through the same context.
 """
@@ -25,6 +25,7 @@ from homeassistant.loader import async_get_loaded_integration
 
 from ..capabilities import CalendarProvider, Hearing, Stage
 from ..const import DOMAIN, LOGGER
+from ..streams import Node
 
 if TYPE_CHECKING:
     from .. import AACConfigEntry
@@ -110,6 +111,19 @@ class ModuleContext:
         """Work on the audio and add to the buffer (only while the module is on in the voice domain)."""
         stage.module = self.module.id
         self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_stage(stage))
+
+    def add_node(self, node: Node) -> None:
+        """A node on the stream bus (it reads and writes only in domains where the module is on)."""
+        node.module = self.module.id
+        self.entry.async_on_unload(self.entry.runtime_data.bus.add_node(node))
+
+    async def emit(self, domain_id: str, node_id: str, port: str, item: dict[str, Any]) -> list[Any]:
+        """Write a record to one of the module's node outputs; returns what the readers gave back."""
+        return await self.entry.runtime_data.bus.emit(domain_id, node_id, port, item)
+
+    def enabled(self, domain_id: str) -> bool:
+        """Is this module on in a domain?"""
+        return access(self.entry, self.module.id, domain_id)["enabled"]
 
     @property
     def audio(self):
@@ -244,6 +258,7 @@ def _manifests() -> list[dict[str, Any]]:
 async def async_load_modules(hass: HomeAssistant, entry: AACConfigEntry) -> list[LoadedModule]:
     """Load every built-in module (a failing one is skipped, the rest keep working)."""
     entry.runtime_data.capabilities.module_enabled = lambda domain_id, module_id: access(entry, module_id, domain_id)["enabled"]
+    entry.runtime_data.bus.set_module_enabled(entry.runtime_data.capabilities.module_enabled)
     loaded = []
     for manifest in await hass.async_add_executor_job(_manifests):
         module = LoadedModule(manifest)

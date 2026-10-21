@@ -64,11 +64,14 @@ rules for the machines, heartbeat) are declared the same way, so SETUP has one c
 
 `custom_components/aac/modules/<id>/` with `manifest.json` and `async_setup_module(ctx)`. The context
 gives: `storage(domain, name)` (per AAC domain), `add_calendar(provider)`, `add_llm_api(factory)` (one
-LLM API per domain, offered to that domain's agent), `add_ws_commands(...)`, `add_panel_page(id, title,
+LLM API per domain, offered to that domain's agent), `add_ws_commands(...)`, `add_node(node)` / `emit(domain, node, port, item)` / `enabled(domain)` (the [stream bus](streams.md),
+0.44), `add_panel_page(id, title,
 element, script, visible_setting)` (a web component without shadow DOM, so the panel's styles and skins
 apply; the panel keeps the element across re-renders), `setting(domain, key)`, `languages` (the home's languages, ISO codes, first = main). Settings from the manifest
 are stored per domain (`store.module_settings`) and edited in SETTINGS → Modules (form built from the
-schema: bool, text, number, select, entity, entities; `options_from` = choices a module computes at runtime).
+schema: bool, text, longtext, number, time, select, entity, entities; `placeholder`; `options_from` = choices a module or
+the core computes at runtime, e.g. `tiers`). AAC sets any module up in the owner's chat with the setup tool
+`module_setting(module, on, settings)` (built 0.44; replaces `set_heartbeat`).
 A module that fails to load is skipped. Deleting a domain removes its module data too.
 
 **Permissions and properties (v0.19.0)**, per domain, for every module (`store.module_access`, `aac/module/access`;
@@ -80,7 +83,8 @@ deleting unless it is read-only or says destructive=false, HA's default is destr
 `GuardedAPI`, which wraps every module's tools each time an agent asks for them. Setup steps from the
 manifest are built (see above; ids `<domain>/mod/<module>/<step>`), e.g. the calendar module's "Connect a calendar".
 
-Modules so far: `lists` (lists of anything: tree entries with free fields; tools; calendar provider;
+Modules so far: `heartbeat` (0.44: a source node writing `master.request`; off by default; page with its last
+runs and "Run once now"), `lists` (lists of anything: tree entries with free fields; tools; calendar provider;
 page; setting "show dated entries in the calendar") and `calendar` (HA calendars adapter; where new
 entries go; agenda page; setting "show the calendar page"). Still planned: external modules, AAC-made modules, sandbox for code modules.
 

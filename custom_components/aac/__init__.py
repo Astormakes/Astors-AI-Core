@@ -47,8 +47,9 @@ from .capabilities import CalendarProvider, Capabilities, parse_time, plan_occur
 from .home_api import AACHomeAPI, apply_entities, apply_visibility
 from .jobs import JobQueue
 from .requests import Requests
+from .master_node import MasterNode
 from .modules import MODULES_DIR, MODULES_URL, LoadedModule, async_load_modules
-from .pools import Broker
+from .pools import TIERS, Broker
 from .skins import USER_URL as USER_SKINS_URL, user_dir
 from .memory import MemoryStore, memory_path
 from .memory_api import AACMemoryAPI
@@ -58,6 +59,7 @@ from .setup_api import AACSetupAPI
 from .provider import OpenAICompatProvider, ProviderConnectionError
 from .runs import RunRegistry
 from .store import AACStore
+from .streams import Bus
 from .triggers import TriggerEngine
 
 PLATFORMS = (Platform.CONVERSATION, Platform.CALENDAR)
@@ -78,6 +80,7 @@ class AACData:
     broker: Broker | None = None
     jobs: JobQueue | None = None
     capabilities: Capabilities = field(default_factory=Capabilities)
+    bus: Bus = field(default_factory=Bus)
     modules: list[LoadedModule] = field(default_factory=list)
     requests: Requests | None = None
 
@@ -216,6 +219,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         ):
             entry.async_on_unload(llm.async_register_api(hass, api))
 
+    # The master is the core's node on the stream bus: modules ask it through master.request
+    entry.async_on_unload(entry.runtime_data.bus.add_node(MasterNode(hass, entry).node))
+    entry.runtime_data.capabilities.options["tiers"] = lambda domain_id: [
+        (t, t) for t in dict.fromkeys([*TIERS, *(tag for tr in store.data["traits"].values() for tag in tr.get("tags", []))])]
+
     # Modules after the domains (they keep data per domain), before the agents (they bring tools)
     entry.runtime_data.modules = await async_load_modules(hass, entry)
 
@@ -235,7 +243,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Heartbeats and event triggers (one engine per domain) start once HA is up (entities exist)
+    # Event triggers (one engine per domain) start once HA is up (entities exist)
     for dom in entry.runtime_data.domains.values():
         dom.triggers = TriggerEngine(hass, entry, dom)
         entry.async_on_unload(dom.triggers.async_stop)

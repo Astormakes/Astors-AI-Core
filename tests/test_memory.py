@@ -9,7 +9,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 from custom_components.aac.memory import MemoryStore, fuse
 from homeassistant.core import HomeAssistant
 
-from .conftest import BASE_URL, setup_aac
+from .conftest import BASE_URL, heartbeat_now, setup_aac
 
 # A tiny fake "embedding": counts of a few topic words, so meaning-like search is testable
 TOPICS = ["milk", "oat", "soy", "drill", "tool", "basement", "battery", "printer"]
@@ -238,7 +238,7 @@ async def test_extractor_not_for_automatic_runs(
         return AiohttpClientMockResponse(method, url, json={"choices": [{"message": {"role": "assistant", "content": '{"speak": false, "message": ""}'}}]})
 
     aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=side_effect)
-    await mock_entry.runtime_data.triggers.async_heartbeat(force=True)
+    await heartbeat_now(hass)
     await hass.async_block_till_done(wait_background_tasks=True)
     assert len(payloads) == 1
 

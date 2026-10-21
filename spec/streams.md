@@ -1,4 +1,7 @@
-# Streams — planned (draft for the owner's review)
+# Streams — partial
+
+Built (0.44): the bus (`streams.py`: types, default wiring by type, recent records), the core's master node
+(`master_node.py`) and the first node module, the heartbeat. Not yet: own wiring, read rules, slots, audio on the bus.
 
 The core is a **collection of streams**, like the calendar is a collection of the modules' entries
 (owner, 2026-10-21: "everything can be wired into anything", node-based almost). Modules are **nodes**:
@@ -36,7 +39,7 @@ Two classes:
 | `sound.event` | record | `{"labels": [["Beep", 0.8]], "text": "[beeping]"}` | Sounds |
 | `ha.event` | record | HA's event: `type`, `data` ([event.md](event.md)) | the core (HA bus) |
 | `time.tick` | record | `{"at": "…", "name": "every 30 min"}` | a timer node |
-| `master.request` | record | `{"text", "context", "tier", "tools", "title", "trigger", "priority"}` | heartbeat, triggers, companion, wake word |
+| `master.request` | record | see below | heartbeat (built); triggers, companion, wake word (planned) |
 | `master.answer` | record | the finished [run](run.md) (result, chat_id) | the master node |
 | `say` | record | `{"text", "language", "room"}` → spoken | answers, announcements |
 | `notify` | record | `{"title", "text", "to"}` → phone/panel | reminders, findings |
@@ -46,6 +49,12 @@ Two classes:
 New types are added to this table (contract change); a module may also declare its own type under its
 id (`lists.item_changed`), readable by any node that names it.
 
+**`master.request`** (built): `{"trigger", "title", "text", "intro", "context": ["time", "home", "open_loops"],
+"instructions", "tier", "tools", "priority", "due_minutes", "tags", "coalesce", "chat": "aac" | "own", "chat_prefix",
+"now"}`. The master node queues it as a job (or runs it at once with `now`, and the writer gets the run back),
+builds the context when the run starts, skips it while one with the same trigger waits or runs (`coalesce`), and
+writes `master.answer` `{"run_id", "trigger", "status", "result", "chat_id"}` when done.
+
 **Annotating.** Several nodes may add fields to the same record instead of writing a new one, in order
 (today's segment stages): STT gives `text`, Voices gives `speaker`, the attention check gives `addressed`.
 An annotating node has the same type in and out (`text.line → text.line`) and declares which fields it adds.
@@ -53,7 +62,7 @@ An annotating node has the same type in and out (`text.line → text.line`) and 
 ## A node
 
 ```python
-ctx.add_node(Node(
+ctx.add_node(Node(          # built: Node(id, title, inputs, outputs, run, adds); ctx.emit(domain, node, port, item)
     id="stt",
     title="Speech to text",
     inputs={"speech": "audio.segment"},
@@ -121,9 +130,9 @@ Without a provider the slot answers empty, and AAC works without memory. Candida
 5. Memory as the first slot.
 6. The node view in the panel.
 
-## Open questions for the owner
+## Defaults taken (the owner can change them later)
 
-1. Default wiring: auto by type (proposed), or nothing until the owner wires it?
-2. Should AAC itself be allowed to rewire (owner present, like the setup tools), or only the owner in the panel?
-3. Records kept in RAM per stream: how many / how long by default (proposed: last 200 or 10 minutes)?
-4. Which other slots matter to you besides memory?
+1. Default wiring: automatic by type.
+2. Rewiring: only the owner (AAC gets tools for it later, owner present only, like the setup tools).
+3. Records kept in RAM per output: the last 200, at most 10 minutes old.
+4. Slots: memory first; more when a second provider for something appears.

@@ -6,7 +6,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .conftest import BASE_URL, setup_aac
+from .conftest import BASE_URL, heartbeat_now, setup_aac
 
 URL = f"{BASE_URL}/chat/completions"
 
@@ -123,7 +123,7 @@ async def test_plans_are_open_loops(hass: HomeAssistant, aioclient_mock, mock_en
     await mock_entry.runtime_data.memory.async_remember("Wants to lose 4 kg by spring, feel fitter.", "plan")
     await mock_entry.runtime_data.memory.async_remember("Weight 82.4 kg", "event")
     payloads = _queue(aioclient_mock, _text('{"speak": false, "message": ""}'))
-    await mock_entry.runtime_data.triggers.async_heartbeat(force=True)
+    await heartbeat_now(hass)
     system = payloads[0]["messages"][0]["content"]
     assert "Open loops" in system and "lose 4 kg" in system
     assert "Weight 82.4" not in system  # events are recalled when needed, not listed

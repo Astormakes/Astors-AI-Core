@@ -37,7 +37,7 @@ API_ID = "aac_setup"
 _TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")
 
 API_PROMPT = (
-    "You can help the owner set up AAC itself (models, memory, heartbeat, audio). Start with "
+    "You can help the owner set up AAC itself (models, memory, audio, modules such as the heartbeat). Start with "
     "setup_status. Go one step at a time, explain in a sentence why a step is useful, and ask "
     "before you change anything. The charter and what you may do on your own are the owner's "
     "to set in the panel; you cannot change them. Settings change while you talk (the owner may fix things "
@@ -90,7 +90,6 @@ class SetupStatusTool(_SetupTool):
 
     async def _async_run(self, hass, args):
         store = self._entry.runtime_data.store
-        hb = self._domain.settings.heartbeat
         data = self._entry.runtime_data
         audio = audio_overview(hass, data.audio, store.audio)
         return llm.ToolResult(
@@ -117,7 +116,7 @@ class SetupStatusTool(_SetupTool):
                 ],
                 "languages": {"list": home_languages(hass, store), "set_by_owner": store.data["languages"] is not None,
                               "heard": store.audio.get("languages_seen") or {}},
-                "heartbeat": {k: hb[k] for k in ("enabled", "interval", "quiet_start", "quiet_end")},
+                "modules": _modules_overview(self._entry, self._domain.id),
                 "triggers": len(store.triggers),
                 "audio": {
                     "connected_sources": [{"id": c["id"], "name": c["name"], "area": c["area"]} for c in audio["connected"]],
@@ -346,38 +345,69 @@ class MeasureModelsTool(_SetupTool):
         return llm.ToolResult(data={"tokens_per_second": speeds, "by_tier": broker.status()["by_tier"]})
 
 
-class HeartbeatTool(_SetupTool):
-    """Heartbeat settings."""
+def _modules_overview(entry: AACConfigEntry, domain_id: str) -> list[dict]:
+    """Every module: on in this domain?, its settings (values and what they take)."""
+    from .modules import access, setting  # noqa: PLC0415
 
-    name = "set_heartbeat"
-    title = "Set heartbeat"
-    description = "Turn the heartbeat on/off (AAC looks at the home every few minutes and only speaks when it matters), set its interval and quiet hours."
+    return [{"module": m.id, "name": m.manifest.get("name", m.id), "on": access(entry, m.id, domain_id)["enabled"],
+             "settings": {k: {"value": setting(entry, m.manifest, domain_id, k), "type": f.get("type"), "title": f.get("title", k)}
+                          for k, f in m.manifest.get("settings", {}).items()}}
+            for m in entry.runtime_data.modules]
+
+
+class ModuleSettingTool(_SetupTool):
+    """A module on/off and its settings, for any module (the manifest says what a setting takes)."""
+
+    name = "module_setting"
+    title = "Set up a module"
+    description = (
+        "Switch a module on or off in this domain and change its settings (see setup_status → modules for the "
+        "modules, their settings and current values). E.g. the heartbeat: module 'heartbeat', on true, "
+        "settings {\"interval\": 15, \"quiet_start\": \"23:00\"}."
+    )
     annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
     parameters = probatio.Schema(
         {
-            probatio.Optional("enabled"): bool,
-            probatio.Optional("interval_minutes"): int,
-            probatio.Optional("quiet_start", description="HH:MM"): str,
-            probatio.Optional("quiet_end", description="HH:MM"): str,
+            probatio.Required("module"): str,
+            probatio.Optional("on"): bool,
+            probatio.Optional("settings", description="setting key → new value"): dict,
         }
     )
 
     async def _async_run(self, hass, args):
-        changes: dict = {}
-        if "enabled" in args:
-            changes["enabled"] = bool(args["enabled"])
-        if "interval_minutes" in args:
-            changes["interval"] = min(1440, max(1, int(args["interval_minutes"])))
-        for key in ("quiet_start", "quiet_end"):
-            if key in args:
-                if not _TIME_RE.match(args[key]):
-                    return llm.ToolResult(data={"error": f"{key} must be HH:MM"}, error=True)
-                changes[key] = args[key]
-        dom = self._domain
-        await dom.settings.async_update_heartbeat(changes)
-        dom.triggers.async_start()
-        hb = dom.settings.heartbeat
-        return llm.ToolResult(data={k: hb[k] for k in ("enabled", "interval", "quiet_start", "quiet_end")})
+        from .modules import async_set_access, async_set_settings  # noqa: PLC0415
+
+        entry, domain_id = self._entry, self._domain.id
+        module = next((m for m in entry.runtime_data.modules if m.id == args["module"]), None)
+        if module is None:
+            return llm.ToolResult(data={"error": f"No module {args['module']!r}",
+                                        "modules": [m.id for m in entry.runtime_data.modules]}, error=True)
+        schema, values = module.manifest.get("settings", {}), {}
+        for key, value in (args.get("settings") or {}).items():
+            field = schema.get(key)
+            if field is None:
+                return llm.ToolResult(data={"error": f"{module.id} has no setting {key!r}", "settings": list(schema)}, error=True)
+            kind = field.get("type")
+            try:
+                if kind == "number":
+                    value = float(value) if "." in str(value) else int(value)
+                elif kind == "bool":
+                    value = value if isinstance(value, bool) else str(value).lower() in ("true", "yes", "on", "1")
+                elif kind == "time" and not _TIME_RE.match(str(value)):
+                    raise ValueError("HH:MM")
+                elif kind in ("select", "entity") and (source := field.get("options_from") or field.get("options")):
+                    choices = [o[0] for o in (entry.runtime_data.capabilities.options[source](domain_id)
+                                              if isinstance(source, str) else source)]
+                    if value not in choices:
+                        raise ValueError(f"one of {choices}")
+            except (ValueError, TypeError, KeyError) as err:
+                return llm.ToolResult(data={"error": f"{key}: {err}"}, error=True)
+            values[key] = value
+        if "on" in args:
+            await async_set_access(entry, module.id, domain_id, {"enabled": bool(args["on"])})
+        if values:
+            await async_set_settings(entry, module, domain_id, values)
+        return llm.ToolResult(data=next(m for m in _modules_overview(entry, domain_id) if m["module"] == module.id))
 
 
 class AudioTool(_SetupTool):
@@ -480,7 +510,7 @@ class AACSetupAPI(llm.API):
 
     async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
         """Tools + prompt."""
-        tools = [SetupStatusTool, ListModelsTool, AddModelTool, UseModelTool, TagModelTool, AvailabilityTool, MeasureModelsTool, HeartbeatTool, AudioTool, LanguagesTool, SpeakTestTool, SkipStepTool]
+        tools = [SetupStatusTool, ListModelsTool, AddModelTool, UseModelTool, TagModelTool, AvailabilityTool, MeasureModelsTool, ModuleSettingTool, AudioTool, LanguagesTool, SpeakTestTool, SkipStepTool]
         return llm.APIInstance(
             api=self,
             api_prompt=API_PROMPT,

@@ -25,7 +25,7 @@ change, time. Stored in the format below since v0.6.0.
 
 | `when.type` | Fields | Status |
 |---|---|---|
-| `heartbeat` | `interval` (minutes) | built (one global heartbeat) |
+| `heartbeat` | — | moved: since 0.44 the heartbeat is a module (`modules/heartbeat`, a node on the [stream bus](streams.md)) |
 | `state` | `entity_id`, optional `to` (fires only when it becomes this state) | built |
 | `time` | `at` ("07:30", local), optional `weekdays` (0 = Monday … 6 = Sunday; empty = every day) or `date` ("2026-10-24": once, removed after firing) | built |
 | `event` | `event_type` (an [Event](event.md) type), optional `match` (field → value) | planned |
@@ -39,11 +39,12 @@ change, time. Stored in the format below since v0.6.0.
 Common rules:
 - `cooldown` (seconds): after firing, the same trigger stays quiet that long.
 - `quiet_hours` (`{"start": "22:00", "end": "08:00"}`, local time, may wrap midnight):
-  automatic runs are skipped inside. Built for the heartbeat and every trigger.
+  automatic runs are skipped inside. Built for every trigger (and the heartbeat module).
 - A trigger never fires while a run with the same trigger is still running.
 - Only `state` changes count, not attribute-only updates.
-- Whatever the agent decides to say goes to the "From AAC" chat; a heartbeat finding opens a chat of its own
-  (`hb_<utc time>`, "Heartbeat · …"), so a reply is about that one thing. Silence is normal (the run list shows it).
+- Whatever the agent decides to say goes to the "From AAC" chat (a heartbeat finding opens a chat of its own,
+  `hb_<utc time>`, "Heartbeat · …"; see `master.request` → `chat: "own"` in [streams.md](streams.md)). Silence is
+  normal (the run list shows it).
 - `time` triggers usually *are* the message (a reminder): the agent is told to write
   it, and may stay silent only for "check whether …" instructions. `state` triggers
   get the plain "say nothing unless it matters" rule. (Tested: with the plain rule the
@@ -62,10 +63,11 @@ posted to "From AAC". At most 20 own plans. Day names and groups are accepted
 Triggers (`aac.config` → `triggers`): exactly the format above. Flat state triggers
 from 0.4/0.5 (`entity_id`, `to`, `instruction`, …) are converted on load.
 
-Heartbeat (`aac.config` → `heartbeat`), still separate:
-`{"enabled", "interval", "quiet_start", "quiet_end", "instructions" ("" = built-in default), "tools"}`
+Heartbeat: module settings (`aac.config` → `module_settings.<domain>.heartbeat`: `interval`, `quiet_start`,
+`quiet_end`, `tier`, `tools`, `instructions` ("" = built-in)); on/off = the module's switch per domain. 0.43's
+`domains[].heartbeat` is moved there on load.
 
-Code: `custom_components/aac/triggers.py`, `store.py`.
+Code: `custom_components/aac/triggers.py`, `master_node.py` (shared: context, automatic run), `modules/heartbeat/`.
 
 ## More kinds of "when" (v0.24.0)
 

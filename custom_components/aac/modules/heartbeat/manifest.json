@@ -1,0 +1,20 @@
+{
+  "id": "heartbeat",
+  "name": "Heartbeat",
+  "version": "1.0.0",
+  "contract": 1,
+  "kind": "code",
+  "enabled_by_default": false,
+  "description": "Wakes the master every few minutes to look at the situation, without any chat history: it sees only the home right now and its open plans. When something matters it opens a new chat just for that (a reply is about that one thing); otherwise it stays silent.",
+  "instructions": "",
+  "provides": {"nodes": {"heartbeat": {"outputs": {"requests": "master.request"}}}},
+  "uses": {"streams": ["master.request"]},
+  "settings": {
+    "interval": {"type": "number", "title": "Every (minutes)", "default": 30, "help": "1–1440."},
+    "quiet_start": {"type": "time", "title": "Quiet from", "default": "22:00"},
+    "quiet_end": {"type": "time", "title": "Quiet until", "default": "08:00", "help": "No heartbeat in between (the same time twice = never quiet)."},
+    "tier": {"type": "select", "title": "Model (pool request)", "default": "fast", "options_from": "tiers"},
+    "tools": {"type": "bool", "title": "Allow tools", "default": false, "help": "Slower; it already gets a snapshot of the home, and small models tend to tour every room with tools."},
+    "instructions": {"type": "longtext", "title": "Instructions", "default": "", "placeholder": "Look through the states. If anything needs the user's attention now - an alarm (smoke, gas, water leak, CO), a door or window OPEN that should not be, a device that failed, a task due now - tell them in one short sentence. Normal states (lights, closed doors, weather, time, values in normal ranges) are not worth mentioning: then answer exactly NOTHING.", "help": "Empty = the built-in instructions (shown greyed out), so improvements to them reach you."}
+  }
+}
