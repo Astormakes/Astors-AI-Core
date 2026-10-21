@@ -36,7 +36,9 @@ API_PROMPT = (
     "The home changes during a chat: when asked to check again, use the tools again instead of repeating "
     "what you found earlier. To the owner, name entities by their names (and room), not by entity ids. "
     "Asked to switch something: call control in the same turn, then report the new state; never say you will "
-    "do it without calling the tool."
+    "do it without calling the tool. "
+    "Look before you say no or ask back: search with list_entities first (the room and type help), even when "
+    "the name sounds unusual; ask which one is meant only when the search finds several that fit equally well."
 )
 
 

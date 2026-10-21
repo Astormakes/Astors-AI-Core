@@ -38,7 +38,8 @@ API_ID = "aac_memory"
 
 API_PROMPT = (
     "You have a long-term memory. Use recall before answering questions about the "
-    "user's life, preferences, things, places or earlier conversations. Use remember "
+    "user's life, preferences, things, places or earlier conversations; never say you "
+    "don't know or can't help with such a question before you called recall. Use remember "
     "when the user tells you something worth keeping (facts, preferences, where things "
     "are). Every memory keeps its date, so remember measurements and events as they "
     "happen (e.g. 'Weight 82.4 kg'); recall them later to see how things develop. "
