@@ -146,6 +146,82 @@ Without a provider the slot answers empty, and AAC works without memory. Candida
 | Companion | `text.line` | the same |
 | Reminders (planning) | `time.tick` | `notify`, `broker.request` |
 
+## Target model: everything is nodes and wires (owner, 2026-10-21)
+
+The owner's picture from the start, nudged into place piece by piece (0.44–0.48), now written down:
+the user can build pipelines from nodes with clear inputs and outputs; the system stays open, and typed
+ports keep it restricted enough to just work. "Everything is text in the end" for the model.
+
+**One kind of thing: nodes with typed ports, connected by wires.** The bus is only the layer that holds
+the wires. Wires are stored per domain; until the owner changes one, the defaults apply (wired by type
+and by the manifests' `order`), so a fresh domain works without any wiring. A wire only connects ports of
+the same type (`audio.pcm` → `audio.pcm`: the microphone straight to a speaker is allowed; text into an
+audio input is not).
+
+**Annotating chains do the detail work.** A record runs through nodes in order and each adds its part
+(built for audio: STT adds text, Voices adds the speaker). The same for the model:
+
+```
+chat ──▶ [charter] ──▶ [memory] ──▶ [home] ──▶ [lists] ──▶ [MODEL] ──▶ answer ──▶ chat / speaker / notify
+```
+
+**The request is a structured record** (type `model.request`), not one long text, so each node writes to
+the right place and the server's prompt cache keeps working:
+
+```json
+{"text": "Is the bed light on?", "history": [...], "own_words": "…",
+ "system": ["<charter>", "<the agent's own prompt>"],
+ "context": ["Memories that may help: …", "Open loops: …"],
+ "tools": ["aac_home", "aac_lists", "aac_memory"],
+ "tier": "master", "kind": "chat", "trigger": "chat", "chat": "…", "domain": "assistant"}
+```
+
+- `system`: stable parts, first in the system prompt (charter: order 0).
+- `context`: what goes along with this message (memory recalls, open loops, the home snapshot for automatic runs).
+- `tools`: what the model may call; a node that brings tools adds its API (home: with the owner's entity
+  list as that node's setting). The model sees exactly what is wired before it and chooses by itself
+  (tool mode "menu": areas first).
+- The **model node** is simple: `model.request` in, `model.answer` out (the run, its result). It picks the
+  model from the pool by `tier`. Today's broker is this node.
+
+**Groups hide the detail without making it static** (like Blender's node groups, Node-RED's subflows): a
+group is a saved piece of graph with its own outer ports. Every domain starts with one group "Assistant"
+(`chat ──▶ [Assistant] ──▶ chat`); opening it shows charter → memory → home → … → model, every node and
+wire, changeable. Saved groups can be reused ("work assistant without home control"). A new user never
+needs to open one.
+
+**Kept restricted:** typed ports; privacy tiers per stream (a node never gets data stricter than it may
+keep); owner-only nodes (the charter: no agent changes or removes it); cycles refused; a paused source
+writes nothing.
+
+### Today's parts in the target model
+
+| Today | Target |
+|---|---|
+| broker (`broker.py`) | the model node (`model.request` → `model.answer`; queue, coalesce, keep, critical stay its job) |
+| prompt parts (`add_prompt`, the charter module) | annotating nodes adding to `system` |
+| memory slot (context before, write path after) | an annotating node adding to `context`, plus a node reading `model.answer` (the write path) |
+| open loops (`add_open_loops`) | annotating nodes adding to `context` in automatic runs |
+| a module's tools (`add_llm_api`, Assist API, setup with the owner present) | annotating nodes adding to `tools` |
+| the conversation entity (HA Assist), the panel chat, the voice answer | sources writing `model.request`; the answer goes back to where it came from |
+| heartbeat, triggers (`broker.request`) | sources writing `model.request` (`broker.request` is its first form) |
+| audio: hearing, stt, voices, sounds, wake word, companion | as built (0.46); wake word and companion write `model.request`, a speaker node reads `say` |
+| `slots.py` | a default chain position ("one memory node per domain"); the registry can go once the chain exists |
+
+### Steps toward it
+
+1. This section, checked by the owner.
+2. The node view, read-only first: the whole system as it is wired today (streams, and the request chain
+   once it exists), self-organizing (see Wiring).
+3. The request record and its chain inside the broker: prompt parts, memory and the modules' tools become
+   annotating nodes on `model.request` (same behaviour, now visible and in order).
+4. Stored wires: the owner rewires streams in the node view (and AAC with tools, owner present only).
+5. Groups: "Assistant" per domain, open, change, save, reuse.
+
+Open: how a node's settings are edited inside the graph (today: the module's settings page); whether one
+domain may have several model nodes (an assistant and a separate "research" pipeline); how answers find
+their way back when a request came through several groups.
+
 ## Order of the rework
 
 1. This contract, reviewed with the owner.
