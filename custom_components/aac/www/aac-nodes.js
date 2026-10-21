@@ -6,7 +6,7 @@
 // Switching Physics on saves the layout first; Undo goes back to it. Positions are kept per browser and
 // domain. Named containers (frames) group nodes: Shift/Ctrl-click nodes, "Group", name it; drag its name bar
 // to move it with its members, its corner to resize, double-click the name to rename. A node dropped inside a
-// frame joins it, dragged out it leaves; members are kept inside, other nodes are pushed out. Frames are kept
+// frame joins it, dragged out it leaves; members drift to its middle, other nodes are pushed off its border. Frames are kept
 // per domain in AAC (the start of real groups, spec/streams.md). Read-only for now: wiring by hand comes later. No shadow DOM, so the panel's colours and skins
 // apply. The panel sets .ws(type, data) and .panel, and calls .refresh() when modules change.
 
@@ -19,7 +19,7 @@ const FIELD = 150; // reach of a node's soft push beyond its box
 const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "#8ab4ff", "#ff8a65", "#c792ea", "#7fdbca"];
 const KIND = { source: "source", sink: "sink", transform: "transform", annotating: "adds to the record" };
 const UNDO_STEPS = 10;
-const BAR = 26, PAD = 26, GRIP = 16; // frame: name bar, room around members, resize corner
+const BAR = 26, PAD = 26, GRIP = 16, EDGE = 50; // frame: name bar, room around members, resize corner, border push reach
 
 class AacNodes extends HTMLElement {
   constructor() {
@@ -247,21 +247,25 @@ class AacNodes extends HTMLElement {
       P[w.b.id].vx += dx * k; P[w.b.id].vy += dy * k;
       P[w.a.id].vx -= dx * k; P[w.a.id].vy -= dy * k;
     }
-    // Frames: members are kept inside the walls, every other node is pushed out
+    // Frames (owner): a gentle pull to the middle for members, a weak push off the border for everyone else
+    // (within EDGE outside it, firmer when a node sits inside); the hand always wins while a node is held
     for (const f of this._frames) {
+      const cx = f.x + f.w / 2, cy = f.y + (BAR + f.h) / 2;
       for (const n of nodes) {
+        if (n.id === this._drag?.id) continue;
         const p = P[n.id], hw = W / 2, hh = this._height(n) / 2;
         if (f.nodes.includes(n.id)) {
+          p.vx += (cx - p.x) * .004; p.vy += (cy - p.y) * .004; // to the middle
           const l = f.x + PAD / 2 + hw, r = f.x + f.w - PAD / 2 - hw, t = f.y + BAR + PAD / 2 + hh, b = f.y + f.h - PAD / 2 - hh;
-          if (p.x < l) p.vx += (Math.min(l, r) - p.x) * .15; else if (p.x > r) p.vx -= (p.x - Math.max(l, r)) * .15;
-          if (p.y < t) p.vy += (Math.min(t, b) - p.y) * .15; else if (p.y > b) p.vy -= (p.y - Math.max(t, b)) * .15;
+          if (p.x < l) p.vx += (Math.min(l, r) - p.x) * .06; else if (p.x > r) p.vx -= (p.x - Math.max(l, r)) * .06;
+          if (p.y < t) p.vy += (Math.min(t, b) - p.y) * .06; else if (p.y > b) p.vy -= (p.y - Math.max(t, b)) * .06;
         } else {
-          const ox = Math.min(p.x + hw, f.x + f.w) - Math.max(p.x - hw, f.x) + 14;
-          const oy = Math.min(p.y + hh, f.y + f.h) - Math.max(p.y - hh, f.y) + 14;
-          if (ox > 0 && oy > 0) { // inside or touching: out along the shorter way
-            const cx = f.x + f.w / 2, cy = f.y + f.h / 2;
-            if (ox < oy) p.vx += Math.sign(p.x - cx || 1) * ox * .2; else p.vy += Math.sign(p.y - cy || 1) * oy * .2;
-          }
+          // gap between the node's box and the frame (negative: they overlap)
+          const gx = Math.max(f.x - (p.x + hw), (p.x - hw) - (f.x + f.w)), gy = Math.max(f.y - (p.y + hh), (p.y - hh) - (f.y + f.h));
+          const gap = Math.max(gx, gy);
+          if (gap >= EDGE) continue;
+          const push = gap < 0 ? Math.min(-gap, 60) * .08 + .6 : (1 - gap / EDGE) * .6;
+          if (gx > gy) p.vx += Math.sign(p.x - cx || 1) * push; else p.vy += Math.sign(p.y - cy || 1) * push;
         }
       }
     }
