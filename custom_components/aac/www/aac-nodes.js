@@ -17,6 +17,7 @@ const SVG = "http://www.w3.org/2000/svg";
 const short = (t, n) => (t.length > n ? `${t.slice(0, n - 1)}…` : t); // the box is narrow; the details are below
 const W = 176, HEAD = 40, ROW = 17; // node box: width, title area, one port row
 const LINK = 70; // how far right of its source a wired node wants to sit (at least)
+const STACK = 14; // gap between the cards of a column (a chain adding to the same record)
 const FIELD = 150; // reach of a node's soft push beyond its box
 const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "#8ab4ff", "#ff8a65", "#c792ea", "#7fdbca"];
 const KIND = { source: "source", sink: "sink", transform: "transform", annotating: "adds to the record" };
@@ -157,13 +158,16 @@ class AacNodes extends HTMLElement {
     const nodes = this._data.nodes;
     // New nodes start at their place in the flow: column = steps after a source (answer wires left out),
     // so the field only has to refine, not untangle (a folded chain jams in a local minimum)
-    const wires = this._wires(), back = this._backEdges(wires), rank = {};
+    const wires = this._wires(), back = this._backEdges(wires), rank = {}, depth = {};
     const forward = wires.filter((w) => !back.has(w));
     for (let i = 0; i < nodes.length; i++) {
       let changed = false;
       for (const w of forward) {
-        const r = (rank[w.a.id] ?? 0) + 1;
-        if ((rank[w.b.id] ?? 0) < r) { rank[w.b.id] = r; changed = true; }
+        const stacked = w.a.kind === "annotating" && w.b.kind === "annotating"; // a column: same place, one lower
+        const r = (rank[w.a.id] ?? 0) + (stacked ? 0 : 1), d = stacked ? (depth[w.a.id] ?? 0) + 1 : 0;
+        if ((rank[w.b.id] ?? 0) < r || (stacked && (rank[w.b.id] ?? 0) === r && (depth[w.b.id] ?? 0) < d)) {
+          rank[w.b.id] = r; depth[w.b.id] = d; changed = true;
+        }
       }
       if (!changed) break;
     }
@@ -175,11 +179,18 @@ class AacNodes extends HTMLElement {
     for (const n of nodes) {
       if (this._pos[n.id]) continue;
       if (wired.has(n.id)) {
-        const col = columns[rank[n.id] ?? 0], row = col.indexOf(n.id) - (col.length - 1) / 2;
-        this._pos[n.id] = { x: ((rank[n.id] ?? 0) - mid) * (W + LINK), y: row * 110 + (Math.random() - .5) * 10, vx: 0, vy: 0, pinned: false };
+        const col = columns[rank[n.id] ?? 0].filter((id) => !depth[id]), row = col.indexOf(n.id) - (col.length - 1) / 2;
+        const y = depth[n.id] ? null : row * 110;
+        this._pos[n.id] = { x: ((rank[n.id] ?? 0) - mid) * (W + LINK), y: y ?? 0, vx: 0, vy: 0, pinned: false, depth: depth[n.id] || 0 };
       } else { // nothing wired: the strip at the bottom
         this._pos[n.id] = { x: (parked++ - 3) * (W + 30), y: 400, vx: 0, vy: 0, pinned: false };
       }
+    }
+    // the cards of a column under the head of their chain
+    for (const w of forward) {
+      if (w.a.kind !== "annotating" || w.b.kind !== "annotating") continue;
+      const head = this._pos[w.a.id], p = this._pos[w.b.id];
+      if (p && head && p.depth) { p.x = head.x; p.y = head.y + this._height(w.a) / 2 + STACK + this._height(w.b) / 2; }
     }
     for (const id of Object.keys(this._pos)) if (!nodes.some((n) => n.id === id)) delete this._pos[id];
   }
@@ -282,17 +293,27 @@ class AacNodes extends HTMLElement {
         P[w.b.id].vy += dy; P[w.a.id].vy -= dy;
         continue;
       }
+      (ins[w.b.id] ||= []).push(w); (outs[w.a.id] ||= []).push(w);
+      if (w.a.kind === "annotating" && w.b.kind === "annotating") {
+        // A chain of nodes adding to the same record stacks into a column (owner: one row was far too wide):
+        // the next card sits right under the previous one, aligned
+        const gap = (P[w.a.id].y + this._height(w.a) / 2 + STACK) - (P[w.b.id].y - this._height(w.b) / 2);
+        const ax = P[w.a.id].x - P[w.b.id].x;
+        P[w.b.id].vx += ax * .04; P[w.a.id].vx -= ax * .04;
+        if (gap > 0) { P[w.b.id].vy += gap * .08; P[w.a.id].vy -= gap * .08; }
+        else { P[w.b.id].vy += gap * .01; P[w.a.id].vy -= gap * .01; } // and not far below either
+        continue;
+      }
       // too short or backwards: pushed apart; longer: no pull at all (a long wire pulling its ends in made
       // whole chains telescope together)
       const dx = (o.x + LINK) - i.x, dy = o.y - i.y, kx = dx > 0 ? .06 : 0, ky = .03;
       P[w.b.id].vx += dx * kx; P[w.b.id].vy += dy * ky;
       P[w.a.id].vx -= dx * kx; P[w.a.id].vy -= dy * ky;
-      (ins[w.b.id] ||= []).push(w); (outs[w.a.id] ||= []).push(w);
     }
     // Wires push nodes off them (owner): a card lying on a wire it does not belong to moves aside, so lines do
     // not run through cards and it stays clear which line goes where
     for (const w of wires) {
-      if (back.has(w)) continue;
+      if (back.has(w) || (w.a.kind === "annotating" && w.b.kind === "annotating")) continue;
       const o = this._port(w.a, w.ap, "out"), i = this._port(w.b, w.bp, "in");
       const lx = i.x - o.x, ly = i.y - o.y, len2 = lx * lx + ly * ly;
       if (len2 < 1) continue;
@@ -310,7 +331,7 @@ class AacNodes extends HTMLElement {
     }
     // A node in the middle of a run is pulled onto the line between its neighbours: runs become straight rows
     for (const n of nodes) {
-      if (ins[n.id]?.length !== 1 || outs[n.id]?.length !== 1) continue;
+      if (n.kind === "annotating" || ins[n.id]?.length !== 1 || outs[n.id]?.length !== 1) continue; // columns stand
       const a = ins[n.id][0], b = outs[n.id][0];
       const before = this._port(a.a, a.ap, "out"), after = this._port(b.b, b.bp, "in");
       const mine = (this._port(n, a.bp, "in").y + this._port(n, b.ap, "out").y) / 2;
@@ -349,7 +370,8 @@ class AacNodes extends HTMLElement {
       if (n.id === this._drag?.id) { // held on an elastic band: it follows the cursor, the field still pushes it
         p.vx += (this._drag.tx - p.x) * .18; p.vy += (this._drag.ty - p.y) * .18;
         p.vx *= .62; p.vy *= .62;
-      } else if (p.pinned) { p.vx = p.vy = 0; continue; } else { p.vx *= .82; p.vy *= .82; } // friction
+      } else if (p.pinned) { p.vx = p.vy = 0; continue; } else { p.vx *= .7; p.vy *= .7; } // friction (owner: more drag)
+      if (n.id !== this._drag?.id && Math.abs(p.vx) + Math.abs(p.vy) < .05) { p.vx = p.vy = 0; continue; } // small motion dies out
       const v = Math.hypot(p.vx, p.vy);
       if (v > 25) { p.vx *= 25 / v; p.vy *= 25 / v; } // no node flies off
       p.x += p.vx; p.y += p.vy;
@@ -357,9 +379,8 @@ class AacNodes extends HTMLElement {
     }
     this._layout();
     // Quiet: the field rests until something moves (no CPU for an open view)
-    const backwards = wires.some((w) => !back.has(w) && this._port(w.b, w.bp, "in").x < this._port(w.a, w.ap, "out").x + LINK / 2);
-    this._busy = backwards ? (this._busy || 0) + 1 : 0;
-    if (energy > .08 * nodes.length || this._drag || (backwards && this._busy < 1800)) this._raf = requestAnimationFrame(() => this._step());
+    // A local minimum is fine (owner): rest as soon as the motion is small
+    if (energy > .15 * nodes.length || this._drag) this._raf = requestAnimationFrame(() => this._step());
     else {
       this._svg.classList.add("still");
       this._save();
