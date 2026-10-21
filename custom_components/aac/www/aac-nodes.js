@@ -6,6 +6,7 @@
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const SVG = "http://www.w3.org/2000/svg";
+const short = (t, n) => (t.length > n ? `${t.slice(0, n - 1)}…` : t); // the box is narrow; the details are below
 const W = 176, HEAD = 40, ROW = 17; // node box: width, title area, one port row
 const LINK = 90; // how far right of its source a wired node wants to sit
 const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "#8ab4ff", "#ff8a65", "#c792ea", "#7fdbca"];
@@ -147,6 +148,12 @@ class AacNodes extends HTMLElement {
         const d2 = Math.max(dx * dx + dy * dy, 400), d = Math.sqrt(d2);
         const reach = (W + 40) ** 2, f = Math.min(30, 9000 / d2 + (d2 < reach ? (reach - d2) / reach * 6 : 0));
         a.vx -= dx / d * f; a.vy -= dy / d * f; b.vx += dx / d * f; b.vy += dy / d * f;
+        // Boxes that overlap are pushed apart firmly, along the axis where they overlap least
+        const ox = W + 24 - Math.abs(dx), oy = (this._height(nodes[i]) + this._height(nodes[j])) / 2 + 18 - Math.abs(dy);
+        if (ox > 0 && oy > 0) {
+          if (oy < ox) { const s = Math.sign(dy) || 1, m = oy * .25; a.vy -= s * m; b.vy += s * m; }
+          else { const s = Math.sign(dx) || 1, m = ox * .25; a.vx -= s * m; b.vx += s * m; }
+        }
       }
     }
     // Wires: the target's input wants to sit LINK to the right of the source's output, at the same height
@@ -181,7 +188,7 @@ class AacNodes extends HTMLElement {
       return `<g class="nv-node ${n.on ? "" : "off"} ${this._sel === n.id ? "sel" : ""} ${this._pos[n.id]?.pinned ? "pinned" : ""}" data-node="${esc(n.id)}">
         <rect class="box" x="${-W / 2}" y="${-h / 2}" width="${W}" height="${h}" rx="7"></rect>
         <text x="${-W / 2 + 10}" y="${-h / 2 + 17}">${esc(n.title)}<tspan class="pin" dx="4">📌</tspan></text>
-        <text class="sub" x="${-W / 2 + 10}" y="${-h / 2 + 31}">${esc(n.module_name)}${n.kind === "annotating" ? ` · adds ${esc(n.adds.join(", "))}` : ""}${flow ? ` · ${flow} recent` : ""}</text>
+        <text class="sub" x="${-W / 2 + 10}" y="${-h / 2 + 31}">${esc(short(`${n.module_name}${n.kind === "annotating" ? ` · adds ${n.adds.join(", ")}` : ""}${flow ? ` · ${flow} recent` : ""}`, 30))}</text>
         ${ins.map(([p, t], i) => `<circle cx="${-W / 2}" cy="${row(i)}" r="4.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)}</title></circle>
           <text class="port" x="${-W / 2 + 9}" y="${row(i) + 3.5}">${esc(p)}</text>`).join("")}
         ${outs.map(([p, t], i) => `<circle cx="${W / 2}" cy="${row(i)}" r="4.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)}</title></circle>
