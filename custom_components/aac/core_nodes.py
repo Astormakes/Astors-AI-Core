@@ -1,0 +1,50 @@
+"""The core's own nodes in the request chain (spec/v1.md), until they become node types of their own.
+
+Order in the chain (lowest first; modules fill the gaps): 0 charter · 10 the agent's prompt and HA's own
+tools · 20 memory recalls · 30 the home · 40 the modules' tool sets · 90 setup (only with the owner in the
+chat). A source of requests (the panel chat, voice, HA Assist; heartbeat and triggers through the broker's
+queue) shows as the node "chat" for now.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT
+
+from .home_api import API_ID as HOME_API_ID
+from .request import ANSWER, REQUEST, ModelRequest
+from .setup_api import API_ID as SETUP_API_ID, owner_present
+from .streams import Node
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+
+    from . import AACConfigEntry
+
+PORT = {"requests": REQUEST}
+
+
+def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
+    """The agent, the home and setup as annotating nodes; the request sources as one node."""
+
+    async def agent(request: ModelRequest) -> None:
+        master = request.domain.settings.master
+        if prompt := (master.get(CONF_PROMPT) or "").strip():
+            request.system.append(prompt)
+        for api_id in master.get(CONF_LLM_HASS_API) or []:  # HA's own tools (Assist), if the owner chose them
+            request.add_tools(api_id)
+
+    async def home(request: ModelRequest) -> None:
+        request.add_tools(request.domain.api_id(HOME_API_ID))  # within the owner's access list
+
+    async def setup(request: ModelRequest) -> None:
+        if await owner_present(hass, request.user_id):  # with the owner present it helps set itself up
+            request.add_tools(request.domain.api_id(SETUP_API_ID))
+
+    return [
+        Node(id="chat", title="Chats, voice, Assist", outputs=PORT, inputs={"answers": ANSWER}),
+        Node(id="agent", title="Agent", inputs=PORT, outputs=PORT, adds=["system", "tools"], order=10, annotate=agent),
+        Node(id="home", title="Home", inputs=PORT, outputs=PORT, adds=["tools"], order=30, annotate=home),
+        Node(id="setup", title="Setup (owner present)", inputs=PORT, outputs=PORT, adds=["tools"], order=90, annotate=setup),
+    ]

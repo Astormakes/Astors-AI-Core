@@ -47,6 +47,8 @@ Two classes:
 | `time.tick` | record | `{"at": "…", "name": "every 30 min"}` | a timer node |
 | `broker.request` | record | see below | heartbeat, triggers (built); companion, wake word (planned) |
 | `broker.answer` | record | the finished [run](run.md) (result, chat_id) | the broker node |
+| `model.request` | record | the request record (`request.py`: text, history, system, instructions, context, tools, …), filled by its chain | chats, voice, Assist, the broker's queue (v1) |
+| `model.answer` | record | `{"request", "run", "text", "provider", "model", "stored_now"}` | the model node (v1) |
 | `say` | record | `{"text", "language", "room"}` → spoken | answers, announcements |
 | `notify` | record | `{"title", "text", "to"}` → phone/panel | reminders, findings |
 | `video.frame` | continuous | frames + source | planned (cameras) |

@@ -30,6 +30,8 @@ STREAM_TYPES: dict[str, str] = {
     "time.tick": "record",
     "broker.request": "record",
     "broker.answer": "record",
+    "model.request": "record",  # the structured request record (request.py), filled by its chain
+    "model.answer": "record",
     "say": "record",
     "notify": "record",
     "video.frame": "continuous",
@@ -41,8 +43,10 @@ KEEP_FOR = timedelta(minutes=10)
 
 # run(domain_id, port, item) → anything (handed back to the writer by emit)
 NodeRun = Callable[[str, str, dict[str, Any]], Awaitable[Any]]
-# annotate(source, pcm, record) → fields to add, {"drop": True}, {"split": [...]} or None (audio.segment)
-Annotate = Callable[[Any, bytes, dict[str, Any]], Awaitable[dict[str, Any] | None]]
+# annotate(...): what an annotating node does to a record; its arguments depend on the type:
+# audio.segment: annotate(source, pcm, line) → fields to add, {"drop": True}, {"split": [...]} or None
+# model.request: annotate(request) → adds to the request in place (request.py)
+Annotate = Callable[..., Awaitable[Any]]
 # listen(source, pcm) → records of its own (audio.pcm in windows, e.g. sound captions)
 Listen = Callable[[Any, bytes], Awaitable[list[dict[str, Any]]]]
 

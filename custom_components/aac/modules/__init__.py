@@ -49,6 +49,8 @@ _DEFAULT_OFF: set[str] = set()
 MODULES_DIR = Path(__file__).parent
 MODULES_URL = "/aac_modules"
 _WS_DONE = f"{DOMAIN}_module_ws"
+REQUEST_PORT = {"requests": "model.request"}  # annotating nodes on the request record (request.py)
+TOOLS_ORDER = 40  # tool sets join the request after the system parts (0–19) and context (20–29)
 
 
 @dataclass
@@ -110,7 +112,12 @@ class ModuleContext:
     def add_prompt(self, part, order: int = 50) -> None:
         """Stable text at the start of every agent's system prompt: part(domain_id) → text (lowest order first;
         keep it stable, the server's prompt cache depends on it). Not where the module is off."""
-        self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_prompt(self.module.id, part, order, self.module.id))
+        async def annotate(request) -> None:
+            if text := (part(request.domain.id) or "").strip():
+                request.system.append(text)
+
+        self.add_node(Node(id=self.module.id, title=self.module.manifest.get("name", self.module.id),
+                           inputs=REQUEST_PORT, outputs=REQUEST_PORT, adds=["system"], order=order, annotate=annotate))
 
     def provide_slot(self, slot: str, provider) -> None:
         """Be the provider of a core slot (slots.py, e.g. "memory"); asked only where the module is on."""
@@ -144,6 +151,13 @@ class ModuleContext:
                                  entry=self.entry, module=self.module, domain_id=dom.id)
             self.entry.async_on_unload(llm.async_register_api(self.hass, guarded))
             self.module.api_ids[dom.id] = api_id
+
+        # Its tool set joins every request of a domain where the module is on (a node in the request's chain)
+        async def annotate(request) -> None:
+            request.add_tools(self.module.api_ids.get(request.domain.id))
+
+        self.add_node(Node(id=f"{self.module.id}_tools", title=f"{title} tools", inputs=REQUEST_PORT, outputs=REQUEST_PORT,
+                           adds=["tools"], order=TOOLS_ORDER, annotate=annotate))
 
     def add_ws_commands(self, *handlers) -> None:
         """WebSocket commands (registered once per HA start, they look the entry up themselves)."""

@@ -1,47 +1,24 @@
-"""Conversation agent for AAC – Astor's AI Core."""
+"""HA Assist adapter (spec/v1.md): AAC as Home Assistant's conversation agent.
+
+v1: a thin adapter. A message from HA (an Assist pipeline, a voice satellite, an automation) becomes a
+request of the domain, runs through the same chain and model node as the panel chat (broker.py →
+request.py → model_node.py), and the answer goes back to HA. HA's chat log only keeps the conversation
+for HA; AAC no longer uses it to build prompts or call tools.
+"""
 
 from __future__ import annotations
 
-import json
-import time
-from typing import Any, Literal
-
-import probatio
-import slugify as unicode_slug
+from typing import Literal
 
 from homeassistant.components import conversation
-from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT, MATCH_ALL
+from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import device_registry as dr, intent, llm
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import device_registry as dr, intent
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.json import json_dumps
 
 from . import AACConfigEntry
-from .const import (
-    CONF_MAX_TOKENS,
-    CONF_TEMPERATURE,
-    CONF_THINKING,
-    DEFAULT_MAX_TOKENS,
-    DEFAULT_NAME,
-    DEFAULT_TEMPERATURE,
-    DEFAULT_THINKING,
-    DOMAIN,
-    LOGGER,
-    MAX_TOOL_ITERATIONS,
-    MAX_TOOL_ITERATIONS_AUTO,
-)
-from .context_fit import estimate, fit
-from .models import resolve_model
-from .provider import OpenAICompatProvider, ProviderConnectionError, ProviderContextError, ProviderError
-from .home_api import API_ID as HOME_API_ID
-from .menu_api import AREA_INFO, MENU_API_ID, build_menu, current_menu
-from .setup_api import API_ID as SETUP_API_ID, owner_present
+from .const import DEFAULT_NAME, DOMAIN
 from .domains import Domain
-from .jobs import NO_MODEL
-from .modules import access as module_access
-from .runs import async_notify, current_run
 
 
 async def async_setup_entry(
@@ -53,169 +30,14 @@ async def async_setup_entry(
     async_add_entities([AACConversationEntity(entry, dom) for dom in entry.runtime_data.domains.values()])
 
 
-def _format_tool(tool: llm.Tool, custom_serializer: Any) -> dict[str, Any]:
-    function: dict[str, Any] = {
-        "name": tool.name,
-        "parameters": probatio.to_openapi(
-            tool.parameters,
-            custom_serializer=custom_serializer,
-            openapi_version="3.1.0",
-        ),
-    }
-    if tool.description:
-        function["description"] = tool.description
-    return {"type": "function", "function": function}
-
-
-def _content_to_message(content: conversation.Content) -> dict[str, Any] | None:
-    """Convert HA chat log content to an OpenAI chat message."""
-    if isinstance(content, conversation.ToolResultContent):
-        return {
-            "role": "tool",
-            "tool_call_id": content.tool_call_id,
-            "content": json_dumps(
-                {"data": content.result.data, "error": content.result.error}
-            ),
-        }
-    if isinstance(content, conversation.AssistantContent):
-        message: dict[str, Any] = {"role": "assistant", "content": content.content}
-        if content.tool_calls:
-            message["tool_calls"] = [
-                {
-                    "id": call.id,
-                    "type": "function",
-                    "function": {
-                        "name": call.tool_name,
-                        "arguments": json_dumps(call.tool_args),
-                    },
-                }
-                for call in content.tool_calls
-            ]
-        return message
-    if content.content:
-        return {"role": content.role, "content": content.content}
-    return None
-
-
-def _parse_tool_calls(message: dict[str, Any]) -> list[llm.ToolInput] | None:
-    calls = message.get("tool_calls")
-    if not calls:
-        return None
-    result = []
-    for call in calls:
-        function = call.get("function", {})
-        try:
-            args = json.loads(function.get("arguments") or "{}")
-        except json.JSONDecodeError as err:
-            raise HomeAssistantError(f"Model sent invalid tool arguments: {err}") from err
-        result.append(
-            llm.ToolInput(id=call.get("id"), tool_name=function["name"], tool_args=args)
-        )
-    return result
-
-
-# Automatic runs without tools decide explicitly whether to speak (enforced by the
-# server's grammar). Much more reliable than asking for the word NOTHING: tested
-# 12/12 on Qwen3-8B and 23/24 on Qwen3.6-35B (alarms vs. a quiet home).
-DECISION_FORMAT = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "decision",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {"speak": {"type": "boolean"}, "message": {"type": "string"}},
-            "required": ["speak", "message"],
-            "additionalProperties": False,
-        },
-    },
-}
-DECISION_RULE = (
-    '\nAnswer as JSON: {"speak": true or false, "message": "one short sentence, or empty"}. '
-    'Not worth mentioning (NOTHING) means "speak": false.'
-)
-DECISION_TEMPERATURE = 0.3
-# Tokens kept free besides the answer (max_tokens): the estimate is rough
-CONTEXT_MARGIN = 300
-# Models whose server was asked for its context size (once per start)
-_CONTEXT_ASKED: set[str] = set()
-DECIDE_NOW = (
-    "Now decide: is what you found worth telling the user right now? "
-    "Normal states are not."
-)
-
-
-def _decision_text(content: str | None) -> str | None:
-    """Turn the JSON decision back into plain text ('NOTHING' when not speaking)."""
-    try:
-        decision = json.loads(content or "")
-    except json.JSONDecodeError:
-        return content  # server ignored the format: fall back to the text rules
-    if not isinstance(decision, dict):
-        return content
-    if not decision.get("speak"):
-        return "NOTHING"
-    return str(decision.get("message") or "").strip() or "NOTHING"
-
-
-FINAL_NUDGE = (
-    "Stop using tools now. Give your final answer in plain words "
-    "(or exactly NOTHING if there is nothing to say)."
-)
-
-
-def _strip_tool_text(text: str | None) -> str | None:
-    """Some models write a tool call as plain text when no tools are offered."""
-    if text and "<tool_call>" in text:
-        text = text.split("<tool_call>", 1)[0].strip()
-    return text or None
-
-
-def _steps(contents: list[conversation.Content]) -> list[dict[str, Any]]:
-    """What the model said and which tools it used in one turn, for the run log (menu calls unwrapped:
-    use_tool shows the tool it called, open_area a short note)."""
-    steps: list[dict[str, Any]] = []
-    inner: dict[str, str | None] = {}  # tool call id → the tool use_tool called (None: open_area, no result shown)
-    for content in contents:
-        # thinking = the model's hidden reasoning (reasoning_content); say = what it wrote for the reader
-        # before calling tools (shown in the answer, between the steps); the final answer is the result
-        if isinstance(content, conversation.AssistantContent) and content.thinking_content:
-            steps.append({"type": "thinking", "text": content.thinking_content})
-        if isinstance(content, conversation.AssistantContent) and content.content and content.tool_calls and \
-                content.content.strip() not in [s["text"].strip() for s in steps if s["type"] == "say"]:
-            steps.append({"type": "say", "text": content.content})  # a model stuck in a loop repeats itself
-        if isinstance(content, conversation.AssistantContent) and content.tool_calls:
-            for call in content.tool_calls:
-                if call.tool_name.endswith("__use_tool"):
-                    inner[call.id] = str(call.tool_args.get("tool", "?"))
-                    steps.append({"type": "tool_call", "tool": inner[call.id], "args": call.tool_args.get("arguments") or {}})
-                elif call.tool_name.endswith("__open_area"):
-                    inner[call.id] = None
-                    steps.append({"type": "note", "text": f"opened {call.tool_args.get('area', '?')}"})
-                else:
-                    steps.append({"type": "tool_call", "tool": call.tool_name, "args": call.tool_args})
-        elif isinstance(content, conversation.ToolResultContent):
-            if content.tool_call_id in inner and inner[content.tool_call_id] is None:
-                continue
-            steps.append(
-                {
-                    "type": "tool_result",
-                    "tool": inner.get(content.tool_call_id) or content.tool_name,
-                    "error": bool(content.result.error),
-                    "data": json_dumps(content.result.data)[:500],
-                }
-            )
-    return steps
-
-
-class AACConversationEntity(
-    conversation.ConversationEntity, conversation.AbstractConversationAgent
-):
-    """The AAC master agent. For now: model + optional HA tools, nothing more."""
+class AACConversationEntity(conversation.ConversationEntity, conversation.AbstractConversationAgent):
+    """A domain's agent as HA sees it."""
 
     _attr_has_entity_name = True
     _attr_name = None
     _attr_supports_streaming = False
+    # AAC's tools are always there (the home, memory, the modules), so HA lets it control things
+    _attr_supported_features = conversation.ConversationEntityFeature.CONTROL
 
     def __init__(self, entry: AACConfigEntry, domain: Domain) -> None:
         """Initialize the agent of one domain (the first keeps the old unique id and entity id)."""
@@ -234,14 +56,6 @@ class AACConversationEntity(
         )
 
     @property
-    def supported_features(self) -> conversation.ConversationEntityFeature:
-        """CONTROL while the master may use tools (an HA API, or AAC's own: always there; settings change live)."""
-        settings = self.domain.settings
-        if settings.master.get(CONF_LLM_HASS_API) or self.entry.runtime_data.slots.memory(self.domain.id):
-            return conversation.ConversationEntityFeature.CONTROL
-        return conversation.ConversationEntityFeature(0)
-
-    @property
     def supported_languages(self) -> list[str] | Literal["*"]:
         """Any language the model speaks."""
         return MATCH_ALL
@@ -258,300 +72,32 @@ class AACConversationEntity(
             conversation.async_unset_agent(self.hass, self.entry)
         await super().async_will_remove_from_hass()
 
-    def _streamer(self, run):
-        """on_delta for a panel chat: the text so far (and a tool being called) to open panels, throttled."""
-        last = [0.0, None]
-
-        def send(text: str, tool: str | None) -> None:
-            now = time.monotonic()
-            if tool == last[1] and now - last[0] < 0.08:
-                return
-            last[0], last[1] = now, tool
-            async_notify(self.hass, "delta", chat_id=run.chat_id, domain=self.domain.id, round=send.round,
-                         text=_strip_tool_text(text) or "", tool=tool.split("__")[-1] if tool else None)
-
-        send.round = 0  # one round per model call: the panel folds finished rounds away
-
-        return send
-
-    async def _context_of(self, pool, model_id: str, provider: OpenAICompatProvider) -> tuple[int | None, float]:
-        """The model's context size (asked once from its server, else learned from errors) and token factor."""
-        traits = pool.traits(model_id)
-        if traits["n_ctx"] is None and model_id not in _CONTEXT_ASKED:
-            _CONTEXT_ASKED.add(model_id)
-            if n_ctx := await provider.context_size():
-                pool.learn_context(model_id, n_ctx)
-                traits = pool.traits(model_id)
-        return traits["n_ctx"], traits["token_factor"]
-
-    def _label(self, model_id: str) -> str:
-        """A model's name for messages to the owner."""
-        endpoint = resolve_model(self.hass, self.entry.runtime_data.store, model_id)
-        return next((m["name"] for m in self.entry.runtime_data.store.models if m["id"] == model_id),
-                    endpoint.model if endpoint else model_id)
-
-    def _describe_area(self, area: str, names: list[str]) -> str | None:
-        """One line for an area of the tool menu."""
-        for key, text in AREA_INFO.items():
-            if area == key or area.startswith(f"{key}-"):
-                return text
-        for module in self.entry.runtime_data.modules:  # a module's area: its own description
-            if area.startswith(unicode_slug.slugify(f"AAC {module.manifest.get('name', module.id).lower()}")):
-                return (module.manifest.get("description", "").split(". ")[0][:140]) or None
-        return None
-
-    def _provider(self, endpoint) -> OpenAICompatProvider:
-        # Short connect timeout: a machine that is off must not stall the answer
-        return OpenAICompatProvider(
-            async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key, connect_timeout=3
-        )
-
     async def _async_handle_message(
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
-        """Answer one user message, running tool calls as needed."""
-        store = self.domain.settings  # this domain's settings (models and pools are shared)
-        pool = self.entry.runtime_data.pool
-        options = store.master
-        run = current_run.get()
-        tier = run.tier if run else "master"
-        background = bool(run and run.kind == "auto")  # owner's availability rules apply
-        picked = pool.endpoint_for(tier, background)
-        if picked is None:
-            response = intent.IntentResponse(language=user_input.language)
-            response.async_set_error(
-                intent.IntentResponseErrorCode.UNKNOWN,
-                f"{NO_MODEL}. Open the AAC panel (SETTINGS → Compute).",
-            )
-            return conversation.ConversationResult(
-                response=response, conversation_id=chat_log.conversation_id
-            )
-        model_id, endpoint = picked
-        provider = self._provider(endpoint)
-        api_ids: list[str] | None = None
-        if not run or run.allow_tools:
-            api_ids = list(options.get(CONF_LLM_HASS_API) or [])
-            api_ids.append(self.domain.api_id(HOME_API_ID))  # the home, within the owner's access list
-            for module in self.entry.runtime_data.modules:  # tools the modules bring (memory, lists, …)
-                if (api_id := module.api_ids.get(self.domain.id)) and module_access(
-                    self.entry, module.id, self.domain.id
-                )["enabled"]:
-                    api_ids.append(api_id)
-            if await owner_present(self.hass, user_input.context.user_id):
-                api_ids.append(self.domain.api_id(SETUP_API_ID))  # with the owner present it helps set itself up
-        # Tools as a menu (per model): areas first, an area's tools when the model opens it
-        menu_mode = bool(api_ids) and pool.traits(model_id)["tool_mode"] == "menu"
-        if menu_mode:
-            api_ids.append(self.domain.api_id(MENU_API_ID))
-        try:
-            await chat_log.async_provide_llm_data(
-                user_input.as_llm_context(DOMAIN),
-                api_ids or None,
-                # Prompt parts first (the charter module: the owner's values), stable for the prompt cache
-                f"{self.entry.runtime_data.capabilities.prompt(self.domain.id)}\n\n{options.get(CONF_PROMPT) or ''}".strip(),
-                user_input.extra_system_prompt,
-            )
-        except conversation.ConverseError as err:
-            return err.as_conversation_result()
+        """Answer a message from HA through the domain's request chain."""
+        from .broker import async_run_request, short  # noqa: PLC0415 - avoid an import cycle
 
-        # HA forgets a conversation after 5 idle minutes (and an edited chat starts over): then the
-        # model would get only the newest message. Put AAC's own record of the chat back in front of it.
-        if run and run.history:
-            contents = chat_log.content
-            last_user = max((i for i, c in enumerate(contents) if isinstance(c, conversation.UserContent)), default=None)
-            if last_user is not None and not any(
-                isinstance(c, (conversation.UserContent, conversation.AssistantContent)) for c in contents[:last_user]
-            ):
-                contents[last_user:last_user] = [
-                    conversation.UserContent(content=m["text"]) if m["role"] == "user"
-                    else conversation.AssistantContent(agent_id=self.entity_id, content=m["text"])
-                    for m in run.history
-                ]
-
-        # Context engine (first piece): hand over matching memories ourselves, because
-        # small models rarely call recall on their own. Attached to the user message,
-        # not the system prompt, so the server's prompt cache keeps working.
-        # The memory slot (spec/streams.md): its provider decides what goes along; none = no memory here.
-        memory_hint = None
-        memory = self.entry.runtime_data.slots.memory(self.domain.id)
-        # What the person said themselves (a voice line comes with the room's lines; those are not theirs)
-        own_words = (run.own_words if run and run.own_words else None) or user_input.text
-        if memory and own_words and (memory_hint := await memory.async_context(self.domain.id, own_words)) and run:
-            run.context = f"{run.context}\n\n{memory_hint}".strip()
-
-        first_new = len(chat_log.content)
-        tools = None
-        if chat_log.llm_api:
-            tools = [
-                _format_tool(tool, chat_log.llm_api.custom_serializer)
-                for tool in chat_log.llm_api.tools
-            ]
-            names = [t["function"]["name"] for t in tools]
-            if menu_mode and (prefix := next((n.split("__")[0] for n in names if n.endswith("__open_area")), None)):
-                own = [t for t in tools if t["function"]["name"].startswith(f"{prefix}__")]
-                menu, menu_text = build_menu(chat_log.llm_api, prefix, [t for t in tools if t not in own], self._describe_area)
-                # the areas instead of every tool's instructions; the two menu tools instead of all tools
-                chat_log.content[0] = conversation.SystemContent(
-                    content=chat_log.content[0].content.replace(chat_log.llm_api.api_prompt, menu_text))
-                tools = own
-                current_menu.set(menu)
-
-        params = {
-            "temperature": float(options.get(CONF_TEMPERATURE, DEFAULT_TEMPERATURE)),
-            "max_tokens": int(options.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)),
-            # Understood by llama.cpp / vLLM chat templates (e.g. Qwen3)
-            "chat_template_kwargs": {
-                "enable_thinking": bool(options.get(CONF_THINKING, DEFAULT_THINKING))
-            },
-        }
-
-        decide = bool(run and run.kind == "auto" and not run.allow_tools)
-        if decide:
-            params["response_format"] = DECISION_FORMAT
-            params["temperature"] = min(params["temperature"], DECISION_TEMPERATURE)
-        limit = MAX_TOOL_ITERATIONS_AUTO if run and run.kind == "auto" else MAX_TOOL_ITERATIONS
-        stream_to = self._streamer(run) if run and run.kind == "chat" and run.chat_id and not decide else None
-        left_out, context_retry, no_tools = 0, 0, False
-        for iteration in range(limit + 1):
-            # Last round: no tools, so the model has to answer instead of exploring on
-            final = iteration == limit
-            messages = [
-                m for c in chat_log.content if (m := _content_to_message(c)) is not None
-            ]
-            if memory_hint:
-                last_user = max(i for i, m in enumerate(messages) if m["role"] == "user")
-                messages[last_user] = {
-                    **messages[last_user],
-                    "content": f"{messages[last_user]['content']}\n\n[{memory_hint}]",
-                }
-            if stream_to:
-                stream_to.round = iteration
-            full = messages
-            while True:
-                offered = None if final or no_tools else tools
-                # Only as much of the chat as the model holds: the oldest turns go first
-                n_ctx, factor = await self._context_of(pool, model_id, provider)
-                messages = full
-                if n_ctx:
-                    messages, dropped, _ = fit(full, offered,
-                                               n_ctx - params["max_tokens"] - CONTEXT_MARGIN, factor)
-                    if dropped > left_out:
-                        left_out = dropped
-                        if run:
-                            run.steps.append({"type": "note", "text": f"Context full: the first {dropped} messages "
-                                              f"of this chat were left out ({self._label(model_id)} holds {n_ctx} tokens)."})
-                if final:
-                    messages = [*messages, {"role": "user", "content": FINAL_NUDGE}]
-                if decide and messages and messages[0]["role"] == "system":
-                    # Into the first system message: some chat templates allow no other
-                    messages = [{**messages[0], "content": messages[0]["content"] + DECISION_RULE}, *messages[1:]]
-                try:
-                    if stream_to:  # the owner watches the panel: show the answer while it is written
-                        reply = await provider.chat_stream(
-                            endpoint.model, messages, offered, on_delta=stream_to, **params
-                        )
-                    else:
-                        reply = await provider.chat(endpoint.model, messages, offered, **params)
-                except ProviderContextError as err:
-                    # Longer than the model holds: learn its size (and how far off the estimate was), fit again;
-                    # if even the tool descriptions do not fit (a small model, many tools): answer without tools
-                    sent = estimate(messages, offered)
-                    if context_retry == 1 and offered:
-                        context_retry, no_tools = 2, True
-                        if run:
-                            run.steps.append({"type": "note", "text": f"Context full: {self._label(model_id)} has too "
-                                              "little room for the tools, so this answer is without them."})
-                        continue
-                    if context_retry or not err.n_ctx:
-                        raise HomeAssistantError(
-                            f"This chat no longer fits into {self._label(model_id)} ({err.n_ctx or '?'} tokens of "
-                            "context, the request needed " f"{err.n_prompt or '?'}). Start a new chat, or give the "
-                            "model's server a bigger context (llama.cpp: -c)."
-                        ) from err
-                    context_retry = 1
-                    pool.learn_context(model_id, err.n_ctx, err.n_prompt / sent if err.n_prompt and sent else None)
-                    continue
-                except ProviderConnectionError as err:
-                    # Its machine did not answer (e.g. a PC that is off): next in the pool
-                    pool.mark_down(model_id, str(err))
-                    if (picked := pool.endpoint_for(tier, background)) is None:
-                        raise HomeAssistantError(f"{NO_MODEL}: {err}") from err
-                    LOGGER.info("Master model %s unreachable, using %s", model_id, picked[0])
-                    if run:
-                        run.steps.append({"type": "note", "text": f"{model_id} unreachable, switched to {picked[0]}"})
-                    model_id, endpoint = picked
-                    provider = self._provider(endpoint)
-                    continue
-                except ProviderError as err:
-                    LOGGER.error("Model request failed: %s", err)
-                    raise HomeAssistantError(f"Model request failed: {err}") from err
-                pool.mark_up(model_id)
-                pool.record_speed(model_id, (reply.get("_stats") or {}).get("tokens_per_second"))
-                if run:
-                    run.model = model_id
-                    self.domain.runs.record_request(run, model_id, messages, offered, left_out=left_out,
-                                                    tokens=estimate(messages, offered), n_ctx=n_ctx)
-                break
-
-            async for _tool_result in chat_log.async_add_assistant_content(
-                conversation.AssistantContent(
-                    agent_id=self.entity_id,
-                    content=_decision_text(reply.get("content"))
-                    if decide
-                    else _strip_tool_text(reply.get("content"))
-                    if final
-                    else reply.get("content"),
-                    thinking_content=reply.get("reasoning_content"),
-                    tool_calls=None if final else _parse_tool_calls(reply),
-                )
-            ):
-                pass
-
-            if not chat_log.unresponded_tool_results:
-                break
-
-        if run:
-            run.steps.extend(_steps(chat_log.content[first_new:]))
-
-        # Automatic runs that used tools still end in a structured decision: one more
-        # short call without tools. Free-text answers ("No urgent updates. The lamp is
-        # off.") slipped past the silence check too often.
-        if run and run.kind == "auto" and not decide and chat_log.content[-1].role == "assistant":
-            messages = [m for c in chat_log.content if (m := _content_to_message(c)) is not None]
-            messages.append({"role": "user", "content": DECIDE_NOW + DECISION_RULE})
-            try:
-                reply = await provider.chat(
-                    endpoint.model,
-                    messages,
-                    None,
-                    **{**params, "response_format": DECISION_FORMAT,
-                       "temperature": min(params["temperature"], DECISION_TEMPERATURE)},
-                )
-            except ProviderError as err:
-                LOGGER.warning("Decision call failed, keeping the text answer: %s", err)
-            else:
-                decided = _decision_text(reply.get("content"))
-                run.steps.append({"type": "note", "text": f"decision: {decided}"})
-                async for _ in chat_log.async_add_assistant_content(
-                    conversation.AssistantContent(agent_id=self.entity_id, content=decided)
-                ):
-                    pass
-
-        # Memory write path: keep what was worth keeping, in the background
-        if memory and own_words and (not run or run.kind == "chat"):
-            stored_now = [
-                str(call.tool_args.get("text", ""))
-                for c in chat_log.content[first_new:]
-                if isinstance(c, conversation.AssistantContent) and c.tool_calls
-                for call in c.tool_calls
-                if call.tool_name.endswith("remember")
-            ]
-            self.entry.async_create_background_task(
-                self.hass,
-                memory.async_after_message(self.domain.id, own_words, stored_now, provider, endpoint.model),
-                "aac memory extract",
-            )
-
-        return conversation.async_get_result_from_chat_log(user_input, chat_log)
+        # The conversation so far as HA kept it (HA forgets it after 5 idle minutes)
+        history = [
+            {"role": "user" if isinstance(c, conversation.UserContent) else "aac", "text": c.content}
+            for c in chat_log.content[:-1]
+            if isinstance(c, (conversation.UserContent, conversation.AssistantContent)) and c.content
+        ]
+        run, answer = await async_run_request(
+            self.hass, self.entry, user_input.text,
+            kind="chat", trigger="assist", title=f"Assist · {short(user_input.text)}",
+            conversation_id=chat_log.conversation_id, extra_system_prompt=user_input.extra_system_prompt,
+            user_id=user_input.context.user_id, domain=self.domain, history=history,
+            language=user_input.language, device_id=user_input.device_id,
+        )
+        response = intent.IntentResponse(language=user_input.language)
+        if answer is None:
+            response.async_set_error(intent.IntentResponseErrorCode.UNKNOWN, run.result or "No answer")
+        else:
+            chat_log.async_add_assistant_content_without_tools(
+                conversation.AssistantContent(agent_id=self.entity_id, content=answer.text))
+            response.async_set_speech(answer.text)
+        return conversation.ConversationResult(response=response, conversation_id=chat_log.conversation_id)

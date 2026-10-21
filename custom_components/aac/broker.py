@@ -27,15 +27,16 @@ A request (plain JSON):
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
-
 from typing import TYPE_CHECKING, Any
 
 from datetime import timedelta
 
-from homeassistant.components import conversation
-from homeassistant.core import Context, HomeAssistant
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
+from homeassistant.util.ulid import ulid_now
 
 from .capabilities import parse_time
 from .chats import AAC_CHAT_ID
@@ -43,6 +44,7 @@ from .const import LOGGER
 from .context import home_snapshot
 from .jobs import Job
 from .pools import role_configured
+from .request import ModelRequest, async_prepare
 from .runs import Run, current_run
 from .streams import Node
 
@@ -71,6 +73,14 @@ def is_silent(text: str) -> bool:
     return not text or bool(_NOTHING_RE.match(text)) or text.strip(".!").upper() == SILENT
 
 
+@dataclass
+class Answer:
+    """What a request returns besides its run."""
+
+    text: str
+    conversation_id: str
+
+
 async def async_run_request(
     hass: HomeAssistant,
     entry: AACConfigEntry,
@@ -88,46 +98,42 @@ async def async_run_request(
     domain: Domain | None = None,
     history: list[dict[str, Any]] | None = None,
     own_words: str | None = None,
-) -> tuple[Run, conversation.ConversationResult | None]:
-    """One request to a domain's agent, recorded as a run (steps come from the agent)."""
+    language: str | None = None,
+    device_id: str | None = None,
+) -> tuple[Run, Answer | None]:
+    """One request to a domain's model, recorded as a run: the request record runs through its chain
+    (request.py), the model node answers (model_node.py), readers of model.answer get it (memory's write path)."""
     domain = domain or entry.runtime_data.domain()
     runs = domain.runs
-    run = runs.start(
-        kind,
-        trigger,
-        title,
-        input=text,
-        chat_id=chat_id,
-        context=extra_system_prompt or "",
-        allow_tools=allow_tools,
-        tier=tier,
-        history=history or [],
-        own_words=own_words,
+    request = ModelRequest(
+        domain=domain, text=text, kind=kind, trigger=trigger, title=title, chat_id=chat_id,
+        conversation_id=conversation_id or ulid_now(), user_id=user_id, own_words=own_words,
+        history=list(history or []), tier=tier, allow_tools=allow_tools, language=language or hass.config.language,
+        device_id=device_id, instructions=extra_system_prompt or "",
     )
+    run = runs.start(kind, trigger, title, input=text, chat_id=chat_id, context=extra_system_prompt or "",
+                     allow_tools=allow_tools, tier=tier, history=history or [], own_words=own_words)
     token = current_run.set(run)
     try:
-        result = await conversation.async_converse(
-            hass,
-            text,
-            conversation_id,
-            Context(user_id=user_id),
-            agent_id=domain.entity_id(hass, entry.entry_id) or entry.entry_id,
-            extra_system_prompt=extra_system_prompt,
-        )
+        await async_prepare(hass, entry, request)
+        if request.context:
+            run.context = "\n\n".join(filter(None, [run.context, *request.context]))
+        speech, extra = await entry.runtime_data.model_node.async_answer(request, run)
     except Exception as err:  # noqa: BLE001 - a failed run must not kill the caller
+        if not isinstance(err, HomeAssistantError):
+            LOGGER.exception("AAC: request %s failed", run.id)
         runs.finish(run, "failed", str(err))
         return run, None
     finally:
         current_run.reset(token)
-
-    speech = result.response.speech.get("plain", {}).get("speech", "")
-    if result.response.response_type.value == "error":
-        runs.finish(run, "failed", speech)
-    elif kind == "auto" and is_silent(speech):
+    if kind == "auto" and is_silent(speech):
         runs.finish(run, "silent", speech)
     else:
         runs.finish(run, "done", speech)
-    return run, result
+    # The answer on the bus: e.g. memory keeps what was worth keeping (in the background, nobody waits)
+    entry.async_create_background_task(hass, entry.runtime_data.bus.emit(domain.id, "broker", "model_answers", {
+        "request": request, "run": run, "text": speech, **extra}), f"aac answer {run.id}")
+    return run, Answer(speech, request.conversation_id)
 
 
 def short(text: str, n: int = 40) -> str:
@@ -191,8 +197,8 @@ class BrokerNode:
         """Initialize."""
         self.hass = hass
         self.entry = entry
-        self.node = Node(id="broker", title="Broker", inputs={"requests": "broker.request"},
-                         outputs={"answers": "broker.answer"}, run=self._async_request)
+        self.node = Node(id="broker", title="Model", inputs={"requests": "broker.request", "model": "model.request"},
+                         outputs={"answers": "broker.answer", "model_answers": "model.answer"}, run=self._async_request)
 
     def _busy(self, domain: Domain, trigger: str) -> bool:
         if any(j.domain is domain and trigger in j.tags for j in self.entry.runtime_data.jobs.waiting):

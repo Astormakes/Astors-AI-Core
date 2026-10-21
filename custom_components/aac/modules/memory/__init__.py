@@ -20,7 +20,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from ...const import DOMAIN
 from ...provider import OpenAICompatProvider, ProviderConnectionError
-from .. import ModuleContext
+from ...streams import Node
+from .. import REQUEST_PORT, ModuleContext
 from .api import AACMemoryAPI
 from .extractor import async_extract
 from .store import KINDS, SOURCES, MemoryStore, memory_path, summarize
@@ -105,6 +106,21 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         return [f"- plan: {m.text} (since {m.created[:10]})" for m in await memory.store(domain_id).async_plans()]
 
     ctx.add_open_loops(plans)
+
+    # In the request chain (spec/v1.md): recalls go along with the message; the answer feeds the write path
+    async def recall(request) -> None:
+        if request.words and (hint := await memory.async_context(request.domain.id, request.words)):
+            request.context.append(hint)
+
+    async def keep(domain_id: str, port: str, item: dict) -> None:
+        request = item["request"]
+        if request.kind == "chat" and request.words:  # heartbeats and triggers: nobody said anything
+            await memory.async_after_message(domain_id, request.words, item.get("stored_now") or [],
+                                             item["provider"], item["model"])
+
+    ctx.add_node(Node(id="memory", title="Memory recall", inputs=REQUEST_PORT, outputs=REQUEST_PORT, adds=["context"],
+                      order=20, annotate=recall))
+    ctx.add_node(Node(id="memory_keeper", title="Memory keeper", inputs={"answers": "model.answer"}, run=keep))
     ctx.add_llm_api(lambda dom, api_id, name: AACMemoryAPI(hass=hass, id=api_id, name=name, memory=memory.stores[dom.id]))
     ctx.add_ws_commands(ws_memory_list, ws_memory_save, ws_memory_delete, ws_memory_reembed, ws_facts)
     ctx.add_panel_page("browse", "Memory", "aac-memory-page", "page.js")
