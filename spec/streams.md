@@ -100,7 +100,9 @@ Kinds by ports: **source** (only outputs: a mic, a timer, HA's events), **transf
 
 ## Wiring
 
-- Stored per domain: `[{"from": "stt.lines", "to": "companion.heard", "filter": {"source": "bedroom"}}]`.
+- Stored per domain (built v1, `aac/nodes/wires`, store `node_view.<domain>.wires`): `[{"from": "stt.lines",
+  "to": "companion.heard"}]`; absent = automatic. Chains follow the wires (`Bus.chain`): an annotating node
+  taken out of the chain no longer runs, one wired in elsewhere runs there. Later: `"filter": {"source": "bedroom"}`.
 - **Default wiring by type**: a module that is switched on gets its inputs wired to every matching output
   (`auto`), until the owner changes a wire by hand; then that node's wires are kept as set.
 - `filter` narrows a wire by fields (source, room, kind, language) without a node in between.

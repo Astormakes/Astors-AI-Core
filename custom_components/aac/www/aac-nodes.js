@@ -7,7 +7,9 @@
 // domain. Named containers (frames) group nodes: Shift/Ctrl-click nodes, "Group", name it; drag its name bar
 // to move it with its members, its corner to resize, double-click the name to rename. A node dropped inside a
 // frame joins it, dragged out it leaves; members drift to its middle, other nodes are pushed off its border. Frames are kept
-// per domain in AAC (the start of real groups, spec/streams.md). Read-only for now: wiring by hand comes later. No shadow DOM, so the panel's colours and skins
+// per domain in AAC (the start of real groups, spec/streams.md). Wiring: drag from an output dot to an input
+// dot of the same colour (type); click a wire to select it, Delete removes it. The first change keeps the
+// current wiring plus the change; "Automatic wiring" goes back (aac/nodes/wires). No shadow DOM, so the panel's colours and skins
 // apply. The panel sets .ws(type, data) and .panel, and calls .refresh() when modules change.
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -61,6 +63,7 @@ class AacNodes extends HTMLElement {
     const first = this._loaded !== this._key;
     if (!this._frameDrag) this._frames = (this._data.containers || []).map((f) => ({ ...f, nodes: [...f.nodes] }));
     this._place();
+    this._mode();
     this._draw();
     if (first) { if (this._physics) this._fitWhenQuiet = true; else this._fit(); }
     if (!quiet) this._kick();
@@ -76,6 +79,8 @@ class AacNodes extends HTMLElement {
           <label class="check" style="margin:0"><input type="checkbox" class="nv-physics">Physics</label>
           <span class="hint nv-help"></span>
           <span style="flex:1"></span>
+          <span class="hint nv-wiring"></span>
+          <button class="btn" data-nv="auto" title="Forget the wires set by hand: everything wired by type again">Automatic wiring</button>
           <button class="btn" data-nv="group" title="Put the nodes selected with Shift/Ctrl-click into a named container">Group</button>
           <button class="btn" data-nv="undo" title="Back to the layout saved when Physics went on">Undo</button>
           <button class="btn" data-nv="fit">Fit</button>
@@ -93,7 +98,12 @@ class AacNodes extends HTMLElement {
     this._svg.setAttribute("height", "100%");
     this._svg.style.display = "block";
     this._svg.innerHTML = `<style>
-        .nv-wire { fill: none; stroke-width: 1.6; opacity: .55; }
+        .nv-wire { fill: none; stroke-width: 1.6; opacity: .55; pointer-events: none; }
+        .nv-wire.sel { opacity: 1; stroke-width: 3.4; }
+        .nv-hit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; }
+        .nv-link { fill: none; stroke: var(--text); stroke-width: 1.8; stroke-dasharray: 4 4; pointer-events: none; }
+        .nv-dot { cursor: crosshair; }
+        .nv-dot.ok { stroke: var(--text); stroke-width: 2; }
         .nv-wire.flow { stroke-dasharray: 6 5; animation: nvflow 1.2s linear infinite; opacity: .95; stroke-width: 2.2; }
         @keyframes nvflow { to { stroke-dashoffset: -22; } }
         .nv-node rect.box { fill: var(--bg2, #111); stroke: var(--line); stroke-width: 1.2; }
@@ -184,6 +194,9 @@ class AacNodes extends HTMLElement {
       ? "Drag a node: the others give way · double-click pins it · Shift-click several, then Group · wheel zooms · drag the background to move"
       : "Physics off: nodes stay where you put them · wheel zooms · drag the background to move";
     this.querySelector('[data-nv="undo"]').disabled = !this._undo.length;
+    const byHand = !!this._data?.by_hand;
+    this.querySelector(".nv-wiring").textContent = byHand ? "Wired by hand" : "Wired automatically";
+    this.querySelector('[data-nv="auto"]').style.display = byHand ? "" : "none";
   }
 
   _setPhysics(on) {
@@ -307,15 +320,17 @@ class AacNodes extends HTMLElement {
         <rect class="box" x="${-W / 2}" y="${-h / 2}" width="${W}" height="${h}" rx="7"></rect>
         <text x="${-W / 2 + 10}" y="${-h / 2 + 17}">${esc(n.title)}<tspan class="pin" dx="4">📌</tspan></text>
         <text class="sub" x="${-W / 2 + 10}" y="${-h / 2 + 31}">${esc(short(`${n.module_name}${n.kind === "annotating" ? ` · adds ${n.adds.join(", ")}` : ""}${flow ? ` · ${flow} recent` : ""}`, 30))}</text>
-        ${ins.map(([p, t], i) => `<circle cx="${-W / 2}" cy="${row(i)}" r="4.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)}</title></circle>
+        ${ins.map(([p, t], i) => `<circle class="nv-dot" data-dot="in" data-port="${esc(p)}" data-type="${esc(t)}" cx="${-W / 2}" cy="${row(i)}" r="5.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)}</title></circle>
           <text class="port" x="${-W / 2 + 9}" y="${row(i) + 3.5}">${esc(p)}</text>`).join("")}
-        ${outs.map(([p, t], i) => `<circle cx="${W / 2}" cy="${row(i)}" r="4.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)}</title></circle>
+        ${outs.map(([p, t], i) => `<circle class="nv-dot" data-dot="out" data-port="${esc(p)}" data-type="${esc(t)}" cx="${W / 2}" cy="${row(i)}" r="5.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)} (drag to an input to wire)</title></circle>
           <text class="port" x="${W / 2 - 9}" y="${row(i) + 3.5}" text-anchor="end">${esc(p)}</text>`).join("")}
       </g>`;
     }).join("");
     wiresG.innerHTML = this._wires().map((w, i) => {
       const flow = (w.a.recent || {})[w.ap] > 0;
-      return `<path class="nv-wire ${flow ? "flow" : ""}" data-wire="${i}" stroke="${this._color(w.type)}"><title>${esc(w.a.title)}.${esc(w.ap)} → ${esc(w.b.title)}.${esc(w.bp)} (${esc(w.type)})</title></path>`;
+      const key = `${w.a.id}.${w.ap}|${w.b.id}.${w.bp}`;
+      return `<path class="nv-wire ${flow ? "flow" : ""} ${this._selWire === key ? "sel" : ""}" data-wire="${i}" stroke="${this._color(w.type)}"></path>
+        <path class="nv-hit" data-wire="${i}" data-key="${esc(key)}"><title>${esc(w.a.title)}.${esc(w.ap)} → ${esc(w.b.title)}.${esc(w.bp)} (${esc(w.type)}) · click to select</title></path>`;
     }).join("");
     this.querySelector(".nv-legend").innerHTML = Object.keys(this._colors).sort()
       .map((t) => `<span><span style="display:inline-block;width:.75em;height:.75em;border-radius:50%;background:${this._color(t)};vertical-align:-.05em"></span> ${esc(t)}</span>`).join("");
@@ -342,7 +357,7 @@ class AacNodes extends HTMLElement {
       grip.setAttribute("x", f.w - GRIP - 3); grip.setAttribute("y", f.h - GRIP - 3);
     }
     const wires = this._wires();
-    for (const path of this._svg.querySelectorAll(".nv-wire")) {
+    for (const path of this._svg.querySelectorAll(".nv-wire, .nv-hit")) {
       const w = wires[path.dataset.wire];
       if (!w) continue;
       const o = this._port(w.a, w.ap, "out"), i = this._port(w.b, w.bp, "in");
@@ -376,6 +391,8 @@ class AacNodes extends HTMLElement {
       if (b?.dataset.nv === "undo") this._undoLayout();
       if (b?.dataset.nv === "free") { for (const p of Object.values(this._pos)) p.pinned = false; this._save(); this._draw(); this._kick(); }
       if (b?.dataset.nv === "group") this._group();
+      if (b?.dataset.nv === "auto") this._automatic();
+      if (b?.dataset.nv === "unwire") this._unwire(this._selWire);
       if (b?.dataset.nv === "rename") this._rename(b.dataset.frame);
       if (b?.dataset.nv === "ungroup") {
         this._frames = this._frames.filter((f) => f.id !== b.dataset.frame);
@@ -388,6 +405,23 @@ class AacNodes extends HTMLElement {
     this._svg.addEventListener("pointerdown", (e) => {
       const g = e.target.closest(".nv-node"), fg = e.target.closest(".nv-frame");
       this._svg.setPointerCapture(e.pointerId);
+      this.focus({ preventScroll: true }); // for Delete on a selected wire
+      if (g && e.target.dataset.dot === "out") { // start a wire
+        this._link = { from: `${g.dataset.node}.${e.target.dataset.port}`, type: e.target.dataset.type,
+                       o: this._port(this._data.nodes.find((n) => n.id === g.dataset.node), e.target.dataset.port, "out") };
+        const path = document.createElementNS(SVG, "path");
+        path.setAttribute("class", "nv-link");
+        this._svg.querySelector(".nv-wires").appendChild(path);
+        this._link.path = path;
+        for (const d of this._svg.querySelectorAll('.nv-dot[data-dot="in"]')) d.classList.toggle("ok", d.dataset.type === this._link.type);
+        return;
+      }
+      if (e.target.classList.contains("nv-hit")) { // select a wire
+        this._selWire = e.target.dataset.key; this._sel = null; this._selFrame = null;
+        this._draw(); this._info();
+        return;
+      }
+      if (this._selWire) { this._selWire = null; this._draw(); }
       if (g) {
         const id = g.dataset.node, w = this._world2(e), p = this._pos[id];
         this._drag = { id, dx: p.x - w.x, dy: p.y - w.y, tx: p.x, ty: p.y, moved: false };
@@ -407,6 +441,11 @@ class AacNodes extends HTMLElement {
       }
     });
     this._svg.addEventListener("pointermove", (e) => {
+      if (this._link) {
+        const w = this._world2(e), o = this._link.o, bend = Math.max(40, Math.abs(w.x - o.x) / 2);
+        this._link.path.setAttribute("d", `M${o.x},${o.y} C${o.x + bend},${o.y} ${w.x - bend},${w.y} ${w.x},${w.y}`);
+        return;
+      }
       if (this._drag) {
         const w = this._world2(e), p = this._pos[this._drag.id];
         this._drag.tx = w.x + this._drag.dx; this._drag.ty = w.y + this._drag.dy;
@@ -428,7 +467,21 @@ class AacNodes extends HTMLElement {
         this._layout();
       }
     });
-    const up = () => {
+    const up = (e) => {
+      if (this._link) { // dropped on an input of the same type: a new wire
+        const link = this._link;
+        this._link = null;
+        link.path.remove();
+        for (const d of this._svg.querySelectorAll(".nv-dot.ok")) d.classList.remove("ok");
+        const hit = e && this.getRootNode().elementFromPoint?.(e.clientX, e.clientY);
+        const dot = hit?.closest?.('.nv-dot[data-dot="in"]'), g = dot?.closest(".nv-node");
+        if (dot && g && dot.dataset.type === link.type && !link.from.startsWith(`${g.dataset.node}.`)) {
+          this._wire(link.from, `${g.dataset.node}.${dot.dataset.port}`);
+        } else if (dot) {
+          this._msg.textContent = `Not wired: ${link.type} only goes into an input of the same type (same colour).`;
+        }
+        return;
+      }
       if (this._drag) {
         const p = this._pos[this._drag.id];
         // Let go: with Physics on it keeps its swing and floats into its place
@@ -456,6 +509,13 @@ class AacNodes extends HTMLElement {
       p.pinned = !p.pinned;
       this._save(); this._draw(); this._kick();
     });
+    this.tabIndex = 0;
+    this.addEventListener("keydown", (e) => {
+      if ((e.key === "Delete" || e.key === "Backspace") && this._selWire && !e.target.closest("input, textarea")) {
+        e.preventDefault();
+        this._unwire(this._selWire);
+      }
+    });
     this._svg.addEventListener("wheel", (e) => {
       e.preventDefault();
       const r = this._stage.getBoundingClientRect(), v = this._view;
@@ -464,6 +524,36 @@ class AacNodes extends HTMLElement {
       v.x = mx - (mx - v.x) * k / v.k; v.y = my - (my - v.y) * k / v.k; v.k = k;
       this._layout();
     }, { passive: false });
+  }
+
+  // ------------------------------------------------------------------ wiring by hand
+  _current() {
+    return this._data.wires.map((w) => ({ from: w.from, to: w.to }));
+  }
+
+  async _setWires(wires) {
+    try { await this.ws("aac/nodes/wires", { wires }); this._msg.textContent = ""; }
+    catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
+    await this.refresh();
+  }
+
+  _wire(from, to) {
+    const wires = this._current();
+    if (wires.some((w) => w.from === from && w.to === to)) return;
+    this._setWires([...wires, { from, to }]);
+  }
+
+  _unwire(key) {
+    if (!key) return;
+    const [from, to] = key.split("|");
+    this._selWire = null;
+    this._setWires(this._current().filter((w) => !(w.from === from && w.to === to)));
+  }
+
+  async _automatic() {
+    const ok = this.panel?._confirm ? await this.panel._confirm("Forget the wires set by hand? Everything is wired by type again.", "Automatic wiring", true)
+      : window.confirm("Forget the wires set by hand?");
+    if (ok) this._setWires(null);
   }
 
   // ------------------------------------------------------------------ frames
@@ -514,6 +604,15 @@ class AacNodes extends HTMLElement {
   _info() {
     const box = this.querySelector(".nv-info"), n = this._data?.nodes.find((x) => x.id === this._sel);
     const fr = this._frames.find((f) => f.id === this._selFrame);
+    const wire = this._selWire && this._wires().find((w) => `${w.a.id}.${w.ap}|${w.b.id}.${w.bp}` === this._selWire);
+    if (wire) {
+      box.style.display = "";
+      box.innerHTML = `<h2>WIRE <span class="tag" style="border-color:${this._color(wire.type)}">${esc(wire.type)}</span></h2>
+        <div class="kv"><span class="k">From</span><span class="v">${esc(wire.a.title)} · ${esc(wire.ap)}</span>
+          <span class="k">To</span><span class="v">${esc(wire.b.title)} · ${esc(wire.bp)}</span></div>
+        <div class="actions"><button class="btn danger" data-nv="unwire">Remove wire</button></div>`;
+      return;
+    }
     if (fr) {
       const titles = fr.nodes.map((id) => this._data.nodes.find((x) => x.id === id)?.title || id);
       box.style.display = "";

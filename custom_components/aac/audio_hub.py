@@ -319,10 +319,10 @@ class AudioHub:
         source.ring.append(chunk)
         seg = source.segmenter
         if seg.active and not source.partial_busy and seg.frames - source.partial_at >= PARTIAL_EVERY:
-            if live := next((n for n in self._bus.annotators(self._domain_id, "audio.segment") if n.partial), None):
+            if live := next((n for n in self._bus.chain(self._domain_id, "hearing", "segments")[0] if n.partial), None):
                 source.partial_busy, source.partial_at = True, seg.frames
                 self.entry.async_create_background_task(self.hass, self._async_partial(source, live), f"aac partial {source.id}")
-        for stage in self._bus.media_readers(self._domain_id, "audio.pcm"):  # e.g. sound captions, on all audio
+        for stage, _ in self._bus.wired_from(self._domain_id, "hearing", "audio", listening=True):  # e.g. sound captions
             buf = source.windows.setdefault(stage.id, bytearray())
             buf += chunk
             if len(buf) >= int(stage.window * SAMPLE_RATE * 2):
@@ -369,7 +369,7 @@ class AudioHub:
         ended = dt_util.utcnow()
         seconds = len(pcm) / (SAMPLE_RATE * 2)
         start = ended - timedelta(seconds=seconds)
-        stages = self._bus.annotators(self._domain_id, "audio.segment")
+        stages = self._bus.chain(self._domain_id, "hearing", "segments")[0]
         source.transcribing += 1
         try:
             lines = await self._async_stages(source, pcm, self._segment_line(source, pcm, start), stages)
@@ -468,7 +468,9 @@ class AudioHub:
 
     def hearing(self) -> list[str]:
         """The hearing modules that are on (they read the heard lines)."""
-        return [n.title for n in self._bus.readers(self._domain_id, "text.line")] if self.entry.runtime_data.voice_domain else []
+        if not self.entry.runtime_data.voice_domain:
+            return []
+        return [n.title for n, _ in self._bus.wired_from(self._domain_id, *self._bus.chain(self._domain_id, "hearing", "lines")[1])]
 
     def engine(self, kind: str) -> str | None:
         """What would serve STT/TTS now: the first usable resource of the pool role, else local first."""

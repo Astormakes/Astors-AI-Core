@@ -68,7 +68,7 @@ async def test_annotating_chain_and_concurrent_readers():
     line = {"time": "2026-10-21T12:00:00+00:00", "text": "hi"}
     await bus.emit("d", "mic", "lines", line)
     assert started == ["slow", "fast"] and line["addressed"] is True
-    assert [n.id for n in bus.readers("d", "text.line")] == ["wake", "comp"]
+    assert [n.id for n, _ in bus.wired_from("d", "mic", "lines")] == ["wake", "comp"]
 
 
 async def test_node_view_command(hass, hass_ws_client, mock_entry, configured):
@@ -101,3 +101,35 @@ async def test_node_view_containers(hass, hass_ws_client, mock_entry, configured
     assert [c["nodes"] for c in saved] == [["stt", "voices"], ["heartbeat"]]
     await ws.send_json_auto_id({"type": "aac/nodes"})
     assert [c["name"] for c in (await ws.receive_json())["result"]["containers"]] == ["Ears", "Wakeups"]
+
+
+async def test_wiring_by_hand(hass, hass_ws_client, mock_entry, configured):
+    """The owner's wires replace the automatic ones: a chain runs as wired (memory recall taken out of the
+    request chain), a wrong-typed wire is refused, None goes back to automatic."""
+    from custom_components.aac.request import ModelRequest, async_prepare
+
+    from .conftest import memory_of, setup_aac
+
+    await setup_aac(hass, mock_entry)
+    data = mock_entry.runtime_data
+    await memory_of(hass).async_remember("The drill is on basement shelf 2.", "fact")
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/nodes"})
+    auto = (await ws.receive_json())["result"]
+    assert auto["by_hand"] is False
+    # memory recall out of the request chain: agent's output goes straight to whatever came after memory
+    wires = [w for w in auto["wires"] if "memory.requests" not in (w["from"], w["to"])]
+    after = next(w["to"] for w in auto["wires"] if w["from"] == "memory.requests")
+    wires.append({"from": "agent.requests", "to": after})
+    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": wires})
+    assert (await ws.receive_json())["result"]["by_hand"] is True
+    request = await async_prepare(hass, mock_entry, ModelRequest(domain=data.domain(), text="Where is the drill?"))
+    assert request.context == [] and request.system[0].startswith("Charter")
+
+    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": [{"from": "hearing.audio", "to": "broker.model"}]})
+    assert not (await ws.receive_json())["success"]  # audio into a request input: refused
+
+    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": None})
+    assert (await ws.receive_json())["result"]["by_hand"] is False
+    request = await async_prepare(hass, mock_entry, ModelRequest(domain=data.domain(), text="Where is the drill?"))
+    assert any("basement" in c for c in request.context)

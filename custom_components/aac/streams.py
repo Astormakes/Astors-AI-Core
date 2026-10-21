@@ -86,6 +86,16 @@ class Bus:
         self.nodes: dict[str, Node] = {}
         self._module_enabled = module_enabled or (lambda domain_id, module_id: True)
         self._recent: dict[tuple[str, str, str], deque[dict[str, Any]]] = {}
+        # The owner's own wires per domain: fn(domain_id) → [{"from": "a.p", "to": "b.q"}] or None (automatic)
+        self._stored: Callable[[str], list[dict[str, str]] | None] = lambda domain_id: None
+
+    def set_wiring(self, stored: Callable[[str], list[dict[str, str]] | None]) -> None:
+        """Where the owner's wires come from (the store)."""
+        self._stored = stored
+
+    def wired_by_hand(self, domain_id: str) -> bool:
+        """Has the owner wired this domain himself?"""
+        return self._stored(domain_id) is not None
 
     def set_module_enabled(self, check: Callable[[str, str], bool]) -> None:
         """Set by the module loader."""
@@ -111,18 +121,49 @@ class Bus:
         found = [n for n in self.nodes.values() if n.annotating and kind in n.inputs.values() and self._on(n, domain_id)]
         return sorted(found, key=lambda n: n.order)
 
-    def media_readers(self, domain_id: str, kind: str) -> list[Node]:
-        """Nodes that listen to raw media of a type (audio.pcm) and are on in a domain."""
-        return [n for n in self.nodes.values() if n.listen and kind in n.inputs.values() and self._on(n, domain_id)]
+    def chain(self, domain_id: str, node_id: str, port: str) -> tuple[list[Node], tuple[str, str]]:
+        """The annotating nodes a record from an output runs through, by following the wires (automatic:
+        by their order; wired by hand: as the owner wired them), and the output at the end of the chain."""
+        kind = self.nodes[node_id].outputs[port]
+        wires = self.wires(domain_id)
+        chain: list[Node] = []
+        at = (node_id, port)
+        while True:
+            nxt = next((self.nodes[b] for a, ap, b, bp in wires if (a, ap) == at and self.nodes[b].annotating
+                        and self.nodes[b].inputs.get(bp) == kind and self.nodes[b] not in chain), None)
+            if nxt is None:
+                return chain, at
+            chain.append(nxt)
+            at = (nxt.id, next(p for p, k in nxt.outputs.items() if k == kind))
 
-    def readers(self, domain_id: str, kind: str) -> list[Node]:
-        """Ordinary (not annotating) nodes with an input of a type that are on in a domain."""
-        return [n for n in self.nodes.values() if not n.annotating and n.run and kind in n.inputs.values()
-                and self._on(n, domain_id)]
+    def wired_from(self, domain_id: str, node_id: str, port: str, listening: bool = False) -> list[tuple[Node, str]]:
+        """The ordinary nodes (and their input) wired to an output; listening: those that read raw media."""
+        found = []
+        for a, ap, b, bp in self.wires(domain_id):
+            reader = self.nodes[b]
+            if (a, ap) == (node_id, port) and not reader.annotating and (reader.listen if listening else reader.run) \
+                    and (reader, bp) not in found:
+                found.append((reader, bp))
+        return found
 
     def wires(self, domain_id: str) -> list[tuple[str, str, str, str]]:
-        """(from node, from port, to node, to port) in a domain: default wiring by type. A type with
-        annotating nodes runs through them as a chain: writers → first → … → last → readers."""
+        """(from node, from port, to node, to port) in a domain: the owner's wires (of nodes that exist and are
+        on, with matching types), or the automatic ones."""
+        stored = self._stored(domain_id)
+        if stored is None:
+            return self.default_wires(domain_id)
+        found = []
+        for wire in stored:
+            (a, _, ap), (b, _, bp) = wire["from"].partition("."), wire["to"].partition(".")
+            src, dst = self.nodes.get(a), self.nodes.get(b)
+            if src and dst and self._on(src, domain_id) and self._on(dst, domain_id) \
+                    and src.outputs.get(ap) and src.outputs.get(ap) == dst.inputs.get(bp):
+                found.append((a, ap, b, bp))
+        return list(dict.fromkeys(found))
+
+    def default_wires(self, domain_id: str) -> list[tuple[str, str, str, str]]:
+        """The automatic wiring by type. A type with annotating nodes runs through them as a chain in their
+        order: writers → first → … → last → readers."""
         found = []
         for src in self.nodes.values():
             if not self._on(src, domain_id) or src.annotating:
@@ -154,16 +195,9 @@ class Bus:
         record = item if "time" in item else {"time": dt_util.utcnow().isoformat(), **item}
         recent = self._recent.setdefault((domain_id, node_id, port), deque(maxlen=KEEP_RECORDS))
         recent.append(record)
-        # Its readers: wired to this output, or (a type with annotating nodes) to the chain's last one;
+        # Its readers: wired to this output, or (through annotating nodes) to the end of its chain;
         # whoever writes such a type has run the chain already (the audio hub with each segment)
-        kind = node.outputs[port]
-        chain = self.annotators(domain_id, kind)
-        tail = (chain[-1].id, next(p for p, k in chain[-1].outputs.items() if k == kind)) if chain else (node_id, port)
-        readers = []
-        for src, out_port, dst, in_port in self.wires(domain_id):
-            reader = self.nodes.get(dst)
-            if (src, out_port) == tail and reader and reader.run and not reader.annotating and (reader, in_port) not in readers:
-                readers.append((reader, in_port))
+        readers = self.wired_from(domain_id, *self.chain(domain_id, node_id, port)[1])
 
         async def deliver(reader: Node, in_port: str) -> Any:
             try:

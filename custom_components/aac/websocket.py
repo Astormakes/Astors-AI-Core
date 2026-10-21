@@ -80,6 +80,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_modules,
         ws_nodes,
         ws_node_containers,
+        ws_node_wires,
         ws_module_settings,
         ws_module_access,
         ws_jobs,
@@ -664,6 +665,7 @@ def ws_nodes(hass: HomeAssistant, connection, msg) -> None:
         node["module_name"] = names.get(node["module"], "Core") if node["module"] else "Core"
     summary["types"] = STREAM_TYPES
     summary["containers"] = entry.runtime_data.store.data["node_view"].get(dom.id, {}).get("containers", [])
+    summary["by_hand"] = entry.runtime_data.bus.wired_by_hand(dom.id)
     connection.send_result(msg["id"], summary)
 
 
@@ -675,6 +677,35 @@ _CONTAINER = vol.Schema({
     vol.Required("w"): vol.All(vol.Coerce(float), vol.Range(min=60, max=20000)),
     vol.Required("h"): vol.All(vol.Coerce(float), vol.Range(min=60, max=20000)),
 })
+
+
+_WIRE = vol.Schema({vol.Required("from"): vol.Match(r"^[\w-]+\.[\w-]+$"), vol.Required("to"): vol.Match(r"^[\w-]+\.[\w-]+$")})
+
+
+@aac_command({vol.Required("type"): "aac/nodes/wires", vol.Required("wires"): vol.Any(None, [_WIRE])})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_node_wires(hass: HomeAssistant, connection, msg) -> None:
+    """The owner's own wires of the domain (None: back to the automatic wiring). A wire must join an output
+    and an input of the same type."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    bus, dom = entry.runtime_data.bus, _d(entry, msg)
+    wires = msg["wires"]
+    for wire in wires or []:
+        (a, _, ap), (b, _, bp) = wire["from"].partition("."), wire["to"].partition(".")
+        src, dst = bus.nodes.get(a), bus.nodes.get(b)
+        if not src or not dst or a == b or not src.outputs.get(ap) or src.outputs.get(ap) != dst.inputs.get(bp):
+            connection.send_error(msg["id"], "invalid", f"{wire['from']} → {wire['to']}: not an output and an input of the same type")
+            return
+    view = entry.runtime_data.store.data["node_view"].setdefault(dom.id, {})
+    if wires is None:
+        view.pop("wires", None)
+    else:
+        view["wires"] = [dict(w) for w in {(w["from"], w["to"]): w for w in wires}.values()]
+    await entry.runtime_data.store.async_save()
+    async_notify(hass, "modules", domain=dom.id)
+    connection.send_result(msg["id"], {"by_hand": bus.wired_by_hand(dom.id)})
 
 
 @aac_command({vol.Required("type"): "aac/nodes/containers", vol.Required("containers"): [_CONTAINER]})

@@ -60,8 +60,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Job queue (jobs.py): tell the owner once when no model is available; a job that waited
     # longer than postpone_notice minutes is told so when it finally runs
     "queue": {"notify_no_model": True, "postpone_notice": 10},
-    # The node view per domain: named, resizable containers ({id, name, nodes, x, y, w, h}); node positions
-    # stay in the browser
+    # The node view per domain: named, resizable containers ({id, name, nodes, x, y, w, h}) and the owner's
+    # own wires ({"wires": [{"from": "a.port", "to": "b.port"}]}; absent = automatic); positions stay in the browser
     "node_view": {},
     # Module settings per domain: {domain id: {module id: {key: value}}} (defaults in the manifests)
     "module_settings": {},

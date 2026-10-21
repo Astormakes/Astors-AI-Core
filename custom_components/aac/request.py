@@ -63,8 +63,9 @@ class ModelRequest:
 
 
 async def async_prepare(hass: HomeAssistant, entry: AACConfigEntry, request: ModelRequest) -> ModelRequest:
-    """Run the request through its chain: every annotating node of `model.request` that is on in its domain."""
-    for node in entry.runtime_data.bus.annotators(request.domain.id, REQUEST):
+    """Run the request through its chain: the annotating nodes wired after the request sources ("chat"),
+    in the order of the wires (automatic: by their order numbers)."""
+    for node in entry.runtime_data.bus.chain(request.domain.id, "chat", "requests")[0]:
         if node.annotate is None:
             continue
         try:
