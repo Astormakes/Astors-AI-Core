@@ -1,6 +1,6 @@
 # Progress
 
-**v1 rewrite on `main`** (owner, 2026-10-21: "no branch, scrap what doesn't fit, reuse what can be used"): plan in `spec/v1.md`; the last v0 is the tag `v0.50.1-last-v0`, which the real HA runs (0.50.1) until the switch. The deploy script refuses 1.x without `AAC_ALLOW_V1=1`.
+**v1 rewrite on `main`** (owner, 2026-10-21: "no branch, scrap what doesn't fit, reuse what can be used"): plan in `spec/v1.md`; the last v0 is the tag `v0.50.1-last-v0`, which the real HA runs (0.50.1) until the switch. The deploy script refuses 1.x without `AAC_ALLOW_V1=1`. **Phase 1, first step done:** request record + chain (`request.py`), the model node's own tool loop (`model_node.py`, no HA chat log), core chain nodes (`core_nodes.py`), charter/memory/module tools as annotating nodes, `conversation.py` a thin Assist adapter. Tests 138. A **local test HA** (`~/cluade/AAC/dev-ha`, port 8124, see docs/dev-environment.md) runs the working tree: a chat question (4 s, tool used), an Assist action (bed light switched) and a silent heartbeat checked with the real 35B. Next in phase 1: node types vs. instances, stored wires, the new data layout.
 
 Running log for AAC. Read this first in a new session. Newest state on top.
 
