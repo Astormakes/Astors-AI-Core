@@ -791,7 +791,7 @@ class AacPanel extends HTMLElement {
       if (navigate || !this._view) this._view = `chat/${id}`;
     } catch (e) {
       this._chat = null;
-      if (this._view === `chat/${id}`) this._view = "chat/new";
+      if (this._view === `chat/${id}`) { this._view = "chat/new"; this._chatGone = true; }  // say so instead of a silent empty chat
     }
     this._render();
   }
@@ -826,6 +826,7 @@ class AacPanel extends HTMLElement {
     this._view = view;
     this._navOpen = false;
     this._flash = null;
+    this._chatGone = false;
     if (view === "models/new") this._form = { name: "", base_url: "", api_key: "", model: "", models: [], msg: null };
     if (view.startsWith("model/edit/")) {
       const m = (this._models?.manual || []).find((x) => x.id === view.slice(11));
@@ -1212,7 +1213,8 @@ class AacPanel extends HTMLElement {
     const isAac = chat?.id === "aac";
     const log = msgs.length
       ? msgs.map((m, i) => this._bubbleHtml(m, i, msgs, { editable: !isAac, details: isAac, key: "m" })).join("")
-      : `<div class="welcome"><div class="big">AAC</div>${!master ? "No master model yet. Open SETUP to choose one."
+      : `<div class="welcome"><div class="big">AAC</div>${this._chatGone ? "That chat no longer exists (it was deleted). This is a new chat."
+          : !master ? "No master model yet. Open SETUP to choose one."
           : this._state?.pools?.roles?.master?.active ? "Ask me anything." : "No master model is reachable right now (see Compute)."}</div>`;
     const busy = this._busy ? `<div class="bubble aac busy"><div class="who">AAC</div>${this._streamHtml()}</div>` : "";
     const title = chat ? chat.title : "NEW CHAT";
@@ -1248,7 +1250,9 @@ class AacPanel extends HTMLElement {
       <div class="card"><h2>${icon("bolt")} RUN</h2>
         <div class="kv">${rows.map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span>`).join("")}</div>
         ${r.context ? `<details class="steps"><summary>CONTEXT ADDED FOR THIS RUN</summary><pre>${esc(r.context)}</pre></details>` : ""}
-        ${r.chat_id ? `<div class="actions"><button class="btn" data-go="chat/${esc(r.chat_id)}">Open chat</button></div>` : ""}
+        ${!r.chat_id ? "" : (this._chats || []).some((c) => c.id === r.chat_id)
+          ? `<div class="actions"><button class="btn" data-go="chat/${esc(r.chat_id)}">Open chat</button></div>`
+          : '<p class="hint">Its chat was deleted.</p>'}
       </div>`);
   }
 
@@ -1313,7 +1317,7 @@ class AacPanel extends HTMLElement {
         <span class="dot ${STATUS_DOT[r.status] || ""}"></span>
         <div style="flex:1;min-width:0"><div class="n">${esc(fmtTime(r.started))} · ${r.status === "silent" ? "nothing to report" : r.status === "done" ? "said something" : esc(r.status)}</div>
           ${r.status !== "silent" && r.result ? `<div class="m">${esc(r.result.length > 220 ? r.result.slice(0, 220) + "…" : r.result)}</div>` : ""}</div>
-        <span class="actions" style="margin:0">${r.chat_id && (this._chats || []).some((c) => c.id === r.chat_id) ? `<button class="btn" data-go="chat/${esc(r.chat_id)}">Chat</button>` : ""}<button class="btn" data-go="run/${esc(r.id)}">Details</button></span>
+        <span class="actions" style="margin:0">${r.chat_id && (this._chats || []).some((c) => c.id === r.chat_id) ? `<button class="btn" data-go="chat/${esc(r.chat_id)}">Chat</button>` : ""}${r.chat_id && !(this._chats || []).some((c) => c.id === r.chat_id) ? '<span class="hint">chat deleted</span>' : ""}<button class="btn" data-go="run/${esc(r.id)}">Details</button></span>
       </div>`).join("");
     return this._page("HEARTBEAT", hb.enabled ? `every ${esc(hb.interval)} min` : "off", `
       <div class="cards">
