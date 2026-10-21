@@ -4,7 +4,10 @@
 // left-to-right flow; drag one and the others give way, let go and it floats into its place. Double-click
 // pins a node where it is. With Physics off, everything stays where it is and you place nodes by hand.
 // Switching Physics on saves the layout first; Undo goes back to it. Positions are kept per browser and
-// domain. Read-only for now: wiring by hand comes later. No shadow DOM, so the panel's colours and skins
+// domain. Named containers (frames) group nodes: Shift/Ctrl-click nodes, "Group", name it; drag its name bar
+// to move it with its members, its corner to resize, double-click the name to rename. A node dropped inside a
+// frame joins it, dragged out it leaves; members are kept inside, other nodes are pushed out. Frames are kept
+// per domain in AAC (the start of real groups, spec/streams.md). Read-only for now: wiring by hand comes later. No shadow DOM, so the panel's colours and skins
 // apply. The panel sets .ws(type, data) and .panel, and calls .refresh() when modules change.
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -16,6 +19,7 @@ const FIELD = 150; // reach of a node's soft push beyond its box
 const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "#8ab4ff", "#ff8a65", "#c792ea", "#7fdbca"];
 const KIND = { source: "source", sink: "sink", transform: "transform", annotating: "adds to the record" };
 const UNDO_STEPS = 10;
+const BAR = 26, PAD = 26, GRIP = 16; // frame: name bar, room around members, resize corner
 
 class AacNodes extends HTMLElement {
   constructor() {
@@ -28,6 +32,8 @@ class AacNodes extends HTMLElement {
     this._undo = []; // layouts saved when Physics went on (newest last)
     this._physics = true;
     this._loaded = null; // the domain whose saved layout is loaded
+    this._frames = []; // named containers {id, name, nodes, x, y, w, h} (AAC keeps them per domain)
+    this._multi = new Set(); // nodes selected with Shift/Ctrl for "Group"
   }
 
   connectedCallback() {
@@ -53,6 +59,7 @@ class AacNodes extends HTMLElement {
     try { this._data = await this.ws("aac/nodes"); this._error = null; } catch (e) { this._error = e.message || String(e); }
     if (this._error) { this._msg.textContent = this._error; return; }
     const first = this._loaded !== this._key;
+    if (!this._frameDrag) this._frames = (this._data.containers || []).map((f) => ({ ...f, nodes: [...f.nodes] }));
     this._place();
     this._draw();
     if (first) { if (this._physics) this._fitWhenQuiet = true; else this._fit(); }
@@ -69,6 +76,7 @@ class AacNodes extends HTMLElement {
           <label class="check" style="margin:0"><input type="checkbox" class="nv-physics">Physics</label>
           <span class="hint nv-help"></span>
           <span style="flex:1"></span>
+          <button class="btn" data-nv="group" title="Put the nodes selected with Shift/Ctrl-click into a named container">Group</button>
           <button class="btn" data-nv="undo" title="Back to the layout saved when Physics went on">Undo</button>
           <button class="btn" data-nv="fit">Fit</button>
           <button class="btn" data-nv="free" title="Release every pinned node">Unpin all</button>
@@ -97,7 +105,13 @@ class AacNodes extends HTMLElement {
         .nv-node text { fill: var(--text); font-size: 12px; font-family: inherit; pointer-events: none; }
         .nv-node text.sub, .nv-node text.port { fill: var(--dim); font-size: 10px; }
         .nv-node { cursor: grab; }
-      </style><g class="nv-world"><g class="nv-wires"></g><g class="nv-nodes"></g></g>`;
+        .nv-node.multi rect.box { stroke: var(--magenta); stroke-width: 2.2; }
+        .nv-frame .fbox { fill: var(--cyan); fill-opacity: .035; stroke: var(--line); stroke-dasharray: 5 4; }
+        .nv-frame.sel .fbox { stroke: var(--cyan); stroke-dasharray: none; }
+        .nv-frame .fbar { fill: var(--cyan); fill-opacity: .09; cursor: move; }
+        .nv-frame .fname { fill: var(--text); font-size: 13px; font-weight: 600; letter-spacing: .04em; pointer-events: none; }
+        .nv-frame .fgrip { fill: var(--line); cursor: nwse-resize; }
+      </style><g class="nv-world"><g class="nv-frames"></g><g class="nv-wires"></g><g class="nv-nodes"></g></g>`;
     this._stage.appendChild(this._svg);
     this._world = this._svg.querySelector(".nv-world");
     this._bind();
@@ -143,13 +157,14 @@ class AacNodes extends HTMLElement {
   }
 
   _snapshot() {
-    return Object.fromEntries(Object.entries(this._pos).map(([id, p]) => [id, { x: Math.round(p.x), y: Math.round(p.y), pinned: p.pinned }]));
+    return { pos: Object.fromEntries(Object.entries(this._pos).map(([id, p]) => [id, { x: Math.round(p.x), y: Math.round(p.y), pinned: p.pinned }])),
+             frames: this._frames.map((f) => ({ ...f, nodes: [...f.nodes] })) };
   }
 
   _save() {
     if (!this._loaded) return;
     try {
-      localStorage.setItem(this._key, JSON.stringify({ pos: this._snapshot(), physics: this._physics, undo: this._undo.slice(-UNDO_STEPS) }));
+      localStorage.setItem(this._key, JSON.stringify({ pos: this._snapshot().pos, physics: this._physics, undo: this._undo.slice(-UNDO_STEPS) }));
     } catch (e) { /* private window: the layout is not kept */ }
   }
 
@@ -166,7 +181,7 @@ class AacNodes extends HTMLElement {
   _mode() {
     this.querySelector(".nv-physics").checked = this._physics;
     this.querySelector(".nv-help").textContent = this._physics
-      ? "Drag a node: the others give way · double-click pins it · wheel zooms · drag the background to move"
+      ? "Drag a node: the others give way · double-click pins it · Shift-click several, then Group · wheel zooms · drag the background to move"
       : "Physics off: nodes stay where you put them · wheel zooms · drag the background to move";
     this.querySelector('[data-nv="undo"]').disabled = !this._undo.length;
   }
@@ -189,7 +204,8 @@ class AacNodes extends HTMLElement {
     const last = this._undo.pop();
     if (!last) return;
     this._physics = false; // the restored layout stays as it was
-    for (const [id, p] of Object.entries(last)) if (this._pos[id]) Object.assign(this._pos[id], { x: p.x, y: p.y, vx: 0, vy: 0, pinned: !!p.pinned });
+    for (const [id, p] of Object.entries(last.pos || last)) if (this._pos[id]) Object.assign(this._pos[id], { x: p.x, y: p.y, vx: 0, vy: 0, pinned: !!p.pinned });
+    if (last.frames) { this._frames = last.frames; this._saveFrames(); }
     this._mode();
     this._save();
     this._draw();
@@ -231,6 +247,24 @@ class AacNodes extends HTMLElement {
       P[w.b.id].vx += dx * k; P[w.b.id].vy += dy * k;
       P[w.a.id].vx -= dx * k; P[w.a.id].vy -= dy * k;
     }
+    // Frames: members are kept inside the walls, every other node is pushed out
+    for (const f of this._frames) {
+      for (const n of nodes) {
+        const p = P[n.id], hw = W / 2, hh = this._height(n) / 2;
+        if (f.nodes.includes(n.id)) {
+          const l = f.x + PAD / 2 + hw, r = f.x + f.w - PAD / 2 - hw, t = f.y + BAR + PAD / 2 + hh, b = f.y + f.h - PAD / 2 - hh;
+          if (p.x < l) p.vx += (Math.min(l, r) - p.x) * .15; else if (p.x > r) p.vx -= (p.x - Math.max(l, r)) * .15;
+          if (p.y < t) p.vy += (Math.min(t, b) - p.y) * .15; else if (p.y > b) p.vy -= (p.y - Math.max(t, b)) * .15;
+        } else {
+          const ox = Math.min(p.x + hw, f.x + f.w) - Math.max(p.x - hw, f.x) + 14;
+          const oy = Math.min(p.y + hh, f.y + f.h) - Math.max(p.y - hh, f.y) + 14;
+          if (ox > 0 && oy > 0) { // inside or touching: out along the shorter way
+            const cx = f.x + f.w / 2, cy = f.y + f.h / 2;
+            if (ox < oy) p.vx += Math.sign(p.x - cx || 1) * ox * .2; else p.vy += Math.sign(p.y - cy || 1) * oy * .2;
+          }
+        }
+      }
+    }
     // A soft pull to the middle, then inertia with friction
     let energy = 0;
     for (const n of nodes) {
@@ -258,11 +292,14 @@ class AacNodes extends HTMLElement {
   // ------------------------------------------------------------------ drawing
   _draw() {
     const nodesG = this._svg.querySelector(".nv-nodes"), wiresG = this._svg.querySelector(".nv-wires");
+    this._svg.querySelector(".nv-frames").innerHTML = this._frames.map((f) => `<g class="nv-frame ${this._selFrame === f.id ? "sel" : ""}" data-frame="${esc(f.id)}">
+        <rect class="fbox" rx="10"></rect><rect class="fbar" rx="10" height="${BAR}"></rect>
+        <text class="fname">${esc(f.name || "Unnamed")}</text><rect class="fgrip" width="${GRIP}" height="${GRIP}" rx="3"></rect></g>`).join("");
     nodesG.innerHTML = this._data.nodes.map((n) => {
       const h = this._height(n), ins = Object.entries(n.inputs), outs = Object.entries(n.outputs);
       const row = (i) => -h / 2 + HEAD + ROW * i + ROW / 2;
       const flow = Object.values(n.recent || {}).reduce((s, v) => s + v, 0);
-      return `<g class="nv-node ${n.on ? "" : "off"} ${this._sel === n.id ? "sel" : ""} ${this._pos[n.id]?.pinned ? "pinned" : ""}" data-node="${esc(n.id)}">
+      return `<g class="nv-node ${n.on ? "" : "off"} ${this._sel === n.id ? "sel" : ""} ${this._multi.has(n.id) && this._multi.size > 1 ? "multi" : ""} ${this._pos[n.id]?.pinned ? "pinned" : ""}" data-node="${esc(n.id)}">
         <rect class="box" x="${-W / 2}" y="${-h / 2}" width="${W}" height="${h}" rx="7"></rect>
         <text x="${-W / 2 + 10}" y="${-h / 2 + 17}">${esc(n.title)}<tspan class="pin" dx="4">📌</tspan></text>
         <text class="sub" x="${-W / 2 + 10}" y="${-h / 2 + 31}">${esc(short(`${n.module_name}${n.kind === "annotating" ? ` · adds ${n.adds.join(", ")}` : ""}${flow ? ` · ${flow} recent` : ""}`, 30))}</text>
@@ -290,6 +327,16 @@ class AacNodes extends HTMLElement {
       const p = this._pos[g.dataset.node];
       if (p) g.setAttribute("transform", `translate(${p.x},${p.y})`);
     }
+    for (const g of this._svg.querySelectorAll(".nv-frame")) {
+      const f = this._frames.find((x) => x.id === g.dataset.frame);
+      if (!f) continue;
+      g.setAttribute("transform", `translate(${f.x},${f.y})`);
+      const [box, bar, name, grip] = g.children;
+      box.setAttribute("width", f.w); box.setAttribute("height", f.h);
+      bar.setAttribute("width", f.w);
+      name.setAttribute("x", 12); name.setAttribute("y", BAR / 2 + 4.5);
+      grip.setAttribute("x", f.w - GRIP - 3); grip.setAttribute("y", f.h - GRIP - 3);
+    }
     const wires = this._wires();
     for (const path of this._svg.querySelectorAll(".nv-wire")) {
       const w = wires[path.dataset.wire];
@@ -303,7 +350,8 @@ class AacNodes extends HTMLElement {
   _fit() {
     const ps = Object.values(this._pos);
     if (!ps.length || !this._stage.clientWidth) return;
-    const xs = ps.map((p) => p.x), ys = ps.map((p) => p.y);
+    const xs = [...ps.map((p) => p.x), ...this._frames.flatMap((f) => [f.x + W / 2, f.x + f.w - W / 2])];
+    const ys = [...ps.map((p) => p.y), ...this._frames.flatMap((f) => [f.y + 60, f.y + f.h - 60])];
     const w = Math.max(...xs) - Math.min(...xs) + W + 80, h = Math.max(...ys) - Math.min(...ys) + 200;
     const k = Math.min(1.3, this._stage.clientWidth / w, this._stage.clientHeight / h);
     this._view = { k, x: -(Math.max(...xs) + Math.min(...xs)) / 2 * k, y: -(Math.max(...ys) + Math.min(...ys)) / 2 * k };
@@ -323,17 +371,33 @@ class AacNodes extends HTMLElement {
       if (b?.dataset.nv === "fit") this._fit();
       if (b?.dataset.nv === "undo") this._undoLayout();
       if (b?.dataset.nv === "free") { for (const p of Object.values(this._pos)) p.pinned = false; this._save(); this._draw(); this._kick(); }
+      if (b?.dataset.nv === "group") this._group();
+      if (b?.dataset.nv === "rename") this._rename(b.dataset.frame);
+      if (b?.dataset.nv === "ungroup") {
+        this._frames = this._frames.filter((f) => f.id !== b.dataset.frame);
+        this._selFrame = null;
+        this._saveFrames(); this._draw(); this._info(); this._kick();
+      }
       const go = e.target.closest("[data-go]");
       if (go) this.panel?._go(go.dataset.go);
     });
     this._svg.addEventListener("pointerdown", (e) => {
-      const g = e.target.closest(".nv-node");
+      const g = e.target.closest(".nv-node"), fg = e.target.closest(".nv-frame");
       this._svg.setPointerCapture(e.pointerId);
       if (g) {
         const id = g.dataset.node, w = this._world2(e), p = this._pos[id];
         this._drag = { id, dx: p.x - w.x, dy: p.y - w.y, tx: p.x, ty: p.y, moved: false };
-        this._sel = id;
+        // Shift/Ctrl adds to the selection for "Group"; a plain click selects only this one
+        if (e.shiftKey || e.ctrlKey || e.metaKey) { if (this._multi.has(id)) this._multi.delete(id); else this._multi.add(id); }
+        else this._multi = new Set([id]);
+        this._sel = id; this._selFrame = null;
+        this._draw();
         this._kick();
+      } else if (fg && (e.target.classList.contains("fbar") || e.target.classList.contains("fgrip"))) {
+        const f = this._frames.find((x) => x.id === fg.dataset.frame), w = this._world2(e);
+        this._frameDrag = { f, resize: e.target.classList.contains("fgrip"), last: w, moved: false };
+        this._selFrame = f.id; this._sel = null;
+        this._draw(); this._info();
       } else {
         this._pan = { x: e.clientX - this._view.x, y: e.clientY - this._view.y };
       }
@@ -345,6 +409,16 @@ class AacNodes extends HTMLElement {
         this._drag.moved = true;
         if (this._physics) this._kick();
         else { p.x = this._drag.tx; p.y = this._drag.ty; this._layout(); } // Physics off: exactly where you put it
+      } else if (this._frameDrag) {
+        const fd = this._frameDrag, f = fd.f, w = this._world2(e), dx = w.x - fd.last.x, dy = w.y - fd.last.y;
+        fd.last = w; fd.moved = true;
+        if (fd.resize) { f.w = Math.max(W + PAD + 20, f.w + dx); f.h = Math.max(BAR + 90, f.h + dy); }
+        else { // the frame takes its members along
+          f.x += dx; f.y += dy;
+          for (const id of f.nodes) if (this._pos[id]) { this._pos[id].x += dx; this._pos[id].y += dy; }
+        }
+        this._layout();
+        if (this._physics) this._kick();
       } else if (this._pan) {
         this._view.x = e.clientX - this._pan.x; this._view.y = e.clientY - this._pan.y;
         this._layout();
@@ -355,15 +429,23 @@ class AacNodes extends HTMLElement {
         const p = this._pos[this._drag.id];
         // Let go: with Physics on it keeps its swing and floats into its place
         if (this._drag.moved && this._physics && p.pinned) { p.x = this._drag.tx; p.y = this._drag.ty; }
+        if (this._drag.moved) this._joinFrame(this._drag.id, this._physics ? this._drag.tx : p.x, this._physics ? this._drag.ty : p.y);
         this._drag = null;
         this._save();
         this._draw(); this._info(); this._kick();
+      }
+      if (this._frameDrag) {
+        if (this._frameDrag.moved) this._saveFrames();
+        this._frameDrag = null;
+        this._save(); this._kick();
       }
       this._pan = null;
     };
     this._svg.addEventListener("pointerup", up);
     this._svg.addEventListener("pointercancel", up);
     this._svg.addEventListener("dblclick", (e) => {
+      const fg = e.target.closest(".nv-frame");
+      if (fg && e.target.classList.contains("fbar")) { this._rename(fg.dataset.frame); return; }
       const g = e.target.closest(".nv-node");
       if (!g) return;
       const p = this._pos[g.dataset.node];
@@ -380,8 +462,64 @@ class AacNodes extends HTMLElement {
     }, { passive: false });
   }
 
+  // ------------------------------------------------------------------ frames
+  _saveFrames() {
+    this.ws?.("aac/nodes/containers", { containers: this._frames }).catch((e) => { this._msg.textContent = `Frames not saved: ${e.message || e}`; });
+  }
+
+  async _ask(text, value) {
+    return this.panel?._prompt ? this.panel._prompt(text, value) : window.prompt(text, value);
+  }
+
+  async _group() {
+    const ids = [...this._multi].filter((id) => this._pos[id]);
+    if (!ids.length) { this._msg.textContent = "Select nodes first: Shift- or Ctrl-click them."; return; }
+    const name = await this._ask("Name of the container", "Group");
+    if (name === null || name === undefined) return;
+    const boxes = ids.map((id) => { const n = this._data.nodes.find((x) => x.id === id), p = this._pos[id]; return { p, hh: this._height(n) / 2 }; });
+    const x0 = Math.min(...boxes.map((b) => b.p.x - W / 2)) - PAD, x1 = Math.max(...boxes.map((b) => b.p.x + W / 2)) + PAD;
+    const y0 = Math.min(...boxes.map((b) => b.p.y - b.hh)) - PAD - BAR, y1 = Math.max(...boxes.map((b) => b.p.y + b.hh)) + PAD;
+    for (const f of this._frames) f.nodes = f.nodes.filter((id) => !ids.includes(id)); // one container per node
+    const f = { id: `f_${Date.now().toString(36)}`, name: String(name).trim().slice(0, 60) || "Group", nodes: ids,
+                x: Math.round(x0), y: Math.round(y0), w: Math.round(x1 - x0), h: Math.round(y1 - y0) };
+    this._frames.push(f);
+    this._selFrame = f.id; this._multi = new Set(); this._sel = null;
+    this._saveFrames(); this._draw(); this._info(); this._kick();
+  }
+
+  async _rename(id) {
+    const f = this._frames.find((x) => x.id === id);
+    if (!f) return;
+    const name = await this._ask("Name of the container", f.name);
+    if (name === null || name === undefined) return;
+    f.name = String(name).trim().slice(0, 60) || f.name;
+    this._saveFrames(); this._draw(); this._info();
+  }
+
+  _joinFrame(id, x, y) {
+    // Dropped inside a frame: it belongs there (the smallest, if frames overlap); dropped outside: it leaves
+    const inside = this._frames.filter((f) => x > f.x && x < f.x + f.w && y > f.y + BAR && y < f.y + f.h)
+      .sort((a, b) => a.w * a.h - b.w * b.h)[0];
+    const before = this._frames.find((f) => f.nodes.includes(id));
+    if (before === inside) return;
+    if (before) before.nodes = before.nodes.filter((n) => n !== id);
+    if (inside) inside.nodes.push(id);
+    this._saveFrames();
+  }
+
   _info() {
     const box = this.querySelector(".nv-info"), n = this._data?.nodes.find((x) => x.id === this._sel);
+    const fr = this._frames.find((f) => f.id === this._selFrame);
+    if (fr) {
+      const titles = fr.nodes.map((id) => this._data.nodes.find((x) => x.id === id)?.title || id);
+      box.style.display = "";
+      box.innerHTML = `<h2>${esc((fr.name || "Unnamed").toUpperCase())} <span class="tag">CONTAINER</span></h2>
+        <div class="kv"><span class="k">Nodes</span><span class="v">${esc(titles.join(", ") || "none yet: drop nodes into it")}</span></div>
+        <p class="hint">Drag the name bar to move it with its nodes, the corner to resize. Drop a node inside to add it, drag it out to take it away.</p>
+        <div class="actions"><button class="btn" data-nv="rename" data-frame="${esc(fr.id)}">Rename</button>
+          <button class="btn danger" data-nv="ungroup" data-frame="${esc(fr.id)}">Ungroup</button></div>`;
+      return;
+    }
     if (!n) { box.style.display = "none"; return; }
     const ports = (o) => Object.entries(o).map(([p, t]) => `<span class="tag" style="border-color:${this._color(t)}">${esc(p)}: ${esc(t)}</span>`).join(" ") || "—";
     const into = this._wires().filter((w) => w.b.id === n.id).map((w) => `${esc(w.a.title)}.${esc(w.ap)}`).join(", ") || "—";

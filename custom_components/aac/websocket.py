@@ -79,6 +79,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_request_decide,
         ws_modules,
         ws_nodes,
+        ws_node_containers,
         ws_module_settings,
         ws_module_access,
         ws_jobs,
@@ -662,7 +663,38 @@ def ws_nodes(hass: HomeAssistant, connection, msg) -> None:
     for node in summary["nodes"]:
         node["module_name"] = names.get(node["module"], "Core") if node["module"] else "Core"
     summary["types"] = STREAM_TYPES
+    summary["containers"] = entry.runtime_data.store.data["node_view"].get(dom.id, {}).get("containers", [])
     connection.send_result(msg["id"], summary)
+
+
+_CONTAINER = vol.Schema({
+    vol.Required("id"): vol.All(str, vol.Length(min=1, max=40)),
+    vol.Required("name"): vol.All(str, vol.Length(max=60)),
+    vol.Optional("nodes", default=[]): [str],
+    vol.Required("x"): vol.Coerce(float), vol.Required("y"): vol.Coerce(float),
+    vol.Required("w"): vol.All(vol.Coerce(float), vol.Range(min=60, max=20000)),
+    vol.Required("h"): vol.All(vol.Coerce(float), vol.Range(min=60, max=20000)),
+})
+
+
+@aac_command({vol.Required("type"): "aac/nodes/containers", vol.Required("containers"): [_CONTAINER]})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_node_containers(hass: HomeAssistant, connection, msg) -> None:
+    """The node view's named containers of the domain (all of them; a node belongs to one at most)."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    seen: set[str] = set()
+    containers = []
+    for c in msg["containers"]:
+        c = {**c, "nodes": [n for n in dict.fromkeys(c["nodes"]) if n not in seen],
+             **{k: round(c[k]) for k in ("x", "y", "w", "h")}}
+        seen.update(c["nodes"])
+        containers.append(c)
+    store = entry.runtime_data.store
+    store.data["node_view"].setdefault(_d(entry, msg).id, {})["containers"] = containers
+    await store.async_save()
+    connection.send_result(msg["id"], {"containers": containers})
 
 
 @aac_command({vol.Required("type"): "aac/modules"})

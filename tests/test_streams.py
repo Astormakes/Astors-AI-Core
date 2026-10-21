@@ -85,3 +85,19 @@ async def test_node_view_command(hass, hass_ws_client, mock_entry, configured):
     assert nodes["hearing"]["recent"] == {"audio": 0, "segments": 0, "lines": 0}
     assert {"from": "hearing.segments", "to": "stt.speech"} in result["wires"]
     assert "broker.request" in result["types"]
+
+
+async def test_node_view_containers(hass, hass_ws_client, mock_entry, configured):
+    """Named, resizable containers are kept per domain; a node belongs to one at most."""
+    from .conftest import setup_aac
+
+    await setup_aac(hass, mock_entry)
+    ws = await hass_ws_client(hass)
+    box = {"x": 0, "y": 0, "w": 300, "h": 200}
+    await ws.send_json_auto_id({"type": "aac/nodes/containers", "containers": [
+        {"id": "c1", "name": "Ears", "nodes": ["stt", "voices"], **box},
+        {"id": "c2", "name": "Wakeups", "nodes": ["voices", "heartbeat"], **box}]})
+    saved = (await ws.receive_json())["result"]["containers"]
+    assert [c["nodes"] for c in saved] == [["stt", "voices"], ["heartbeat"]]
+    await ws.send_json_auto_id({"type": "aac/nodes"})
+    assert [c["name"] for c in (await ws.receive_json())["result"]["containers"]] == ["Ears", "Wakeups"]
