@@ -16,7 +16,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const SVG = "http://www.w3.org/2000/svg";
 const short = (t, n) => (t.length > n ? `${t.slice(0, n - 1)}…` : t); // the box is narrow; the details are below
 const W = 176, HEAD = 40, ROW = 17; // node box: width, title area, one port row
-const LINK = 90; // how far right of its source a wired node wants to sit
+const LINK = 70; // how far right of its source a wired node wants to sit (at least)
 const FIELD = 150; // reach of a node's soft push beyond its box
 const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "#8ab4ff", "#ff8a65", "#c792ea", "#7fdbca"];
 const KIND = { source: "source", sink: "sink", transform: "transform", annotating: "adds to the record" };
@@ -54,10 +54,11 @@ class AacNodes extends HTMLElement {
     this._save();
   }
 
-  get _key() { return `aac-nodes-${this.panel?._state?.domain?.id || "default"}`; }
+  get _key() { return `aac-nodes-${this.panel?._state?.domain?.id}`; }
 
   async refresh(quiet = false) {
     if (!this.ws) return;
+    if (!this.panel?._state?.domain) { setTimeout(() => this.refresh(quiet), 300); return; } // layouts are per domain
     try { this._data = await this.ws("aac/nodes"); this._error = null; } catch (e) { this._error = e.message || String(e); }
     if (this._error) { this._msg.textContent = this._error; return; }
     const first = this._loaded !== this._key;
@@ -154,15 +155,32 @@ class AacNodes extends HTMLElement {
       this._mode();
     }
     const nodes = this._data.nodes;
-    nodes.forEach((n, i) => {
-      if (this._pos[n.id]) return;
-      // new: next to a node it is wired to, else in a loose column by kind
-      const peer = this._wires().map((w) => (w.a.id === n.id ? w.b.id : w.b.id === n.id ? w.a.id : null)).find((id) => id && this._pos[id]);
-      const col = { source: 0, annotating: 1, transform: 2, sink: 3 }[n.kind] ?? 2;
-      this._pos[n.id] = peer
-        ? { x: this._pos[peer].x + (Math.random() - .5) * 60, y: this._pos[peer].y + 80 + Math.random() * 40, vx: 0, vy: 0, pinned: false }
-        : { x: (col - 1.5) * (W + LINK) + (Math.random() - .5) * 40, y: (i % 6 - 2.5) * 90 + (Math.random() - .5) * 40, vx: 0, vy: 0, pinned: false };
-    });
+    // New nodes start at their place in the flow: column = steps after a source (answer wires left out),
+    // so the field only has to refine, not untangle (a folded chain jams in a local minimum)
+    const wires = this._wires(), back = this._backEdges(wires), rank = {};
+    const forward = wires.filter((w) => !back.has(w));
+    for (let i = 0; i < nodes.length; i++) {
+      let changed = false;
+      for (const w of forward) {
+        const r = (rank[w.a.id] ?? 0) + 1;
+        if ((rank[w.b.id] ?? 0) < r) { rank[w.b.id] = r; changed = true; }
+      }
+      if (!changed) break;
+    }
+    const wired = new Set(wires.flatMap((w) => [w.a.id, w.b.id]));
+    const columns = {};
+    for (const n of nodes) if (wired.has(n.id)) (columns[rank[n.id] ?? 0] ||= []).push(n.id);
+    const ranks = Object.keys(columns).map(Number), mid = (Math.max(0, ...ranks)) / 2;
+    let parked = 0;
+    for (const n of nodes) {
+      if (this._pos[n.id]) continue;
+      if (wired.has(n.id)) {
+        const col = columns[rank[n.id] ?? 0], row = col.indexOf(n.id) - (col.length - 1) / 2;
+        this._pos[n.id] = { x: ((rank[n.id] ?? 0) - mid) * (W + LINK), y: row * 110 + (Math.random() - .5) * 10, vx: 0, vy: 0, pinned: false };
+      } else { // nothing wired: the strip at the bottom
+        this._pos[n.id] = { x: (parked++ - 3) * (W + 30), y: 400, vx: 0, vy: 0, pinned: false };
+      }
+    }
     for (const id of Object.keys(this._pos)) if (!nodes.some((n) => n.id === id)) delete this._pos[id];
   }
 
@@ -253,13 +271,55 @@ class AacNodes extends HTMLElement {
         }
       }
     }
-    // Wires are springs: the target's input wants to sit LINK right of the source's output, at the same height
-    for (const w of this._wires()) {
+    // Wires want to be straight and run left to right (owner: runs that space each other out by themselves):
+    // a target left of LINK past its source is pushed right firmly, a longer wire is fine (only a weak pull);
+    // the height difference along a wire is pulled out
+    const wires = this._wires(), ins = {}, outs = {}, back = this._backEdges(wires);
+    for (const w of wires) {
       const o = this._port(w.a, w.ap, "out"), i = this._port(w.b, w.bp, "in");
-      const dx = (o.x + LINK) - i.x, dy = o.y - i.y, k = .012;
-      P[w.b.id].vx += dx * k; P[w.b.id].vy += dy * k;
-      P[w.a.id].vx -= dx * k; P[w.a.id].vy -= dy * k;
+      if (back.has(w)) { // closes a loop (an answer going back to its chat): no left-to-right, it arcs back
+        const dy = (o.y - i.y) * .004;
+        P[w.b.id].vy += dy; P[w.a.id].vy -= dy;
+        continue;
+      }
+      // too short or backwards: pushed apart; longer: no pull at all (a long wire pulling its ends in made
+      // whole chains telescope together)
+      const dx = (o.x + LINK) - i.x, dy = o.y - i.y, kx = dx > 0 ? .06 : 0, ky = .03;
+      P[w.b.id].vx += dx * kx; P[w.b.id].vy += dy * ky;
+      P[w.a.id].vx -= dx * kx; P[w.a.id].vy -= dy * ky;
+      (ins[w.b.id] ||= []).push(w); (outs[w.a.id] ||= []).push(w);
     }
+    // Wires push nodes off them (owner): a card lying on a wire it does not belong to moves aside, so lines do
+    // not run through cards and it stays clear which line goes where
+    for (const w of wires) {
+      if (back.has(w)) continue;
+      const o = this._port(w.a, w.ap, "out"), i = this._port(w.b, w.bp, "in");
+      const lx = i.x - o.x, ly = i.y - o.y, len2 = lx * lx + ly * ly;
+      if (len2 < 1) continue;
+      for (const n of nodes) {
+        if (n.id === w.a.id || n.id === w.b.id || n.id === this._drag?.id) continue;
+        const p = P[n.id], t = ((p.x - o.x) * lx + (p.y - o.y) * ly) / len2;
+        if (t < 0 || t > 1) continue;
+        const cx = o.x + lx * t, cy = o.y + ly * t, dx = p.x - cx, dy = p.y - cy;
+        const reach = this._height(n) / 2 + 26 + (Math.abs(ly) / Math.sqrt(len2)) * W / 2; // a steep wire meets the card's width
+        const d = Math.hypot(dx, dy);
+        if (d >= reach) continue;
+        const f = (reach - d) * .05, ux = d ? dx / d : 0, uy = d ? dy / d : 1;
+        p.vx += ux * f; p.vy += uy * f; // only the card moves: a counter-push pulled long wires' ends inward
+      }
+    }
+    // A node in the middle of a run is pulled onto the line between its neighbours: runs become straight rows
+    for (const n of nodes) {
+      if (ins[n.id]?.length !== 1 || outs[n.id]?.length !== 1) continue;
+      const a = ins[n.id][0], b = outs[n.id][0];
+      const before = this._port(a.a, a.ap, "out"), after = this._port(b.b, b.bp, "in");
+      const mine = (this._port(n, a.bp, "in").y + this._port(n, b.ap, "out").y) / 2;
+      P[n.id].vy += ((before.y + after.y) / 2 - mine) * .05;
+    }
+    // Nodes without wires (or switched off) settle in a strip below the pipelines, out of the way
+    const wired = nodes.filter((n) => ins[n.id] || outs[n.id]);
+    const floor = wired.length ? Math.max(...wired.map((n) => P[n.id].y + this._height(n) / 2)) + 140 : 0;
+    for (const n of nodes) if (!ins[n.id] && !outs[n.id]) P[n.id].vy += (floor - P[n.id].y) * .02;
     // Frames (owner): a gentle pull to the middle for members, a weak push off the border for everyone else
     // (within EDGE outside it, firmer when a node sits inside); the hand always wins while a node is held
     for (const f of this._frames) {
@@ -282,11 +342,10 @@ class AacNodes extends HTMLElement {
         }
       }
     }
-    // A soft pull to the middle, then inertia with friction
+    // No pull to the middle (owner: "only in boxes"); then inertia with friction
     let energy = 0;
     for (const n of nodes) {
       const p = P[n.id];
-      p.vx -= p.x * .0015; p.vy -= p.y * .0025;
       if (n.id === this._drag?.id) { // held on an elastic band: it follows the cursor, the field still pushes it
         p.vx += (this._drag.tx - p.x) * .18; p.vy += (this._drag.ty - p.y) * .18;
         p.vx *= .62; p.vy *= .62;
@@ -298,12 +357,41 @@ class AacNodes extends HTMLElement {
     }
     this._layout();
     // Quiet: the field rests until something moves (no CPU for an open view)
-    if (energy > .08 * nodes.length || this._drag) this._raf = requestAnimationFrame(() => this._step());
+    const backwards = wires.some((w) => !back.has(w) && this._port(w.b, w.bp, "in").x < this._port(w.a, w.ap, "out").x + LINK / 2);
+    this._busy = backwards ? (this._busy || 0) + 1 : 0;
+    if (energy > .08 * nodes.length || this._drag || (backwards && this._busy < 1800)) this._raf = requestAnimationFrame(() => this._step());
     else {
       this._svg.classList.add("still");
       this._save();
       if (this._fitWhenQuiet) { this._fitWhenQuiet = false; this._fit(); }
     }
+  }
+
+  _backEdges(wires) {
+    // Wires that close a loop, by name ("a.port>b.port"; wire objects are made anew on every step), found by a
+    // depth-first walk from the sources and cached until the wiring changes. has(w) checks a wire.
+    const name = (w) => `${w.a.id}.${w.ap}>${w.b.id}.${w.bp}`;
+    const key = wires.map(name).join(",");
+    if (this._backKey !== key) {
+      // Answers flow back to where the request came from: those wires always arc back
+      const back = new Set(wires.filter((w) => w.type.endsWith(".answer")).map(name));
+      const out = {}, state = {};
+      for (const w of wires) if (!back.has(name(w))) (out[w.a.id] ||= []).push(w);
+      const visit = (id) => {
+        state[id] = 1;
+        for (const w of out[id] || []) {
+          if (state[w.b.id] === 1) back.add(name(w));
+          else if (!state[w.b.id]) visit(w.b.id);
+        }
+        state[id] = 2;
+      };
+      const hasIn = new Set(wires.map((w) => w.b.id));
+      for (const n of this._data.nodes) if (!hasIn.has(n.id) && !state[n.id]) visit(n.id); // sources first
+      for (const n of this._data.nodes) if (!state[n.id]) visit(n.id);
+      this._backKey = key; this._back = back;
+    }
+    const back = this._back;
+    return { has: (w) => back.has(name(w)) };
   }
 
   // ------------------------------------------------------------------ drawing
