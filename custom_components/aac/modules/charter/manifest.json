@@ -8,9 +8,9 @@
   "instructions": "",
   "owner_only": true,
   "provides": {
-    "prompt": {
-      "order": 0
-    }
+    "prompt_parts": [
+      "charter (first in every system prompt)"
+    ]
   },
   "settings": {
     "text": {
