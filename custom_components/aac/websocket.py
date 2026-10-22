@@ -665,7 +665,7 @@ def ws_nodes(hass: HomeAssistant, connection, msg) -> None:
     for node in summary["nodes"]:
         node["module_name"] = names.get(node["module"], "Core") if node["module"] else "Core"
     summary["types"] = STREAM_TYPES
-    summary["containers"] = entry.runtime_data.store.data["node_view"].get(dom.id, {}).get("containers", [])
+    summary["containers"] = entry.runtime_data.store.graph(dom.id)["containers"]
     summary["by_hand"] = entry.runtime_data.bus.wired_by_hand(dom.id)
     caps = entry.runtime_data.capabilities
     summary["options"] = {name: fn(dom.id) for name, fn in caps.options.items() if name == "tiers"}
@@ -702,7 +702,7 @@ async def ws_node_wires(hass: HomeAssistant, connection, msg) -> None:
         if not src or not dst or a == b or not src.outputs.get(ap) or src.outputs.get(ap) != dst.inputs.get(bp):
             connection.send_error(msg["id"], "invalid", f"{wire['from']} → {wire['to']}: not an output and an input of the same type")
             return
-    view = entry.runtime_data.store.data["node_view"].setdefault(dom.id, {})
+    view = entry.runtime_data.store.graph(dom.id)
     if wires is None:
         view.pop("wires", None)
     else:
@@ -731,9 +731,9 @@ async def ws_node_instances(hass: HomeAssistant, connection, msg) -> None:
             return
         instances[inst_id] = {"type": kind.id, "title": spec["title"].strip() or kind.title,
                               "settings": {k: v for k, v in spec["settings"].items() if k in kind.settings_schema}}
-    view = entry.runtime_data.store.data["node_view"].setdefault(dom.id, {})
-    gone = set(view.get("instances") or {}) - set(instances)
-    view["instances"] = instances
+    view = entry.runtime_data.store.graph(dom.id)
+    gone = set(view.get("nodes") or {}) - set(instances)
+    view["nodes"] = instances
     if gone and view.get("wires") is not None:
         view["wires"] = [w for w in view["wires"] if w["from"].split(".")[0] not in gone and w["to"].split(".")[0] not in gone]
     await entry.runtime_data.store.async_save()
@@ -756,7 +756,7 @@ async def ws_node_containers(hass: HomeAssistant, connection, msg) -> None:
         seen.update(c["nodes"])
         containers.append(c)
     store = entry.runtime_data.store
-    store.data["node_view"].setdefault(_d(entry, msg).id, {})["containers"] = containers
+    store.graph(_d(entry, msg).id)["containers"] = containers
     await store.async_save()
     connection.send_result(msg["id"], {"containers": containers})
 

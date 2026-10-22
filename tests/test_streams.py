@@ -167,7 +167,7 @@ async def test_a_second_model_node(hass, hass_ws_client, aioclient_mock, mock_en
 
     await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {}})
     await ws.receive_json()
-    assert not any("research" in w["to"] for w in data.store.data["node_view"]["assistant"]["wires"])
+    assert not any("research" in w["to"] for w in data.store.graph("assistant")["wires"])
 
 
 async def test_sources_and_a_second_charter(hass, hass_ws_client, mock_entry, configured):
@@ -198,3 +198,27 @@ async def test_sources_and_a_second_charter(hass, hass_ws_client, mock_entry, co
     chat = await async_prepare(hass, mock_entry, ModelRequest(domain=data.domain(), text="hi", source="chat"))
     assert voice.system[0] == "Speak softly." and chat.system[0].startswith("Charter")
     assert voice.tools == chat.tools  # the rest of the chain is shared
+
+
+async def test_old_places_move_into_the_graph(hass, hass_storage, mock_entry, configured):
+    """Up to 1.0.0-dev.12 a domain's graph was spread over module_settings, module_access and node_view; on load
+    it is one record per domain (and the old keys are gone)."""
+    from custom_components.aac.store import STORAGE_KEY
+
+    from .conftest import setup_aac
+
+    data = hass_storage[STORAGE_KEY]["data"]
+    data["module_settings"] = {"assistant": {"charter": {"text": "Be kind."}}}
+    data["module_access"] = {"assistant": {"charter": {"hidden": True}, "heartbeat": {"enabled": True}}}
+    data["node_view"] = {"assistant": {"containers": [{"id": "c1", "name": "Ears", "nodes": ["stt"], "x": 0, "y": 0, "w": 300, "h": 200}],
+                                       "wires": [{"from": "chat.requests", "to": "charter.requests"}],
+                                       "instances": {"calm": {"type": "charter", "title": "Calm", "settings": {"text": "Softly."}}}}}
+    await setup_aac(hass, mock_entry)
+    store = mock_entry.runtime_data.store
+    graph = store.data["graphs"]["assistant"]
+    assert graph["modules"]["charter"] == {"settings": {"text": "Be kind."}, "hidden": True}
+    assert graph["modules"]["heartbeat"]["enabled"] is True
+    assert graph["containers"][0]["name"] == "Ears" and graph["wires"] == [{"from": "chat.requests", "to": "charter.requests"}]
+    assert graph["nodes"]["calm"]["title"] == "Calm"
+    assert not {"module_settings", "module_access", "node_view"} & set(store.data)
+    assert mock_entry.runtime_data.bus.wired_by_hand("assistant")

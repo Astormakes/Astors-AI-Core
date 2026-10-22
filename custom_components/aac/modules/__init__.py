@@ -241,7 +241,7 @@ def _destructive(tool: llm.Tool) -> bool:
 
 def access(entry: AACConfigEntry, module_id: str, domain_id: str | None) -> dict[str, Any]:
     """A module's permissions and properties in a domain (defaults filled in)."""
-    stored = entry.runtime_data.store.data["module_access"].get(domain_id or "", {}).get(module_id, {})
+    stored = entry.runtime_data.store.module_record(domain_id, module_id)
     return {**ACCESS_DEFAULTS, "enabled": module_id not in _DEFAULT_OFF,
             **{k: v for k, v in stored.items() if k in ACCESS_DEFAULTS}}
 
@@ -249,7 +249,7 @@ def access(entry: AACConfigEntry, module_id: str, domain_id: str | None) -> dict
 async def async_set_access(entry: AACConfigEntry, module_id: str, domain_id: str, values: dict[str, Any]) -> None:
     """Store permissions/properties (None or "" resets a text field to the manifest's)."""
     store = entry.runtime_data.store
-    current = store.data["module_access"].setdefault(domain_id, {}).setdefault(module_id, {})
+    current = store.graph(domain_id)["modules"].setdefault(module_id, {})
     for key, value in values.items():
         if key not in ACCESS_DEFAULTS:
             continue
@@ -262,7 +262,7 @@ async def async_set_access(entry: AACConfigEntry, module_id: str, domain_id: str
 
 def setting(entry: AACConfigEntry, manifest: dict[str, Any], domain_id: str, key: str) -> Any:
     """A module's setting in a domain, or its default."""
-    stored = entry.runtime_data.store.data["module_settings"].get(domain_id, {}).get(manifest["id"], {})
+    stored = entry.runtime_data.store.module_record(domain_id, manifest["id"]).get("settings", {})
     return stored[key] if key in stored else (manifest.get("settings", {}).get(key) or {}).get("default")
 
 
@@ -270,7 +270,7 @@ async def async_set_settings(entry: AACConfigEntry, module: LoadedModule, domain
     """Store a module's settings for a domain (unknown keys are dropped)."""
     schema = module.manifest.get("settings", {})
     store = entry.runtime_data.store
-    current = store.data["module_settings"].setdefault(domain_id, {}).setdefault(module.id, {})
+    current = store.graph(domain_id)["modules"].setdefault(module.id, {}).setdefault("settings", {})
     current.update({k: v for k, v in values.items() if k in schema})
     await store.async_save()
 
@@ -290,9 +290,9 @@ async def async_load_modules(hass: HomeAssistant, entry: AACConfigEntry) -> list
     entry.runtime_data.capabilities.module_enabled = lambda domain_id, module_id: access(entry, module_id, domain_id)["enabled"]
     entry.runtime_data.bus.set_module_enabled(entry.runtime_data.capabilities.module_enabled)
     entry.runtime_data.slots.module_enabled = entry.runtime_data.capabilities.module_enabled
-    view = entry.runtime_data.store.data["node_view"]
-    entry.runtime_data.bus.set_wiring(lambda domain_id: view.get(domain_id, {}).get("wires"))
-    entry.runtime_data.bus.set_instances(lambda domain_id: view.get(domain_id, {}).get("instances") or {})
+    graphs = entry.runtime_data.store.data["graphs"]
+    entry.runtime_data.bus.set_wiring(lambda domain_id: (graphs.get(domain_id) or {}).get("wires"))
+    entry.runtime_data.bus.set_instances(lambda domain_id: (graphs.get(domain_id) or {}).get("nodes") or {})
     loaded = []
     for manifest in await hass.async_add_executor_job(_manifests):
         module = LoadedModule(manifest)

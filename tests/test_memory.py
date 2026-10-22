@@ -327,5 +327,5 @@ async def test_memory_switched_off_is_gone(hass: HomeAssistant, hass_storage, ai
     hass_storage[STORAGE_KEY]["data"]["memory"] = {"enabled": False}
     await setup_aac(hass, mock_entry)
     data = mock_entry.runtime_data
-    assert data.store.data["module_access"]["assistant"]["memory"]["enabled"] is False
+    assert data.store.module_record("assistant", "memory")["enabled"] is False
     assert data.slots.memory("assistant") is None and data.slots.memory() is not None

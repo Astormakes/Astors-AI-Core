@@ -60,19 +60,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Job queue (jobs.py): tell the owner once when no model is available; a job that waited
     # longer than postpone_notice minutes is told so when it finally runs
     "queue": {"notify_no_model": True, "postpone_notice": 10},
-    # The node view per domain: named, resizable containers ({id, name, nodes, x, y, w, h}) and the owner's
-    # own wires ({"wires": [{"from": "a.port", "to": "b.port"}]}; absent = automatic); positions stay in the browser
-    "node_view": {},
-    # Module settings per domain: {domain id: {module id: {key: value}}} (defaults in the manifests)
-    "module_settings": {},
+    # Everything a domain's graph holds (v1, spec/v1.md), one record per domain:
+    # {domain id: {"modules": {module id: {"settings": {key: value}, enabled, name, instructions, access, auto,
+    #                                      destructive_needs_owner, hidden}},   (defaults: the manifests, ACCESS_DEFAULTS)
+    #              "nodes": {instance id: {"type", "title", "settings"}},       (added node instances)
+    #              "wires": [{"from": "a.port", "to": "b.port"}],               (absent = automatic)
+    #              "containers": [{id, name, nodes, x, y, w, h}]}}              (node positions stay in the browser)
+    # Up to 1.0.0-dev.12: module_settings, module_access and node_view (moved here on load)
+    "graphs": {},
     # Read/write per entity, for every domain and module: {entity_id: {"read": bool, "write": bool}}.
     # None = not chosen yet: what HA exposes to Assist may be read and written (entities.py)
     "entity_access": None,
     # Requests from AAC that wait for the owner's OK (requests.py)
     "requests": [],
-    # Module permissions and properties per domain (modules/__init__.py ACCESS_DEFAULTS):
-    # {domain id: {module id: {enabled, name, instructions, access, auto, destructive_needs_owner}}}
-    "module_access": {},
     # Machines (hosts that run model servers, models.py): {host: {"name": str}}
     "machines": {},
 }
@@ -188,8 +188,9 @@ class AACStore:
         data["traits"] = dict(stored.get("traits", {}))
         data["ui"].update(stored.get("ui", {}))
         data["queue"].update(stored.get("queue", {}))
-        data["module_settings"] = dict(stored.get("module_settings", {}))
-        data["module_access"] = dict(stored.get("module_access", {}))
+        # The old per-domain places (moved into graphs below, after the older migrations that still write them)
+        data["module_settings"] = deepcopy(stored.get("module_settings", {}))
+        data["module_access"] = deepcopy(stored.get("module_access", {}))
         data["requests"] = list(stored.get("requests", []))[-100:]
         data["satellite_app"] = dict(stored.get("satellite_app", {}))
         data["machines"] = dict(stored.get("machines", {}))
@@ -248,12 +249,41 @@ class AACStore:
         data["pools"].pop("mood", None)
         for per_domain in (*data["module_access"].values(), *data["module_settings"].values()):
             per_domain.pop("mood", None)
+        # Up to 1.0.0-dev.12 a domain's graph was spread over three places: one record per domain now
+        graphs = deepcopy(stored.get("graphs", {}))
+        for domain_id, modules in data.pop("module_settings").items():
+            for module_id, values in modules.items():
+                graphs.setdefault(domain_id, {}).setdefault("modules", {}).setdefault(module_id, {}) \
+                    .setdefault("settings", {}).update(values)
+        for domain_id, modules in data.pop("module_access").items():
+            for module_id, values in modules.items():
+                graphs.setdefault(domain_id, {}).setdefault("modules", {}).setdefault(module_id, {}).update(values)
+        for domain_id, view in (stored.get("node_view") or {}).items():
+            graph = graphs.setdefault(domain_id, {})
+            graph.setdefault("nodes", dict(view.get("instances") or {}))
+            graph.setdefault("containers", list(view.get("containers") or []))
+            if view.get("wires") is not None:
+                graph.setdefault("wires", list(view["wires"]))
+        data["graphs"] = graphs
         self.data = data
         self.domains = {d["id"]: DomainSettings(self, d) for d in data["domains"]}
 
     async def async_save(self) -> None:
         """Write to disk."""
         await self._store.async_save(self.data)
+
+    # ------------------------------------------------------------ graphs
+    def graph(self, domain_id: str) -> dict[str, Any]:
+        """A domain's graph record (created empty when it has none yet): modules, nodes, wires, containers."""
+        graph = self.data["graphs"].setdefault(domain_id, {})
+        graph.setdefault("modules", {})
+        graph.setdefault("nodes", {})
+        graph.setdefault("containers", [])
+        return graph
+
+    def module_record(self, domain_id: str | None, module_id: str) -> dict[str, Any]:
+        """A module's record in a domain's graph, for reading (empty when the owner never set anything)."""
+        return (self.data["graphs"].get(domain_id or "") or {}).get("modules", {}).get(module_id) or {}
 
     # ------------------------------------------------------------ domains
     @property
@@ -277,10 +307,9 @@ class AACStore:
             data["visible"] = []  # a new domain sees nothing until the owner ticks entities
         self.data["domains"].append(data)
         self.domains[domain_id] = DomainSettings(self, data)
-        if base:  # a copy: its modules switched and set like the original's (their data stays with the original)
-            for key in ("module_settings", "module_access"):
-                if copy_from in self.data[key]:
-                    self.data[key][domain_id] = deepcopy(self.data[key][copy_from])
+        if base and copy_from in self.data["graphs"]:
+            # a copy: its graph too (modules switched and set, added nodes, wires, frames); data stays with the original
+            self.data["graphs"][domain_id] = deepcopy(self.data["graphs"][copy_from])
         await self.async_save()
         return self.domains[domain_id]
 
@@ -295,6 +324,7 @@ class AACStore:
             raise ValueError("The first domain cannot be deleted")
         self.data["domains"] = [d for d in self.data["domains"] if d["id"] != domain_id]
         self.domains.pop(domain_id, None)
+        self.data["graphs"].pop(domain_id, None)
         if self.data["voice_domain"] == domain_id:
             self.data["voice_domain"] = self.default_domain.id
         await self.async_save()

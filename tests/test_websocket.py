@@ -161,7 +161,7 @@ async def test_charter_reaches_every_agent(
     hass_storage[STORAGE_KEY]["data"]["charter"] = "Be kind. Never lie."  # 0.47: core, flat config
     await setup_aac(hass, mock_entry)
     data = mock_entry.runtime_data
-    assert data.store.data["module_settings"]["assistant"]["charter"] == {"text": "Be kind. Never lie."}
+    assert data.store.module_record("assistant", "charter")["settings"] == {"text": "Be kind. Never lie."}
     assert "charter" not in data.store.default_domain.data
     aioclient_mock.post(f"{BASE_URL}/chat/completions", json=_reply("ok"))
     ws = await hass_ws_client(hass)
