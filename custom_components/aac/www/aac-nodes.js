@@ -83,7 +83,8 @@ class AacNodes extends HTMLElement {
           <span style="flex:1"></span>
           <span class="hint nv-wiring"></span>
           <button class="btn" data-nv="auto" title="Forget the wires set by hand: everything wired by type again">Automatic wiring</button>
-          <button class="btn" data-nv="add" title="Add another node of a type that can exist more than once (e.g. a second model)">Add node</button>
+          <span style="position:relative"><button class="btn" data-nv="add" title="Add another node of a type that can exist more than once (e.g. a second model)">Add node</button>
+            <span class="nv-addmenu" style="display:none;position:absolute;top:100%;right:0;z-index:5;min-width:12em;background:var(--bg2, #111);border:1px solid var(--line);border-radius:.4em;padding:.3em 0"></span></span>
           <button class="btn" data-nv="group" title="Put the nodes selected with Shift/Ctrl-click into a named container">Group</button>
           <button class="btn" data-nv="undo" title="Back to the layout saved when Physics went on">Undo</button>
           <button class="btn" data-nv="fit">Fit</button>
@@ -511,6 +512,7 @@ class AacNodes extends HTMLElement {
       if (b?.dataset.nv === "group") this._group();
       if (b?.dataset.nv === "auto") this._automatic();
       if (b?.dataset.nv === "add") this._addNode();
+      if (b?.dataset.nv === "add-type") this._addOf(b.dataset.type);
       if (b?.dataset.nv === "inst-save") this._saveInstance(b.dataset.node);
       if (b?.dataset.nv === "inst-remove") this._removeInstance(b.dataset.node);
       if (b?.dataset.nv === "unwire") this._unwire(this._selWire);
@@ -689,15 +691,21 @@ class AacNodes extends HTMLElement {
     await this.refresh();
   }
 
-  async _addNode() {
+  _addNode() {
+    // A small menu of the types that can be added (one: add it at once)
     const types = this._data.nodes.filter((n) => n.addable && !n.type);
+    const menu = this.querySelector(".nv-addmenu");
     if (!types.length) { this._msg.textContent = "No node type can be added more than once yet."; return; }
-    let type = types[0];
-    if (types.length > 1) {
-      const pick = await this._ask(`Which node? ${types.map((t) => t.title).join(", ")}`, types[0].title);
-      type = types.find((t) => t.title.toLowerCase() === String(pick || "").trim().toLowerCase());
-      if (!type) return;
-    }
+    if (types.length === 1) { this._addOf(types[0].id); return; }
+    if (menu.style.display !== "none") { menu.style.display = "none"; return; }
+    menu.innerHTML = types.map((t) => `<button class="ditem" data-nv="add-type" data-type="${esc(t.id)}" style="display:block;width:100%">${esc(t.title)}</button>`).join("");
+    menu.style.display = "";
+  }
+
+  async _addOf(typeId) {
+    this.querySelector(".nv-addmenu").style.display = "none";
+    const type = this._data.nodes.find((n) => n.id === typeId);
+    if (!type) return;
     const title = await this._ask(`Name of the new ${type.title.toLowerCase()} node`, `${type.title} 2`);
     if (title === null || title === undefined || !String(title).trim()) return;
     const base = String(title).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 30) || "node";
