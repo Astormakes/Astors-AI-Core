@@ -22,7 +22,8 @@ const FIELD = 150; // reach of a node's soft push beyond its box
 const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "#8ab4ff", "#ff8a65", "#c792ea", "#7fdbca"];
 const KIND = { source: "source", sink: "sink", transform: "transform", annotating: "adds to the record" };
 const UNDO_STEPS = 10;
-const BAR = 26, PAD = 26, GRIP = 16, EDGE = 50; // frame: name bar, room around members, resize corner, border push reach
+const BAR = 26, PAD = 26, GRIP = 16, EDGE = 50;
+const FOLD_W = W + 30, FOLD_H = BAR + 30; // a folded frame: one card // frame: name bar, room around members, resize corner, border push reach
 
 class AacNodes extends HTMLElement {
   constructor() {
@@ -137,6 +138,11 @@ class AacNodes extends HTMLElement {
         .nv-frame .fbar { fill: var(--cyan); fill-opacity: .09; cursor: move; }
         .nv-frame .fname { fill: var(--text); font-size: 13px; font-weight: 600; letter-spacing: .04em; pointer-events: none; }
         .nv-frame .fgrip { fill: var(--line); cursor: nwse-resize; }
+        .nv-frame.folded .fgrip { display: none; }
+        .nv-frame.folded .fbox { fill-opacity: .12; stroke-dasharray: none; }
+        .nv-frame .ffold { fill: var(--text); font-size: 14px; cursor: pointer; }
+        .nv-frame .fcount { fill: var(--dim); font-size: 11px; pointer-events: none; }
+        .nv-node.hidden { display: none; }
       </style><g class="nv-world"><g class="nv-frames"></g><g class="nv-wires"></g><g class="nv-nodes"></g></g>`;
     this._stage.appendChild(this._svg);
     this._world = this._svg.querySelector(".nv-world");
@@ -150,7 +156,14 @@ class AacNodes extends HTMLElement {
 
   _height(n) { return HEAD + ROW * Math.max(Object.keys(n.inputs).length, Object.keys(n.outputs).length, 1) + 6; }
 
+  _folded(id) {
+    // The folded frame a node is in (its wires attach to the frame's card), or nothing
+    return this._frames.find((f) => f.collapsed && f.nodes.includes(id));
+  }
+
   _port(n, port, side) {
+    const f = this._folded(n.id);
+    if (f) return { x: f.x + (side === "out" ? FOLD_W : 0), y: f.y + FOLD_H / 2 + 6 };
     const p = this._pos[n.id], names = Object.keys(side === "out" ? n.outputs : n.inputs);
     return { x: p.x + (side === "out" ? W / 2 : -W / 2), y: p.y - this._height(n) / 2 + HEAD + ROW * names.indexOf(port) + ROW / 2 };
   }
@@ -275,7 +288,7 @@ class AacNodes extends HTMLElement {
     this._raf = null;
     if (!this._physics || !this._data) { this._svg.classList.add("still"); this._layout(); return; }
     this._svg.classList.remove("still");
-    const nodes = this._data.nodes, P = this._pos;
+    const nodes = this._data.nodes.filter((n) => !this._folded(n.id)), P = this._pos; // folded cards rest
     // Every node pushes the others away, strongly when their boxes touch, softly within FIELD
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
@@ -301,6 +314,7 @@ class AacNodes extends HTMLElement {
     // the height difference along a wire is pulled out
     const wires = this._wires(), ins = {}, outs = {}, back = this._backEdges(wires);
     for (const w of wires) {
+      if (this._folded(w.a.id) || this._folded(w.b.id)) continue; // a folded frame stays where it is
       const o = this._port(w.a, w.ap, "out"), i = this._port(w.b, w.bp, "in");
       if (back.has(w)) { // closes a loop (an answer going back to its chat): no left-to-right, it arcs back
         const dy = (o.y - i.y) * .004;
@@ -327,7 +341,7 @@ class AacNodes extends HTMLElement {
     // Wires push nodes off them (owner): a card lying on a wire it does not belong to moves aside, so lines do
     // not run through cards and it stays clear which line goes where
     for (const w of wires) {
-      if (back.has(w) || (w.a.kind === "annotating" && w.b.kind === "annotating")) continue;
+      if (back.has(w) || (w.a.kind === "annotating" && w.b.kind === "annotating") || this._folded(w.a.id) || this._folded(w.b.id)) continue;
       const o = this._port(w.a, w.ap, "out"), i = this._port(w.b, w.bp, "in");
       const lx = i.x - o.x, ly = i.y - o.y, len2 = lx * lx + ly * ly;
       if (len2 < 1) continue;
@@ -366,18 +380,19 @@ class AacNodes extends HTMLElement {
     // Frames (owner): a gentle pull to the middle for members, a weak push off the border for everyone else
     // (within EDGE outside it, firmer when a node sits inside); the hand always wins while a node is held
     for (const f of this._frames) {
-      const cx = f.x + f.w / 2, cy = f.y + (BAR + f.h) / 2;
+      const fw = f.collapsed ? FOLD_W : f.w, fh = f.collapsed ? FOLD_H : f.h;
+      const cx = f.x + fw / 2, cy = f.y + (BAR + fh) / 2;
       for (const n of nodes) {
         if (n.id === this._drag?.id) continue;
         const p = P[n.id], hw = W / 2, hh = this._height(n) / 2;
-        if (f.nodes.includes(n.id)) {
+        if (f.nodes.includes(n.id) && !f.collapsed) {
           p.vx += (cx - p.x) * .004; p.vy += (cy - p.y) * .004; // to the middle
           const l = f.x + PAD / 2 + hw, r = f.x + f.w - PAD / 2 - hw, t = f.y + BAR + PAD / 2 + hh, b = f.y + f.h - PAD / 2 - hh;
           if (p.x < l) p.vx += (Math.min(l, r) - p.x) * .06; else if (p.x > r) p.vx -= (p.x - Math.max(l, r)) * .06;
           if (p.y < t) p.vy += (Math.min(t, b) - p.y) * .06; else if (p.y > b) p.vy -= (p.y - Math.max(t, b)) * .06;
         } else {
           // gap between the node's box and the frame (negative: they overlap)
-          const gx = Math.max(f.x - (p.x + hw), (p.x - hw) - (f.x + f.w)), gy = Math.max(f.y - (p.y + hh), (p.y - hh) - (f.y + f.h));
+          const gx = Math.max(f.x - (p.x + hw), (p.x - hw) - (f.x + fw)), gy = Math.max(f.y - (p.y + hh), (p.y - hh) - (f.y + fh));
           const gap = Math.max(gx, gy);
           if (gap >= EDGE) continue;
           const push = gap < 0 ? Math.min(-gap, 60) * .08 + .6 : (1 - gap / EDGE) * .6;
@@ -440,14 +455,16 @@ class AacNodes extends HTMLElement {
   // ------------------------------------------------------------------ drawing
   _draw() {
     const nodesG = this._svg.querySelector(".nv-nodes"), wiresG = this._svg.querySelector(".nv-wires");
-    this._svg.querySelector(".nv-frames").innerHTML = this._frames.map((f) => `<g class="nv-frame ${this._selFrame === f.id ? "sel" : ""}" data-frame="${esc(f.id)}">
+    this._svg.querySelector(".nv-frames").innerHTML = this._frames.map((f) => `<g class="nv-frame ${f.collapsed ? "folded" : ""} ${this._selFrame === f.id ? "sel" : ""}" data-frame="${esc(f.id)}">
         <rect class="fbox" rx="10"></rect><rect class="fbar" rx="10" height="${BAR}"></rect>
-        <text class="fname">${esc(f.name || "Unnamed")}</text><rect class="fgrip" width="${GRIP}" height="${GRIP}" rx="3"></rect></g>`).join("");
+        <text class="fname">${esc(f.name || "Unnamed")}</text><rect class="fgrip" width="${GRIP}" height="${GRIP}" rx="3"></rect>
+        <text class="ffold" data-fold="${esc(f.id)}"><title>${f.collapsed ? "Unfold" : "Fold into one card"}</title>${f.collapsed ? "▸" : "▾"}</text>
+        <text class="fcount">${f.collapsed ? `${f.nodes.length} card${f.nodes.length === 1 ? "" : "s"} inside` : ""}</text></g>`).join("");
     nodesG.innerHTML = this._data.nodes.map((n) => {
       const h = this._height(n), ins = Object.entries(n.inputs), outs = Object.entries(n.outputs);
       const row = (i) => -h / 2 + HEAD + ROW * i + ROW / 2;
       const flow = Object.values(n.recent || {}).reduce((s, v) => s + v, 0);
-      return `<g class="nv-node ${n.on ? "" : "off"} ${this._lit?.has(n.id) ? "lit" : ""} ${this._sel === n.id ? "sel" : ""} ${this._multi.has(n.id) && this._multi.size > 1 ? "multi" : ""} ${this._pos[n.id]?.pinned ? "pinned" : ""}" data-node="${esc(n.id)}">
+      return `<g class="nv-node ${this._folded(n.id) ? "hidden" : ""} ${n.on ? "" : "off"} ${this._lit?.has(n.id) ? "lit" : ""} ${this._sel === n.id ? "sel" : ""} ${this._multi.has(n.id) && this._multi.size > 1 ? "multi" : ""} ${this._pos[n.id]?.pinned ? "pinned" : ""}" data-node="${esc(n.id)}">
         <rect class="box" x="${-W / 2}" y="${-h / 2}" width="${W}" height="${h}" rx="7"></rect>
         <text x="${-W / 2 + 10}" y="${-h / 2 + 17}">${esc(n.title)}<tspan class="pin" dx="4">📌</tspan></text>
         <text class="sub" x="${-W / 2 + 10}" y="${-h / 2 + 31}">${esc(short(`${n.module_name}${n.kind === "annotating" ? ` · adds ${n.adds.join(", ")}` : ""}${flow ? ` · ${flow} recent` : ""}`, 30))}</text>
@@ -460,7 +477,9 @@ class AacNodes extends HTMLElement {
     wiresG.innerHTML = this._wires().map((w, i) => {
       const flow = (w.a.recent || {})[w.ap] > 0;
       const key = `${w.a.id}.${w.ap}|${w.b.id}.${w.bp}`;
-      const lit = this._litWires?.has(`${w.a.id}>${w.b.id}`);
+      const lit = this._litWires?.has(`${w.a.id}>${w.b.id}`) || (this._folded(w.a.id) && this._lit?.has(w.a.id) && this._lit?.has(w.b.id));
+      const inner = this._folded(w.a.id) && this._folded(w.a.id) === this._folded(w.b.id); // inside a folded frame: not drawn
+      if (inner) return "";
       return `<path class="nv-wire ${flow ? "flow" : ""} ${lit ? "lit" : ""} ${this._selWire === key ? "sel" : ""}" data-wire="${i}" stroke="${this._color(w.type)}"></path>
         <path class="nv-hit" data-wire="${i}" data-key="${esc(key)}"><title>${esc(w.a.title)}.${esc(w.ap)} → ${esc(w.b.title)}.${esc(w.bp)} (${esc(w.type)}) · click to select</title></path>`;
     }).join("");
@@ -482,11 +501,13 @@ class AacNodes extends HTMLElement {
       const f = this._frames.find((x) => x.id === g.dataset.frame);
       if (!f) continue;
       g.setAttribute("transform", `translate(${f.x},${f.y})`);
-      const [box, bar, name, grip] = g.children;
-      box.setAttribute("width", f.w); box.setAttribute("height", f.h);
-      bar.setAttribute("width", f.w);
+      const [box, bar, name, grip, fold, count] = g.children, fw = f.collapsed ? FOLD_W : f.w, fh = f.collapsed ? FOLD_H : f.h;
+      box.setAttribute("width", fw); box.setAttribute("height", fh);
+      bar.setAttribute("width", fw);
       name.setAttribute("x", 12); name.setAttribute("y", BAR / 2 + 4.5);
-      grip.setAttribute("x", f.w - GRIP - 3); grip.setAttribute("y", f.h - GRIP - 3);
+      grip.setAttribute("x", fw - GRIP - 3); grip.setAttribute("y", fh - GRIP - 3);
+      fold.setAttribute("x", fw - 20); fold.setAttribute("y", BAR / 2 + 5);
+      count.setAttribute("x", 12); count.setAttribute("y", BAR + 18);
     }
     const wires = this._wires();
     for (const path of this._svg.querySelectorAll(".nv-wire, .nv-hit")) {
@@ -534,6 +555,7 @@ class AacNodes extends HTMLElement {
       if (b?.dataset.nv === "mod-save") this._saveModule(b.dataset.module);
       if (b?.dataset.nv === "unwire") this._unwire(this._selWire);
       if (b?.dataset.nv === "rename") this._rename(b.dataset.frame);
+      if (b?.dataset.nv === "fold") this._fold(b.dataset.frame);
       if (b?.dataset.nv === "ungroup") {
         this._frames = this._frames.filter((f) => f.id !== b.dataset.frame);
         this._selFrame = null;
@@ -571,6 +593,9 @@ class AacNodes extends HTMLElement {
         this._sel = id; this._selFrame = null;
         this._draw();
         this._kick();
+      } else if (e.target.dataset.fold) { // fold or unfold a frame
+        this._fold(e.target.dataset.fold);
+        return;
       } else if (fg && (e.target.classList.contains("fbar") || e.target.classList.contains("fgrip"))) {
         const f = this._frames.find((x) => x.id === fg.dataset.frame), w = this._world2(e);
         this._frameDrag = { f, resize: e.target.classList.contains("fgrip"), last: w, moved: false };
@@ -876,6 +901,14 @@ class AacNodes extends HTMLElement {
     this._saveFrames(); this._draw(); this._info(); this._kick();
   }
 
+  _fold(id) {
+    const f = this._frames.find((x) => x.id === id);
+    if (!f) return;
+    f.collapsed = !f.collapsed;
+    this._selFrame = id;
+    this._saveFrames(); this._draw(); this._info(); this._kick();
+  }
+
   async _rename(id) {
     const f = this._frames.find((x) => x.id === id);
     if (!f) return;
@@ -887,7 +920,7 @@ class AacNodes extends HTMLElement {
 
   _joinFrame(id, x, y) {
     // Dropped inside a frame: it belongs there (the smallest, if frames overlap); dropped outside: it leaves
-    const inside = this._frames.filter((f) => x > f.x && x < f.x + f.w && y > f.y + BAR && y < f.y + f.h)
+    const inside = this._frames.filter((f) => !f.collapsed && x > f.x && x < f.x + f.w && y > f.y + BAR && y < f.y + f.h)
       .sort((a, b) => a.w * a.h - b.w * b.h)[0];
     const before = this._frames.find((f) => f.nodes.includes(id));
     if (before === inside) return;
@@ -914,7 +947,8 @@ class AacNodes extends HTMLElement {
       box.innerHTML = `<h2>${esc((fr.name || "Unnamed").toUpperCase())} <span class="tag">CONTAINER</span></h2>
         <div class="kv"><span class="k">Nodes</span><span class="v">${esc(titles.join(", ") || "none yet: drop nodes into it")}</span></div>
         <p class="hint">Drag the name bar to move it with its nodes, the corner to resize. Drop a node inside to add it, drag it out to take it away.</p>
-        <div class="actions"><button class="btn" data-nv="rename" data-frame="${esc(fr.id)}">Rename</button>
+        <div class="actions"><button class="btn" data-nv="fold" data-frame="${esc(fr.id)}">${fr.collapsed ? "Unfold" : "Fold into one card"}</button>
+          <button class="btn" data-nv="rename" data-frame="${esc(fr.id)}">Rename</button>
           <button class="btn danger" data-nv="ungroup" data-frame="${esc(fr.id)}">Ungroup</button></div>`;
       return;
     }

@@ -684,6 +684,7 @@ _CONTAINER = vol.Schema({
     vol.Required("x"): vol.Coerce(float), vol.Required("y"): vol.Coerce(float),
     vol.Required("w"): vol.All(vol.Coerce(float), vol.Range(min=60, max=20000)),
     vol.Required("h"): vol.All(vol.Coerce(float), vol.Range(min=60, max=20000)),
+    vol.Optional("collapsed", default=False): bool,  # folded into one card
 })
 
 
