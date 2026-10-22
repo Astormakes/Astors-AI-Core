@@ -77,6 +77,16 @@ class AacNodes extends HTMLElement {
   _build() {
     this.style.display = "block";
     this.innerHTML = `
+      <details class="card nv-how"><summary style="cursor:pointer"><b>HOW IT WORKS</b> <span class="hint">· building your own chain, step by step</span></summary>
+        <ol style="margin:.6em 0 0 1.2em;line-height:1.6">
+          <li><b>A request starts at a source</b>: Panel chat, Voice, HA Assist or Automatic (heartbeat, triggers).</li>
+          <li><b>It runs through a chain</b>: each card adds its part (system text, context, or tools), in the order of the wires.</li>
+          <li><b>The model at the end answers</b>, and the answer goes back to where the request came from.</li>
+          <li><b>Build your own:</b> Add node (e.g. Charter, Instructions, Context, Home, a tool set, another Model), then drag from an output dot to an input dot of the same colour. Click a wire and press Delete to remove it. The first change switches to "Wired by hand"; Automatic wiring goes back.</li>
+          <li><b>Set a card up</b>: click it, change its settings in the box below the graph, Save.</li>
+          <li><b>Try it</b>: pick the source, type a message, Send. The way lights up and you see what each card added.</li>
+          <li><b>Tidy up</b>: Shift-click cards, Group, name it; fold the frame (▾) into one card.</li>
+        </ol></details>
       <div class="card" style="padding:0;overflow:hidden;position:relative">
         <div class="nv-bar" style="display:flex;gap:.6em;align-items:center;flex-wrap:wrap;padding:.6em .9em;border-bottom:1px solid var(--line)">
           <label class="check" style="margin:0"><input type="checkbox" class="nv-physics">Physics</label>
