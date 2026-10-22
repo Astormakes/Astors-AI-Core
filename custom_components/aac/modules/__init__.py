@@ -109,7 +109,7 @@ class ModuleContext:
         """Lines for the open loops of every automatic run: provider(domain_id) → ["- …"] (not where the module is off)."""
         self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_open_loops(self.module.id, provider, self.module.id))
 
-    def add_prompt(self, part, order: int = 50, instance_part=None) -> None:
+    def add_prompt(self, part, order: int = 50, instance_part=None, description: str = "") -> None:
         """Stable text at the start of every agent's system prompt: part(domain_id) → text (lowest order first;
         keep it stable, the server's prompt cache depends on it). Not where the module is off.
         instance_part(settings) → text: the node can also be added more than once (each instance with its own
@@ -128,6 +128,7 @@ class ModuleContext:
 
         self.add_node(Node(id=self.module.id, title=self.module.manifest.get("name", self.module.id),
                            inputs=IN, outputs=OUT, adds=["system"], order=order, annotate=annotate, role="transform",
+                           description=description or self.module.manifest.get("description", ""),
                            make=make if instance_part else None,
                            settings_schema=self.module.manifest.get("settings", {}) if instance_part else {}))
 
@@ -138,6 +139,7 @@ class ModuleContext:
     def add_node(self, node: Node) -> None:
         """A node on the stream bus (it reads and writes only in domains where the module is on)."""
         node.module = self.module.id
+        node.description = node.description or self.module.manifest.get("description", "")
         self.entry.async_on_unload(self.entry.runtime_data.bus.add_node(node))
 
     async def emit(self, domain_id: str, node_id: str, port: str, item: dict[str, Any]) -> list[Any]:
@@ -165,9 +167,9 @@ class ModuleContext:
             self.module.api_ids[dom.id] = api_id
 
         if card:  # its tools as a card attached to a model (the model's menu); card=False: the module makes its own
-            self.add_card(f"{self.module.id}_tools", title)
+            self.add_card(f"{self.module.id}_tools", f"{title} tools")
 
-    def add_card(self, card_id: str, title: str, provide=None) -> None:
+    def add_card(self, card_id: str, title: str, provide=None, description: str = "") -> None:
         """A card that attaches to a model (the dotted line): provide(message) adds its tool set, maybe context;
         by default the module's own tools. It can be attached to more models (added again)."""
         async def tools(message) -> None:
@@ -178,7 +180,10 @@ class ModuleContext:
         def make(inst_id: str, inst_title: str, settings: dict) -> Node:
             return Node(id=inst_id, title=inst_title, outputs=CARD, role="tool", provide=provide, settings=settings)
 
-        self.add_node(Node(id=card_id, title=title, outputs=CARD, role="tool", provide=provide, make=make))
+        about = self.module.manifest.get("description", "").split(". ")[0].rstrip(".")
+        self.add_node(Node(id=card_id, title=title, outputs=CARD, role="tool", provide=provide, make=make,
+                           description=description or f"Attach to a model to give it the {self.module.manifest.get('name', self.module.id)} "
+                                                      f"module's tools. ({about}.)"))
 
     def add_ws_commands(self, *handlers) -> None:
         """WebSocket commands (registered once per HA start, they look the entry up themselves)."""

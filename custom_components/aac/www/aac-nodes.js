@@ -21,6 +21,7 @@ const STACK = 14; // gap between the cards of a column (a chain adding to the sa
 const FIELD = 150; // reach of a node's soft push beyond its box
 const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "#8ab4ff", "#ff8a65", "#c792ea", "#7fdbca"];
 const KIND = { source: "source", sink: "sink", transform: "transform", annotating: "adds to the record" };
+const ROLE = { source: "source", transform: "in the line", model: "model", decide: "decide", reply: "reply", sink: "reads along", tool: "attaches to a model" };
 const UNDO_STEPS = 10;
 const BAR = 26, PAD = 26, GRIP = 16, EDGE = 50;
 const FOLD_W = W + 30, FOLD_H = BAR + 30; // a folded frame: one card // frame: name bar, room around members, resize corner, border push reach
@@ -497,7 +498,7 @@ class AacNodes extends HTMLElement {
       const row = (i) => -h / 2 + HEAD + ROW * i + ROW / 2;
       const flow = Object.values(n.recent || {}).reduce((s, v) => s + v, 0);
       return `<g class="nv-node ${this._folded(n.id) ? "hidden" : ""} ${n.on ? "" : "off"} ${this._lit?.has(n.id) ? "lit" : ""} ${this._sel === n.id ? "sel" : ""} ${this._multi.has(n.id) && this._multi.size > 1 ? "multi" : ""} ${this._pos[n.id]?.pinned ? "pinned" : ""}" data-node="${esc(n.id)}">
-        <rect class="box" x="${-W / 2}" y="${-h / 2}" width="${W}" height="${h}" rx="7"></rect>
+        <rect class="box" x="${-W / 2}" y="${-h / 2}" width="${W}" height="${h}" rx="7"><title>${esc(n.title)}: ${esc(n.description || "")}</title></rect>
         <text x="${-W / 2 + 10}" y="${-h / 2 + 17}">${esc(n.title)}<tspan class="pin" dx="4">📌</tspan></text>
         <text class="sub" x="${-W / 2 + 10}" y="${-h / 2 + 31}">${esc(short(`${n.module_name}${n.kind === "annotating" ? ` · adds ${n.adds.join(", ")}` : ""}${flow ? ` · ${flow} recent` : ""}`, 30))}</text>
         ${ins.map(([p, t], i) => `<circle class="nv-dot" data-dot="in" data-port="${esc(p)}" data-type="${esc(t)}" cx="${-W / 2}" cy="${row(i)}" r="5.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)}</title></circle>
@@ -807,15 +808,16 @@ class AacNodes extends HTMLElement {
     if (types.length === 1) { this._addOf(types[0].id); return; }
     if (menu.style.display !== "none") { menu.style.display = "none"; return; }
     // grouped by what they add: text for the system prompt, context, tools; the model
-    const group = (t) => t.id === "broker" ? "Model" : t.adds?.includes("tools") && !t.adds.includes("system") ? "Tools"
-      : t.adds?.includes("context") ? "Context and memory" : "Text for the system prompt";
-    const order = ["Text for the system prompt", "Context and memory", "Tools", "Model"];
+    const group = (t) => t.role === "model" ? "Model" : t.role === "decide" ? "Route" : t.role === "tool" ? "Attach to a model"
+      : t.adds?.includes("context") ? "In the line: context" : "In the line: system prompt";
+    const order = ["In the line: system prompt", "In the line: context", "Model", "Attach to a model", "Route"];
     menu.innerHTML = order.map((g) => {
       const items = types.filter((t) => group(t) === g);
       return items.length ? `<div class="hint" style="padding:.4em .9em .1em;font-size:.75em;letter-spacing:.08em">${esc(g.toUpperCase())}</div>
-        ${items.map((t) => `<button class="ditem" data-nv="add-type" data-type="${esc(t.id)}" style="display:block;width:100%">${esc(t.title)}</button>`).join("")}` : "";
+        ${items.map((t) => `<button class="ditem" data-nv="add-type" data-type="${esc(t.id)}" title="${esc(t.description || "")}" style="display:block;width:100%;white-space:normal">
+          ${esc(t.title)}<span class="hint" style="display:block;font-size:.78em;line-height:1.3;margin-top:.15em">${esc(short(t.description || "", 90))}</span></button>`).join("")}` : "";
     }).join("");
-    menu.style.maxHeight = "60vh"; menu.style.overflow = "auto";
+    menu.style.maxHeight = "60vh"; menu.style.overflow = "auto"; menu.style.width = "22em";
     menu.style.display = "";
   }
 
@@ -1000,7 +1002,8 @@ class AacNodes extends HTMLElement {
     const into = this._wires().filter((w) => w.b.id === n.id).map((w) => `${esc(w.a.title)}.${esc(w.ap)}`).join(", ") || "—";
     const out = this._wires().filter((w) => w.a.id === n.id).map((w) => `${esc(w.b.title)}.${esc(w.bp)}`).join(", ") || "—";
     box.style.display = "";
-    box.innerHTML = `<h2>${esc(n.title.toUpperCase())} <span class="tag">${esc(KIND[n.kind] || n.kind)}</span>${n.on ? "" : ' <span class="tag plan">MODULE OFF</span>'}${this._pos[n.id]?.pinned ? ' <span class="tag">PINNED</span>' : ""}</h2>
+    box.innerHTML = `<h2>${esc(n.title.toUpperCase())} <span class="tag">${esc(ROLE[n.role] || KIND[n.kind] || n.kind)}</span>${n.on ? "" : ' <span class="tag plan">MODULE OFF</span>'}${this._pos[n.id]?.pinned ? ' <span class="tag">PINNED</span>' : ""}</h2>
+      ${n.description ? `<p style="margin:.2em 0 .8em">${esc(n.description)}</p>` : ""}
       <div class="kv">
         <span class="k">Module</span><span class="v">${esc(n.module_name)}</span>
         <span class="k">Inputs</span><span class="v">${ports(n.inputs)}</span>
@@ -1011,7 +1014,7 @@ class AacNodes extends HTMLElement {
         <span class="k">Last 10 min</span><span class="v">${Object.entries(n.recent || {}).map(([p, c]) => `${esc(p)}: ${c}`).join(", ") || "—"}</span>
       </div>
       ${n.type ? `<h3 style="margin-top:1em">THIS NODE</h3>${this._settingsForm(n)}`
-        : n.addable ? '<p class="hint">The standard one. "Add node" makes another with its own settings; the one wired at the end of the chain answers.</p>' : ""}
+        : n.addable ? '<p class="hint">The standard one. "Add node" makes another with its own settings.</p>' : ""}
       ${n.module && !n.type ? this._moduleForm(n.module) : ""}`;
   }
 }

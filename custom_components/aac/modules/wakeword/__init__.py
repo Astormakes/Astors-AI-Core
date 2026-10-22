@@ -115,4 +115,6 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         if source := ctx.audio.source_of(line):
             await heard(source, line, ctx.audio.earlier(line))
 
-    ctx.add_node(Node(id="wakeword", title="Wake word", inputs={"lines": "text.line"}, run=on_line))
+    ctx.add_node(Node(id="wakeword", title="Wake word", inputs={"lines": "text.line"}, run=on_line,
+                      description="Listens to the heard lines and answers when one of AAC's names is said (or right after "
+                                  "it spoke); an attention check filters out a video saying the name."))

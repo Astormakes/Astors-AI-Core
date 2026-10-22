@@ -71,7 +71,8 @@ async def async_setup_module(ctx: ModuleContext) -> None:
             return None  # HA's CPU engines are too slow to transcribe every second
         return ((await ctx.audio.async_stt(pcm)) or {}).get("text", "").strip() or None
 
-    ctx.add_node(Node(id="stt", title="Speech to text", inputs={"speech": "audio.segment"}, outputs={"speech": "audio.segment"},
+    ctx.add_node(Node(id="stt", title="Speech to text", description="Writes down what was said in each stretch of speech "
+                      "(the voice pool's engine), and drops what whisper makes up.", inputs={"speech": "audio.segment"}, outputs={"speech": "audio.segment"},
                       adds=["text", "language", "confidence", "engine", "words"], order=10, annotate=run, partial=partial))
 
 

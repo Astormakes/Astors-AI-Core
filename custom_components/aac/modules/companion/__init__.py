@@ -173,4 +173,6 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         if source := ctx.audio.source_of(line):
             await heard(source, line, ctx.audio.earlier(line))
 
-    ctx.add_node(Node(id="companion", title="Companion", inputs={"lines": "text.line"}, run=on_line))
+    ctx.add_node(Node(id="companion", title="Companion", inputs={"lines": "text.line"}, run=on_line,
+                      description="Follows the conversation in the room instead of waiting for its name: for every spoken "
+                                  "line a quick decision whether AAC should answer now. Steps back while the wake word is on."))

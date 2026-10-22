@@ -124,8 +124,13 @@ async def async_setup_module(ctx: ModuleContext) -> None:
 
     ctx.add_llm_api(lambda dom, api_id, name: AACMemoryAPI(hass=hass, id=api_id, name=name, memory=memory.stores[dom.id]),
                     card=False)
-    ctx.add_card("memory", "Memory", provide)
-    ctx.add_node(Node(id="memory_keeper", title="Memory keeper", inputs={"in": "message"}, role="sink", run=keep))
+    ctx.add_card("memory", "Memory", provide,
+                 "Attach to a model to give it a long-term memory: its tools (remember, recall, look up facts, forget) "
+                 "for when the model wants them, and, with the setting on, matching memories handed along with every "
+                 "message (small models rarely ask on their own).")
+    ctx.add_node(Node(id="memory_keeper", title="Memory keeper", inputs={"in": "message"}, role="sink", run=keep,
+                      description="Reads the answers of a chat and keeps what is worth keeping (lasting facts, measurements, "
+                                  "plans), with a short extra call. Wire a model's output to it."))
     ctx.add_ws_commands(ws_memory_list, ws_memory_save, ws_memory_delete, ws_memory_reembed, ws_facts)
     ctx.add_panel_page("browse", "Memory", "aac-memory-page", "page.js")
 

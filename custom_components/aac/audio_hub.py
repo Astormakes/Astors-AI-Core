@@ -272,7 +272,8 @@ class AudioHub:
         # The core's audio node on the stream bus (spec/streams.md): raw audio for media readers (sound
         # captions), each speech segment through the annotating nodes (speech to text, sounds, voices), and
         # every finished line to the hearing modules (wake word, companion) as text.line
-        self.node = Node(id="hearing", title="Hearing", outputs={
+        self.node = Node(id="hearing", title="Hearing", description="AAC's microphones: the raw audio, each stretch of "
+                         "speech (through speech to text and voices) and every finished line, for the hearing modules.", outputs={
             "audio": "audio.pcm", "segments": "audio.segment", "lines": "text.line"})
         entry.async_on_unload(entry.runtime_data.bus.add_node(self.node))
 

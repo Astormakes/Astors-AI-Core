@@ -19,4 +19,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         return (ctx.setting(domain_id, "text") or "").strip() or builtin
 
     # Added charters (another chain, e.g. for voice or a work assistant) have their own text
-    ctx.add_prompt(charter, order=0, instance_part=lambda settings: (settings.get("text") or "").strip() or builtin)
+    ctx.add_prompt(charter, order=0, instance_part=lambda settings: (settings.get("text") or "").strip() or builtin,
+                   description="Puts your values first in the system prompt (honest, sparing, your decisions stay yours). "
+                               "Only you can change it, never an agent. An added Charter has its own text, e.g. a calmer "
+                               "one for voice.")

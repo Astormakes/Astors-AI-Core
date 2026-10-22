@@ -212,7 +212,8 @@ async def async_setup_module(ctx: ModuleContext) -> None:
 
     ctx.hass.data.setdefault(f"{DOMAIN}_voices", {})[ctx.entry.entry_id] = (voices, keep)
     ctx.add_ws_commands(ws_voices, ws_voice_change)
-    ctx.add_node(Node(id="voices", title="Voices", inputs={"speech": "audio.segment"}, outputs={"speech": "audio.segment"}, adds=["speaker"], order=20, annotate=run))
+    ctx.add_node(Node(id="voices", title="Voices", description="Tells voices apart: marks each spoken line with whose voice "
+                      "it is (a known one or a new \"voice #3\"), so a video or the TV can be told from you.", inputs={"speech": "audio.segment"}, outputs={"speech": "audio.segment"}, adds=["speaker"], order=20, annotate=run))
     ctx.add_llm_api(lambda dom, api_id, name: VoicesAPI(hass=ctx.hass, id=api_id, name=name, voices=voices, keep=keep))
 
 

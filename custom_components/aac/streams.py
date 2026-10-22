@@ -81,6 +81,9 @@ class Node:
     type: str | None = None  # an instance: the type it was made from
     # Its part in the message graph (flow.py): source · transform · model · decide · reply · sink · tool
     role: str | None = None
+    # What it does, in plain words: shown on the card and in Add node, and what AAC reads when it builds a graph
+    # itself; every node brings one (spec/module.md)
+    description: str = ""
     # A tool card: provide(message) adds its tool set (and maybe context) when the model it is attached to answers
     provide: Callable[[Any], Awaitable[None]] | None = None
     template: bool = False  # a type that exists only as added instances (not as a node of its own)
@@ -117,6 +120,7 @@ class Bus:
             if kind and kind.make and inst_id not in found:
                 node = kind.make(inst_id, spec.get("title") or kind.title, dict(spec.get("settings") or {}))
                 node.type, node.module = kind.id, kind.module
+                node.description = node.description or kind.description
                 found[inst_id] = node
         return found
 
@@ -279,6 +283,7 @@ class Bus:
         return {
             "nodes": [{"id": n.id, "title": n.title, "module": n.module, "inputs": n.inputs, "outputs": n.outputs,
                        "adds": n.adds, "order": n.order if n.annotating else None, "on": self._on(n, domain_id),
+                       "role": n.role, "description": n.description,
                        "kind": "annotating" if n.annotating else "source" if not n.inputs else "sink" if not n.outputs
                        else "transform",
                        # how many records each output carried in the last minutes (the view shows the flow)
@@ -290,6 +295,6 @@ class Bus:
             "wires": [{"from": f"{a}.{b}", "to": f"{c}.{d}"} for a, b, c, d in self.wires(domain_id)],
             # What "Add node" offers: node types that can be added (more than once), templates included
             "types": [{"id": n.id, "title": n.title, "kind": "annotating" if n.annotating else "node", "adds": n.adds,
-                       "module": n.module, "settings_schema": n.settings_schema}
+                       "module": n.module, "settings_schema": n.settings_schema, "description": n.description, "role": n.role}
                       for n in [*self.nodes.values(), *self.templates.values()] if n.make and self._on(n, domain_id)],
         }

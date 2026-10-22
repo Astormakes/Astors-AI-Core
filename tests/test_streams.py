@@ -302,3 +302,15 @@ async def test_decide_routes_by_named_outputs(hass, hass_ws_client, aioclient_mo
     decided = next(s for s in trace if s["node"] == "check")
     assert decided["output"] == "has_69" and [s["node"] for s in trace if s.get("role") == "model"] == ["model", "second"]
 
+
+
+async def test_every_card_says_what_it_does(hass, mock_entry, configured):
+    """Descriptions are part of the node contract (the owner reads them on the card; AAC will read them when it
+    builds graphs itself): every node and every addable type has one."""
+    from .conftest import setup_aac
+
+    await setup_aac(hass, mock_entry)
+    summary = mock_entry.runtime_data.bus.summary("assistant")
+    missing = [n["id"] for n in summary["nodes"] if len(n["description"]) < 20]
+    missing += [t["id"] for t in summary["types"] if len(t["description"]) < 20]
+    assert not missing, missing

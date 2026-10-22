@@ -65,7 +65,9 @@ async def async_run_now(hass: HomeAssistant, domain_id: str | None = None):
 
 async def async_setup_module(ctx: ModuleContext) -> None:
     """The node, its clock, the "Run once now" command and the page."""
-    ctx.add_node(Node(id=NODE, title="Heartbeat", outputs={"out": "message"}, role="source"))
+    ctx.add_node(Node(id=NODE, title="Heartbeat", outputs={"out": "message"}, role="source",
+                      description="Every few minutes (outside quiet hours) a check-in: anything worth telling you right now? "
+                                  "Low priority; a finding opens a chat of its own, silence stays silent."))
     ctx.hass.data[_CTX] = ctx
     started = dt_util.utcnow()
     last: dict[str, datetime] = {}

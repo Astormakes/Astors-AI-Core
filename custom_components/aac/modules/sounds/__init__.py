@@ -52,7 +52,9 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         return [{"text": f"[{', '.join(n.lower() for n in names[:3])}]", "labels": [[n, p] for n, p in labels[:5]]}]
 
     window = min(10.0, max(1.0, float(ctx.setting(ctx.entry.runtime_data.voice_domain.id, "window") or 2)))
-    ctx.add_node(Node(id="sounds_speech", title="Sounds behind speech", inputs={"speech": "audio.segment"}, outputs={"speech": "audio.segment"},
+    ctx.add_node(Node(id="sounds_speech", title="Sounds behind speech", description="Notes the sounds behind a spoken line "
+                      "(music, laughter, a door), so the line is read in its situation.", inputs={"speech": "audio.segment"}, outputs={"speech": "audio.segment"},
                       adds=["sounds"], order=15, annotate=on_speech))
-    ctx.add_node(Node(id="sounds", title="Sounds", inputs={"audio": "audio.pcm"}, outputs={"events": "sound.event"},
+    ctx.add_node(Node(id="sounds", title="Sounds", description="Names the sounds in the room like subtitles ([doorbell], "
+                      "[music]) between spoken lines.", inputs={"audio": "audio.pcm"}, outputs={"events": "sound.event"},
                       listen=between, window=window))
