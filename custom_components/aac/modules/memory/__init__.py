@@ -118,8 +118,12 @@ async def async_setup_module(ctx: ModuleContext) -> None:
             await memory.async_after_message(domain_id, request.words, item.get("stored_now") or [],
                                              item["provider"], item["model"])
 
+    def again(inst_id: str, title: str, settings: dict) -> Node:  # recall in another chain too
+        return Node(id=inst_id, title=title, inputs=REQUEST_PORT, outputs=REQUEST_PORT, adds=["context"], order=20,
+                    annotate=recall, settings=settings)
+
     ctx.add_node(Node(id="memory", title="Memory recall", inputs=REQUEST_PORT, outputs=REQUEST_PORT, adds=["context"],
-                      order=20, annotate=recall))
+                      order=20, annotate=recall, make=again))
     ctx.add_node(Node(id="memory_keeper", title="Memory keeper", inputs={"answers": "model.answer"}, run=keep))
     ctx.add_llm_api(lambda dom, api_id, name: AACMemoryAPI(hass=hass, id=api_id, name=name, memory=memory.stores[dom.id]))
     ctx.add_ws_commands(ws_memory_list, ws_memory_save, ws_memory_delete, ws_memory_reembed, ws_facts)

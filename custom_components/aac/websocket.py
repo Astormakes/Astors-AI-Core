@@ -665,9 +665,13 @@ def ws_nodes(hass: HomeAssistant, connection, msg) -> None:
     names = {m.id: m.manifest.get("name", m.id) for m in entry.runtime_data.modules}
     for node in summary["nodes"]:
         node["module_name"] = names.get(node["module"], "Core") if node["module"] else "Core"
-    summary["types"] = STREAM_TYPES
+    summary["stream_types"] = STREAM_TYPES
     summary["containers"] = entry.runtime_data.store.graph(dom.id)["containers"]
     summary["by_hand"] = entry.runtime_data.bus.wired_by_hand(dom.id)
+    # The modules behind the nodes, with their settings form and values: editable right in the node view
+    used = {n["module"] for n in summary["nodes"] if n["module"]}
+    summary["modules"] = {m.id: {k: v for k, v in _module_view(hass, entry, m, dom.id).items() if k != "manifest"}
+                          for m in entry.runtime_data.modules if m.id in used}
     caps = entry.runtime_data.capabilities
     summary["options"] = {name: fn(dom.id) for name, fn in caps.options.items() if name == "tiers"}
     connection.send_result(msg["id"], summary)
@@ -748,7 +752,7 @@ async def ws_node_instances(hass: HomeAssistant, connection, msg) -> None:
     bus, dom = entry.runtime_data.bus, _d(entry, msg)
     instances = {}
     for inst_id, spec in msg["instances"].items():
-        kind = bus.nodes.get(spec["type"])
+        kind = bus.nodes.get(spec["type"]) or bus.templates.get(spec["type"])
         if kind is None or kind.make is None or inst_id in bus.nodes:
             connection.send_error(msg["id"], "invalid", f"{inst_id}: {spec['type']} cannot be added as a node")
             return

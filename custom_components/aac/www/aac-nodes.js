@@ -94,6 +94,7 @@ class AacNodes extends HTMLElement {
         <div class="nv-legend" style="display:flex;gap:.9em;flex-wrap:wrap;padding:.5em .9em;border-top:1px solid var(--line);font-size:.8em"></div>
         <p class="hint nv-msg" style="margin:.5em .9em"></p>
       </div>
+      <div class="card nv-info" style="display:none"></div>
       <div class="card nv-try"><h2>TRY IT</h2>
         <p class="hint">Send a message through the graph and watch its way: the cards it passes light up, and you see what each one added.</p>
         <div class="row" style="align-items:flex-end;gap:.6em">
@@ -103,8 +104,7 @@ class AacNodes extends HTMLElement {
           <div style="flex:none" class="actions"><button class="btn primary" data-nv="try">Send</button></div>
         </div>
         <div class="nv-try-out"></div>
-      </div>
-      <div class="card nv-info" style="display:none"></div>`;
+      </div>`;
     this._stage = this.querySelector(".nv-stage");
     this._msg = this.querySelector(".nv-msg");
     this._svg = document.createElementNS(SVG, "svg");
@@ -531,6 +531,7 @@ class AacNodes extends HTMLElement {
       if (step) { this._sel = step.dataset.tryNode; this._selFrame = null; this._selWire = null; this._draw(); this._info(); }
       if (b?.dataset.nv === "inst-save") this._saveInstance(b.dataset.node);
       if (b?.dataset.nv === "inst-remove") this._removeInstance(b.dataset.node);
+      if (b?.dataset.nv === "mod-save") this._saveModule(b.dataset.module);
       if (b?.dataset.nv === "unwire") this._unwire(this._selWire);
       if (b?.dataset.nv === "rename") this._rename(b.dataset.frame);
       if (b?.dataset.nv === "ungroup") {
@@ -741,18 +742,27 @@ class AacNodes extends HTMLElement {
 
   _addNode() {
     // A small menu of the types that can be added (one: add it at once)
-    const types = this._data.nodes.filter((n) => n.addable && !n.type);
+    const types = this._data.types || [];
     const menu = this.querySelector(".nv-addmenu");
-    if (!types.length) { this._msg.textContent = "No node type can be added more than once yet."; return; }
+    if (!types.length) { this._msg.textContent = "No node type can be added yet."; return; }
     if (types.length === 1) { this._addOf(types[0].id); return; }
     if (menu.style.display !== "none") { menu.style.display = "none"; return; }
-    menu.innerHTML = types.map((t) => `<button class="ditem" data-nv="add-type" data-type="${esc(t.id)}" style="display:block;width:100%">${esc(t.title)}</button>`).join("");
+    // grouped by what they add: text for the system prompt, context, tools; the model
+    const group = (t) => t.id === "broker" ? "Model" : t.adds?.includes("tools") && !t.adds.includes("system") ? "Tools"
+      : t.adds?.includes("context") ? "Context and memory" : "Text for the system prompt";
+    const order = ["Text for the system prompt", "Context and memory", "Tools", "Model"];
+    menu.innerHTML = order.map((g) => {
+      const items = types.filter((t) => group(t) === g);
+      return items.length ? `<div class="hint" style="padding:.4em .9em .1em;font-size:.75em;letter-spacing:.08em">${esc(g.toUpperCase())}</div>
+        ${items.map((t) => `<button class="ditem" data-nv="add-type" data-type="${esc(t.id)}" style="display:block;width:100%">${esc(t.title)}</button>`).join("")}` : "";
+    }).join("");
+    menu.style.maxHeight = "60vh"; menu.style.overflow = "auto";
     menu.style.display = "";
   }
 
   async _addOf(typeId) {
     this.querySelector(".nv-addmenu").style.display = "none";
-    const type = this._data.nodes.find((n) => n.id === typeId);
+    const type = (this._data.types || []).find((n) => n.id === typeId);
     if (!type) return;
     const title = await this._ask(`Name of the new ${type.title.toLowerCase()} node`, `${type.title} 2`);
     if (title === null || title === undefined || !String(title).trim()) return;
@@ -782,6 +792,47 @@ class AacNodes extends HTMLElement {
     delete all[id];
     this._sel = null;
     this._setInstances(all);
+  }
+
+  _moduleForm(id) {
+    // A module's settings right here (simple kinds; entity lists and the rest on its settings page)
+    const m = this._data.modules?.[id];
+    if (!m) return "";
+    let more = false;
+    const fields = Object.entries(m.settings || {}).map(([key, f]) => {
+      const v = m.values?.[key], label = `<label>${esc(f.title || key)}</label>`;
+      const help = f.help ? `<div class="hint" style="margin:-.2em 0 .5em">${esc(f.help)}</div>` : "";
+      if (f.type === "bool") return `<label class="check"><input type="checkbox" data-mod-key="${esc(key)}" ${v ? "checked" : ""}>${esc(f.title || key)}</label>${help}`;
+      if (f.type === "select" && f.options) return `${label}<select data-mod-key="${esc(key)}">${f.options.map(([val, l]) =>
+        `<option value="${esc(val)}" ${String(val) === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>${help}`;
+      if (f.type === "longtext") return `${label}<textarea data-mod-key="${esc(key)}" class="thin-scroll" style="min-height:${(f.rows || 4) * 1.3}em" placeholder="${esc(f.placeholder || "")}">${esc(v ?? "")}</textarea>${help}`;
+      if (["number", "time", "text", "string"].includes(f.type) || !f.type)
+        return `${label}<input data-mod-key="${esc(key)}" ${f.type === "number" ? 'type="number" inputmode="decimal"' : f.type === "time" ? 'type="time"' : ""} value="${esc(v ?? "")}">${help}`;
+      more = true;
+      return "";
+    }).join("");
+    return `<h3 style="margin-top:1em">MODULE: ${esc((m.name || id).toUpperCase())}</h3>
+      <label class="check"><input type="checkbox" data-mod-on ${m.enabled ? "checked" : ""}>On in this domain</label>
+      ${fields}${more ? '<p class="hint">More settings on the module\'s page.</p>' : ""}
+      <div class="actions"><button class="btn primary" data-nv="mod-save" data-module="${esc(id)}">Save</button>
+        <button class="btn" data-go="settings/module/${esc(id)}">Module page</button></div>`;
+  }
+
+  async _saveModule(id) {
+    const box = this.querySelector(".nv-info"), m = this._data.modules?.[id];
+    if (!m) return;
+    const values = {};
+    for (const el of box.querySelectorAll("[data-mod-key]")) {
+      const f = m.settings[el.dataset.modKey] || {};
+      values[el.dataset.modKey] = f.type === "bool" ? el.checked : f.type === "number" ? Number(el.value) : el.value;
+    }
+    const on = box.querySelector("[data-mod-on]")?.checked;
+    try {
+      if (Object.keys(values).length) await this.ws("aac/module/settings", { module: id, values });
+      if (on !== undefined && on !== m.enabled) await this.ws("aac/module/access", { module: id, values: { enabled: on } });
+      this._msg.textContent = "Saved.";
+    } catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
+    await this.refresh();
   }
 
   _settingsForm(n) {
@@ -884,7 +935,7 @@ class AacNodes extends HTMLElement {
       </div>
       ${n.type ? `<h3 style="margin-top:1em">THIS NODE</h3>${this._settingsForm(n)}`
         : n.addable ? '<p class="hint">The standard one. "Add node" makes another with its own settings; the one wired at the end of the chain answers.</p>' : ""}
-      ${n.module ? `<div class="actions"><button class="btn" data-go="settings/module/${esc(n.module)}">Module settings</button></div>` : ""}`;
+      ${n.module && !n.type ? this._moduleForm(n.module) : ""}`;
   }
 }
 

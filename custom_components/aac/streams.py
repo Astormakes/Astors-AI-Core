@@ -78,6 +78,7 @@ class Node:
     settings_schema: dict[str, Any] = field(default_factory=dict)
     settings: dict[str, Any] = field(default_factory=dict)
     type: str | None = None  # an instance: the type it was made from
+    template: bool = False  # a type that exists only as added instances (not as a node of its own)
 
     @property
     def annotating(self) -> bool:
@@ -91,6 +92,7 @@ class Bus:
     def __init__(self, module_enabled: Callable[[str, str], bool] | None = None) -> None:
         """Initialize (module_enabled(domain_id, module_id): is a module on in a domain)."""
         self.nodes: dict[str, Node] = {}
+        self.templates: dict[str, Node] = {}  # node types that exist only when the owner adds one
         self._module_enabled = module_enabled or (lambda domain_id, module_id: True)
         self._recent: dict[tuple[str, str, str], deque[dict[str, Any]]] = {}
         # The owner's own wires per domain: fn(domain_id) → [{"from": "a.p", "to": "b.q"}] or None (automatic)
@@ -106,7 +108,7 @@ class Bus:
         """Every node of a domain: the registered ones and the domain's added instances."""
         found = dict(self.nodes)
         for inst_id, spec in (self._instances(domain_id) or {}).items():
-            kind = self.nodes.get(spec.get("type", ""))
+            kind = self.nodes.get(spec.get("type", "")) or self.templates.get(spec.get("type", ""))
             if kind and kind.make and inst_id not in found:
                 node = kind.make(inst_id, spec.get("title") or kind.title, dict(spec.get("settings") or {}))
                 node.type, node.module = kind.id, kind.module
@@ -130,10 +132,10 @@ class Bus:
         for port, kind in {**node.inputs, **node.outputs}.items():
             if kind not in STREAM_TYPES and "." not in kind:
                 raise ValueError(f"Node {node.id}: unknown stream type {kind!r} on port {port!r}")
-        self.nodes[node.id] = node
+        (self.templates if node.template else self.nodes)[node.id] = node
 
         def remove() -> None:
-            self.nodes.pop(node.id, None)
+            (self.templates if node.template else self.nodes).pop(node.id, None)
 
         return remove
 
@@ -248,8 +250,13 @@ class Bus:
                        else "transform",
                        # how many records each output carried in the last minutes (the view shows the flow)
                        "recent": {p: len(self.recent(domain_id, n.id, p)) for p in n.outputs},
-                       "type": n.type, "settings": n.settings, "settings_schema": (self.nodes.get(n.type or n.id) or n).settings_schema,
+                       "type": n.type, "settings": n.settings,
+                       "settings_schema": (self.nodes.get(n.type or n.id) or self.templates.get(n.type or "") or n).settings_schema,
                        "addable": bool(n.make)}
                       for n in self.nodes_in(domain_id).values()],
             "wires": [{"from": f"{a}.{b}", "to": f"{c}.{d}"} for a, b, c, d in self.wires(domain_id)],
+            # What "Add node" offers: node types that can be added (more than once), templates included
+            "types": [{"id": n.id, "title": n.title, "kind": "annotating" if n.annotating else "node", "adds": n.adds,
+                       "module": n.module, "settings_schema": n.settings_schema}
+                      for n in [*self.nodes.values(), *self.templates.values()] if n.make and self._on(n, domain_id)],
         }

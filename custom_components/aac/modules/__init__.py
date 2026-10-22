@@ -168,8 +168,12 @@ class ModuleContext:
         async def annotate(request) -> None:
             request.add_tools(self.module.api_ids.get(request.domain.id))
 
+        def make(inst_id: str, inst_title: str, settings: dict) -> Node:  # the same tools in another chain
+            return Node(id=inst_id, title=inst_title, inputs=REQUEST_PORT, outputs=REQUEST_PORT, adds=["tools"],
+                        order=TOOLS_ORDER, annotate=annotate, settings=settings)
+
         self.add_node(Node(id=f"{self.module.id}_tools", title=f"{title} tools", inputs=REQUEST_PORT, outputs=REQUEST_PORT,
-                           adds=["tools"], order=TOOLS_ORDER, annotate=annotate))
+                           adds=["tools"], order=TOOLS_ORDER, annotate=annotate, make=make))
 
     def add_ws_commands(self, *handlers) -> None:
         """WebSocket commands (registered once per HA start, they look the entry up themselves)."""
