@@ -719,7 +719,7 @@ async def ws_node_wires(hass: HomeAssistant, connection, msg) -> None:
 
 
 @aac_command({vol.Required("type"): "aac/nodes/try", vol.Required("text"): vol.All(str, vol.Length(min=1)),
-              vol.Optional("source", default="chat"): vol.In(["chat", "voice", "assist", "auto"])})
+              vol.Optional("source", default="chat"): vol.In(["chat", "voice", "assist", "heartbeat", "triggers"])})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_node_try(hass: HomeAssistant, connection, msg) -> None:
@@ -729,7 +729,7 @@ async def ws_node_try(hass: HomeAssistant, connection, msg) -> None:
         return
     dom = _d(entry, msg)
     run, answer = await async_run_request(
-        hass, entry, msg["text"], kind="auto" if msg["source"] == "auto" else "chat", trigger="try",
+        hass, entry, msg["text"], kind="auto" if msg["source"] in ("heartbeat", "triggers") else "chat", trigger="try",
         title=f"Try ({msg['source']}) · {msg['text'][:40]}", user_id=connection.user.id, domain=dom, source=msg["source"],
         allow_tools=True,
     )

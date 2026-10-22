@@ -49,8 +49,8 @@ _DEFAULT_OFF: set[str] = set()
 MODULES_DIR = Path(__file__).parent
 MODULES_URL = "/aac_modules"
 _WS_DONE = f"{DOMAIN}_module_ws"
-REQUEST_PORT = {"requests": "model.request"}  # annotating nodes on the request record (request.py)
-TOOLS_ORDER = 40  # tool sets join the request after the system parts (0–19) and context (20–29)
+IN, OUT = {"in": "message"}, {"out": "message"}  # a transform: a message in, the same message (added to) out
+CARD = {"tools": "tool"}  # a card attached to a model (the dotted line; its menu)
 
 
 @dataclass
@@ -123,11 +123,11 @@ class ModuleContext:
                 if text := (instance_part(settings) or "").strip():
                     request.system.append(text)
 
-            return Node(id=inst_id, title=title, inputs=REQUEST_PORT, outputs=REQUEST_PORT, adds=["system"],
+            return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=["system"], role="transform",
                         order=order, annotate=annotate_instance, settings=settings)
 
         self.add_node(Node(id=self.module.id, title=self.module.manifest.get("name", self.module.id),
-                           inputs=REQUEST_PORT, outputs=REQUEST_PORT, adds=["system"], order=order, annotate=annotate,
+                           inputs=IN, outputs=OUT, adds=["system"], order=order, annotate=annotate, role="transform",
                            make=make if instance_part else None,
                            settings_schema=self.module.manifest.get("settings", {}) if instance_part else {}))
 
@@ -153,7 +153,7 @@ class ModuleContext:
         """The audio hub: sources, transcript, speaking, answering through the master."""
         return self.entry.runtime_data.audio
 
-    def add_llm_api(self, factory: Callable[[Domain, str, str], llm.API]) -> None:
+    def add_llm_api(self, factory: Callable[[Domain, str, str], llm.API], card: bool = True) -> None:
         """Tools for the agents: factory(domain, api_id, name) → an llm.API, registered per domain."""
         title = self.module.manifest.get("name", self.module.id)
         for dom in self.domains.values():
@@ -164,16 +164,21 @@ class ModuleContext:
             self.entry.async_on_unload(llm.async_register_api(self.hass, guarded))
             self.module.api_ids[dom.id] = api_id
 
-        # Its tool set joins every request of a domain where the module is on (a node in the request's chain)
-        async def annotate(request) -> None:
-            request.add_tools(self.module.api_ids.get(request.domain.id))
+        if card:  # its tools as a card attached to a model (the model's menu); card=False: the module makes its own
+            self.add_card(f"{self.module.id}_tools", title)
 
-        def make(inst_id: str, inst_title: str, settings: dict) -> Node:  # the same tools in another chain
-            return Node(id=inst_id, title=inst_title, inputs=REQUEST_PORT, outputs=REQUEST_PORT, adds=["tools"],
-                        order=TOOLS_ORDER, annotate=annotate, settings=settings)
+    def add_card(self, card_id: str, title: str, provide=None) -> None:
+        """A card that attaches to a model (the dotted line): provide(message) adds its tool set, maybe context;
+        by default the module's own tools. It can be attached to more models (added again)."""
+        async def tools(message) -> None:
+            message.add_tools(self.module.api_ids.get(message.domain.id))
 
-        self.add_node(Node(id=f"{self.module.id}_tools", title=f"{title} tools", inputs=REQUEST_PORT, outputs=REQUEST_PORT,
-                           adds=["tools"], order=TOOLS_ORDER, annotate=annotate, make=make))
+        provide = provide or tools
+
+        def make(inst_id: str, inst_title: str, settings: dict) -> Node:
+            return Node(id=inst_id, title=inst_title, outputs=CARD, role="tool", provide=provide, settings=settings)
+
+        self.add_node(Node(id=card_id, title=title, outputs=CARD, role="tool", provide=provide, make=make))
 
     def add_ws_commands(self, *handlers) -> None:
         """WebSocket commands (registered once per HA start, they look the entry up themselves)."""

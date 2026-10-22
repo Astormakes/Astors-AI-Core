@@ -132,7 +132,7 @@ async def test_heartbeat_schedule(hass: HomeAssistant, aioclient_mock, mock_entr
         await hass.async_block_till_done(wait_background_tasks=True)
     runs = mock_entry.runtime_data.runs.runs
     assert [r.trigger for r in runs] == ["heartbeat"]
-    sent = mock_entry.runtime_data.bus.recent(mock_entry.runtime_data.domain().id, "heartbeat", "requests")
+    sent = mock_entry.runtime_data.bus.recent(mock_entry.runtime_data.domain().id, "heartbeat", "out")
     assert [r["trigger"] for r in sent] == ["heartbeat"]
 
 

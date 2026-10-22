@@ -2,7 +2,7 @@
 
 The first module on the stream bus (owner, 2026-10-21: "the heartbeat should be a module"). It is a
 source node: a clock checks every minute whether a domain's interval has passed (outside its quiet
-hours) and writes a `broker.request`; the core's broker node queues the run (low priority, pointless
+hours) and sends a message from its card through the graph; the model node queues it (low priority, pointless
 once the next heartbeat is due, one waiting at a time) and opens a chat of its own for a finding.
 Tested instructions (Qwen3-8B and Qwen3.6-35B): alarms reported 12/12, quiet home silent; stating the
 NOTHING rule several times made both models swallow real alarms.
@@ -21,6 +21,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from ...const import DOMAIN
+from ...broker import async_send
 from ...streams import Node
 from ...capabilities import in_quiet_hours
 from .. import ModuleContext
@@ -45,24 +46,26 @@ def request(ctx: ModuleContext, domain_id: str, now: bool = False) -> dict[str, 
 
 
 async def async_queue(hass: HomeAssistant, domain_id: str | None = None) -> None:
-    """One heartbeat through the stream bus and the queue (what the clock does when the interval passed)."""
+    """One heartbeat through the graph and the queue (what the clock does when the interval passed)."""
     ctx: ModuleContext = hass.data[_CTX]
-    domain_id = domain_id or ctx.entry.runtime_data.domain().id
-    await ctx.emit(domain_id, NODE, "requests", request(ctx, domain_id))
+    data = ctx.entry.runtime_data
+    domain = data.domain(domain_id) if domain_id else data.domain()
+    await async_send(hass, ctx.entry, domain, request(ctx, domain.id), NODE)
 
 
 async def async_run_now(hass: HomeAssistant, domain_id: str | None = None):
     """One heartbeat at once, without the queue ("Run once now"; also while the module is off): the run,
     or None (no master model, or one is already running)."""
     ctx: ModuleContext = hass.data[_CTX]
-    domain_id = domain_id or ctx.entry.runtime_data.domain().id
-    # Straight to the broker node, so it works while the module is off in this domain
-    return await ctx.entry.runtime_data.bus.nodes["broker"].run(domain_id, "requests", request(ctx, domain_id, now=True))
+    data = ctx.entry.runtime_data
+    domain = data.domain(domain_id) if domain_id else data.domain()
+    # From the heartbeat's own card, so it works while the module is off in this domain (its wires stay)
+    return await async_send(hass, ctx.entry, domain, request(ctx, domain.id, now=True), NODE)
 
 
 async def async_setup_module(ctx: ModuleContext) -> None:
     """The node, its clock, the "Run once now" command and the page."""
-    ctx.add_node(Node(id=NODE, title="Heartbeat", outputs={"requests": "broker.request"}))
+    ctx.add_node(Node(id=NODE, title="Heartbeat", outputs={"out": "message"}, role="source"))
     ctx.hass.data[_CTX] = ctx
     started = dt_util.utcnow()
     last: dict[str, datetime] = {}

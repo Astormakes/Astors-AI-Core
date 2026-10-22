@@ -1,36 +1,48 @@
-"""The model request record and its chain (spec/streams.md → Target model, spec/v1.md).
+"""The message (spec/streams.md → Target model, spec/v1.md).
 
-A request to a model is a structured record, not one long text, so every node writes to the right place
-and the server's prompt cache keeps working:
+Owner, 2026-10-22: "answer and request is the same thing". A message is a structured record, not one long
+text, so every node writes to the right place and the server's prompt cache keeps working:
+- `text`: what is being asked now (after a model: its answer, so another model can work on it)
 - `system`: stable parts, first in the system prompt (the charter, the agent's own prompt)
-- `instructions`: system text for this request only (an automatic run's situation, the voice rules)
-- `context`: goes along with the message itself (memory recalls)
-- `tools`: the LLM API ids the model may use (each tool set a node adds)
+- `instructions`: system text for this message only (an automatic run's situation, the voice rules)
+- `context`: goes along with the message itself (memory recalls, a context card)
+- `tools`: the LLM API ids the model may use (filled by the cards attached to it, when it answers)
+- where it came from (`source`, chat, user, …), so Reply brings the answer home however many models it passed
+- `priority` (set by a source's output), and for automatic ones how long it may wait (`due_minutes`, …)
 
-On the way to the model node it runs through the annotating nodes of type `model.request` on the stream
-bus, lowest order first: each adds its part (`annotate(request)`). The model node then sends it.
+flow.py moves it through the graph.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
-
-from .const import LOGGER
+import uuid
 
 if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
-
-    from . import AACConfigEntry
     from .domains import Domain
 
-REQUEST = "model.request"
-ANSWER = "model.answer"
+MESSAGE = "message"
+TOOL = "tool"
+
+SOURCES = {"chat": "Panel chat", "voice": "Voice", "assist": "HA Assist"}
+PRIORITY = {"chat": "high", "voice": "high", "assist": "high"}
+
+
+def source_of(kind: str, trigger: str) -> str:
+    """Which source node a message comes from."""
+    if trigger == "heartbeat":
+        return "heartbeat"
+    if kind == "auto":
+        return "triggers"
+    if trigger.startswith("voice"):
+        return "voice"
+    return "assist" if trigger == "assist" else "chat"
 
 
 @dataclass
 class ModelRequest:
-    """One request to a domain's model."""
+    """A message (the name stays from v0's requests: one record for asking and answering)."""
 
     domain: Domain
     text: str
@@ -44,14 +56,29 @@ class ModelRequest:
     history: list[dict[str, Any]] = field(default_factory=list)  # [{"role": "user"|"aac", "text": …}]
     tier: str = "master"
     allow_tools: bool = True
-    source: str = "chat"  # the node it comes from: chat (panel), voice, assist (HA), auto (heartbeat, triggers)
-    trace: list[dict[str, Any]] = field(default_factory=list)  # what each node of the chain added (async_prepare)
     language: str | None = None
     device_id: str | None = None
+    source: str = "chat"  # the node it comes from: chat (panel), voice, assist (HA), auto (heartbeat, triggers)
+    priority: str = "high"  # high · normal · low (a source's output sets it)
     system: list[str] = field(default_factory=list)
     instructions: str = ""
     context: list[str] = field(default_factory=list)
     tools: list[str] = field(default_factory=list)
+    trace: list[dict[str, Any]] = field(default_factory=list)  # the way through the graph, each node's part
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
+    # Automatic messages (heartbeat, triggers): how they wait for a model (jobs.py) and where a finding goes
+    due_minutes: int | None = None
+    critical: bool = False
+    fallback: str = ""
+    coalesce: bool = False
+    keep: bool = False
+    tags: list[str] = field(default_factory=list)
+    context_parts: list[str] = field(default_factory=list)  # built when a model really starts: time, home, open_loops
+    chat: str = "aac"  # an automatic finding: "aac" = the From AAC chat, "own" = a chat of its own
+    chat_prefix: str | None = None
+    answered: bool = False  # a model has answered it (text = the answer)
+    now: bool = False  # automatic but at once, without the queue ("Run once now")
+    meta: dict[str, Any] = field(default_factory=dict, repr=False)  # the last answer's details for sinks (memory)
 
     @property
     def words(self) -> str:
@@ -59,48 +86,15 @@ class ModelRequest:
         return self.own_words or self.text
 
     def add_tools(self, api_id: str | None) -> None:
-        """A tool set for this request (once)."""
+        """A tool set for this message (once)."""
         if api_id and api_id not in self.tools:
             self.tools.append(api_id)
 
-
-SOURCES = {"chat": "Panel chat", "voice": "Voice", "assist": "HA Assist", "auto": "Automatic (heartbeat, triggers)"}
-
-
-def source_of(kind: str, trigger: str) -> str:
-    """Which source node a request comes from."""
-    if kind == "auto":
-        return "auto"
-    if trigger.startswith("voice"):
-        return "voice"
-    return "assist" if trigger == "assist" else "chat"
+    def branch(self) -> ModelRequest:
+        """A copy for one branch of the graph (lists copied, the way so far kept)."""
+        return replace(self, system=list(self.system), context=list(self.context), tools=list(self.tools),
+                       trace=list(self.trace), history=list(self.history), tags=list(self.tags),
+                       context_parts=list(self.context_parts), meta=dict(self.meta))
 
 
-def start(entry: AACConfigEntry, domain_id: str, source: str) -> tuple[str, str]:
-    """Where a source's chain starts; a source with no wire at all (wired by hand before it existed) uses the
-    panel chat's chain."""
-    bus = entry.runtime_data.bus
-    if source != "chat" and source in bus.nodes and not any(a == source for a, *_ in bus.wires(domain_id)):
-        source = "chat"
-    return source, "requests"
-
-
-async def async_prepare(hass: HomeAssistant, entry: AACConfigEntry, request: ModelRequest) -> ModelRequest:
-    """Run the request through its chain: the annotating nodes wired after its source node, in the order of
-    the wires (automatic: by their order numbers)."""
-    for node in entry.runtime_data.bus.chain(request.domain.id, *start(entry, request.domain.id, request.source))[0]:
-        if node.annotate is None:
-            continue
-        before = (len(request.system), len(request.context), len(request.tools))
-        step: dict[str, Any] = {"node": node.id, "title": node.title}
-        try:
-            await node.annotate(request)
-        except Exception as err:  # noqa: BLE001 - one broken node must not stop the request
-            LOGGER.exception("AAC: node %s failed on a request", node.id)
-            step["error"] = str(err)
-        # What it added, for the run's trace (the node view shows the way and each node's part)
-        for key, n in zip(("system", "context", "tools"), before):
-            if added := getattr(request, key)[n:]:
-                step[key] = [a if key == "tools" else (a if len(a) <= 600 else a[:600] + "…") for a in added]
-        request.trace.append(step)
-    return request
+Message = ModelRequest

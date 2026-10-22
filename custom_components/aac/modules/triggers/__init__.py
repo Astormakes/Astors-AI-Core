@@ -1,7 +1,7 @@
 """Triggers module: what wakes AAC on its own, the owner's triggers and AAC's own plans (spec/trigger.md).
 
 Moved out of the core in 0.45 (owner, 2026-10-21: "a light and open core"). A trigger watches an
-entity, an HA event or a time; when it fires, the node "triggers" writes a `broker.request` and the
+entity, an HA event or a time; when it fires, its card "triggers" sends a message through the graph and the
 core's broker queues the run (reminders are time-critical: without a model their text reaches the owner
 anyway; event reactions expire). When the model has something to say it lands in "From AAC"; otherwise
 it answers NOTHING and stays silent (little noise is a core principle).
@@ -28,7 +28,7 @@ from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, Home
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change
 from homeassistant.util import dt as dt_util
 
-from ...broker import SILENT
+from ...broker import SILENT, async_send
 from ...capabilities import CalendarProvider, in_quiet_hours, parse_hhmm, parse_time
 from ...const import DOMAIN, LOGGER
 from ...pools import role_configured
@@ -186,7 +186,7 @@ class Triggers:
 
     def _fire(self, trig: dict, title: str, text: str) -> None:
         self.hass.async_create_background_task(
-            self.ctx.emit(self.domain.id, NODE, "requests", self.request(trig, title, text)), f"aac trigger {trig['id']}")
+            async_send(self.hass, self.ctx.entry, self.domain, self.request(trig, title, text), NODE), f"aac trigger {trig['id']}")
 
     @callback
     def _async_state_changed(self, event: Event[EventStateChangedData]) -> None:
@@ -294,14 +294,8 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         found[dom.id] = Triggers(ctx, dom)
         await found[dom.id].async_load()
         ctx.entry.async_on_unload(found[dom.id].async_stop)
-    ctx.add_node(Node(id=NODE, title="Triggers", outputs={"requests": "broker.request"}))
+    ctx.add_node(Node(id=NODE, title="Triggers", outputs={"out": "message"}, role="source"))
 
-    # Trigger jobs that waited before a restart in 0.44 and older (newer ones come back as broker requests)
-    def restore_old(dom: Domain, item: dict[str, Any]):
-        req = of(hass, dom.id).request(item["trigger"], item["title"], item["text"])
-        return data.jobs.restorers["request"](dom, {"request": req})  # the broker's
-
-    data.jobs.restorers["trigger"] = restore_old
 
     async def own_plans(domain_id: str) -> list[str]:
         return [f"- your own scheduled check-in: {t['name']} ({t['when'].get('date') or 'repeating'} at {t['when'].get('at')})"

@@ -28,10 +28,11 @@ STREAM_TYPES: dict[str, str] = {
     "sound.event": "record",
     "ha.event": "record",
     "time.tick": "record",
-    "broker.request": "record",
-    "broker.answer": "record",
-    "model.request": "record",  # the structured request record (request.py), filled by its chain
-    "model.answer": "record",
+    # v1 (owner, 2026-10-22): a request and an answer are the same thing, a message (request.py): sources write it,
+    # transforms add to it, a model answers it (its answer is the message's new text), Reply brings it home
+    "message": "record",
+    # A card attached to a model (the dotted line): its tools, maybe context; the model's menu is its attached cards
+    "tool": "link",
     "say": "record",
     "notify": "record",
     "video.frame": "continuous",
@@ -45,7 +46,7 @@ KEEP_FOR = timedelta(minutes=10)
 NodeRun = Callable[[str, str, dict[str, Any]], Awaitable[Any]]
 # annotate(...): what an annotating node does to a record; its arguments depend on the type:
 # audio.segment: annotate(source, pcm, line) → fields to add, {"drop": True}, {"split": [...]} or None
-# model.request: annotate(request) → adds to the request in place (request.py)
+# message: annotate(message) → adds to the message in place (request.py)
 Annotate = Callable[..., Awaitable[Any]]
 # listen(source, pcm) → records of its own (audio.pcm in windows, e.g. sound captions)
 Listen = Callable[[Any, bytes], Awaitable[list[dict[str, Any]]]]
@@ -78,6 +79,10 @@ class Node:
     settings_schema: dict[str, Any] = field(default_factory=dict)
     settings: dict[str, Any] = field(default_factory=dict)
     type: str | None = None  # an instance: the type it was made from
+    # Its part in the message graph (flow.py): source · transform · model · decide · reply · sink · tool
+    role: str | None = None
+    # A tool card: provide(message) adds its tool set (and maybe context) when the model it is attached to answers
+    provide: Callable[[Any], Awaitable[None]] | None = None
     template: bool = False  # a type that exists only as added instances (not as a node of its own)
 
     @property
@@ -190,10 +195,11 @@ class Bus:
 
     def default_wires(self, domain_id: str) -> list[tuple[str, str, str, str]]:
         """The automatic wiring by type. A type with annotating nodes runs through them as a chain in their
-        order: writers → first → … → last → readers."""
-        found = []  # added instances are wired by hand
+        order: writers → first → … → last → readers. Messages by role: every source through the transforms into
+        the model, the model into Reply and the sinks; every tool card onto the model."""
+        found = self._message_wires(domain_id)  # added instances are wired by hand
         for src in self.nodes.values():
-            if not self._on(src, domain_id) or src.annotating:
+            if not self._on(src, domain_id) or src.annotating or src.role:
                 continue
             for out_port, kind in src.outputs.items():
                 chain = self.annotators(domain_id, kind)
@@ -210,6 +216,28 @@ class Bus:
                         continue
                     found += [(tail.id, tail_port, dst.id, in_port) for in_port, k in dst.inputs.items() if k == kind]
         return list(dict.fromkeys(found))
+
+    def _message_wires(self, domain_id: str) -> list[tuple[str, str, str, str]]:
+        on = [n for n in self.nodes.values() if n.role and self._on(n, domain_id)]
+
+        def port(node: Node, kind: str, side: str) -> str | None:
+            return next((p for p, k in (node.outputs if side == "out" else node.inputs).items() if k == kind), None)
+
+        found = []
+        models = [n for n in on if n.role == "model"]
+        transforms = sorted((n for n in on if n.role == "transform"), key=lambda n: n.order)
+        for model in models[:1]:  # the standard model (added ones are wired by hand)
+            for src in (n for n in on if n.role == "source"):
+                at = (src.id, port(src, "message", "out"))
+                for t in transforms:
+                    found.append((*at, t.id, port(t, "message", "in")))
+                    at = (t.id, port(t, "message", "out"))
+                found.append((*at, model.id, port(model, "message", "in")))
+            for end in (n for n in on if n.role in ("reply", "sink")):
+                found.append((model.id, port(model, "message", "out"), end.id, port(end, "message", "in")))
+            for card in (n for n in on if n.role == "tool"):
+                found.append((card.id, port(card, "tool", "out"), model.id, port(model, "tool", "in")))
+        return list(dict.fromkeys(w for w in found if None not in w))
 
     async def emit(self, domain_id: str, node_id: str, port: str, item: dict[str, Any]) -> list[Any]:
         """A node writes a record to one of its outputs: kept in RAM and handed to every input wired
@@ -235,6 +263,11 @@ class Bus:
 
         # Readers work at the same time (the wake word answering must not hold up the companion)
         return list(await asyncio.gather(*(deliver(r, p) for r, p in readers)))
+
+    def record(self, domain_id: str, node_id: str, port: str, record: dict[str, Any]) -> None:
+        """Keep a record of what left an output (the flow's messages; the node view shows the counts)."""
+        self._recent.setdefault((domain_id, node_id, port), deque(maxlen=KEEP_RECORDS)).append(
+            {"time": dt_util.utcnow().isoformat(), **record})
 
     def recent(self, domain_id: str, node_id: str, port: str) -> list[dict[str, Any]]:
         """The output's last records (newest last, at most KEEP_RECORDS and KEEP_FOR old)."""

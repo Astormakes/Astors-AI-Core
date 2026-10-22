@@ -1,19 +1,24 @@
-"""The core's own nodes in the request chain (spec/v1.md), until they become node types of their own.
+"""The core's own cards in the message graph (spec/v1.md, flow.py).
 
-Order in the chain (lowest first; modules fill the gaps): 0 charter · 10 the agent's prompt and HA's own
-tools · 20 memory recalls · 30 the home · 40 the modules' tool sets · 90 setup (only with the owner in the
-chat). The request sources are nodes of their own: chat (the panel), voice, assist (HA), auto (heartbeat and
-triggers through the broker's queue); automatic wiring sends them all into the same chain.
+- sources: the panel chat, voice, HA Assist (the heartbeat and the triggers are sources in their modules)
+- transforms (in the line, they add to the message): the agent's prompt; Instructions and Context (added ones)
+- cards attached to a model (the dotted line, its menu): the home, setup (only with the owner in the chat),
+  Home Assistant's own Assist tools
+- the model (the standard one; more can be added, each with its own tier and instructions), Decide (named outputs),
+  Reply (brings the answer home)
+Automatic wiring: every source through the transforms (by order) into the model, the model into Reply and the
+sinks, every attached card onto the model.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT
 
+from .flow import DECIDE_SETTINGS, MODEL, MODEL_SETTINGS, REPLY
 from .home_api import API_ID as HOME_API_ID
-from .request import ANSWER, REQUEST, SOURCES, ModelRequest
+from .request import MESSAGE, SOURCES, TOOL, ModelRequest
 from .setup_api import API_ID as SETUP_API_ID, owner_present
 from .streams import Node
 
@@ -22,63 +27,81 @@ if TYPE_CHECKING:
 
     from . import AACConfigEntry
 
-PORT = {"requests": REQUEST}
+IN, OUT = {"in": MESSAGE}, {"out": MESSAGE}
+CARD = {"tools": TOOL}
+
+
+def model_node(inst_id: str = MODEL, title: str = "Model", settings: dict[str, Any] | None = None) -> Node:
+    """A model card: a message in, the answered message out; cards attach to its tool input."""
+    return Node(id=inst_id, title=title, inputs={"in": MESSAGE, "tools": TOOL}, outputs=OUT, role="model",
+                settings=settings or {}, make=None if settings is not None else (lambda i, t, s: model_node(i, t, s)),
+                settings_schema=MODEL_SETTINGS)
+
+
+def decide_node(inst_id: str, title: str, settings: dict[str, Any]) -> Node:
+    """A Decide card: its outputs are the ones the owner named."""
+    names = [o["name"] for o in settings.get("outputs") or [] if isinstance(o, dict) and o.get("name")] or ["yes", "no"]
+    return Node(id=inst_id, title=title, inputs=IN, outputs={n: MESSAGE for n in names}, role="decide", settings=settings)
 
 
 def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
-    """The agent, the home and setup as annotating nodes; the request sources as one node."""
+    """The core's cards."""
 
-    async def agent(request: ModelRequest) -> None:
-        master = request.domain.settings.master
-        if prompt := (master.get(CONF_PROMPT) or "").strip():
-            request.system.append(prompt)
-        for api_id in master.get(CONF_LLM_HASS_API) or []:  # HA's own tools (Assist), if the owner chose them
-            request.add_tools(api_id)
+    async def agent(message: ModelRequest) -> None:
+        if prompt := (message.domain.settings.master.get(CONF_PROMPT) or "").strip():
+            message.system.append(prompt)
 
-    async def home(request: ModelRequest) -> None:
-        request.add_tools(request.domain.api_id(HOME_API_ID))  # within the owner's access list
+    async def home(message: ModelRequest) -> None:
+        message.add_tools(message.domain.api_id(HOME_API_ID))  # within the owner's access list
 
-    async def setup(request: ModelRequest) -> None:
-        if await owner_present(hass, request.user_id):  # with the owner present it helps set itself up
-            request.add_tools(request.domain.api_id(SETUP_API_ID))
+    async def setup(message: ModelRequest) -> None:
+        if await owner_present(hass, message.user_id):  # with the owner present it helps set itself up
+            message.add_tools(message.domain.api_id(SETUP_API_ID))
 
-    def again(fn):
-        """make() for a node that can be added again as it is (e.g. the home's tools in a second chain)."""
-        def make(inst_id: str, title: str, settings: dict) -> Node:
-            return Node(id=inst_id, title=title, inputs=PORT, outputs=PORT, adds=["tools"], order=30, annotate=fn,
-                        settings=settings)
-        return make
+    async def ha_tools(message: ModelRequest) -> None:
+        for api_id in message.domain.settings.master.get(CONF_LLM_HASS_API) or []:  # if the owner chose them
+            message.add_tools(api_id)
+
+    def card(card_id: str, title: str, provide) -> Node:
+        def make(inst_id: str, inst_title: str, settings: dict) -> Node:  # the same card on another model
+            return Node(id=inst_id, title=inst_title, outputs=CARD, role="tool", provide=provide, settings=settings)
+        return Node(id=card_id, title=title, outputs=CARD, role="tool", provide=provide, make=make)
 
     def agent_make(inst_id: str, title: str, settings: dict) -> Node:
-        async def annotate(request: ModelRequest) -> None:  # its own prompt instead of the domain's
+        async def annotate(message: ModelRequest) -> None:  # its own prompt instead of the domain's
             if prompt := (settings.get("prompt") or "").strip():
-                request.system.append(prompt)
-        return Node(id=inst_id, title=title, inputs=PORT, outputs=PORT, adds=["system"], order=10, annotate=annotate,
-                    settings=settings)
+                message.system.append(prompt)
+        return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=["system"], order=10, annotate=annotate,
+                    role="transform", settings=settings)
 
     def text_make(field: str):
         def make(inst_id: str, title: str, settings: dict) -> Node:
-            async def annotate(request: ModelRequest) -> None:
+            async def annotate(message: ModelRequest) -> None:
                 if text := (settings.get("text") or "").strip():
-                    getattr(request, field).append(text)
-            return Node(id=inst_id, title=title, inputs=PORT, outputs=PORT, adds=[field], order=15, annotate=annotate,
-                        settings=settings)
+                    getattr(message, field).append(text)
+            return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=[field], order=15, annotate=annotate,
+                        role="transform", settings=settings)
         return make
 
-    text = {"text": {"type": "longtext", "title": "Text", "default": "", "rows": 5}}
+    text = {"type": "longtext", "title": "Text", "default": "", "rows": 5}
     return [
-        # Building blocks that exist only when the owner adds them (spec/v1.md): own instructions in the system
-        # prompt, own context with every message
-        Node(id="instructions", title="Instructions", inputs=PORT, outputs=PORT, adds=["system"], template=True,
-             make=text_make("system"), settings_schema={"text": {**text["text"], "help": "Added to the system prompt (stable: good for the prompt cache)."}}),
-        Node(id="context", title="Context", inputs=PORT, outputs=PORT, adds=["context"], template=True,
-             make=text_make("context"), settings_schema={"text": {**text["text"], "help": "Goes along with every message (e.g. who uses this chain)."}}),
-        # The request sources: each can be wired into its own chain (automatic: all into the same one)
-        *(Node(id=sid, title=title, outputs=PORT, inputs={"answers": ANSWER}) for sid, title in SOURCES.items()),
-        Node(id="agent", title="Agent", inputs=PORT, outputs=PORT, adds=["system", "tools"], order=10, annotate=agent,
-             make=agent_make, settings_schema={"prompt": {"type": "longtext", "title": "Prompt", "default": "", "rows": 5,
-                                                          "help": "This agent's own prompt (the domain's agent prompt is on SETTINGS → Master agent)."}}),
-        Node(id="home", title="Home", inputs=PORT, outputs=PORT, adds=["tools"], order=30, annotate=home, make=again(home)),
-        Node(id="setup", title="Setup (owner present)", inputs=PORT, outputs=PORT, adds=["tools"], order=90, annotate=setup,
-             make=again(setup)),
+        # Sources (the heartbeat and the triggers are sources in their modules)
+        *(Node(id=sid, title=title, outputs=OUT, role="source") for sid, title in SOURCES.items()),
+        # In the line: they add to the message
+        Node(id="agent", title="Agent", inputs=IN, outputs=OUT, adds=["system"], order=10, annotate=agent, role="transform",
+             make=agent_make, settings_schema={"prompt": {**text, "title": "Prompt",
+                                                          "help": "This agent's own prompt (the domain's is on SETTINGS → Master agent)."}}),
+        Node(id="instructions", title="Instructions", inputs=IN, outputs=OUT, adds=["system"], template=True, role="transform",
+             make=text_make("system"), settings_schema={"text": {**text, "help": "Added to the system prompt (stable: good for the prompt cache)."}}),
+        Node(id="context", title="Context", inputs=IN, outputs=OUT, adds=["context"], template=True, role="transform",
+             make=text_make("context"), settings_schema={"text": {**text, "help": "Goes along with every message (e.g. who uses this way)."}}),
+        # Attached to a model (its menu)
+        card("home", "Home", home),
+        card("setup", "Setup (owner present)", setup),
+        card("ha_tools", "Home Assistant tools", ha_tools),
+        # The model, Decide, Reply
+        model_node(),
+        Node(id="decide", title="Decide", inputs=IN, outputs={"yes": MESSAGE, "no": MESSAGE}, role="decide", template=True,
+             make=decide_node, settings_schema=DECIDE_SETTINGS),
+        Node(id=REPLY, title="Reply", inputs=IN, role="reply"),
     ]

@@ -1,17 +1,12 @@
-"""The broker: every request to a model goes through here (spec/streams.md).
+"""The broker: every request to a model enters here (spec/v1.md).
 
-Owner, 2026-10-21: "the master with pulling together context and all should be called the broker".
-It takes requests (a chat, a spoken line, a trigger, the heartbeat), builds their context, asks the pool
-for a model of the request's tier, lets the agent answer with its tools and records the run. It does
-not think; the model does. "Master" now means only the main model (the master role in the pool).
+Owner, 2026-10-21: "the master with pulling together context and all should be called the broker"; 2026-10-22:
+"answer and request is the same thing". A request becomes a message (request.py) that starts at its source node
+and runs through the graph (flow.py): transforms add their part, a model answers with the cards attached to it,
+Reply brings the answer home. This file is the entrance (async_run_request for whoever waits for an answer,
+async_send for automatic ones from the heartbeat and the triggers) and the helpers they share.
 
-On the stream bus it is the core's node "broker": `broker.request` in, `broker.answer` out. Any module
-(heartbeat, later triggers, companion, wake word) asks by writing a request; the node turns it into an
-automatic run: through the job queue (or at once with "now"), with the context built when the run really
-starts (so a request that had to wait sees the current home), and the result posted to a chat, or nothing
-when the model answers NOTHING (little noise is a core principle).
-
-A request (plain JSON):
+An automatic request (plain JSON, from the heartbeat and the triggers):
     {"trigger": "heartbeat", "title": "Heartbeat", "text": "Check-in: anything I should know right now?",
      "intro": "Heartbeat: a scheduled check-in, nobody asked you anything.",
      "context": ["time", "home", "open_loops"], "instructions": "…",
@@ -22,31 +17,25 @@ A request (plain JSON):
      "critical": false,         # still reach the owner when no model came before it was due …
      "fallback": "…",           # … with this text (a plain notification, no model)
      "keep": false,             # wait across a restart (saved with the queue)
-     "now": false}              # true: no queue, emit returns the run (the owner pressed "Run once now")
+     "now": false}              # true: no queue, the run comes back (the owner pressed "Run once now")
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 import re
 from typing import TYPE_CHECKING, Any
 
-from datetime import timedelta
-
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 from homeassistant.util.ulid import ulid_now
 
 from .capabilities import parse_time
-from .chats import AAC_CHAT_ID
-from .const import LOGGER
 from .context import home_snapshot
-from .jobs import Job
 from .pools import role_configured
-from .request import ANSWER, REQUEST, ModelRequest, async_prepare, source_of, start
-from .runs import Run, current_run
-from .streams import Node
+from .request import PRIORITY, ModelRequest, source_of
+from .runs import Run
 
 if TYPE_CHECKING:
     from .domains import Domain
@@ -71,24 +60,6 @@ def is_silent(text: str) -> bool:
     """The model answers NOTHING (or an obvious equivalent) when it has nothing to say."""
     text = text.strip()
     return not text or bool(_NOTHING_RE.match(text)) or text.strip(".!").upper() == SILENT
-
-
-# The settings of an added model node (the panel builds the form from them, like a manifest's settings)
-MODEL_SETTINGS = {
-    "tier": {"type": "select", "title": "Model (pool request)", "default": "master", "options_from": "tiers",
-             "help": "Which kind of model it asks the pool for."},
-    "prompt": {"type": "longtext", "title": "Extra instructions", "default": "",
-               "help": "Added to the system prompt after the chain's parts (e.g. how this model should work)."},
-}
-
-
-def answering_model(entry: AACConfigEntry, domain: Domain, source: str = "chat") -> Node | None:
-    """The model node wired at the end of a source's request chain (the standard one, or an added one)."""
-    bus = entry.runtime_data.bus
-    tail = bus.chain(domain.id, *start(entry, domain.id, source))[1]
-    nodes = bus.nodes_in(domain.id)
-    return next((nodes[b] for a, ap, b, bp in bus.wires(domain.id)
-                 if (a, ap) == tail and nodes[b].inputs.get(bp) == REQUEST), None)
 
 
 @dataclass
@@ -120,50 +91,53 @@ async def async_run_request(
     device_id: str | None = None,
     source: str | None = None,
 ) -> tuple[Run, Answer | None]:
-    """One request to a domain's model, recorded as a run: the request record runs through its chain
-    (request.py), the model node answers (model_node.py), readers of model.answer get it (memory's write path)."""
+    """A message from someone who waits for the answer (a chat, a spoken line, HA Assist, Try it): it starts at
+    its source node and goes through the graph; the answer that comes home (or the last model's) is returned with
+    the run of the model that gave it."""
     domain = domain or entry.runtime_data.domain()
-    runs = domain.runs
-    request = ModelRequest(
+    source = source or source_of(kind, trigger)
+    message = ModelRequest(
         domain=domain, text=text, kind=kind, trigger=trigger, title=title, chat_id=chat_id,
         conversation_id=conversation_id or ulid_now(), user_id=user_id, own_words=own_words,
         history=list(history or []), tier=tier, allow_tools=allow_tools, language=language or hass.config.language,
-        device_id=device_id, instructions=extra_system_prompt or "", source=source or source_of(kind, trigger),
+        device_id=device_id, instructions=extra_system_prompt or "", source=source, priority=PRIORITY.get(source, "high"),
     )
-    run = runs.start(kind, trigger, title, input=text, chat_id=chat_id, context=extra_system_prompt or "",
-                     allow_tools=allow_tools, tier=tier, history=history or [], own_words=own_words, source=request.source)
-    token = current_run.set(run)
-    model = None
-    try:
-        await async_prepare(hass, entry, request)
-        run.trace = request.trace
-        if (model := answering_model(entry, domain, request.source)) is None:
-            raise HomeAssistantError("No model node is wired at the end of the request chain (SETTINGS → Nodes).")
-        run.model_node = model.id
-        if model.type:  # an added model node: its own tier and instructions
-            request.tier = model.settings.get("tier") or request.tier
-            if prompt := (model.settings.get("prompt") or "").strip():
-                request.system.append(prompt)
-            run.tier = request.tier
-            run.steps.append({"type": "note", "text": f"answered by the model node \"{model.title}\""})
-        if request.context:
-            run.context = "\n\n".join(filter(None, [run.context, *request.context]))
-        speech, extra = await entry.runtime_data.model_node.async_answer(request, run)
-    except Exception as err:  # noqa: BLE001 - a failed run must not kill the caller
-        if not isinstance(err, HomeAssistantError):
-            LOGGER.exception("AAC: request %s failed", run.id)
-        runs.finish(run, "failed", str(err))
+    result = await entry.runtime_data.flow.async_send(message)
+    run = result.run
+    if run is None:  # it never reached a model
+        run = domain.runs.start(kind, trigger, title, input=text, chat_id=chat_id, source=source)
+        run.trace = list(message.trace)
+        domain.runs.finish(run, "failed", "No model node on this message's way (SETTINGS → Nodes).")
         return run, None
-    finally:
-        current_run.reset(token)
-    if kind == "auto" and is_silent(speech):
-        runs.finish(run, "silent", speech)
-    else:
-        runs.finish(run, "done", speech)
-    # The answer on the bus: e.g. memory keeps what was worth keeping (in the background, nobody waits)
-    entry.async_create_background_task(hass, entry.runtime_data.bus.emit(domain.id, model.id, "model_answers", {
-        "request": request, "run": run, "text": speech, **extra}), f"aac answer {run.id}")
-    return run, Answer(speech, request.conversation_id)
+    if run.status == "failed":
+        return run, None
+    answer = result.message.text if result.message else run.result
+    return run, Answer(answer, message.conversation_id)
+
+
+async def async_send(hass: HomeAssistant, entry: AACConfigEntry, domain: Domain, req: dict[str, Any],
+                     source: str) -> Run | None:
+    """An automatic request (the heartbeat's, a trigger's) from its source node: through the graph, waiting for a
+    model in the queue unless `now`; with now, the run comes back (None: no model, or one is already running)."""
+    trigger = req.get("trigger") or source
+    if not role_configured(hass, entry.runtime_data.store, "master"):
+        return None
+    message = ModelRequest(
+        domain=domain, text=req.get("text") or "", kind="auto", trigger=trigger, title=req.get("title") or trigger,
+        instructions="\n\n".join(filter(None, [req.get("intro") or "Nobody asked you anything.", req.get("instructions") or ""])),
+        tier=req.get("tier") or "master", allow_tools=bool(req.get("tools", True)), source=source,
+        priority=req.get("priority") or "normal", due_minutes=req.get("due_minutes") or 15, critical=bool(req.get("critical")),
+        fallback=req.get("fallback") or "", coalesce=bool(req.get("coalesce")), keep=bool(req.get("keep")),
+        tags=list(req.get("tags") or []), context_parts=list(req.get("context") or []), chat=req.get("chat") or "aac",
+        chat_prefix=req.get("chat_prefix"), now=bool(req.get("now")),
+    )
+    flow = entry.runtime_data.flow
+    if message.now:
+        if message.coalesce and flow._busy(message):  # noqa: SLF001
+            return None
+        return (await flow.async_send(message)).run
+    await flow.async_send(message, wait=False)
+    return None
 
 
 def short(text: str, n: int = 40) -> str:
@@ -199,98 +173,3 @@ async def async_context(hass: HomeAssistant, entry: AACConfigEntry, domain: Doma
     return text
 
 
-async def async_auto_run(
-    hass: HomeAssistant, entry: AACConfigEntry, domain: Domain, trigger: str, title: str, text: str, prompt: str,
-    allow_tools: bool = True, tier: str = "master", chat: str = "aac", chat_prefix: str | None = None,
-) -> Run:
-    """One automatic run; what the model says goes to a chat (chat "own": a chat of its own)."""
-    run, result = await async_run_request(
-        hass, entry, text, kind="auto", trigger=trigger, title=title,
-        extra_system_prompt=prompt, allow_tools=allow_tools, tier=tier, domain=domain,
-    )
-    if result is not None and run.status == "done" and run.result:
-        # A finding with a chat of its own (owner, 2026-10-20, heartbeat): a reply is about that one
-        # thing, and findings don't pile up as context in one long chat
-        chat_id = f"{chat_prefix or trigger}_{dt_util.utcnow().strftime('%Y%m%d%H%M%S')}" if chat == "own" else AAC_CHAT_ID
-        if chat_id != AAC_CHAT_ID:
-            domain.chats.create(f"{title} · {short(run.result)}", chat_id)
-        run.chat_id = chat_id
-        domain.chats.add_message(chat_id, "aac", run.result, proactive=True, run_id=run.id, trigger=title)
-    LOGGER.debug("Automatic run %s (%s): %s", run.id, trigger, run.status)
-    return run
-
-
-class BrokerNode:
-    """The core's broker node."""
-
-    def __init__(self, hass: HomeAssistant, entry: AACConfigEntry) -> None:
-        """Initialize."""
-        self.hass = hass
-        self.entry = entry
-        self.node = Node(id="broker", title="Model", inputs={"requests": "broker.request", "model": "model.request"},
-                         outputs={"answers": "broker.answer", "model_answers": "model.answer"}, run=self._async_request,
-                         make=self._instance, settings_schema=MODEL_SETTINGS)
-
-    @staticmethod
-    def _instance(inst_id: str, title: str, settings: dict[str, Any]) -> Node:
-        """Another model node in a domain (spec/v1.md): its own tier and prompt; it answers the requests that
-        reach it, i.e. when it is wired at the end of the request chain instead of the standard one."""
-        return Node(id=inst_id, title=title, inputs={"model": REQUEST}, outputs={"model_answers": ANSWER}, settings=settings)
-
-    def _busy(self, domain: Domain, trigger: str) -> bool:
-        if any(j.domain is domain and trigger in j.tags for j in self.entry.runtime_data.jobs.waiting):
-            return True  # one waiting is enough
-        return any(r.trigger == trigger for r in domain.runs.running("auto"))
-
-    async def _async_request(self, domain_id: str, port: str, req: dict[str, Any]) -> Run | None:
-        data = self.entry.runtime_data
-        domain = data.domain(domain_id)
-        trigger = req.get("trigger") or "request"
-        if domain is None or not role_configured(self.hass, data.store, "master"):
-            return None
-        if req.get("coalesce") and self._busy(domain, trigger):
-            return None
-        title = req.get("title") or trigger
-        tier = req.get("tier") or "master"
-
-        async def start(note: str = "") -> Run:
-            prompt = (
-                f"{req.get('intro') or 'Nobody asked you anything.'}\n"
-                f"{await async_context(self.hass, self.entry, domain, req.get('context') or [])}\n\n"
-                f"{req.get('instructions') or ''}"
-                f"{chr(10) * 2 + note if note else ''}"
-            )
-            run = await async_auto_run(self.hass, self.entry, domain, trigger, title, req.get("text") or "", prompt,
-                                       allow_tools=bool(req.get("tools", True)), tier=tier, chat=req.get("chat") or "aac",
-                                       chat_prefix=req.get("chat_prefix"))
-            await data.bus.emit(domain.id, "broker", "answers", {
-                "run_id": run.id, "trigger": trigger, "status": run.status, "result": run.result, "chat_id": run.chat_id})
-            return run
-
-        if req.get("now"):
-            return await start(req.get("_note") or "")
-        await data.jobs.async_submit(self._job(domain, req, start))
-        return None
-
-    def _job(self, domain: Domain, req: dict[str, Any], start) -> Job:
-        trigger = req.get("trigger") or "request"
-        due = req.get("due_minutes")
-        return Job(
-            domain, req.get("title") or trigger, req.get("tier") or "master", req.get("priority") or "normal", start,
-            due=dt_util.utcnow() + timedelta(minutes=int(due)) if due else None,
-            critical=bool(req.get("critical")), fallback=req.get("fallback") or "",
-            tags=list(dict.fromkeys([trigger, *(req.get("tags") or [])])),
-            saved={"kind": "request", "title": req.get("title") or trigger, "request": {**req, "now": False}} if req.get("keep") else None,
-        )
-
-    def restore(self, domain: Domain, item: dict[str, Any]) -> Job | None:
-        """A request that waited before a restart, queued again (the job queue keeps its times)."""
-        req = item.get("request") or {}
-
-        async def start(note: str = "") -> Run | None:
-            # The same path as a fresh request, at once (it already waited its turn)
-            return await self._async_request(domain.id, "requests", {**req, "now": True, "coalesce": False, "_note": note})
-
-        job = self._job(domain, req, start)
-        job.reason = "waited before Home Assistant restarted"
-        return job

@@ -6,14 +6,39 @@
   "kind": "code",
   "description": "AAC's long-term memory: facts, preferences, events and plans in one local file (included in HA backups). It hands matching memories to the model with every message, keeps what is worth keeping after each chat message, and lists your plans when AAC looks around on its own. Search uses keywords and, with an embedding model, meaning.",
   "instructions": "",
-  "provides": {"slots": ["memory"]},
+  "provides": {
+    "slots": [
+      "memory"
+    ]
+  },
   "settings": {
-    "extract": {"type": "bool", "title": "Keep what is worth keeping after each message", "default": true,
-                "help": "A short extra call after every chat message stores lasting facts, measurements and plans (small models often forget to call remember)."}
+    "extract": {
+      "type": "bool",
+      "title": "Keep what is worth keeping after each message",
+      "default": true,
+      "help": "A short extra call after every chat message stores lasting facts, measurements and plans (small models often forget to call remember)."
+    },
+    "recall": {
+      "type": "bool",
+      "title": "Hand matching memories along with every message",
+      "default": true,
+      "help": "Small models rarely ask their memory on their own. Off: the model only gets memories when it calls recall."
+    }
   },
   "setup": [
-    {"id": "embeddings", "title": "Give AAC a memory", "optional": true, "target": "models",
-     "hint": "Pick an embedding model so it finds memories by meaning, not only by words.",
-     "done_when": {"role": "memory"}, "how": ["chat", "panel"]}
+    {
+      "id": "embeddings",
+      "title": "Give AAC a memory",
+      "optional": true,
+      "target": "models",
+      "hint": "Pick an embedding model so it finds memories by meaning, not only by words.",
+      "done_when": {
+        "role": "memory"
+      },
+      "how": [
+        "chat",
+        "panel"
+      ]
+    }
   ]
 }

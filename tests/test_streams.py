@@ -71,22 +71,6 @@ async def test_annotating_chain_and_concurrent_readers():
     assert [n.id for n, _ in bus.wired_from("d", "mic", "lines")] == ["wake", "comp"]
 
 
-async def test_node_view_command(hass, hass_ws_client, mock_entry, configured):
-    """aac/nodes: the domain's nodes with kind, module name and flow counts, and the wires."""
-    from .conftest import setup_aac
-
-    await setup_aac(hass, mock_entry)
-    ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/nodes"})
-    result = (await ws.receive_json())["result"]
-    nodes = {n["id"]: n for n in result["nodes"]}
-    assert nodes["broker"]["module_name"] == "Core" and nodes["broker"]["kind"] == "transform"
-    assert nodes["stt"]["kind"] == "annotating" and nodes["stt"]["order"] == 10
-    assert nodes["hearing"]["recent"] == {"audio": 0, "segments": 0, "lines": 0}
-    assert {"from": "hearing.segments", "to": "stt.speech"} in result["wires"]
-    assert "broker.request" in result["stream_types"]
-
-
 async def test_node_view_containers(hass, hass_ws_client, mock_entry, configured):
     """Named, resizable containers are kept per domain; a node belongs to one at most."""
     from .conftest import setup_aac
@@ -101,103 +85,6 @@ async def test_node_view_containers(hass, hass_ws_client, mock_entry, configured
     assert [c["nodes"] for c in saved] == [["stt", "voices"], ["heartbeat"]]
     await ws.send_json_auto_id({"type": "aac/nodes"})
     assert [c["name"] for c in (await ws.receive_json())["result"]["containers"]] == ["Ears", "Wakeups"]
-
-
-async def test_wiring_by_hand(hass, hass_ws_client, mock_entry, configured):
-    """The owner's wires replace the automatic ones: a chain runs as wired (memory recall taken out of the
-    request chain), a wrong-typed wire is refused, None goes back to automatic."""
-    from custom_components.aac.request import ModelRequest, async_prepare
-
-    from .conftest import memory_of, setup_aac
-
-    await setup_aac(hass, mock_entry)
-    data = mock_entry.runtime_data
-    await memory_of(hass).async_remember("The drill is on basement shelf 2.", "fact")
-    ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/nodes"})
-    auto = (await ws.receive_json())["result"]
-    assert auto["by_hand"] is False
-    # memory recall out of the request chain: agent's output goes straight to whatever came after memory
-    wires = [w for w in auto["wires"] if "memory.requests" not in (w["from"], w["to"])]
-    after = next(w["to"] for w in auto["wires"] if w["from"] == "memory.requests")
-    wires.append({"from": "agent.requests", "to": after})
-    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": wires})
-    assert (await ws.receive_json())["result"]["by_hand"] is True
-    request = await async_prepare(hass, mock_entry, ModelRequest(domain=data.domain(), text="Where is the drill?"))
-    assert request.context == [] and request.system[0].startswith("Charter")
-
-    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": [{"from": "hearing.audio", "to": "broker.model"}]})
-    assert not (await ws.receive_json())["success"]  # audio into a request input: refused
-
-    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": None})
-    assert (await ws.receive_json())["result"]["by_hand"] is False
-    request = await async_prepare(hass, mock_entry, ModelRequest(domain=data.domain(), text="Where is the drill?"))
-    assert any("basement" in c for c in request.context)
-
-
-async def test_a_second_model_node(hass, hass_ws_client, aioclient_mock, mock_entry, configured):
-    """Node types vs. instances: an added model node with its own tier and instructions answers once it is
-    wired at the end of the request chain; removing it takes its wires along."""
-    from .conftest import BASE_URL, setup_aac
-
-    await setup_aac(hass, mock_entry)
-    data = mock_entry.runtime_data
-    ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {
-        "research": {"type": "broker", "title": "Research", "settings": {"tier": "smart", "prompt": "Dig deep.", "x": 1}}}})
-    saved = (await ws.receive_json())["result"]["instances"]
-    assert saved["research"]["settings"] == {"tier": "smart", "prompt": "Dig deep."}
-    await ws.send_json_auto_id({"type": "aac/nodes"})
-    view = (await ws.receive_json())["result"]
-    nodes = {n["id"]: n for n in view["nodes"]}
-    assert nodes["research"]["type"] == "broker" and not any("research" in w["to"] for w in view["wires"])  # wired by hand
-    # the end of the chain into Research instead of the standard model
-    tail = next(w for w in view["wires"] if w["to"] == "broker.model")
-    wires = [w for w in view["wires"] if w is not tail] + [{"from": tail["from"], "to": "research.model"}]
-    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": wires})
-    assert (await ws.receive_json())["success"]
-
-    aioclient_mock.post(f"{BASE_URL}/chat/completions", json={"choices": [{"message": {"role": "assistant", "content": "Deep."}}]})
-    await ws.send_json_auto_id({"type": "aac/chat", "text": "hi"})
-    reply = (await ws.receive_json())["result"]["message"]
-    assert reply["text"] == "Deep."
-    run = data.runs.runs[-1]
-    assert run.tier == "smart" and any("Research" in s.get("text", "") for s in run.steps)
-    assert "Dig deep." in aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
-
-    await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {}})
-    await ws.receive_json()
-    assert not any("research" in w["to"] for w in data.store.graph("assistant")["wires"])
-
-
-async def test_sources_and_a_second_charter(hass, hass_ws_client, mock_entry, configured):
-    """Each request source has its own node and chain start; an added charter with its own text runs where it
-    is wired (voice through it, the panel chat still through the standard one)."""
-    from custom_components.aac.request import ModelRequest, async_prepare
-
-    from .conftest import setup_aac
-
-    await setup_aac(hass, mock_entry)
-    data = mock_entry.runtime_data
-    ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/nodes"})
-    view = (await ws.receive_json())["result"]
-    assert {"chat", "voice", "assist", "auto"} <= {n["id"] for n in view["nodes"]}
-    assert {"from": "voice.requests", "to": "charter.requests"} in view["wires"]
-    await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {
-        "calm": {"type": "charter", "title": "Calm voice", "settings": {"text": "Speak softly."}}}})
-    assert (await ws.receive_json())["success"]
-    # voice: through the added charter into the rest of the chain (the panel chat keeps the standard one)
-    after = next(w["to"] for w in view["wires"] if w["from"] == "charter.requests")
-    wires = [w for w in view["wires"] if w["from"] != "voice.requests"]
-    wires += [{"from": "voice.requests", "to": "calm.requests"}, {"from": "calm.requests", "to": after}]
-    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": wires})
-    assert (await ws.receive_json())["success"]
-
-    voice = await async_prepare(hass, mock_entry, ModelRequest(domain=data.domain(), text="hi", source="voice"))
-    chat = await async_prepare(hass, mock_entry, ModelRequest(domain=data.domain(), text="hi", source="chat"))
-    assert voice.system[0] == "Speak softly." and chat.system[0].startswith("Charter")
-    assert voice.tools == chat.tools  # the rest of the chain is shared
 
 
 async def test_old_places_move_into_the_graph(hass, hass_storage, mock_entry, configured):
@@ -224,56 +111,194 @@ async def test_old_places_move_into_the_graph(hass, hass_storage, mock_entry, co
     assert mock_entry.runtime_data.bus.wired_by_hand("assistant")
 
 
-async def test_try_it_shows_the_way(hass, hass_ws_client, aioclient_mock, mock_entry, configured):
-    """The node view's Try it: an answer plus the way through the graph, each node with what it added."""
-    from .conftest import BASE_URL, setup_aac
+def _model_answers(aioclient_mock, text="ok"):
+    from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
 
-    await setup_aac(hass, mock_entry)
-    aioclient_mock.post(f"{BASE_URL}/chat/completions", json={"choices": [{"message": {"role": "assistant", "content": "Hi there."}}]})
-    ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "hello", "source": "voice"})
-    result = (await ws.receive_json())["result"]
-    assert result["answer"] == "Hi there." and result["source"] == "voice" and result["model_node"] == "broker"
-    steps = {s["node"]: s for s in result["trace"]}
-    assert steps["charter"]["system"][0].startswith("Charter") and "aac_home" in steps["home"]["tools"]
-    assert list(steps)[:2] == ["charter", "agent"]
-    assert mock_entry.runtime_data.runs.runs[-1].trace == result["trace"]
+    from .conftest import BASE_URL
+
+    calls = []
+
+    async def side_effect(method, url, data):
+        calls.append(data)
+        return AiohttpClientMockResponse(method, url, json={"choices": [{"message": {"role": "assistant", "content": text}}]})
+
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=side_effect)
+    return calls
 
 
-async def test_build_a_voice_chain(hass, hass_ws_client, aioclient_mock, mock_entry, configured):
-    """Start to finish: add a charter, instructions, context and the home's tools, wire Voice through them into
-    the model, try it: exactly these parts reach the model; the panel chat keeps its own chain."""
-    from .conftest import BASE_URL, setup_aac
+async def test_node_view_command(hass, hass_ws_client, mock_entry, configured):
+    """aac/nodes: the domain's cards with role, kind, module name and flow counts, the wires, what can be added."""
+    from .conftest import setup_aac
 
     await setup_aac(hass, mock_entry)
     ws = await hass_ws_client(hass)
     await ws.send_json_auto_id({"type": "aac/nodes"})
+    result = (await ws.receive_json())["result"]
+    nodes = {n["id"]: n for n in result["nodes"]}
+    assert nodes["model"]["module_name"] == "Core" and nodes["stt"]["kind"] == "annotating" and nodes["stt"]["order"] == 10
+    assert nodes["hearing"]["recent"] == {"audio": 0, "segments": 0, "lines": 0}
+    assert {"from": "hearing.segments", "to": "stt.speech"} in result["wires"]
+    assert {"from": "home.tools", "to": "model.tools"} in result["wires"]
+    assert {"message", "tool"} <= set(result["stream_types"])
+    assert {"instructions", "context", "decide", "model", "home", "memory", "charter"} <= {t["id"] for t in result["types"]}
+
+
+async def test_wiring_by_hand(hass, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """The owner's wires replace the automatic ones: the memory card taken off the model gives neither tools nor
+    recalls; a wrong-typed wire is refused; None goes back to automatic."""
+    from .conftest import memory_of, setup_aac
+
+    await setup_aac(hass, mock_entry)
+    await memory_of(hass).async_remember("The drill is on basement shelf 2.", "fact")
+    calls = _model_answers(aioclient_mock)
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/nodes"})
+    auto = (await ws.receive_json())["result"]
+    assert auto["by_hand"] is False
+    wires = [w for w in auto["wires"] if w["from"] != "memory.tools"]
+    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": wires})
+    assert (await ws.receive_json())["result"]["by_hand"] is True
+    await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "Where is the drill?"})
+    await ws.receive_json()
+    assert "basement" not in calls[-1]["messages"][-1]["content"]
+    assert not any(t["function"]["name"].startswith("aac-memory") for t in calls[-1]["tools"])
+
+    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": [{"from": "hearing.audio", "to": "model.in"}]})
+    assert not (await ws.receive_json())["success"]  # audio into a message input: refused
+    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": None})
+    assert (await ws.receive_json())["result"]["by_hand"] is False
+    await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "Where is the drill?"})
+    await ws.receive_json()
+    assert "basement" in calls[-1]["messages"][-1]["content"]
+
+
+async def test_a_second_model_node(hass, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """An added model node with its own tier and instructions answers what is wired into it; without attached cards
+    it has no tools; removing it takes its wires along."""
+    from .conftest import setup_aac
+
+    await setup_aac(hass, mock_entry)
+    data = mock_entry.runtime_data
+    calls = _model_answers(aioclient_mock, "Deep.")
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {
+        "research": {"type": "model", "title": "Research", "settings": {"tier": "smart", "prompt": "Dig deep.", "x": 1}}}})
+    assert (await ws.receive_json())["result"]["instances"]["research"]["settings"] == {"tier": "smart", "prompt": "Dig deep."}
+    await ws.send_json_auto_id({"type": "aac/nodes"})
     view = (await ws.receive_json())["result"]
-    assert {"instructions", "context", "home", "lists_tools", "memory", "broker", "charter"} <= {t["id"] for t in view["types"]}
+    assert not any("research" in w["to"] for w in view["wires"])  # added cards are wired by hand
+    wires = [w for w in view["wires"] if w["to"] != "model.in"]
+    wires += [{"from": "agent.out", "to": "research.in"}, {"from": "research.out", "to": "reply.in"}]
+    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": wires})
+    assert (await ws.receive_json())["success"]
+
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "hi"})
+    assert (await ws.receive_json())["result"]["message"]["text"] == "Deep."
+    run = data.runs.runs[-1]
+    assert run.tier == "smart" and run.model_node == "research" and "Dig deep." in calls[-1]["messages"][0]["content"]
+    assert not calls[-1].get("tools")
+
+    await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {}})
+    await ws.receive_json()
+    assert not any("research" in w["to"] for w in data.store.graph("assistant")["wires"])
+
+
+async def test_try_it_shows_the_way(hass, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """Try it: the answer plus the way through the graph: the line, the attached cards, the model, Reply."""
+    from .conftest import setup_aac
+
+    await setup_aac(hass, mock_entry)
+    _model_answers(aioclient_mock, "Hi there.")
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "hello", "source": "voice"})
+    result = (await ws.receive_json())["result"]
+    assert result["answer"] == "Hi there." and result["source"] == "voice" and result["model_node"] == "model"
+    steps = {s["node"]: s for s in result["trace"]}
+    assert steps["charter"]["system"][0].startswith("Charter") and steps["home"]["attached"] == "model"
+    assert "aac_home" in steps["home"]["tools"] and steps["model"]["role"] == "model" and result["trace"][-1]["node"] == "reply"
+    assert [s["node"] for s in result["trace"]][:2] == ["charter", "agent"]
+
+
+async def test_build_a_voice_way(hass, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """Start to finish: a voice model with its own charter, instructions and context in the line and only the home
+    card attached: exactly these reach the model; the panel chat keeps the standard way."""
+    from .conftest import setup_aac
+
+    await setup_aac(hass, mock_entry)
+    calls = _model_answers(aioclient_mock, "Lights are off.")
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/nodes"})
+    view = (await ws.receive_json())["result"]
     await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {
         "calm": {"type": "charter", "title": "Calm", "settings": {"text": "Be calm."}},
         "short": {"type": "instructions", "title": "Short", "settings": {"text": "Answer in one sentence."}},
         "room": {"type": "context", "title": "Room", "settings": {"text": "The user is in the bedroom."}},
+        "vmodel": {"type": "model", "title": "Voice model"},
         "home2": {"type": "home", "title": "Home (voice)"}}})
     assert (await ws.receive_json())["success"]
-    keep = [w for w in view["wires"] if not w["from"].startswith("voice.")]
-    chain = ["voice", "calm", "short", "room", "home2"]
-    wires = keep + [{"from": f"{a}.requests", "to": f"{b}.requests"} for a, b in zip(chain, chain[1:])]
-    wires.append({"from": "home2.requests", "to": "broker.model"})
+    line = ["voice", "calm", "short", "room", "vmodel"]
+    wires = [w for w in view["wires"] if not w["from"].startswith("voice.")]
+    wires += [{"from": f"{a}.out", "to": f"{b}.in"} for a, b in zip(line, line[1:])]
+    wires += [{"from": "vmodel.out", "to": "reply.in"}, {"from": "home2.tools", "to": "vmodel.tools"}]
     await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": wires})
     assert (await ws.receive_json())["success"]
 
-    aioclient_mock.post(f"{BASE_URL}/chat/completions", json={"choices": [{"message": {"role": "assistant", "content": "Lights are off."}}]})
     await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "Are the lights on?", "source": "voice"})
     result = (await ws.receive_json())["result"]
-    assert [t["node"] for t in result["trace"]] == ["calm", "short", "room", "home2"] and result["model_node"] == "broker"
-    sent = aioclient_mock.mock_calls[-1][2]
-    system, user = sent["messages"][0]["content"], sent["messages"][-1]["content"]
+    assert [t["node"] for t in result["trace"]] == ["calm", "short", "room", "home2", "vmodel", "reply"]
+    system, user = calls[-1]["messages"][0]["content"], calls[-1]["messages"][-1]["content"]
     assert system.startswith("Be calm.") and "Answer in one sentence." in system and "Charter (the owner" not in system
     assert "The user is in the bedroom." in user
-    names = {t["function"]["name"] for t in sent["tools"]}  # one tool set: HA leaves the names unprefixed
-    assert "control" in names and "list_entities" in names and not any("list" in n and "entities" not in n for n in names)
+    names = {t["function"]["name"] for t in calls[-1]["tools"]}  # one tool set: HA leaves the names unprefixed
+    assert "control" in names and not any(n.startswith("aac-") for n in names)
 
     await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "hi", "source": "chat"})
     chat = (await ws.receive_json())["result"]
-    assert chat["trace"][0]["node"] == "charter" and len(chat["trace"]) > 4  # the panel chat's chain is unchanged
+    assert chat["trace"][0]["node"] == "charter" and chat["model_node"] == "model"
+
+
+async def test_decide_routes_by_named_outputs(hass, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """The owner's 69 example: model 1 answers, Decide picks a named output (the server's grammar limits the choice),
+    the chosen way leads on, and the answer still comes home to the panel chat."""
+    import json
+
+    from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
+
+    from .conftest import BASE_URL, setup_aac
+
+    await setup_aac(hass, mock_entry)
+    calls = []
+
+    async def side_effect(method, url, data):
+        calls.append(data)
+        if data.get("response_format", {}).get("json_schema", {}).get("name") == "decision":
+            enum = data["response_format"]["json_schema"]["schema"]["properties"]["output"]["enum"]
+            assert enum == ["has_69", "other"]
+            return AiohttpClientMockResponse(method, url, json={"choices": [{"message": {"role": "assistant", "content": json.dumps({"output": "has_69"})}}]})
+        text = "It contains 69." if "69" in data["messages"][-1]["content"] else "Room 69 is free."
+        return AiohttpClientMockResponse(method, url, json={"choices": [{"message": {"role": "assistant", "content": text}}]})
+
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=side_effect)
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/nodes"})
+    view = (await ws.receive_json())["result"]
+    await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {
+        "check": {"type": "decide", "title": "Has 69?", "settings": {
+            "outputs": [{"name": "has_69", "description": "the text mentions 69"}, {"name": "other", "description": "anything else"}],
+            "default": "other"}},
+        "second": {"type": "model", "title": "Second"}}})
+    assert (await ws.receive_json())["success"]
+    wires = [w for w in view["wires"] if not (w["from"] == "model.out" and w["to"] == "reply.in")]
+    wires += [{"from": "model.out", "to": "check.in"}, {"from": "check.has_69", "to": "second.in"},
+              {"from": "check.other", "to": "reply.in"}, {"from": "second.out", "to": "reply.in"}]
+    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": wires})
+    assert (await ws.receive_json())["success"]
+
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "Which room is free?"})
+    reply = (await ws.receive_json())["result"]["message"]
+    assert reply["text"] == "It contains 69."  # model 1 → Decide (has_69) → model 2 → Reply → the panel chat
+    await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "Which room is free?"})
+    trace = (await ws.receive_json())["result"]["trace"]
+    decided = next(s for s in trace if s["node"] == "check")
+    assert decided["output"] == "has_69" and [s["node"] for s in trace if s.get("role") == "model"] == ["model", "second"]
+

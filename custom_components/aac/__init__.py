@@ -46,8 +46,8 @@ from .capabilities import Capabilities
 from .home_api import AACHomeAPI, apply_entities, apply_visibility
 from .jobs import JobQueue
 from .requests import Requests
-from .broker import BrokerNode
 from .core_nodes import core_nodes
+from .flow import Flow
 from .model_node import ModelNode
 from .modules import MODULES_DIR, MODULES_URL, LoadedModule, async_load_modules
 from .pools import TIERS, Pool
@@ -76,6 +76,7 @@ class AACData:
     audio: AudioHub | None = None
     pool: Pool | None = None
     model_node: ModelNode | None = None
+    flow: Flow | None = None
     jobs: JobQueue | None = None
     capabilities: Capabilities = field(default_factory=Capabilities)
     bus: Bus = field(default_factory=Bus)
@@ -154,14 +155,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         ):
             entry.async_on_unload(llm.async_register_api(hass, api))
 
-    # The broker is the core's node on the stream bus: modules ask it through broker.request
-    broker = BrokerNode(hass, entry)
-    entry.async_on_unload(entry.runtime_data.bus.add_node(broker.node))
-    # v1: the model node answers prepared requests itself; the core's own nodes fill the request chain
+    # v1: messages move through the graph (flow.py); the core's cards (sources, agent, attached cards, the model,
+    # Reply) are nodes; the model node answers with AAC's own tool loop
     entry.runtime_data.model_node = ModelNode(hass, entry)
     for node in core_nodes(hass, entry):
         entry.async_on_unload(entry.runtime_data.bus.add_node(node))
-    entry.runtime_data.jobs.restorers["request"] = broker.restore
+    entry.runtime_data.flow = Flow(hass, entry)
+    entry.runtime_data.jobs.restorers["message"] = entry.runtime_data.flow.restore
     entry.runtime_data.capabilities.options["tiers"] = lambda domain_id: [
         (t, t) for t in dict.fromkeys([*TIERS, *(tag for tr in store.data["traits"].values() for tag in tr.get("tags", []))])]
 

@@ -172,18 +172,18 @@ async def test_charter_reaches_every_agent(
 
     await ws.send_json_auto_id({"type": "aac/module/settings", "module": "charter", "values": {"text": ""}})
     await ws.receive_json()
-    from custom_components.aac.request import ModelRequest, async_prepare
+    async def system() -> str:
+        await ws.send_json_auto_id({"type": "aac/chat", "text": "hi"})
+        await ws.receive_json()
+        return aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
 
-    async def system() -> list[str]:
-        return (await async_prepare(hass, mock_entry, ModelRequest(domain=data.domain(), text="hi"))).system
-
-    assert (await system())[0].startswith("Charter (the owner's values")  # empty = the built-in draft
+    assert (await system()).startswith("Charter (the owner's values")  # empty = the built-in draft
 
     from custom_components.aac.setup_api import ModuleSettingTool
 
     tool = ModuleSettingTool(mock_entry, data.domain())
     result = await tool._async_run(hass, {"module": "charter", "on": False})
-    assert result.error and (await system())[0].startswith("Charter")
+    assert result.error and (await system()).startswith("Charter")
 
 
 async def test_single_model_server_counts_as_online(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
