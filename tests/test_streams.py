@@ -222,3 +222,19 @@ async def test_old_places_move_into_the_graph(hass, hass_storage, mock_entry, co
     assert graph["nodes"]["calm"]["title"] == "Calm"
     assert not {"module_settings", "module_access", "node_view"} & set(store.data)
     assert mock_entry.runtime_data.bus.wired_by_hand("assistant")
+
+
+async def test_try_it_shows_the_way(hass, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """The node view's Try it: an answer plus the way through the graph, each node with what it added."""
+    from .conftest import BASE_URL, setup_aac
+
+    await setup_aac(hass, mock_entry)
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", json={"choices": [{"message": {"role": "assistant", "content": "Hi there."}}]})
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "hello", "source": "voice"})
+    result = (await ws.receive_json())["result"]
+    assert result["answer"] == "Hi there." and result["source"] == "voice" and result["model_node"] == "broker"
+    steps = {s["node"]: s for s in result["trace"]}
+    assert steps["charter"]["system"][0].startswith("Charter") and "aac_home" in steps["home"]["tools"]
+    assert list(steps)[:2] == ["charter", "agent"]
+    assert mock_entry.runtime_data.runs.runs[-1].trace == result["trace"]

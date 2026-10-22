@@ -45,6 +45,7 @@ class ModelRequest:
     tier: str = "master"
     allow_tools: bool = True
     source: str = "chat"  # the node it comes from: chat (panel), voice, assist (HA), auto (heartbeat, triggers)
+    trace: list[dict[str, Any]] = field(default_factory=list)  # what each node of the chain added (async_prepare)
     language: str | None = None
     device_id: str | None = None
     system: list[str] = field(default_factory=list)
@@ -90,8 +91,16 @@ async def async_prepare(hass: HomeAssistant, entry: AACConfigEntry, request: Mod
     for node in entry.runtime_data.bus.chain(request.domain.id, *start(entry, request.domain.id, request.source))[0]:
         if node.annotate is None:
             continue
+        before = (len(request.system), len(request.context), len(request.tools))
+        step: dict[str, Any] = {"node": node.id, "title": node.title}
         try:
             await node.annotate(request)
-        except Exception:  # noqa: BLE001 - one broken node must not stop the request
+        except Exception as err:  # noqa: BLE001 - one broken node must not stop the request
             LOGGER.exception("AAC: node %s failed on a request", node.id)
+            step["error"] = str(err)
+        # What it added, for the run's trace (the node view shows the way and each node's part)
+        for key, n in zip(("system", "context", "tools"), before):
+            if added := getattr(request, key)[n:]:
+                step[key] = [a if key == "tools" else (a if len(a) <= 600 else a[:600] + "…") for a in added]
+        request.trace.append(step)
     return request

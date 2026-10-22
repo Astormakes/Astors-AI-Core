@@ -82,6 +82,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_node_containers,
         ws_node_wires,
         ws_node_instances,
+        ws_node_try,
         ws_module_settings,
         ws_module_access,
         ws_jobs,
@@ -710,6 +711,28 @@ async def ws_node_wires(hass: HomeAssistant, connection, msg) -> None:
     await entry.runtime_data.store.async_save()
     async_notify(hass, "modules", domain=dom.id)
     connection.send_result(msg["id"], {"by_hand": bus.wired_by_hand(dom.id)})
+
+
+@aac_command({vol.Required("type"): "aac/nodes/try", vol.Required("text"): vol.All(str, vol.Length(min=1)),
+              vol.Optional("source", default="chat"): vol.In(["chat", "voice", "assist", "auto"])})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_node_try(hass: HomeAssistant, connection, msg) -> None:
+    """Send a message through the graph from a source node, as the node view's "Try it": the answer and the
+    way it took (each node with what it added, the model node that answered). Recorded as a run, no chat."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    dom = _d(entry, msg)
+    run, answer = await async_run_request(
+        hass, entry, msg["text"], kind="auto" if msg["source"] == "auto" else "chat", trigger="try",
+        title=f"Try ({msg['source']}) · {msg['text'][:40]}", user_id=connection.user.id, domain=dom, source=msg["source"],
+        allow_tools=True,
+    )
+    store = entry.runtime_data.store
+    model = next((m["name"] for m in store.models if m["id"] == run.model), run.model)
+    connection.send_result(msg["id"], {"run_id": run.id, "status": run.status, "answer": run.result,
+                                       "source": run.source, "trace": run.trace, "model": model,
+                                       "model_node": run.model_node, "steps": run.steps})
 
 
 @aac_command({vol.Required("type"): "aac/nodes/instances", vol.Required("instances"): {

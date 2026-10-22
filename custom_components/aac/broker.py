@@ -118,6 +118,7 @@ async def async_run_request(
     own_words: str | None = None,
     language: str | None = None,
     device_id: str | None = None,
+    source: str | None = None,
 ) -> tuple[Run, Answer | None]:
     """One request to a domain's model, recorded as a run: the request record runs through its chain
     (request.py), the model node answers (model_node.py), readers of model.answer get it (memory's write path)."""
@@ -127,16 +128,18 @@ async def async_run_request(
         domain=domain, text=text, kind=kind, trigger=trigger, title=title, chat_id=chat_id,
         conversation_id=conversation_id or ulid_now(), user_id=user_id, own_words=own_words,
         history=list(history or []), tier=tier, allow_tools=allow_tools, language=language or hass.config.language,
-        device_id=device_id, instructions=extra_system_prompt or "", source=source_of(kind, trigger),
+        device_id=device_id, instructions=extra_system_prompt or "", source=source or source_of(kind, trigger),
     )
     run = runs.start(kind, trigger, title, input=text, chat_id=chat_id, context=extra_system_prompt or "",
-                     allow_tools=allow_tools, tier=tier, history=history or [], own_words=own_words)
+                     allow_tools=allow_tools, tier=tier, history=history or [], own_words=own_words, source=request.source)
     token = current_run.set(run)
     model = None
     try:
         await async_prepare(hass, entry, request)
+        run.trace = request.trace
         if (model := answering_model(entry, domain, request.source)) is None:
             raise HomeAssistantError("No model node is wired at the end of the request chain (SETTINGS → Nodes).")
+        run.model_node = model.id
         if model.type:  # an added model node: its own tier and instructions
             request.tier = model.settings.get("tier") or request.tier
             if prompt := (model.settings.get("prompt") or "").strip():

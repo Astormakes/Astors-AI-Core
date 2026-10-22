@@ -94,6 +94,16 @@ class AacNodes extends HTMLElement {
         <div class="nv-legend" style="display:flex;gap:.9em;flex-wrap:wrap;padding:.5em .9em;border-top:1px solid var(--line);font-size:.8em"></div>
         <p class="hint nv-msg" style="margin:.5em .9em"></p>
       </div>
+      <div class="card nv-try"><h2>TRY IT</h2>
+        <p class="hint">Send a message through the graph and watch its way: the cards it passes light up, and you see what each one added.</p>
+        <div class="row" style="align-items:flex-end;gap:.6em">
+          <div style="flex:none;min-width:10em"><label>From</label><select class="nv-try-source">
+            <option value="chat">Panel chat</option><option value="voice">Voice</option><option value="assist">HA Assist</option><option value="auto">Automatic</option></select></div>
+          <div style="flex:1"><label>Message</label><input class="nv-try-text" placeholder="e.g. Is the bed light on?"></div>
+          <div style="flex:none" class="actions"><button class="btn primary" data-nv="try">Send</button></div>
+        </div>
+        <div class="nv-try-out"></div>
+      </div>
       <div class="card nv-info" style="display:none"></div>`;
     this._stage = this.querySelector(".nv-stage");
     this._msg = this.querySelector(".nv-msg");
@@ -120,6 +130,8 @@ class AacNodes extends HTMLElement {
         .nv-node text.sub, .nv-node text.port { fill: var(--dim); font-size: 10px; }
         .nv-node { cursor: grab; }
         .nv-node.multi rect.box { stroke: var(--magenta); stroke-width: 2.2; }
+        .nv-node.lit rect.box { stroke: var(--amber); stroke-width: 2.6; filter: drop-shadow(0 0 6px var(--amber)); }
+        .nv-wire.lit { stroke: var(--amber) !important; opacity: 1; stroke-width: 3; stroke-dasharray: 8 6; animation: nvflow .8s linear infinite; }
         .nv-frame .fbox { fill: var(--cyan); fill-opacity: .035; stroke: var(--line); stroke-dasharray: 5 4; }
         .nv-frame.sel .fbox { stroke: var(--cyan); stroke-dasharray: none; }
         .nv-frame .fbar { fill: var(--cyan); fill-opacity: .09; cursor: move; }
@@ -435,7 +447,7 @@ class AacNodes extends HTMLElement {
       const h = this._height(n), ins = Object.entries(n.inputs), outs = Object.entries(n.outputs);
       const row = (i) => -h / 2 + HEAD + ROW * i + ROW / 2;
       const flow = Object.values(n.recent || {}).reduce((s, v) => s + v, 0);
-      return `<g class="nv-node ${n.on ? "" : "off"} ${this._sel === n.id ? "sel" : ""} ${this._multi.has(n.id) && this._multi.size > 1 ? "multi" : ""} ${this._pos[n.id]?.pinned ? "pinned" : ""}" data-node="${esc(n.id)}">
+      return `<g class="nv-node ${n.on ? "" : "off"} ${this._lit?.has(n.id) ? "lit" : ""} ${this._sel === n.id ? "sel" : ""} ${this._multi.has(n.id) && this._multi.size > 1 ? "multi" : ""} ${this._pos[n.id]?.pinned ? "pinned" : ""}" data-node="${esc(n.id)}">
         <rect class="box" x="${-W / 2}" y="${-h / 2}" width="${W}" height="${h}" rx="7"></rect>
         <text x="${-W / 2 + 10}" y="${-h / 2 + 17}">${esc(n.title)}<tspan class="pin" dx="4">📌</tspan></text>
         <text class="sub" x="${-W / 2 + 10}" y="${-h / 2 + 31}">${esc(short(`${n.module_name}${n.kind === "annotating" ? ` · adds ${n.adds.join(", ")}` : ""}${flow ? ` · ${flow} recent` : ""}`, 30))}</text>
@@ -448,7 +460,8 @@ class AacNodes extends HTMLElement {
     wiresG.innerHTML = this._wires().map((w, i) => {
       const flow = (w.a.recent || {})[w.ap] > 0;
       const key = `${w.a.id}.${w.ap}|${w.b.id}.${w.bp}`;
-      return `<path class="nv-wire ${flow ? "flow" : ""} ${this._selWire === key ? "sel" : ""}" data-wire="${i}" stroke="${this._color(w.type)}"></path>
+      const lit = this._litWires?.has(`${w.a.id}>${w.b.id}`);
+      return `<path class="nv-wire ${flow ? "flow" : ""} ${lit ? "lit" : ""} ${this._selWire === key ? "sel" : ""}" data-wire="${i}" stroke="${this._color(w.type)}"></path>
         <path class="nv-hit" data-wire="${i}" data-key="${esc(key)}"><title>${esc(w.a.title)}.${esc(w.ap)} → ${esc(w.b.title)}.${esc(w.bp)} (${esc(w.type)}) · click to select</title></path>`;
     }).join("");
     this.querySelector(".nv-legend").innerHTML = Object.keys(this._colors).sort()
@@ -513,6 +526,9 @@ class AacNodes extends HTMLElement {
       if (b?.dataset.nv === "auto") this._automatic();
       if (b?.dataset.nv === "add") this._addNode();
       if (b?.dataset.nv === "add-type") this._addOf(b.dataset.type);
+      if (b?.dataset.nv === "try") this._try();
+      const step = e.target.closest("[data-try-node]");
+      if (step) { this._sel = step.dataset.tryNode; this._selFrame = null; this._selWire = null; this._draw(); this._info(); }
       if (b?.dataset.nv === "inst-save") this._saveInstance(b.dataset.node);
       if (b?.dataset.nv === "inst-remove") this._removeInstance(b.dataset.node);
       if (b?.dataset.nv === "unwire") this._unwire(this._selWire);
@@ -632,6 +648,7 @@ class AacNodes extends HTMLElement {
       p.pinned = !p.pinned;
       this._save(); this._draw(); this._kick();
     });
+    this.querySelector(".nv-try-text").addEventListener("keydown", (e) => { if (e.key === "Enter") this._try(); });
     this.tabIndex = 0;
     this.addEventListener("keydown", (e) => {
       if ((e.key === "Delete" || e.key === "Backspace") && this._selWire && !e.target.closest("input, textarea")) {
@@ -677,6 +694,37 @@ class AacNodes extends HTMLElement {
     const ok = this.panel?._confirm ? await this.panel._confirm("Forget the wires set by hand? Everything is wired by type again.", "Automatic wiring", true)
       : window.confirm("Forget the wires set by hand?");
     if (ok) this._setWires(null);
+  }
+
+  // ------------------------------------------------------------------ try it
+  async _try() {
+    const text = this.querySelector(".nv-try-text").value.trim(), source = this.querySelector(".nv-try-source").value;
+    const out = this.querySelector(".nv-try-out");
+    if (!text) return;
+    out.innerHTML = '<p class="hint">On its way…</p>';
+    let r;
+    try { r = await this.ws("aac/nodes/try", { text, source }); }
+    catch (err) { out.innerHTML = `<div class="msg err">${esc(err.message || err)}</div>`; return; }
+    // The way: source → the chain's nodes → the model node; it lights up in the graph
+    const path = [r.source, ...r.trace.map((t) => t.node), ...(r.model_node ? [r.model_node] : [])];
+    this._lit = new Set(path);
+    this._litWires = new Set(path.slice(1).map((id, i) => `${path[i]}>${id}`));
+    this._draw();
+    clearTimeout(this._litTimer);
+    this._litTimer = setTimeout(() => { this._lit = null; this._litWires = null; this._draw(); }, 30000);
+    const title = (id) => this._data.nodes.find((n) => n.id === id)?.title || id;
+    const part = (label, items) => items?.length ? `<div class="m"><b>${label}:</b> ${items.map((x) => esc(x.length > 160 ? x.slice(0, 160) + "…" : x)).join(" · ")}</div>` : "";
+    out.innerHTML = `
+      <div class="msg ${r.status === "failed" ? "err" : "ok"}" style="white-space:pre-wrap">${esc(r.answer || "(no answer)")}</div>
+      <h3 style="margin-top:.8em">THE WAY</h3>
+      <div class="src" data-try-node="${esc(r.source)}" style="cursor:pointer"><span class="dot ok"></span><div><div class="n">${esc(title(r.source))}</div><div class="m">the message comes in here</div></div></div>
+      ${r.trace.map((t) => `<div class="src" data-try-node="${esc(t.node)}" style="cursor:pointer"><span class="dot ${t.error ? "bad" : "ok"}"></span>
+        <div style="flex:1;min-width:0"><div class="n">${esc(t.title)}</div>
+          ${t.error ? `<div class="m">failed: ${esc(t.error)}</div>` : ""}${part("system", t.system)}${part("context", t.context)}${part("tools", t.tools)}
+          ${!t.error && !t.system && !t.context && !t.tools ? '<div class="m">added nothing this time</div>' : ""}</div></div>`).join("")}
+      ${r.model_node ? `<div class="src" data-try-node="${esc(r.model_node)}" style="cursor:pointer"><span class="dot ok"></span><div><div class="n">${esc(title(r.model_node))}</div>
+        <div class="m">answered${r.model ? ` with ${esc(r.model)}` : ""}${r.steps?.filter((s) => s.type === "tool_call").length ? ` · tools used: ${esc(r.steps.filter((s) => s.type === "tool_call").map((s) => s.tool.split("__").pop()).join(", "))}` : ""}</div></div></div>` : ""}
+      <div class="actions"><button class="btn" data-go="run/${esc(r.run_id)}">Run details</button></div>`;
   }
 
   // ------------------------------------------------------------------ added nodes (types vs. instances)
