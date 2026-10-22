@@ -44,7 +44,7 @@ from .const import LOGGER
 from .context import home_snapshot
 from .jobs import Job
 from .pools import role_configured
-from .request import ANSWER, REQUEST, ModelRequest, async_prepare
+from .request import ANSWER, REQUEST, ModelRequest, async_prepare, source_of, start
 from .runs import Run, current_run
 from .streams import Node
 
@@ -82,10 +82,10 @@ MODEL_SETTINGS = {
 }
 
 
-def answering_model(entry: AACConfigEntry, domain: Domain) -> Node | None:
-    """The model node wired at the end of the domain's request chain (the standard one, or an added one)."""
+def answering_model(entry: AACConfigEntry, domain: Domain, source: str = "chat") -> Node | None:
+    """The model node wired at the end of a source's request chain (the standard one, or an added one)."""
     bus = entry.runtime_data.bus
-    tail = bus.chain(domain.id, "chat", "requests")[1]
+    tail = bus.chain(domain.id, *start(entry, domain.id, source))[1]
     nodes = bus.nodes_in(domain.id)
     return next((nodes[b] for a, ap, b, bp in bus.wires(domain.id)
                  if (a, ap) == tail and nodes[b].inputs.get(bp) == REQUEST), None)
@@ -127,7 +127,7 @@ async def async_run_request(
         domain=domain, text=text, kind=kind, trigger=trigger, title=title, chat_id=chat_id,
         conversation_id=conversation_id or ulid_now(), user_id=user_id, own_words=own_words,
         history=list(history or []), tier=tier, allow_tools=allow_tools, language=language or hass.config.language,
-        device_id=device_id, instructions=extra_system_prompt or "",
+        device_id=device_id, instructions=extra_system_prompt or "", source=source_of(kind, trigger),
     )
     run = runs.start(kind, trigger, title, input=text, chat_id=chat_id, context=extra_system_prompt or "",
                      allow_tools=allow_tools, tier=tier, history=history or [], own_words=own_words)
@@ -135,7 +135,7 @@ async def async_run_request(
     model = None
     try:
         await async_prepare(hass, entry, request)
-        if (model := answering_model(entry, domain)) is None:
+        if (model := answering_model(entry, domain, request.source)) is None:
             raise HomeAssistantError("No model node is wired at the end of the request chain (SETTINGS → Nodes).")
         if model.type:  # an added model node: its own tier and instructions
             request.tier = model.settings.get("tier") or request.tier

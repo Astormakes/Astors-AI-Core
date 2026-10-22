@@ -168,3 +168,33 @@ async def test_a_second_model_node(hass, hass_ws_client, aioclient_mock, mock_en
     await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {}})
     await ws.receive_json()
     assert not any("research" in w["to"] for w in data.store.data["node_view"]["assistant"]["wires"])
+
+
+async def test_sources_and_a_second_charter(hass, hass_ws_client, mock_entry, configured):
+    """Each request source has its own node and chain start; an added charter with its own text runs where it
+    is wired (voice through it, the panel chat still through the standard one)."""
+    from custom_components.aac.request import ModelRequest, async_prepare
+
+    from .conftest import setup_aac
+
+    await setup_aac(hass, mock_entry)
+    data = mock_entry.runtime_data
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/nodes"})
+    view = (await ws.receive_json())["result"]
+    assert {"chat", "voice", "assist", "auto"} <= {n["id"] for n in view["nodes"]}
+    assert {"from": "voice.requests", "to": "charter.requests"} in view["wires"]
+    await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {
+        "calm": {"type": "charter", "title": "Calm voice", "settings": {"text": "Speak softly."}}}})
+    assert (await ws.receive_json())["success"]
+    # voice: through the added charter into the rest of the chain (the panel chat keeps the standard one)
+    after = next(w["to"] for w in view["wires"] if w["from"] == "charter.requests")
+    wires = [w for w in view["wires"] if w["from"] != "voice.requests"]
+    wires += [{"from": "voice.requests", "to": "calm.requests"}, {"from": "calm.requests", "to": after}]
+    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": wires})
+    assert (await ws.receive_json())["success"]
+
+    voice = await async_prepare(hass, mock_entry, ModelRequest(domain=data.domain(), text="hi", source="voice"))
+    chat = await async_prepare(hass, mock_entry, ModelRequest(domain=data.domain(), text="hi", source="chat"))
+    assert voice.system[0] == "Speak softly." and chat.system[0].startswith("Charter")
+    assert voice.tools == chat.tools  # the rest of the chain is shared

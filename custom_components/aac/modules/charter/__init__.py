@@ -18,4 +18,5 @@ async def async_setup_module(ctx: ModuleContext) -> None:
     def charter(domain_id: str) -> str:
         return (ctx.setting(domain_id, "text") or "").strip() or builtin
 
-    ctx.add_prompt(charter, order=0)
+    # Added charters (another chain, e.g. for voice or a work assistant) have their own text
+    ctx.add_prompt(charter, order=0, instance_part=lambda settings: (settings.get("text") or "").strip() or builtin)

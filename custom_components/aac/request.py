@@ -44,6 +44,7 @@ class ModelRequest:
     history: list[dict[str, Any]] = field(default_factory=list)  # [{"role": "user"|"aac", "text": …}]
     tier: str = "master"
     allow_tools: bool = True
+    source: str = "chat"  # the node it comes from: chat (panel), voice, assist (HA), auto (heartbeat, triggers)
     language: str | None = None
     device_id: str | None = None
     system: list[str] = field(default_factory=list)
@@ -62,10 +63,31 @@ class ModelRequest:
             self.tools.append(api_id)
 
 
+SOURCES = {"chat": "Panel chat", "voice": "Voice", "assist": "HA Assist", "auto": "Automatic (heartbeat, triggers)"}
+
+
+def source_of(kind: str, trigger: str) -> str:
+    """Which source node a request comes from."""
+    if kind == "auto":
+        return "auto"
+    if trigger.startswith("voice"):
+        return "voice"
+    return "assist" if trigger == "assist" else "chat"
+
+
+def start(entry: AACConfigEntry, domain_id: str, source: str) -> tuple[str, str]:
+    """Where a source's chain starts; a source with no wire at all (wired by hand before it existed) uses the
+    panel chat's chain."""
+    bus = entry.runtime_data.bus
+    if source != "chat" and source in bus.nodes and not any(a == source for a, *_ in bus.wires(domain_id)):
+        source = "chat"
+    return source, "requests"
+
+
 async def async_prepare(hass: HomeAssistant, entry: AACConfigEntry, request: ModelRequest) -> ModelRequest:
-    """Run the request through its chain: the annotating nodes wired after the request sources ("chat"),
-    in the order of the wires (automatic: by their order numbers)."""
-    for node in entry.runtime_data.bus.chain(request.domain.id, "chat", "requests")[0]:
+    """Run the request through its chain: the annotating nodes wired after its source node, in the order of
+    the wires (automatic: by their order numbers)."""
+    for node in entry.runtime_data.bus.chain(request.domain.id, *start(entry, request.domain.id, request.source))[0]:
         if node.annotate is None:
             continue
         try:

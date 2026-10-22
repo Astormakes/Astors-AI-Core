@@ -109,15 +109,27 @@ class ModuleContext:
         """Lines for the open loops of every automatic run: provider(domain_id) → ["- …"] (not where the module is off)."""
         self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_open_loops(self.module.id, provider, self.module.id))
 
-    def add_prompt(self, part, order: int = 50) -> None:
+    def add_prompt(self, part, order: int = 50, instance_part=None) -> None:
         """Stable text at the start of every agent's system prompt: part(domain_id) → text (lowest order first;
-        keep it stable, the server's prompt cache depends on it). Not where the module is off."""
+        keep it stable, the server's prompt cache depends on it). Not where the module is off.
+        instance_part(settings) → text: the node can also be added more than once (each instance with its own
+        settings, the manifest's settings as the form), e.g. a second charter for another chain."""
         async def annotate(request) -> None:
             if text := (part(request.domain.id) or "").strip():
                 request.system.append(text)
 
+        def make(inst_id: str, title: str, settings: dict) -> Node:
+            async def annotate_instance(request) -> None:
+                if text := (instance_part(settings) or "").strip():
+                    request.system.append(text)
+
+            return Node(id=inst_id, title=title, inputs=REQUEST_PORT, outputs=REQUEST_PORT, adds=["system"],
+                        order=order, annotate=annotate_instance, settings=settings)
+
         self.add_node(Node(id=self.module.id, title=self.module.manifest.get("name", self.module.id),
-                           inputs=REQUEST_PORT, outputs=REQUEST_PORT, adds=["system"], order=order, annotate=annotate))
+                           inputs=REQUEST_PORT, outputs=REQUEST_PORT, adds=["system"], order=order, annotate=annotate,
+                           make=make if instance_part else None,
+                           settings_schema=self.module.manifest.get("settings", {}) if instance_part else {}))
 
     def provide_slot(self, slot: str, provider) -> None:
         """Be the provider of a core slot (slots.py, e.g. "memory"); asked only where the module is on."""
