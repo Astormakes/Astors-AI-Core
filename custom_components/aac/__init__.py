@@ -10,12 +10,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
+from .audio import AudioView, async_satellite_access
 from .cards import load_all
 from .const import DOMAIN, PANEL_URL
 from .core import Core
 from .websocket import async_register
 
 type AACConfigEntry = ConfigEntry[Core]
+PLATFORMS = ["conversation"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
@@ -26,6 +28,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     entry.runtime_data = core
     hass.data[DOMAIN] = core
     async_register(hass)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    if not hass.data.get(f"{DOMAIN}_audio_view"):  # satellites stream here
+        hass.http.register_view(AudioView())
+        hass.data[f"{DOMAIN}_audio_view"] = True
+    entry.async_create_background_task(hass, async_satellite_access(core), "aac satellite access")
     version = (await async_get_integration(hass, DOMAIN)).version
     if not hass.data.get(f"{DOMAIN}_static"):
         await hass.http.async_register_static_paths(
@@ -40,9 +47,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     """Stop: the setup is kept."""
     frontend.async_remove_panel(hass, "aac")
+    await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     core = entry.runtime_data
     if core.domain:
         await core.domain.stop()
+        await core.domain.unload()
         await core.domain.save_now()
     hass.data.pop(DOMAIN, None)
     return True

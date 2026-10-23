@@ -45,6 +45,7 @@ class Domain:
         self.user_tags: list[str] = []
         self.flow = Flow(self)
         self._specs: dict[str, dict[str, Any]] = {}
+        self.running = False  # its cards' timers and listeners run
 
     # ------------------------------------------------------------------ storage
     async def load(self) -> None:
@@ -60,6 +61,18 @@ class Domain:
         for card_id, spec in self._specs.items():
             await self._make(card_id, spec)
 
+    async def start(self) -> None:
+        """Run: the cards start their timers and listeners."""
+        self.running = True
+        for card in list(self.cards.values()):
+            await card.start()
+
+    async def unload(self) -> None:
+        """Another domain runs (or AAC stops): every card ends its timers."""
+        self.running = False
+        for card in list(self.cards.values()):
+            await card.unload()
+
     async def _make(self, card_id: str, spec: dict[str, Any]) -> Card | None:
         kind = CARD_TYPES.get(spec.get("type", ""))
         if kind is None:
@@ -67,7 +80,11 @@ class Domain:
             return None
         card = kind(self, card_id, spec.get("title", ""), spec.get("settings"))
         await card.load()
+        if old := self.cards.get(card_id):
+            await old.unload()
         self.cards[card_id] = card
+        if self.running:
+            await card.start()
         return card
 
     def _data(self) -> dict[str, Any]:
@@ -127,7 +144,8 @@ class Domain:
             return
         self._remember()
         self._specs.pop(card_id)
-        self.cards.pop(card_id, None)
+        if card := self.cards.pop(card_id, None):
+            await card.unload()
         self.wires = [w for w in self.wires if w["from"].split(".")[0] != card_id and w["to"].split(".")[0] != card_id]
         self.positions.pop(card_id, None)
         self.save()
@@ -174,6 +192,8 @@ class Domain:
     async def _restore(self, setup: dict[str, Any]) -> None:
         self._specs = deepcopy(setup["cards"])
         self.wires = deepcopy(setup["wires"])
+        for card in list(self.cards.values()):
+            await card.unload()
         self.cards = {}
         for card_id, spec in self._specs.items():
             await self._make(card_id, spec)
@@ -224,6 +244,8 @@ class Core:
         self.data: dict[str, Any] = {}
         self.pool = ModelPool(hass, [])
         self.domain: Domain | None = None
+        from .audio import AudioHub  # noqa: PLC0415
+        self.audio = AudioHub(self)
 
     async def load(self) -> None:
         """Read the core; the first time, build the default domain (with what v1 left behind)."""
@@ -239,6 +261,10 @@ class Core:
             self.data["domains"] = [{"id": "assistant", "name": "Assistant"}]
         self.data.setdefault("active", self.data["domains"][0]["id"])
         await self.switch(self.data["active"])
+        from .defaults import async_assist_card, async_upgrade, async_voice_chain  # noqa: PLC0415
+        await async_upgrade(self)
+        await async_voice_chain(self)
+        await async_assist_card(self)
 
     def save(self) -> None:
         """Keep the core."""
@@ -254,9 +280,11 @@ class Core:
         info = next((d for d in self.data["domains"] if d["id"] == domain_id), self.data["domains"][0])
         if self.domain is not None:
             await self.domain.stop()
+            await self.domain.unload()
             await self.domain.save_now()
         self.domain = Domain(self, info["id"], info["name"])
         await self.domain.load()
+        await self.domain.start()
         self.data["active"] = info["id"]
         self.save()
         self.notify("setup", domain=info["id"])

@@ -83,3 +83,110 @@ async def build_default(domain, charter: str, models: list[str], levels: dict[st
         {"from": "model.out", "to": "lists.in"}, {"from": "lists.out", "to": "model.in"},
         {"from": "model.out", "to": "home.in"}, {"from": "home.out", "to": "model.in"},
     ])
+
+
+async def async_upgrade(core: Core) -> None:
+    """One-time steps for a domain made by an older v2: v1's time triggers become a Schedule card (wired like a chat:
+    into the line, the model's answer back into it)."""
+    from .core import read_v1  # noqa: PLC0415
+
+    if not core.data.get("v1_audio"):  # v1's voice settings and the satellite add-on's HA user
+        core.data["v1_audio"] = True
+        v1c = await core.hass.async_add_executor_job(read_v1, core.hass, "aac.config") or {}
+        pools, audio = v1c.get("pools") or {}, v1c.get("audio") or {}
+        core.data["audio"] = {"stt": list(pools.get("stt") or []), "tts": (pools.get("tts") or [None])[0],
+                              "voices": audio.get("voices") or {}, "volume": audio.get("volume", 40),
+                              "known": audio.get("known") or []}
+        if v1c.get("satellite_app") and not core.data.get("satellite_app"):
+            core.data["satellite_app"] = v1c["satellite_app"]
+        core.save()
+    if core.data.get("v1_triggers"):
+        return
+    core.data["v1_triggers"] = True
+    core.save()
+    v1 = await core.hass.async_add_executor_job(read_v1, core.hass, "aac.mod.triggers.triggers") or {}
+    entries = [{"name": t["name"], "at": t["when"]["at"], "weekdays": t["when"].get("weekdays") or [],
+                "text": (t.get("do") or {}).get("instruction", ""), "enabled": bool(t.get("enabled", True))}
+               for t in v1.get("triggers") or [] if (t.get("when") or {}).get("type") == "time" and t["when"].get("at")]
+    domain = core.domain
+    if not entries or any(c.type == "schedule" for c in domain.cards.values()):
+        return
+    card = await domain.add_card("schedule", "Schedule", {"entries": entries}, at={"x": 0, "y": 200}, card_id="schedule")
+    first = "charter" if "charter" in domain.cards else next((c.id for c in domain.cards.values() if c.type == "model"), None)
+    model = next((c.id for c in domain.cards.values() if c.type == "model"), None)
+    wires = list(domain.wires)
+    if first:
+        wires.append({"from": f"{card.id}.out", "to": f"{first}.in"})
+    if model:
+        wires.append({"from": f"{model}.out", "to": f"{card.id}.answers"})
+    domain.set_wires(wires)
+    domain.undo = []
+    LOGGER.info("AAC: %s v1 time trigger(s) became the Schedule card", len(entries))
+
+
+async def async_voice_chain(core: Core) -> None:
+    """One-time: when satellites are known (v1 had voice), the default domain gets the voice chain as ordinary cards:
+    Microphone → Pause cut → Speech to text → Voice chat → Wake word (a Conditional: "computer", or a follow-up)
+    → Voice rules (a Relay after the turn) → the line; the model's answer → Voice chat → Voice out → status back."""
+    if core.data.get("voice_chain"):
+        return
+    core.data["voice_chain"] = True
+    core.save()
+    domain = core.domain
+    if not core.audio.settings.get("known") or any(c.type == "microphone" for c in domain.cards.values()):
+        return
+    names = ["computer"]
+    v1 = await core.hass.async_add_executor_job(_read, core, "aac.config")
+    names = ((v1 or {}).get("audio") or {}).get("names") or names
+    add = domain.add_card
+    await add("microphone", "Microphone", {"source": "any"}, card_id="mic", at={"x": -720, "y": 420})
+    await add("pause_cut", "Pause cut", {"pause": 800}, card_id="cut", at={"x": -480, "y": 420})
+    await add("speech_to_text", "Speech to text", card_id="ears", at={"x": -240, "y": 420})
+    await add("voice_chat", "Voice chat", card_id="voice", at={"x": 0, "y": 420})
+    rules = [{"name": f"says {n}", "select": {"by": "kind", "value": "said", "which": "newest"}, "test": "contains",
+              "value": n, "actions": [{"do": "output", "a": "yes"}]} for n in names]
+    rules.append({"name": "follow-up", "select": {"by": "kind", "value": "said", "which": "newest"}, "test": "has_tag",
+                  "value": "voice.follow_up", "actions": [{"do": "output", "a": "yes"}]})
+    await add("conditional", "Wake word", {"outputs": ["yes"], "rules": rules}, card_id="wake", at={"x": 240, "y": 420})
+    await add("relay", "Voice rules", {"position": "after", "replace": False,
+                                       "text": "You are heard and answer aloud: one or two short sentences, plain words, no lists."},
+              card_id="voice_rules", at={"x": 480, "y": 420})
+    await add("voice_out", "Voice out", card_id="speaker", at={"x": 240, "y": 600})
+    first = "charter" if "charter" in domain.cards else None
+    model = next((c.id for c in domain.cards.values() if c.type == "model"), None)
+    wires = [*domain.wires, {"from": "mic.out", "to": "cut.in"}, {"from": "cut.out", "to": "ears.in"},
+             {"from": "ears.out", "to": "voice.heard"}, {"from": "voice.said", "to": "wake.in"},
+             {"from": "wake.yes", "to": "voice_rules.in"}, {"from": "voice.speak", "to": "speaker.in"},
+             {"from": "speaker.status", "to": "voice.status"}]
+    if first:
+        wires.append({"from": "voice_rules.out", "to": f"{first}.in"})
+    if model:
+        wires.append({"from": f"{model}.out", "to": "voice.answers"})
+    domain.set_wires(wires)
+    domain.undo = []
+    LOGGER.info("AAC: the voice chain was added to the default domain")
+
+
+def _read(core: Core, key: str):
+    from .core import read_v1  # noqa: PLC0415
+    return read_v1(core.hass, key)
+
+
+async def async_assist_card(core: Core) -> None:
+    """One-time: the default domain gets an HA Assist card (AAC stays HA's conversation agent, as in v1)."""
+    if core.data.get("assist_card"):
+        return
+    core.data["assist_card"] = True
+    core.save()
+    domain = core.domain
+    if any(c.type == "assist" for c in domain.cards.values()):
+        return
+    await domain.add_card("assist", "HA Assist", card_id="assist", at={"x": 0, "y": 140})
+    model = next((c.id for c in domain.cards.values() if c.type == "model"), None)
+    wires = list(domain.wires)
+    if "charter" in domain.cards:
+        wires.append({"from": "assist.said", "to": "charter.in"})
+    if model:
+        wires.append({"from": f"{model}.out", "to": "assist.answers"})
+    domain.set_wires(wires)
+    domain.undo = []

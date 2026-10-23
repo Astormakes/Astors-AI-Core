@@ -84,6 +84,12 @@ class Card:
     async def stop(self) -> None:
         """A stop arrived: drop what it is doing."""
 
+    async def start(self) -> None:
+        """The card is in a running domain: start its timers and listeners."""
+
+    async def unload(self) -> None:
+        """The card goes away (removed, changed, another domain runs): end its timers and listeners."""
+
     # ------------------------------------------------------------------ for the panel
     @classmethod
     def describe(cls) -> dict[str, Any]:
@@ -117,4 +123,5 @@ def tool_spec(card: Card, name: str, spec: dict[str, Any]) -> dict[str, Any]:
 
 def load_all() -> None:
     """Import the built-in card types (each registers itself)."""
-    from . import buffer, chat, conditional, homeassistant, lists, model, pool, relay  # noqa: F401, PLC0415
+    from . import (  # noqa: F401, PLC0415
+        assist, audio, auto, buffer, builder, chat, conditional, decide, homeassistant, lists, memory, model, pool, relay, tools)

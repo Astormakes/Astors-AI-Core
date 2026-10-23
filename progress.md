@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`, its progress file `docs/progress-v1.md` (private).
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-23) – 2.0.0-alpha.2, live on the owner's HA
+## Current state (2026-10-23) – 2.0.0-alpha.3, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -18,13 +18,24 @@ the owner wires them (no automatic wiring), the message is a document of entries
 - **Cards** (`cards/`): Chat, Model, Pool, Relay (nothing / start / note / after, replace tick, add text to tagged
   entries), Conditional (if … then: edit text, tag, call a wired card's function, stop, pick an output), Buffer, Lists
   (with edit and undo of a removal), Home Assistant (own access list: hidden / read / full).
+- **More cards (alpha.3):** Schedule, HA event, Heartbeat (start a chain, keep a log page; Schedule entries can be
+  added by a model), HA Assist (AAC is HA's conversation agent again, entity `conversation.aac_qwen3_8b`), Decide,
+  Memory (by meaning with an embedding model, else by words), File, Notify, Timer, Web (DuckDuckGo or SearXNG),
+  Builder (a model changes cards and wires, within its settings).
+- **Audio (alpha.3, `audio.py` + `cards/audio.py`):** satellites on `/api/aac/audio` (same protocol: the add-on works
+  unchanged, its HA user taken over from v1), STT in the order on the Audio page (Whisper on the PC, then HA's),
+  TTS (Piper, voices per language), volume; cards Microphone, Noise gate, Pause cut, Speech to text, Voice chat
+  (sessions per satellite, follow-up window after Voice out's "finished"), Voice out. Audio wires carry a stream
+  (thickness = loudness), Pause cut makes pieces (`piece` wires).
+- **One-time steps on the owner's HA:** v1's 05:25 trigger → Schedule card; v1's voice settings; the voice chain
+  (Wake word = a Conditional: "computer" or a follow-up; Voice rules = a Relay after the turn); an HA Assist card.
 - **First start** (`defaults.py`): the default domain (Chat → Charter → Time → Model → Chat; Pool "Models"; Lists and
   Home as the model's tools), taking over v1's models, master order, charter, lists and entity access.
 - **Panel** (`www/aac.js`): sidebar (domain switch + clone, a section per Chat card with its chats, per Lists card its
   lists, Nodes, Models), chat (live answer, document view, stop), lists page, models page (find a server's models),
   node view (types left with info, click in the grid to place, drag to wire, Delete/button to unwire, settings right
   with functions and tags, Undo, slots 1–3 (Shift-click loads), Send stop, monitor on a wire).
-- Tests: 10 (`../.venv/bin/python -m pytest -q -p no:logging`).
+- Tests: 18 (`../.venv/bin/python -m pytest -q -p no:logging`).
 
 ## Owner's data
 
@@ -39,12 +50,10 @@ the owner wires them (no automatic wiring), the message is a document of entries
   every panel change). Local test HA: `~/cluade/AAC/dev-ha` (port 8124), runs from the repo.
 - Screenshots: `scripts/ha_screenshot.py` (FIND_PANEL is the `aac-panel` element; `p.go('nodes')`, `p.go('lists','lists')`).
 
-## Next (from docs/v2 page 2)
+## Next
 
-- Audio cards (left out on purpose for now): Microphone, Noise gate, Pause cut, Speech to text, Voice chat, Voice out
-  with its status output; the satellite add-on still calls v1's `/api/aac/audio` (404 until then).
-- In and out: HA Assist (AAC as a conversation agent), Schedule, HA event, Heartbeat. New: Web, Notify, Timer/Delay,
-  Builder (a model changes cards and wires), File, Memory, Calendar.
+- Calendar card (v1 had `calendar.aac_calendar` from the lists' dates); "what the model got" view (the request with
+  each part's source); card values in templates (`{{ <card>.<value> }}`); monitor windows on wires in the grid;
+  Save/Load as files; a proper rules editor for Conditional (JSON now); the owner's own tags in the panel.
 - Live entries through the flow (today the model streams only to the panel), stop as a message along the wires.
-- Panel: a proper rules editor for Conditional (JSON for now), the owner's own tags (`aac/tags/add`), monitors on wires
-  in the grid, Save/Load as files, presets.
+- Presets; docs/v2 page 2 details for the remaining cards.

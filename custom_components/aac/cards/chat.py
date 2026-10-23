@@ -54,9 +54,9 @@ class Chat(Card):
         """One chat."""
         return self.data["chats"].get(chat_id)
 
-    def _new(self, title: str) -> dict[str, Any]:
+    def _new(self, title: str, chat_id: str | None = None) -> dict[str, Any]:
         now = dt_util.utcnow().isoformat()
-        chat = {"id": new_id(), "title": title[:48] or "New chat", "created": now, "updated": now, "messages": [], "entries": []}
+        chat = {"id": chat_id or new_id(), "title": title[:48] or "New chat", "created": now, "updated": now, "messages": [], "entries": []}
         self.data["chats"][chat["id"]] = chat
         return chat
 
@@ -70,10 +70,11 @@ class Chat(Card):
         await self.save()
         self.core.notify("chat", domain=self.domain.id, card=self.id)
 
-    async def send(self, text: str, chat_id: str | None = None) -> tuple[str, str]:
-        """You wrote something: it leaves at `said` with the conversation so far; returns (chat id, answer)."""
+    async def send(self, text: str, chat_id: str | None = None, create_as: str | None = None) -> tuple[str, str]:
+        """You wrote something: it leaves at `said` with the conversation so far; returns (chat id, answer).
+        create_as: the id a new chat gets (HA Assist: its conversation id)."""
         chat = self.get(chat_id) if chat_id else None
-        chat = chat or self._new(text)
+        chat = chat or self._new(text, create_as)
         entries = list(chat["entries"])
         if (turns := int(self.settings.get("turns") or 0)) > 0:  # only the last turns go along
             said = [i for i, e in enumerate(entries) if e["kind"] == "said"]

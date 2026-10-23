@@ -5,7 +5,8 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\n/g, "<br>");
 const tip = (html) => `<span class="qm" tabindex="0">?<span class="tip">${html}</span></span>`;
 const W = 180, HEAD = 34, ROW = 20;
-const KIND_COLOR = { text: "#f5a623", audio: "#4caf50", pool: "#03a9f4" };
+const KIND_COLOR = { text: "#f5a623", audio: "#4caf50", pool: "#03a9f4", piece: "#9c27b0" };
+const DAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
 const STYLE = `
 :host { display: block; height: 100vh; color: var(--primary-text-color); background: var(--primary-background-color);
@@ -92,6 +93,11 @@ class AacPanel extends HTMLElement {
     this.view = { kind: "chat", card: null, id: null };
     this.chats = {}; this.chat = null; this.live = {}; this.busy = false; this.expert = false;
     this.lists = {}; this.sel = null; this.selType = null; this.selWire = null; this.vp = { x: 80, y: 120, k: 1 };
+    // one listener for buttons that are redrawn often (the Audio page's meters)
+    this.shadowRoot.addEventListener("click", (e) => {
+      const b = e.target.closest?.("[data-say]");
+      if (b) this.ws("aac/audio/say", { source: b.dataset.say, text: "This is how I sound." });
+    });
   }
 
   set hass(hass) {
@@ -112,7 +118,9 @@ class AacPanel extends HTMLElement {
     this.render();
   }
 
-  async _load() { this.state = await this.ws("aac/state"); }
+  async _load() {
+    [this.state, this.audio] = await Promise.all([this.ws("aac/state"), this.ws("aac/audio").catch(() => null)]);
+  }
   _cards(page) { return (this.state?.domain.cards || []).filter((c) => c.page === page); }
   _card(id) { return (this.state?.domain.cards || []).find((c) => c.id === id); }
   _type(t) { return (this.state?.types || []).find((x) => x.type === t); }
@@ -134,8 +142,15 @@ class AacPanel extends HTMLElement {
     } else if (ev.what === "setup") {
       clearTimeout(this._st);
       this._st = setTimeout(async () => { await this._load(); if (this.view.kind !== "nodes" || !this._dragging) this.render(); }, 150);
-    } else if (ev.what === "card" && this.view.kind === "lists" && this.view.card === ev.card) {
-      this._loadLists(ev.card).then(() => this.render());
+    } else if (ev.what === "card" && this.view.card === ev.card && ["lists", "log", "memory", "file"].includes(this.view.kind)) {
+      this._loadPage().then(() => this.render());
+    } else if (ev.what === "audio" && this.view.kind === "audio") {
+      clearTimeout(this._at); this._at = setTimeout(async () => { this.audio = await this.ws("aac/audio"); this.render(); }, 300);
+    } else if (ev.what === "level") {
+      for (const p of this.shadowRoot.querySelectorAll(`.wire[data-from="${CSS.escape(ev.wire)}"]`)) {
+        p.style.strokeWidth = (2 + Math.min(100, ev.level) / 100 * 8).toFixed(1);
+        clearTimeout(p._lt); p._lt = setTimeout(() => { p.style.strokeWidth = ""; }, 1200);
+      }
     } else if (ev.what === "flow") {
       for (const p of this.shadowRoot.querySelectorAll(`.wire[data-from="${CSS.escape(ev.wire)}"]`)) {
         p.classList.add("flow"); clearTimeout(p._t); p._t = setTimeout(() => p.classList.remove("flow"), 1800);
@@ -147,18 +162,27 @@ class AacPanel extends HTMLElement {
     this.view = { kind, card, id };
     if (kind === "chat" && id) await this._getChat();
     if (kind === "chat" && !id) this.chat = null;
-    if (kind === "lists") await this._loadLists(card);
+    if (["lists", "log", "memory", "file"].includes(kind)) await this._loadPage();
+    if (kind === "audio") { this.audio = await this.ws("aac/audio"); clearInterval(this._live); this._live = setInterval(async () => { if (this.view.kind !== "audio") { clearInterval(this._live); return; } this.audio = await this.ws("aac/audio"); const b = this.shadowRoot.querySelector("#meters"); if (b) b.innerHTML = this._meters(); }, 700); }
     this.render();
   }
 
   async _getChat() { this.chat = (await this.ws("aac/chat/get", { card: this.view.card, chat_id: this.view.id })).chat; }
   async _loadLists(card) { this.lists[card] = (await this.ws("aac/card/data", { card })).data?.lists || []; }
+  async _loadPage() {
+    const card = this.view.card, kind = this.view.kind;
+    if (kind === "lists") return this._loadLists(card);
+    if (kind === "file") { this.page = { text: (await this.ws("aac/card/call", { card, function: "read" })).result }; return; }
+    this.page = (await this.ws("aac/card/data", { card })).data || {};
+  }
 
   // ------------------------------------------------------------------ layout
   render() {
     if (!this.state) { this.shadowRoot.innerHTML = `<style>${STYLE}</style><p style="padding:20px">Loading…</p>`; return; }
     const v = this.view;
-    const main = v.kind === "nodes" ? this._nodes() : v.kind === "models" ? this._models() : v.kind === "lists" ? this._listsView() : this._chatView();
+    const main = v.kind === "nodes" ? this._nodes() : v.kind === "models" ? this._models() : v.kind === "lists" ? this._listsView()
+      : v.kind === "log" ? this._logView() : v.kind === "memory" ? this._memoryView() : v.kind === "file" ? this._fileView()
+      : v.kind === "audio" ? this._audioView() : this._chatView();
     this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="root">${this._nav()}<main>${main}</main></div>`;
     this._bind();
     if (v.kind === "nodes") this._drawGrid();
@@ -172,11 +196,12 @@ class AacPanel extends HTMLElement {
     const chats = this._cards("chat").map((c) => `<h4>${esc(c.title.toUpperCase())}<button class="small" data-newchat="${esc(c.id)}">+</button></h4>
       ${(this.chats[c.id] || []).map((ch) => item(ch.title, "chat", c.id, ch.id)).join("") || '<div class="item hint" style="cursor:default">no chats yet</div>'}`).join("");
     const lists = this._cards("lists").map((c) => `<h4>${esc(c.title.toUpperCase())}</h4>${item("All lists", "lists", c.id)}`).join("");
+    const pages = ["log", "memory", "file"].flatMap((pg) => this._cards(pg)).map((c) => item(c.title, c.page, c.id)).join("");
     return `<nav><div class="top"><b>AAC</b><span>v${esc(s.version)}</span></div>
       <div class="dom"><select id="domain">${s.domains.map((d) => `<option value="${esc(d.id)}" ${d.id === s.active ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select>
         <button class="small" id="clone" title="A copy of this setup to try things out">Clone</button></div>
-      <div class="scroll">${chats}${lists}</div>
-      <div class="bottom">${item("Nodes", "nodes")}${item("Models", "models")}</div></nav>`;
+      <div class="scroll">${chats}${lists}${pages ? `<h4>MORE</h4>${pages}` : ""}</div>
+      <div class="bottom">${item("Nodes", "nodes")}${item("Models", "models")}${item("Audio", "audio")}</div></nav>`;
   }
 
   _header(title, extra = "") { return `<header><h2>${esc(title)}</h2>${extra}</header>`; }
@@ -239,6 +264,50 @@ class AacPanel extends HTMLElement {
     await this._loadLists(this.view.card); this.render();
   }
 
+  // ------------------------------------------------------------------ pages of cards: log, memory, file
+  _logView() {
+    const log = [...(this.page?.log || [])].reverse();
+    return `${this._header(this._card(this.view.card)?.title || "Log", tip("What woke the chain, and what came back (quiet: the model had nothing to say)."))}
+      <div class="content">${log.map((x) => `<div class="card"><div class="hint">${esc(new Date(x.time).toLocaleString())} · ${esc(x.name)}</div>
+        <div style="margin:4px 0">${md(x.text)}</div><div>${x.answer === null || x.answer === undefined ? '<span class="hint">working…</span>' : x.answer ? md(x.answer) : '<span class="hint">quiet</span>'}</div></div>`).join("") || '<p class="hint">Nothing yet.</p>'}</div>`;
+  }
+
+  _memoryView() {
+    const mem = [...(this.page?.memories || [])].reverse();
+    return `${this._header(this._card(this.view.card)?.title || "Memory")}<div class="content">
+      <div class="row" style="margin-bottom:12px"><input id="newmem" placeholder="Something to remember…"><button id="addmem">Remember</button></div>
+      ${mem.map((m) => `<div class="card row"><span class="t">${esc(m.text)}<div class="hint">${esc(new Date(m.time).toLocaleString())}${m.vector ? " · by meaning" : ""}</div></span>
+        <button class="small danger" data-forget="${esc(m.id)}">Forget</button></div>`).join("") || '<p class="hint">No memories yet.</p>'}</div>`;
+  }
+
+  _fileView() {
+    return `${this._header(this._card(this.view.card)?.title || "File", '<button class="small primary" id="savefile">Save</button>')}
+      <div class="content"><textarea id="filetext" style="height:70vh;font-family:monospace">${esc(this.page?.text || "")}</textarea></div>`;
+  }
+
+  // ------------------------------------------------------------------ audio (core)
+  _meters() {
+    return (this.audio?.sources || []).map((src) => `<div class="card"><div class="row"><b>${esc(src.name)}</b><span class="hint">${src.playing ? "speaking" : "listening"} · peak ${src.peak_db ?? "silent"} dB</span>
+      <button class="small" data-say="${esc(src.id)}" style="margin-left:auto">Test voice</button></div>
+      <div style="display:flex;align-items:flex-end;gap:2px;height:40px;margin-top:6px">${(src.meter || []).map(([lvl, sp]) => `<i style="flex:1;height:${Math.max(2, lvl)}%;background:${sp > 0.3 ? "var(--primary-color)" : "var(--divider-color)"}"></i>`).join("")}</div></div>`).join("")
+      || '<p class="hint">No satellite connected (the AAC satellite add-on, or the PC program).</p>';
+  }
+
+  _audioView() {
+    const a = this.audio || { settings: {} }, st = a.settings || {}, models = this.state.models;
+    const sttItems = [...models.map((m) => [m.id, m.name]), ...(a.stt_entities || []).map((e) => [e, `HA: ${e}`])];
+    const order = st.stt || [];
+    return `${this._header("Audio", tip("The satellites, how AAC hears (speech to text, in this order: the first that answers) and speaks (an HA voice engine). Shared by all domains; the audio cards in Nodes decide what happens with it."))}
+      <div class="content"><h3>Satellites</h3><div id="meters">${this._meters()}</div>
+      <div class="card"><h3 style="margin-top:0">Speech to text (in order)</h3>
+        ${order.map((id, i) => `<div class="row"><span class="t">${esc((sttItems.find((x) => x[0] === id) || [id, id])[1])}</span>
+          <button class="small" data-sttup="${i}">↑</button><button class="small danger" data-sttdel="${i}">✕</button></div>`).join("") || '<p class="hint">None yet.</p>'}
+        <div class="row" style="margin-top:8px"><select id="sttadd"><option value="">Add …</option>${sttItems.filter((x) => !order.includes(x[0])).map(([id, l]) => `<option value="${esc(id)}">${esc(l)}</option>`).join("")}</select></div>
+        <h3>Voice</h3><select id="ttsset"><option value="">—</option>${(a.tts_entities || []).map((e) => `<option ${e === st.tts ? "selected" : ""}>${esc(e)}</option>`).join("")}</select>
+        <h3>Volume: <span id="volval">${esc(st.volume ?? 40)}</span> %</h3><input type="range" id="volume" min="0" max="100" step="5" value="${esc(st.volume ?? 40)}">
+        <p class="hint">0 = AAC never speaks aloud.</p></div></div>`;
+  }
+
   // ------------------------------------------------------------------ models
   _models() {
     const rows = this.state.models.map((m) => `<tr><td><b>${esc(m.name)}</b><div class="hint">${esc(m.model)} · ${esc(m.base_url)}</div></td>
@@ -298,6 +367,22 @@ class AacPanel extends HTMLElement {
       if (f.type === "tags") return `<label>${esc(f.title)}${h}</label>${d.tags.map((x) => `<label class="check"><input type="checkbox" data-tag="${esc(key)}" value="${esc(x.tag)}" ${(v || []).includes(x.tag) ? "checked" : ""}>${esc(x.tag)}</label>`).join("") || '<p class="hint">No tags yet.</p>'}`;
       if (f.type === "list") return `<label>${esc(f.title)}${h}</label><input data-set="${esc(key)}" data-list value="${esc((v || []).join(", "))}">`;
       if (f.type === "access") return `<label>${esc(f.title)}${h}</label><textarea rows="6" data-set="${esc(key)}" data-access placeholder="switch.lamp: full">${esc(Object.entries(v || {}).map(([e, l]) => `${e}: ${l}`).join("\n"))}</textarea>`;
+      if (f.type === "model") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">—</option>${this.state.models.map((m) => `<option value="${esc(m.id)}" ${m.id === v ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>`;
+      if (f.type === "source") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="${key === "source" && c.type === "microphone" ? "any" : ""}">${c.type === "microphone" ? "any satellite" : "where the line came from"}</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)}</option>`).join("")}</select>`;
+      if (f.type === "outputs") return `<label>${esc(f.title)}${h}</label><textarea rows="4" data-set="${esc(key)}" data-outputs>${esc((v || []).map((o) => `${o.name}: ${o.description || ""}`).join("\n"))}</textarea>`;
+      if (f.type === "schedule") return `<label>${esc(f.title)}${h}</label>${(v || []).map((e, i) => `<div class="card" style="padding:8px" data-entry="${i}">
+          <div class="row"><input data-e="name" value="${esc(e.name)}" placeholder="Name"><input data-e="at" value="${esc(e.at)}" style="width:80px" placeholder="HH:MM"></div>
+          <div class="row" style="margin:4px 0;flex-wrap:wrap">${DAYS.map((d, n) => `<label class="check" style="font-size:12px"><input type="checkbox" data-day="${n}" ${(e.weekdays || []).includes(n) ? "checked" : ""}>${d}</label>`).join("")}</div>
+          <textarea rows="2" data-e="text" placeholder="What to do">${esc(e.text)}</textarea>
+          <div class="row"><label class="check"><input type="checkbox" data-e="enabled" ${e.enabled !== false ? "checked" : ""}>on</label><button class="small danger" data-delentry="${i}" style="margin-left:auto">Remove</button></div></div>`).join("")}
+        <button class="small" id="addentry">Add an entry</button>`;
+      if (f.type === "watches") return `<label>${esc(f.title)}${h}</label>${(v || []).map((w, i) => `<div class="card" style="padding:8px" data-watch="${i}">
+          <div class="row"><input data-w="name" value="${esc(w.name)}" placeholder="Name"><input data-w="cooldown" value="${esc(w.cooldown ?? 300)}" style="width:70px" title="Cooldown (s)"></div>
+          <input data-w="entity_id" value="${esc(w.entity_id)}" placeholder="entity, e.g. binary_sensor.door" style="margin-top:4px">
+          <input data-w="to" value="${esc(w.to || "")}" placeholder="state that counts (empty: any change)" style="margin-top:4px">
+          <textarea rows="2" data-w="text" placeholder="What to do" style="margin-top:4px">${esc(w.text)}</textarea>
+          <button class="small danger" data-delwatch="${i}">Remove</button></div>`).join("")}
+        <button class="small" id="addwatch">Add a watch</button>`;
       if (f.type === "rules") return `<label>${esc(f.title)}${h}${tip(`One rule: {"name": "for me", "select": {"by": "kind" | "tag" | "card" | "any", "value": "said", "which": "newest" | "all"}, "test": "contains" (is, starts, ends, matches, has_tag, count_more, empty, always), "value": "computer", "actions": [{"do": "replace", "a": "x", "b": "y"}, {"do": "tag", "a": "addressed"}, {"do": "call", "card": "lists", "function": "add_items", "args": {"list": "Shopping", "items": ["{text}"]}}, {"do": "output", "a": "yes"}, {"do": "stop"}], "go_on": false}`)}</label>
         <textarea rows="10" data-set="${esc(key)}" data-json style="font-family:monospace;font-size:12px">${esc(JSON.stringify(v || [], null, 1))}</textarea>`;
       return `<label>${esc(f.title)}${h}</label><input data-set="${esc(key)}" value="${esc(v)}">`;
@@ -426,6 +511,7 @@ class AacPanel extends HTMLElement {
     if (el.dataset.num !== undefined) value = Number(value);
     if (el.dataset.list !== undefined) value = value.split(",").map((x) => x.trim()).filter(Boolean);
     if (el.dataset.access !== undefined) value = Object.fromEntries(value.split("\n").map((l) => l.split(":").map((x) => x.trim())).filter(([e, l]) => e && ["hidden", "read", "full"].includes(l)));
+    if (el.dataset.outputs !== undefined) value = value.split("\n").map((l) => { const [n, ...r] = l.split(":"); return { name: n.trim().replace(/[^\w-]/g, "_"), description: r.join(":").trim() }; }).filter((o) => o.name);
     if (el.dataset.json !== undefined) { try { value = JSON.parse(value || "[]"); } catch (err) { alert(`Not valid: ${err.message}`); return; } }
     await this.ws("aac/card/update", { card: c.id, settings: { [key]: value } });
     await this._load(); this.render();
@@ -491,6 +577,34 @@ class AacPanel extends HTMLElement {
     }));
     $("#remove")?.addEventListener("click", async () => { if (confirm("Remove this card? (Undo brings it back)")) { await this.ws("aac/card/remove", { card: this.sel }); this.sel = null; await this._load(); this.render(); } });
     $("#unwire")?.addEventListener("click", () => this._unwire());
+    // schedule entries and watches: the whole list is saved on any change
+    const collect = (sel, attr) => [...$$(sel)].map((box) => {
+      const o = {};
+      box.querySelectorAll(`[${attr}]`).forEach((el) => { o[el.getAttribute(attr)] = el.type === "checkbox" ? el.checked : el.value; });
+      if (attr === "data-e") o.weekdays = [...box.querySelectorAll("[data-day]")].filter((x) => x.checked).map((x) => Number(x.dataset.day));
+      if (o.cooldown !== undefined) o.cooldown = Number(o.cooldown) || 300;
+      return o;
+    });
+    const saveList = async (key, list) => { await this.ws("aac/card/update", { card: this.sel, settings: { [key]: list } }); await this._load(); this.render(); };
+    $$("[data-entry] input, [data-entry] textarea").forEach((el) => el.addEventListener("change", () => saveList("entries", collect("[data-entry]", "data-e"))));
+    $$("[data-watch] input, [data-watch] textarea").forEach((el) => el.addEventListener("change", () => saveList("watches", collect("[data-watch]", "data-w"))));
+    $("#addentry")?.addEventListener("click", () => saveList("entries", [...collect("[data-entry]", "data-e"), { name: "New", at: "08:00", weekdays: [], text: "", enabled: true }]));
+    $("#addwatch")?.addEventListener("click", () => saveList("watches", [...collect("[data-watch]", "data-w"), { name: "New", entity_id: "", to: "", text: "", cooldown: 300 }]));
+    $$("[data-delentry]").forEach((el) => el.addEventListener("click", () => saveList("entries", collect("[data-entry]", "data-e").filter((_, i) => i !== Number(el.dataset.delentry)))));
+    $$("[data-delwatch]").forEach((el) => el.addEventListener("click", () => saveList("watches", collect("[data-watch]", "data-w").filter((_, i) => i !== Number(el.dataset.delwatch)))));
+    // memory, file
+    $("#addmem")?.addEventListener("click", async () => { const t = $("#newmem").value.trim(); if (t) { await this.ws("aac/card/call", { card: this.view.card, function: "remember", args: { text: t } }); await this._loadPage(); this.render(); } });
+    $$("[data-forget]").forEach((el) => el.addEventListener("click", async () => { await this.ws("aac/card/call", { card: this.view.card, function: "forget", args: { text: el.dataset.forget } }); await this._loadPage(); this.render(); }));
+    $("#savefile")?.addEventListener("click", async () => { await this.ws("aac/card/call", { card: this.view.card, function: "write", args: { text: $("#filetext").value } }); });
+    // audio
+    const audioSet = async (data) => { this.audio = await this.ws("aac/audio/settings", data); this.render(); };
+    $("#sttadd")?.addEventListener("change", (e) => e.target.value && audioSet({ stt: [...(this.audio.settings.stt || []), e.target.value] }));
+    $$("[data-sttdel]").forEach((el) => el.addEventListener("click", () => audioSet({ stt: this.audio.settings.stt.filter((_, i) => i !== Number(el.dataset.sttdel)) })));
+    $$("[data-sttup]").forEach((el) => el.addEventListener("click", () => { const l = [...this.audio.settings.stt], i = Number(el.dataset.sttup); if (i > 0) { [l[i - 1], l[i]] = [l[i], l[i - 1]]; audioSet({ stt: l }); } }));
+    $("#ttsset")?.addEventListener("change", (e) => audioSet({ tts: e.target.value || null }));
+    $("#volume")?.addEventListener("input", (e) => { $("#volval").textContent = e.target.value; });
+    $("#volume")?.addEventListener("change", (e) => audioSet({ volume: Number(e.target.value) }));
+
     $("#monitor")?.addEventListener("click", async () => {
       const r = await this.ws("aac/monitor", { wire: this.selWire.from }), m = r.message;
       $("#mon").innerHTML = m ? m.entries.map((e) => `<div class="entry"><div class="k">${esc(e.by)} · ${esc(e.kind)} ${e.tags.map((t) => `#${esc(t)}`).join(" ")}</div>${md(e.text)}</div>`).join("") : '<p class="hint">Nothing passed yet.</p>';

@@ -255,3 +255,26 @@ async def ws_domain_switch(hass, connection, msg) -> None:
     """Run another domain."""
     domain = await _core(hass).switch(msg["domain_id"])
     connection.send_result(msg["id"], {"id": domain.id})
+
+
+# ---------------------------------------------------------------------- audio (core)
+@command({vol.Required("type"): "aac/audio"})
+async def ws_audio(hass, connection, msg) -> None:
+    """Satellites (live levels), engines, volume."""
+    connection.send_result(msg["id"], _core(hass).audio.summary())
+
+
+@command({vol.Required("type"): "aac/audio/settings", vol.Optional("stt"): [str], vol.Optional("tts"): vol.Any(str, None),
+          vol.Optional("volume"): vol.All(vol.Coerce(int), vol.Range(0, 100)), vol.Optional("voices"): dict})
+async def ws_audio_settings(hass, connection, msg) -> None:
+    """Change the engines and the volume."""
+    core = _core(hass)
+    core.audio.settings.update({k: v for k, v in msg.items() if k in ("stt", "tts", "volume", "voices")})
+    core.save()
+    connection.send_result(msg["id"], core.audio.summary())
+
+
+@command({vol.Required("type"): "aac/audio/say", vol.Required("source"): str, vol.Required("text"): str})
+async def ws_audio_say(hass, connection, msg) -> None:
+    """Speak a test sentence at a satellite."""
+    connection.send_result(msg["id"], {"spoken": await _core(hass).audio.say(msg["source"], msg["text"])})

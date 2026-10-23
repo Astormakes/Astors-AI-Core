@@ -47,6 +47,9 @@ def v1_files(tmp_config: str, lists: list[dict[str, Any]] | None = None) -> None
 
 async def setup_aac(hass: HomeAssistant, entry: MockConfigEntry):
     """Set up AAC; returns the core."""
+    from homeassistant.setup import async_setup_component
+
+    assert await async_setup_component(hass, "homeassistant", {})
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
