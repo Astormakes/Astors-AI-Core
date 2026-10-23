@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`, its progress file `docs/progress-v1.md` (private).
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-23) – 2.0.0-alpha.3, live on the owner's HA
+## Current state (2026-10-23) – 2.0.0-alpha.4, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -27,6 +27,9 @@ the owner wires them (no automatic wiring), the message is a document of entries
   TTS (Piper, voices per language), volume; cards Microphone, Noise gate, Pause cut, Speech to text, Voice chat
   (sessions per satellite, follow-up window after Voice out's "finished"), Voice out. Audio wires carry a stream
   (thickness = loudness), Pause cut makes pieces (`piece` wires).
+- **Calendar (alpha.4, `cards/calendar.py` + `calendar.py`):** its own entries plus the open entries of Lists cards
+  with a field when/date/due; HA shows them as `calendar.aac_calendar` (v1's unique id kept; create/change/delete from
+  HA work); functions calendar/add/change/remove; one-time: a Calendar card as the default model's tool.
 - **One-time steps on the owner's HA:** v1's 05:25 trigger → Schedule card; v1's voice settings; the voice chain
   (Wake word = a Conditional: "computer" or a follow-up; Voice rules = a Relay after the turn); an HA Assist card.
 - **First start** (`defaults.py`): the default domain (Chat → Charter → Time → Model → Chat; Pool "Models"; Lists and
@@ -35,14 +38,15 @@ the owner wires them (no automatic wiring), the message is a document of entries
   lists, Nodes, Models), chat (live answer, document view, stop), lists page, models page (find a server's models),
   node view (types left with info, click in the grid to place, drag to wire, Delete/button to unwire, settings right
   with functions and tags, Undo, slots 1–3 (Shift-click loads), Send stop, monitor on a wire).
-- Tests: 18 (`../.venv/bin/python -m pytest -q -p no:logging`).
+- Tests: 20 (`../.venv/bin/python -m pytest -q -p no:logging`).
 
 ## Owner's data
 
 - Lists exported before v2: `docs/aac-lists-2026-10-23.md` and `docs/aac-lists-2026-10-23-v1.json`; they live in the
   default domain's Lists card now (Open Issues 4, Project Portfolio 10).
 - v1 storage on the HA is untouched (`/config/.storage/aac.*`), backup `/config/aac/bak-before-v2-20261023/`.
-- HA's own Assist pipeline uses `conversation.qwen3_8b` (not AAC): v2 has no conversation agent yet, nothing broke.
+- HA's own Assist pipeline uses `conversation.qwen3_8b` (not AAC). Backups of v2 storage: `/config/aac/bak-v2-alpha2/`,
+  `/config/aac/bak-v2-alpha3/`.
 
 ## Deploy and test
 
@@ -52,7 +56,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
 
 ## Next
 
-- Calendar card (v1 had `calendar.aac_calendar` from the lists' dates); "what the model got" view (the request with
+- "What the model got" view (the request with
   each part's source); card values in templates (`{{ <card>.<value> }}`); monitor windows on wires in the grid;
   Save/Load as files; a proper rules editor for Conditional (JSON now); the owner's own tags in the panel.
 - Live entries through the flow (today the model streams only to the panel), stop as a message along the wires.

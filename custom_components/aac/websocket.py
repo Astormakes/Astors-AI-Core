@@ -178,8 +178,9 @@ async def ws_tags_add(hass, connection, msg) -> None:
 
 # ---------------------------------------------------------------------- chats
 def _chat_card(hass, card_id: str):
+    from .cards.chat import Chat  # noqa: PLC0415
     card = _core(hass).domain.cards.get(card_id)
-    if card is None or card.type != "chat":
+    if not isinstance(card, Chat):
         raise ValueError("no such chat card")
     return card
 

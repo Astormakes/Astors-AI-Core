@@ -261,10 +261,11 @@ class Core:
             self.data["domains"] = [{"id": "assistant", "name": "Assistant"}]
         self.data.setdefault("active", self.data["domains"][0]["id"])
         await self.switch(self.data["active"])
-        from .defaults import async_assist_card, async_upgrade, async_voice_chain  # noqa: PLC0415
+        from .defaults import async_assist_card, async_calendar_card, async_upgrade, async_voice_chain  # noqa: PLC0415
         await async_upgrade(self)
         await async_voice_chain(self)
         await async_assist_card(self)
+        await async_calendar_card(self)
 
     def save(self) -> None:
         """Keep the core."""

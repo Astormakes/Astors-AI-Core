@@ -190,3 +190,19 @@ async def async_assist_card(core: Core) -> None:
         wires.append({"from": f"{model}.out", "to": "assist.answers"})
     domain.set_wires(wires)
     domain.undo = []
+
+
+async def async_calendar_card(core: Core) -> None:
+    """One-time: the default domain gets a Calendar card as the model's tool (calendar.aac_calendar, as in v1)."""
+    if core.data.get("calendar_card"):
+        return
+    core.data["calendar_card"] = True
+    core.save()
+    domain = core.domain
+    if any(c.type == "calendar" for c in domain.cards.values()):
+        return
+    await domain.add_card("calendar", "Calendar", card_id="calendar", at={"x": 960, "y": 410})
+    model = next((c.id for c in domain.cards.values() if c.type == "model"), None)
+    if model:
+        domain.set_wires([*domain.wires, {"from": f"{model}.out", "to": "calendar.in"}, {"from": "calendar.out", "to": f"{model}.in"}])
+    domain.undo = []

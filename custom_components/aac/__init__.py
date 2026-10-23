@@ -17,7 +17,7 @@ from .core import Core
 from .websocket import async_register
 
 type AACConfigEntry = ConfigEntry[Core]
-PLATFORMS = ["conversation"]
+PLATFORMS = ["calendar", "conversation"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:

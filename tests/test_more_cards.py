@@ -94,3 +94,46 @@ async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
     added = await builder.call("add_card", {"type": "buffer", "name": "Room"})
     assert added["id"] == "room" and (await builder.call("remove_card", {"card": "room"}))["error"]
     assert (await builder.call("wire", {"from": "room.out", "to": "notes.in"}))["wired"]
+
+
+async def test_calendar_card_and_entity(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """The default Calendar card is the model's tool; its entries and dated list entries show in calendar.aac_calendar."""
+    from datetime import timedelta
+
+    core = await setup_aac(hass, mock_entry)
+    cal = core.domain.cards["calendar"]
+    assert {"from": "model.out", "to": "calendar.in"} in core.domain.wires
+    tomorrow = (dt_util.now() + timedelta(days=1)).date().isoformat()
+    assert (await cal.call("add", {"summary": "Dentist", "start": f"{tomorrow}T10:00"}))["done"] == "add"
+    lists = core.domain.cards["lists"]
+    await lists.call("create_list", {"list": "Errands"})
+    await lists.call("add_items", {"list": "Errands", "items": ["Pay rent"]})
+    item = lists.data["lists"][-1]["items"][0]
+    item["fields"]["due"] = tomorrow
+    found = await cal.call("calendar", {})
+    assert [e["summary"] for e in found] == ["Pay rent (Errands)", "Dentist"]
+    uid = next(e["uid"] for e in found if e["summary"] == "Dentist")
+    await cal.call("change", {"uid": uid, "summary": "Dentist (moved)"})
+    await hass.async_block_till_done()
+    state = hass.states.get("calendar.aac_calendar")
+    assert state is not None
+    start, end = dt_util.now(), dt_util.now() + timedelta(days=3)
+    events = await hass.services.async_call("calendar", "get_events", {"entity_id": "calendar.aac_calendar", "start_date_time": start,
+                                                                        "end_date_time": end}, blocking=True, return_response=True)
+    assert {e["summary"] for e in events["calendar.aac_calendar"]["events"]} == {"Pay rent (Errands)", "Dentist (moved)"}
+    await cal.call("remove", {"uid": uid})
+    assert len(await cal.call("calendar", {})) == 1
+
+
+async def test_chat_commands_take_every_chat_card(hass: HomeAssistant, mock_entry, aioclient_mock, hass_ws_client):
+    """The panel lists and deletes the chats of HA Assist and Voice chat cards too."""
+    core = await setup_aac(hass, mock_entry)
+    assist = core.domain.cards["assist"]
+    chat = assist._new("Test")
+    await assist.save()
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "aac/chat/list", "card": "assist"})
+    assert [c["id"] for c in (await client.receive_json())["result"]["chats"]] == [chat["id"]]
+    await client.send_json_auto_id({"type": "aac/chat/delete", "card": "assist", "chat_id": chat["id"]})
+    assert (await client.receive_json())["success"]
+    assert assist.chats() == []
