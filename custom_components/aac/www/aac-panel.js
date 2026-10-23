@@ -608,8 +608,10 @@ class AacPanel extends HTMLElement {
     } else if (ev.what === "pools") {
       clearTimeout(this._poolTimer);
       this._poolTimer = setTimeout(async () => { await this._loadState(); if (!this._typing()) this._render(); }, 300);
-    } else if (ev.what === "flow") {  // something passed a wire: the node view's monitors
+    } else if (ev.what === "flow") {  // something passed a wire: live wires and monitors in the node view
       this.shadowRoot.querySelector("aac-nodes")?.onFlow?.(ev);
+    } else if (ev.what === "level") {  // an audio wire's loudness
+      this.shadowRoot.querySelector("aac-nodes")?.onLevel?.(ev);
     } else if (ev.what === "audio") {
       clearTimeout(this._audioTimer);
       this._audioTimer = setTimeout(async () => {

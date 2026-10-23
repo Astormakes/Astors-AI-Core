@@ -9,12 +9,14 @@ gets every output of its type (except the node's own), in domains where the read
 
 from __future__ import annotations
 
+from array import array
 import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 import json
+import math
 import time
 from typing import Any
 
@@ -116,6 +118,18 @@ class Node:
         return bool(self.adds) and any(k in self.outputs.values() for k in self.inputs.values())
 
 
+LEVEL_EVERY = 0.25  # seconds between an audio wire's loudness updates
+
+
+def level(chunk: bytes) -> int:
+    """Loudness of 16-bit mono audio: 0 = digital silence, 100 = full scale (about 60 dB of range)."""
+    samples = array("h", chunk[: len(chunk) - len(chunk) % 2])
+    if not samples:
+        return 0
+    rms = math.sqrt(sum(s * s for s in samples) / len(samples))
+    return int(max(0.0, min(100.0, (20 * math.log10(rms / 32768) + 60) / 60 * 100))) if rms > 0 else 0
+
+
 def json_safe(value: Any) -> Any:
     """A copy that a websocket can send (anything odd as text)."""
     if isinstance(value, dict):
@@ -142,6 +156,9 @@ class Bus:
         self._last: dict[tuple[str, str, str], dict[str, Any]] = {}
         # Told whenever an output carries something: fn(domain_id, node_id, port) (open panels' monitors)
         self.on_record: Callable[[str, str, str], None] | None = None
+        # An audio output's loudness, at most LEVEL_EVERY: fn(domain_id, node_id, port, 0–100) (wire thickness)
+        self.on_level: Callable[[str, str, str, int], None] | None = None
+        self._level_at: dict[tuple[str, str, str], float] = {}
         self._made: dict[tuple[str, str], tuple[str, Node]] = {}  # added cards, made again only when changed
         self._stream_to: dict[tuple[str, str, str], tuple[float, list]] = {}  # a stream's readers (cached briefly)
 
@@ -352,6 +369,9 @@ class Bus:
             nodes = self.nodes_in(domain_id)
             cached = self._stream_to[(domain_id, node_id, port)] = (now, list(dict.fromkeys(
                 (nodes[b], bp) for a, ap, b, bp in self.wires(domain_id) if (a, ap) == (node_id, port) and nodes[b].stream)))
+        if self.on_level and now - self._level_at.get((domain_id, node_id, port), 0) >= LEVEL_EVERY:
+            self._level_at[(domain_id, node_id, port)] = now
+            self.on_level(domain_id, node_id, port, level(chunk))
         for reader, in_port in cached[1]:
             try:
                 reader.stream(domain_id, in_port, chunk, meta)

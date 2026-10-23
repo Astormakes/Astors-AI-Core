@@ -10,16 +10,14 @@ All are templates under "Audio" in Add node; they replace the old Hearing card a
 
 from __future__ import annotations
 
-from array import array
 from datetime import datetime, timedelta
-import math
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.util import dt as dt_util
 
 from .languages import code_of
 from .request import TEXT, Message
-from .streams import Node
+from .streams import Node, level
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -51,15 +49,6 @@ STT_SETTINGS = {
 }
 STT_VARS = {"text": "What was said.", "mic": "The microphone's id.", "mic_name": "The microphone's name.",
             "area": "The microphone's area.", "start": "When the speech started (ISO time).", "seconds": "How long it was."}
-
-
-def level(chunk: bytes) -> float:
-    """Loudness of 16-bit mono audio: 0 = digital silence, 100 = full scale (about 60 dB of range)."""
-    samples = array("h", chunk[: len(chunk) - len(chunk) % 2])
-    if not samples:
-        return 0.0
-    rms = math.sqrt(sum(s * s for s in samples) / len(samples))
-    return max(0.0, min(100.0, (20 * math.log10(rms / 32768) + 60) / 60 * 100)) if rms > 0 else 0.0
 
 
 def audio_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:

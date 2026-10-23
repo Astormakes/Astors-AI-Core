@@ -702,12 +702,12 @@ class AacNodes extends HTMLElement {
       </g>`;
     }).join("");
     wiresG.innerHTML = this._wires().map((w, i) => {
-      const flow = (w.a.recent || {})[w.ap] > 0;
+      const flow = (this._live?.[`${w.a.id}.${w.ap}`] || 0) > Date.now(); // moving only while something passes
       const key = `${w.a.id}.${w.ap}|${w.b.id}.${w.bp}`;
       const lit = this._litWires?.has(`${w.a.id}>${w.b.id}`) || (this._folded(w.a.id) && this._lit?.has(w.a.id) && this._lit?.has(w.b.id));
       const inner = this._folded(w.a.id) && this._folded(w.a.id) === this._folded(w.b.id); // inside a folded frame: not drawn
       if (inner) return "";
-      return `<path class="nv-wire ${w.loop || w.type === "pool" ? "card" : ""} ${flow ? "flow" : ""} ${lit ? "lit" : ""} ${this._selWire === key ? "sel" : ""}" data-wire="${i}" stroke="${this._color(w.type)}"></path>
+      return `<path class="nv-wire ${w.loop || w.type === "pool" ? "card" : ""} ${flow ? "flow" : ""} ${lit ? "lit" : ""} ${this._selWire === key ? "sel" : ""}" data-wire="${i}" data-from="${esc(`${w.a.id}.${w.ap}`)}" stroke="${this._color(w.type)}"></path>
         <path class="nv-hit" data-wire="${i}" data-key="${esc(key)}"><title>${esc(w.a.title)}.${esc(w.ap)} → ${esc(w.b.title)}.${esc(w.bp)} (${esc(w.type)}) · click to select</title></path>`;
     }).join("");
     this.querySelector(".nv-legend").innerHTML = Object.keys(this._colors).sort()
@@ -1217,8 +1217,30 @@ class AacNodes extends HTMLElement {
 
   _editingNow() { return this.querySelector(".nv-info")?.contains(document.activeElement) && document.activeElement.matches("input, textarea, select"); }
 
+  // Live wires (owner: the moving dashes showed action when nothing happened): a wire moves for a moment after
+  // something passed it; an audio wire's thickness follows its loudness
+  _wirePaths(from) { return this._svg ? [...this._svg.querySelectorAll(`.nv-wire[data-from="${CSS.escape(from)}"]`)] : []; }
+
+  _pulse(from, ms) {
+    (this._live ||= {})[from] = Date.now() + ms;
+    for (const p of this._wirePaths(from)) p.classList.add("flow");
+    clearTimeout((this._liveTimers ||= {})[from]);
+    this._liveTimers[from] = setTimeout(() => { for (const p of this._wirePaths(from)) p.classList.remove("flow"); }, ms);
+  }
+
+  onLevel(ev) {
+    if (ev.domain !== this.panel?._state?.domain?.id) return;
+    const width = (1.6 + Math.min(100, ev.level) / 100 * 7).toFixed(1);
+    for (const p of this._wirePaths(ev.wire)) p.style.strokeWidth = width;
+    if (ev.level > 15) this._pulse(ev.wire, 600);
+    clearTimeout((this._levelTimers ||= {})[ev.wire]);
+    this._levelTimers[ev.wire] = setTimeout(() => { for (const p of this._wirePaths(ev.wire)) p.style.strokeWidth = ""; }, 1200);
+  }
+
   onFlow(ev) {  // the panel: something passed an output
-    if (!this._monitors?.size || ev.domain !== this.panel?._state?.domain?.id) return;
+    if (ev.domain !== this.panel?._state?.domain?.id) return;
+    this._pulse(ev.wire, 2500);
+    if (!this._monitors?.size) return;
     for (const key of this._monitors.keys()) {
       if (key.split("|")[0] !== ev.wire) continue;
       clearTimeout(this._monTimers?.[key]);

@@ -171,6 +171,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     # what passes a wire, to open panels (the node view's monitors)
     entry.runtime_data.bus.on_record = lambda domain_id, node_id, port: async_notify(
         hass, "flow", domain=domain_id, wire=f"{node_id}.{port}")
+    entry.runtime_data.bus.on_level = lambda domain_id, node_id, port, value: async_notify(
+        hass, "level", domain=domain_id, wire=f"{node_id}.{port}", level=value)
 
     await panel_custom.async_register_panel(
         hass,
