@@ -194,6 +194,8 @@ class AacNodes extends HTMLElement {
         .nv-link { fill: none; stroke: var(--text); stroke-width: 1.8; stroke-dasharray: 4 4; pointer-events: none; }
         .nv-dot { cursor: crosshair; }
         .nv-dot.ok { stroke: var(--text); stroke-width: 2; }
+        /* a bigger, invisible area to grab a port (owner: "areas of effect bigger than they look"); one row tall */
+        .nv-dot.nv-dothit { fill: transparent; stroke: none !important; }
         .nv-wire.flow { stroke-dasharray: 6 5; animation: nvflow 1.2s linear infinite; opacity: .95; stroke-width: 2.2; }
         @keyframes nvflow { to { stroke-dashoffset: -22; } }
         .nv-node rect.box { fill: var(--bg2, #111); stroke: var(--line); stroke-width: 1.2; }
@@ -634,17 +636,18 @@ class AacNodes extends HTMLElement {
       const h = this._height(n), ins = Object.entries(n.inputs), outs = Object.entries(n.outputs);
       const row = (i) => -h / 2 + HEAD + ROW * i + ROW / 2;
       const m = this._mirror.has(n.id) ? -1 : 1, inX = -m * W / 2, outX = m * W / 2; // mirrored: in right, out left
+      const grab = (side, p, t, x, i) => `<rect class="nv-dot nv-dothit" data-dot="${side}" data-port="${esc(p)}" data-type="${esc(t)}" x="${x - 17}" y="${row(i) - ROW / 2}" width="34" height="${ROW}"></rect>`;
       const flow = Object.values(n.recent || {}).reduce((s, v) => s + v, 0);
       return `<g class="nv-node ${this._folded(n.id) ? "hidden" : ""} ${n.on ? "" : "off"} ${this._lit?.has(n.id) ? "lit" : ""} ${this._sel === n.id ? "sel" : ""} ${this._multi.has(n.id) && this._multi.size > 1 ? "multi" : ""} ${this._pos[n.id]?.pinned ? "pinned" : ""}" data-node="${esc(n.id)}">
         <rect class="box" x="${-W / 2}" y="${-h / 2}" width="${W}" height="${h}" rx="7"><title>${esc(n.title)}: ${esc(n.description || "")}</title></rect>
         <text x="${-W / 2 + 10}" y="${-h / 2 + 17}">${esc(n.title)}<tspan class="pin" dx="4">📌</tspan></text>
         <text class="sub" x="${-W / 2 + 10}" y="${-h / 2 + 31}">${esc(short(`${n.module_name}${n.kind === "annotating" ? ` · adds ${n.adds.join(", ")}` : ""}${flow ? ` · ${flow} recent` : ""}`, 30))}</text>
         ${ins.map(([p, t], i) => `<circle class="nv-dot" data-dot="in" data-port="${esc(p)}" data-type="${esc(t)}" cx="${inX}" cy="${row(i)}" r="5.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)}</title></circle>
-          <text class="port" x="${inX + m * 9}" y="${row(i) + 3.5}" ${m < 0 ? 'text-anchor="end"' : ""}>${esc(p)}</text>`).join("")}
+          <text class="port" x="${inX + m * 9}" y="${row(i) + 3.5}" ${m < 0 ? 'text-anchor="end"' : ""}>${esc(p)}</text>${grab("in", p, t, inX, i)}`).join("")}
         ${outs.map(([p, t], i) => `${(n.square || []).includes(p)
           ? `<rect class="nv-dot" data-dot="out" data-port="${esc(p)}" data-type="${esc(t)}" x="${outX - 5.5}" y="${row(i) - 5.5}" width="11" height="11" rx="1.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)} · square: the card decides which wire (drag to an input to wire)</title></rect>`
           : `<circle class="nv-dot" data-dot="out" data-port="${esc(p)}" data-type="${esc(t)}" cx="${outX}" cy="${row(i)}" r="5.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)} · round: every wire gets it (drag to an input to wire)</title></circle>`}
-          <text class="port" x="${outX - m * 9}" y="${row(i) + 3.5}" ${m > 0 ? 'text-anchor="end"' : ""}>${esc(p)}</text>`).join("")}
+          <text class="port" x="${outX - m * 9}" y="${row(i) + 3.5}" ${m > 0 ? 'text-anchor="end"' : ""}>${esc(p)}</text>${grab("out", p, t, outX, i)}`).join("")}
       </g>`;
     }).join("");
     wiresG.innerHTML = this._wires().map((w, i) => {
