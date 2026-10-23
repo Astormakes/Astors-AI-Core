@@ -92,6 +92,39 @@ sends the edited document. The expert view shows every entry, with its node and 
 The panel's settings shrink to Appearance, Languages and Nodes. Everything else becomes node settings:
 the model servers and pools (pool nodes), the entity lists (the Home Assistant node), audio, modules.
 
+## Live wires (proposal, owner 2026-10-23; not built yet)
+
+Things can flow live instead of as finished pieces: a node opens an entry, adds to it piece by piece and closes
+it with an end marker ("ends the paragraph"). This is meant for audio (where and when a stream is cut matters)
+but is the same for every node, so people can try their own experiments: cut speech with a pause rule, with a
+small model, with anything else.
+
+- **Live or whole, per input.** A node's input says whether it gets every piece as it comes (`live`) or only
+  closed entries (`whole`, the default). Every node that exists today stays `whole` and works unchanged.
+- **One writer per live entry.** Only the node that opened an entry adds to it, replaces its text (a live
+  transcript rewrites its last words) or closes it. Nobody else closes it: a node that wants to decide where
+  something ends reads it live and writes **its own** entries.
+- **So there are three kinds of nodes**, by their input and output:
+  - live → live: a stream picker, speech to text, Voice (speaks the answer while it is still written),
+    audio out;
+  - live → whole: a cut. It reads a live stream and sends on a whole message whenever it thinks a thought is
+    finished. A `Cut` node with a pause rule is built in; a model card can do the same job (owner: "in this
+    particular installation I wanted to try using a model for it"). Whether that is fast enough is the
+    installation's question, not the graph's;
+  - whole → whole: everything else (Buffer, Decide, tools, files, a model's tool calls).
+  A model card can write its answer live (the panel chat and Voice read it as it comes).
+- **Pieces:** `open` (a new entry, its pointers: source/satellite id, speaker …), `add` (append), `replace`
+  (new text for the open entry), `close`, `cancel` (stop an open entry, e.g. someone talks while AAC is still
+  speaking).
+- **Raw audio stays a stream.** Below the first node that makes entries (10 ms frames from a microphone),
+  audio is a plain `audio` stream, not entries.
+- **The id travels.** The satellite a stream came from is a pointer on the message, so an answer finds its way
+  back to the speaker at that satellite without any hidden routing.
+
+Example (the owner's chain): microphones → stream picker (passes one stream and its id) → speech to text (live
+text) → a small model as the cut (whole sentences) → Buffer → Decide → main model → Chat and Voice (live) →
+audio out (plays at the id). The Companion becomes a saved group of such nodes instead of one hidden card.
+
 ## Nodes from elsewhere
 
 A module brings node types (like an HA integration from HACS). Nodes run inside AAC for now; an external node
@@ -104,4 +137,5 @@ A module brings node types (like an HA integration from HACS). Nodes run inside 
 2. The node view: round and square ports, the pool wire, the copy setting per output; the chat's expert view
    and editing.
 3. Pool nodes; the settings pages folded into nodes.
-4. The audio types merged into `audio` / `text`.
+4. The audio types merged into `audio` / `text`; Hearing and the Companion split into nodes on live wires
+   (see Live wires).

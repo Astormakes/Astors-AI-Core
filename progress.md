@@ -62,7 +62,7 @@ Running log for AAC. Read this first in a new session. Newest state on top. The 
 
 
 ## Next steps
-- Open design question (owner, 2026-10-23): Hearing has three outputs (audio.pcm, audio.segment, text.line) and hidden VAD/STT/addressing; owner leans to one audio source per satellite, a stream picker node (by volume), audio in the message document so Voices can add the voice id before STT. Also (owner): everything sent live with an end marker set by a node ("ends the paragraph"); today audio is cut by a hidden 800 ms pause rule in Hearing and model text streams only to the panel. Decide before Phase 4.
+- Open design question (owner, 2026-10-23): Hearing has three outputs (audio.pcm, audio.segment, text.line) and hidden VAD/STT/addressing; owner leans to one audio source per satellite, a stream picker node (by volume), audio in the message document so Voices can add the voice id before STT. Also (owner): everything sent live with an end marker set by a node ("ends the paragraph"); today audio is cut by a hidden 800 ms pause rule in Hearing and model text streams only to the panel. Proposal written: spec/graph.md "Live wires" (owner to read). Decide before Phase 4.
 
 - Bench 2026-10-23 (35B on the PC, Decide's grammar): "addressed to AAC?" 12/12 right in 0.26 s each (English, German, a video, a follow-up that only counts with the Buffer's line before it). Script: session scratchpad `bench/addressed.py`.
 - Try the owner's audio chain with the real models: Heard lines → Buffer → Decide ("addressed to AAC?") → yes: an Instructions card → Model → Voice (all cards exist now).
