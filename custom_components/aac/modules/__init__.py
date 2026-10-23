@@ -308,6 +308,7 @@ async def async_load_modules(hass: HomeAssistant, entry: AACConfigEntry) -> list
     entry.runtime_data.bus.set_wiring(lambda domain_id: (graphs.get(domain_id) or {}).get("wires"))
     store = entry.runtime_data.store  # graph(): a new domain gets its defaults (the Time card)
     entry.runtime_data.bus.set_instances(lambda domain_id: store.graph(domain_id)["nodes"])
+    entry.runtime_data.bus.set_titles(lambda domain_id: store.graph(domain_id).get("titles") or {})
     loaded = []
     for manifest in await hass.async_add_executor_job(_manifests):
         module = LoadedModule(manifest)

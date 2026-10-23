@@ -359,3 +359,19 @@ async def test_every_card_says_what_it_does(hass, mock_entry, configured):
     missing = [n["id"] for n in summary["nodes"] if len(n["description"]) < 20]
     missing += [t["id"] for t in summary["types"] if len(t["description"]) < 20]
     assert not missing, missing
+
+
+async def test_built_in_cards_can_be_renamed(hass, hass_ws_client, mock_entry, configured):
+    """The owner's own name for a built-in card, per domain; empty gives its own name back."""
+    from .conftest import setup_aac
+
+    await setup_aac(hass, mock_entry)
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/nodes/title", "node": "charter", "title": "Charter"})
+    assert (await ws.receive_json())["result"]["titles"] == {"charter": "Charter"}
+    assert mock_entry.runtime_data.bus.nodes_in("assistant")["charter"].title == "Charter"
+    assert mock_entry.runtime_data.bus.nodes["charter"].title == "Header"  # the type keeps its name
+    await ws.send_json_auto_id({"type": "aac/nodes/title", "node": "time", "title": "x"})
+    assert (await ws.receive_json())["error"]["code"] == "invalid"  # an added card has its Name field
+    await ws.send_json_auto_id({"type": "aac/nodes/title", "node": "charter", "title": ""})
+    assert (await ws.receive_json())["result"]["titles"] == {}

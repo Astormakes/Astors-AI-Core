@@ -86,6 +86,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_node_names,
         ws_node_single,
         ws_node_hidden,
+        ws_node_title,
         ws_notes_get,
         ws_notes_save,
         ws_node_positions,
@@ -853,6 +854,26 @@ async def ws_notes_save(hass: HomeAssistant, connection, msg) -> None:
         return
     await hass.async_add_executor_job(node.write_file, msg["text"], False)
     connection.send_result(msg["id"], {})
+
+
+@aac_command({vol.Required("type"): "aac/nodes/title", vol.Required("node"): str, vol.Required("title"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_node_title(hass: HomeAssistant, connection, msg) -> None:
+    """The owner's own name for a built-in card in this domain (empty: its own name again)."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    if msg["node"] not in entry.runtime_data.bus.nodes:
+        connection.send_error(msg["id"], "invalid", "Only built-in cards are renamed here (an added card has its Name field)")
+        return
+    store = entry.runtime_data.store
+    titles = store.graph(_d(entry, msg).id).setdefault("titles", {})
+    if msg["title"].strip():
+        titles[msg["node"]] = msg["title"].strip()[:60]
+    else:
+        titles.pop(msg["node"], None)
+    await store.async_save()
+    connection.send_result(msg["id"], {"titles": titles})
 
 
 @aac_command({vol.Required("type"): "aac/nodes/hidden", vol.Required("hidden"): [vol.Match(r"^[\w-]+$")]})

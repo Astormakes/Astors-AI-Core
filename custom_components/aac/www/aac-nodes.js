@@ -780,6 +780,7 @@ class AacNodes extends HTMLElement {
       if (b?.dataset.nv === "inst-save") this._saveInstance(b.dataset.node);
       if (b?.dataset.nv === "inst-remove") this._removeInstance(b.dataset.node);
       if (b?.dataset.nv === "hide") this._hide(b.dataset.node, true);
+      if (b?.dataset.nv === "title-save") this._retitle(b.dataset.node);
       if (b?.dataset.nv === "vars") { this._sel = null; this._selWire = null; this._selFrame = null; this._showVars = true; this._draw(); this._info(); }
       if (b?.dataset.nv === "mod-save") this._saveModule(b.dataset.module);
       if (b?.dataset.nv === "core-save") this._saveCore(b.dataset.node);
@@ -1043,6 +1044,14 @@ class AacNodes extends HTMLElement {
   _shown(n) {
     const wired = (this._data.wires || []).some((w) => w.from.split(".")[0] === n.id || w.to.split(".")[0] === n.id);
     return wired || this._reveal?.has(n.id) || (n.on && !(this._data.hidden || []).includes(n.id));
+  }
+
+  async _retitle(id) {
+    const title = this.querySelector(".nv-info [data-core-title]")?.value ?? "";
+    try { await this.ws("aac/nodes/title", { node: id, title }); this._msg.textContent = "Renamed."; }
+    catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
+    await this.refresh(true);
+    this._info();
   }
 
   async _hide(id, hide) {
@@ -1387,6 +1396,8 @@ class AacNodes extends HTMLElement {
         : n.addable ? '<p class="hint">The standard one. "Add node" makes another with its own settings.</p>' : ""}
       ${n.role === "pool" ? this._poolInfo(n) : ""}
       ${PAGES[n.id] ? `<div class="actions"><button class="btn" data-go="${esc(PAGES[n.id][0])}">${esc(PAGES[n.id][1])}</button></div>` : ""}
+      ${!n.type ? `<label>Name</label><div style="display:flex;gap:.5em"><input data-core-title value="${esc(n.title)}" style="flex:1">
+        <button class="btn" data-nv="title-save" data-node="${esc(n.id)}" title="Your own name for this card in this domain (empty: its own name)">Rename</button></div>` : ""}
       ${!n.type && !(this._data.wires || []).some((w) => w.from.split(".")[0] === n.id || w.to.split(".")[0] === n.id)
         ? `<div class="actions"><button class="btn" data-nv="hide" data-node="${esc(n.id)}" title="Built-in cards cannot be removed; hidden ones stay in the sidebar list (click one to bring it back)">Hide from the grid</button></div>` : ""}
       ${n.edit_schema ? this._coreForm(n) : ""}

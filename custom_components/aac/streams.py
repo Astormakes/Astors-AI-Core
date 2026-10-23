@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Any
 
@@ -123,6 +123,10 @@ class Bus:
         # Added node instances per domain: fn(domain_id) → {instance id: {"type", "title", "settings"}}
         self._instances: Callable[[str], dict[str, dict[str, Any]]] = lambda domain_id: {}
 
+    def set_titles(self, titles: Callable[[str], dict[str, str]]) -> None:
+        """The owner's own names for built-in cards per domain (owner, 2026-10-23: "rename the first header charter")."""
+        self._titles = titles
+
     def set_instances(self, instances: Callable[[str], dict[str, dict[str, Any]]]) -> None:
         """Where a domain's added node instances come from (the store)."""
         self._instances = instances
@@ -130,6 +134,9 @@ class Bus:
     def nodes_in(self, domain_id: str) -> dict[str, Node]:
         """Every node of a domain: the registered ones and the domain's added instances."""
         found = dict(self.nodes)
+        for node_id, title in (getattr(self, "_titles", None) and self._titles(domain_id) or {}).items():
+            if node_id in found and title:  # a copy: the same card in other domains keeps its name
+                found[node_id] = replace(found[node_id], title=title)
         for inst_id, spec in (self._instances(domain_id) or {}).items():
             kind_id = TYPE_ALIASES.get(spec.get("type", ""), spec.get("type", ""))
             kind = self.nodes.get(kind_id) or self.templates.get(kind_id)
