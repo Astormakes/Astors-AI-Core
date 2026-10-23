@@ -1,5 +1,5 @@
 name: AAC satellite
-version: "0.1.0"
+version: "0.1.1"
 slug: aac_satellite
 description: Lets AAC hear and speak through a microphone and speaker attached to the Home Assistant machine (no wake word; AAC listens for its name).
 url: https://github.com/Astormakes/Astors-AI-Core

@@ -19,7 +19,8 @@ LOG = logging.getLogger("aac_satellite.bt600")
 USB_ID = "0003:047F:0417"
 TELEPHONY_IF = ":1.3/"
 OFF_HOOK, ON_HOOK = b"\x05\x01", b"\x05\x00"
-SILENCE_RESEND = 5.0  # seconds of digital silence (rms 0) before off-hook is sent again
+SILENCE_RESEND = 5.0  # seconds of silence before off-hook is sent again
+SILENT_RMS = 3.0  # below this the link is down: a dropped link gives zeros, or ±1 noise (about -90 dBFS, 2026-10-23)
 MIN_GAP = 10.0  # do not resend more often than this
 
 
@@ -79,9 +80,9 @@ class BT600(DevicePlugin):
         self._write(ON_HOOK, "stop")
 
     def on_audio(self, rms: float) -> None:
-        """Watchdog: pure digital silence means the link dropped (speaker off, out of range, re-pair)."""
+        """Watchdog: (almost) digital silence means the link dropped (speaker off, out of range, re-pair)."""
         now = time.monotonic()
-        if rms > 0:
+        if rms >= SILENT_RMS:
             self._silent_since = None
             return
         self._silent_since = self._silent_since or now
