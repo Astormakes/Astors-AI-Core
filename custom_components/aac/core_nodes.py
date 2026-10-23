@@ -30,6 +30,7 @@ from .const import (
 )
 from .flow import DECIDE_SETTINGS, MODEL, MODEL_SETTINGS
 from .home_api import API_ID as HOME_API_ID
+from .pools import TIERS
 from .request import SOURCES, TEXT, Message
 from .setup_api import API_ID as SETUP_API_ID, owner_present
 from .streams import Node
@@ -56,11 +57,12 @@ DECIDE_HELP = ("Sends the message on through one of its named outputs. A model r
 
 def model_node(inst_id: str = MODEL, title: str = "Model", settings: dict[str, Any] | None = None) -> Node:
     """A model card: reads the whole conversation; its output is square (its wired nodes are its tools)."""
-    return Node(id=inst_id, title=title, inputs={"in": TEXT}, outputs={"out": TEXT}, role="model", square={"out"},
+    return Node(id=inst_id, title=title, inputs={"in": TEXT, "pool": "pool"}, outputs={"out": TEXT}, role="model", square={"out"},
                 description="Reads the whole conversation and answers it with a model from the pool. The nodes wired to "
                             "its output are its tools: calling one sends the conversation there, and what that node "
                             "writes comes back as the result (wire it back into this card). The answer goes back to "
-                            "where the message came from. Automatic messages wait here until a model is free.",
+                            "where the message came from. The dotted pool wire says which models it may use (none: its "
+                            "Model setting). Automatic messages wait here until a model is free.",
                 settings=settings or {}, make=None if settings is not None else (lambda i, t, s: model_node(i, t, s)),
                 settings_schema=MODEL_SETTINGS)
 
@@ -177,6 +179,11 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
     flow = lambda: entry.runtime_data.flow  # noqa: E731
     return [
         *(endpoint(sid) for sid in SOURCES),
+        # The pools (dotted: a model card reserves a model from the one wired to it)
+        *(Node(id=f"pool_{tier}", title=f"Models: {tier}", outputs={"models": "pool"}, role="pool",
+               description=f"Hands a model card a model from the pool: {about} (SETTINGS → Compute holds the models). "
+                           "Wire its dotted output into a model card's pool input.")
+          for tier, about in TIERS.items()),
         # Standing text: replaced in place every time (the start of the conversation stays the same: the cache)
         Node(id="agent", title="Agent", inputs=IN, outputs=OUT, adds=["system"], order=10, handle=agent, role="transform",
              description="Writes the assistant's role and manner into the system prompt (its Prompt setting, e.g. \"You "

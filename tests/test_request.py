@@ -203,3 +203,20 @@ async def test_an_output_with_one_wire(hass: HomeAssistant, hass_ws_client, aioc
     await async_run_request(hass, mock_entry, "hi", kind="chat", trigger="chat", title="t")
     await hass.async_block_till_done(wait_background_tasks=True)
     assert len(calls) == 3
+
+
+async def test_the_pool_wire_picks_the_models(hass: HomeAssistant, mock_entry, configured):
+    """The standard model takes its models from the pool wired to it (dotted); another pool, another tier."""
+    await setup_aac(hass, mock_entry)
+    data = mock_entry.runtime_data
+    wires = {(a, ap, b, bp) for a, ap, b, bp in data.bus.wires("assistant")}
+    assert ("pool_master", "models", "model", "pool") in wires
+    graph = data.store.graph("assistant")
+    graph["wires"] = [{"from": f"{a}.{ap}", "to": f"{b}.{bp}"} for a, ap, b, bp in wires if a != "pool_master"] + \
+        [{"from": "pool_fast.models", "to": "model.pool"}]
+    from unittest.mock import patch
+
+    seen = []
+    with patch.object(data.pool, "endpoint_for", side_effect=lambda tier, bg=False: seen.append(tier)):
+        run, _ = await async_run_request(hass, mock_entry, "hi", kind="chat", trigger="chat", title="t")
+    assert seen and seen[0] == "fast" and run.tier == "fast"

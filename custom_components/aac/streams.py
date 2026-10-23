@@ -255,6 +255,8 @@ class Bus:
             for tool in (n for n in on if n.role == "tool"):
                 found.append((model.id, port(model, "out"), tool.id, port(tool, "in")))
                 found.append((tool.id, port(tool, "out"), model.id, port(model, "in")))
+            if "pool_master" in self.nodes and "pool" in model.inputs:  # its models: the owner's order
+                found.append(("pool_master", "models", model.id, "pool"))
         return list(dict.fromkeys(w for w in found if None not in w))
 
     async def emit(self, domain_id: str, node_id: str, port: str, item: dict[str, Any]) -> list[Any]:

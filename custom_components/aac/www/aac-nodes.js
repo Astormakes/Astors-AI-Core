@@ -21,7 +21,7 @@ const STACK = 14; // gap between the cards of a column (a chain adding to the sa
 const FIELD = 150; // reach of a node's soft push beyond its box
 const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "#8ab4ff", "#ff8a65", "#c792ea", "#7fdbca"];
 const KIND = { source: "source", sink: "sink", transform: "transform", annotating: "adds to the record" };
-const ROLE = { source: "source", endpoint: "in and out", transform: "in the line", model: "model", decide: "decide", sink: "reads along", tool: "tools (a loop)" };
+const ROLE = { pool: "pool (dotted)", source: "source", endpoint: "in and out", transform: "in the line", model: "model", decide: "decide", sink: "reads along", tool: "tools (a loop)" };
 const UNDO_STEPS = 10;
 const BAR = 26, PAD = 26, GRIP = 16, EDGE = 50;
 const FOLD_W = W + 30, FOLD_H = BAR + 30; // a folded frame: one card // frame: name bar, room around members, resize corner, border push reach
@@ -534,7 +534,7 @@ class AacNodes extends HTMLElement {
       const lit = this._litWires?.has(`${w.a.id}>${w.b.id}`) || (this._folded(w.a.id) && this._lit?.has(w.a.id) && this._lit?.has(w.b.id));
       const inner = this._folded(w.a.id) && this._folded(w.a.id) === this._folded(w.b.id); // inside a folded frame: not drawn
       if (inner) return "";
-      return `<path class="nv-wire ${w.loop ? "card" : ""} ${flow ? "flow" : ""} ${lit ? "lit" : ""} ${this._selWire === key ? "sel" : ""}" data-wire="${i}" stroke="${this._color(w.type)}"></path>
+      return `<path class="nv-wire ${w.loop || w.type === "pool" ? "card" : ""} ${flow ? "flow" : ""} ${lit ? "lit" : ""} ${this._selWire === key ? "sel" : ""}" data-wire="${i}" stroke="${this._color(w.type)}"></path>
         <path class="nv-hit" data-wire="${i}" data-key="${esc(key)}"><title>${esc(w.a.title)}.${esc(w.ap)} → ${esc(w.b.title)}.${esc(w.bp)} (${esc(w.type)}) · click to select</title></path>`;
     }).join("");
     this.querySelector(".nv-legend").innerHTML = Object.keys(this._colors).sort()

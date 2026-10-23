@@ -303,7 +303,10 @@ class Flow:
         domain, data = message.domain, self.entry.runtime_data
         if not message.trace or message.trace[-1].get("node") != node.id:  # started by the queue
             message.trace.append({"node": node.id, "title": node.title, "role": node.role})
-        tier = (node.settings.get("tier") if node.type else None) or message.tier
+        # its pool: the dotted wire, else its own setting, else what the message asks for
+        pooled = next((a for a, ap, b, bp in self.bus.wires(domain.id) if b == node.id and node.inputs.get(bp) == "pool"), None)
+        tier = (pooled[len("pool_"):] if pooled and pooled.startswith("pool_") and message.tier == "master" else None) \
+            or (node.settings.get("tier") if node.type else None) or message.tier
         if node.type and (prompt := (node.settings.get("prompt") or "").strip()):
             message.put(node.id, "system", prompt)
         home = self.answer_to(message, node, ctx)
