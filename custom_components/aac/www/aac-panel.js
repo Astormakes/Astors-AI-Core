@@ -350,6 +350,14 @@ textarea { min-height: 10em; resize: vertical; }
 .why pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28em; overflow: auto; font-size: .9em; margin: .3em 0 .6em; }
 .why .wm { margin: .5em 0 0 .6em; }
 /* where each part of a request came from (owner: "where all the context comes from") */
+.xb > summary { cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: .2em .7em; }
+.xb > summary::-webkit-details-marker { display: none; }
+.xb > summary .who { margin: 0; }
+.xb > summary .xn { margin-left: auto; color: var(--dim); font-size: .8em; }
+.xb > summary .xone { flex-basis: 100%; color: var(--dim); font-size: .85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xb[open] > summary .xone { display: none; }
+.xb:not([open]) { opacity: .8; }
+.xb.outside { border-style: dashed !important; background: transparent !important; }
 .src-group { margin: .9em 0 .2em; color: var(--magenta); letter-spacing: .1em; font-size: .85em; display: flex; gap: .6em; }
 .src-group .n { margin-left: auto; color: var(--dim); }
 .src-row { margin: .15em 0 !important; }
@@ -1260,13 +1268,13 @@ class AacPanel extends HTMLElement {
   }
 
   // Every part of one request, grouped by where it sits, with the card it came from and its size
-  _sourcesHtml(w) {
+  _sourcesHtml(w, total_line = true) {
     if (!w.sources) return '<p class="hint">This answer was recorded before the parts got their sources (1.0.0-dev.44): only the raw request is there.</p>';
     const total = w.sources.reduce((a, x) => a + x.chars, 0) || 1, max = Math.max(...w.sources.map((x) => x.chars), 1);
     const tok = (c) => `~${Math.max(1, Math.round(c / 4)).toLocaleString()} tok`;
     const GROUPS = [["system", "SYSTEM PROMPT · the start, cached by the server"], ["chat", "THE CONVERSATION · as this model reads it"],
       ["end", "AT THE END · read last"], ["tools", "TOOL DEFINITIONS · sent with every call"]];
-    return `<p class="hint">About ${tok(total)} in all (characters ÷ 4). Click a line for its text.</p>` + GROUPS.map(([where, label]) => {
+    return (total_line ? `<p class="hint">About ${tok(total)} in all (characters ÷ 4). Click a line for its text.</p>` : "") + GROUPS.map(([where, label]) => {
       const rows = w.sources.filter((x) => x.where === where);
       if (!rows.length) return "";
       const sum = rows.reduce((a, x) => a + x.chars, 0);
@@ -1285,20 +1293,6 @@ class AacPanel extends HTMLElement {
     this._ws("aac/run/request", { run_id: runId }).then((r) => { c[runId] = r; }, (e) => { c[runId] = { error: e.message || String(e) }; })
       .then(() => this._render());
     return "loading";
-  }
-
-  // The chat's answers, one at a time: what each model call got, part by part
-  _sourcesPageHtml(chat) {
-    const answers = (chat?.messages || []).map((m, i) => ({ m, i })).filter(({ m }) => m.role === "aac" && m.run_id).reverse();
-    if (!answers.length) return '<div class="welcome">No answer in this chat yet.</div>';
-    const sel = answers.some(({ m }) => m.run_id === this._srcRun) ? this._srcRun : answers[0].m.run_id;
-    const w = this._loadWhy(sel);
-    const short = (t) => (t = String(t || "(no text)").replace(/\s+/g, " ").trim()).length > 70 ? `${t.slice(0, 70)}…` : t;
-    const pick = `<select id="src-run" aria-label="Which answer">${answers.map(({ m }, n) => `<option value="${esc(m.run_id)}" ${m.run_id === sel ? "selected" : ""}>${n ? "" : "Newest · "}${esc(short(m.text))}</option>`).join("")}</select>`;
-    return `<div class="card why" style="border-top:1px solid var(--line);margin-top:0"><h2>WHAT THE MODEL GOT</h2>
-      <p class="hint">Everything that went to the model for one answer, in order, with the card or built-in part it came from. The ⚡ view shows what the cards wrote; this shows what the model really read (tool instructions and definitions included).</p>
-      ${pick}${w === "loading" || !w ? '<p class="hint">Loading…</p>' : w.error ? `<p class="hint">${esc(w.error)}</p>`
-        : `<div class="hint" style="margin:.6em 0">${esc(this._resourceLabel(w.model))} · ${esc(fmtTime(w.at))}${w.n_ctx ? ` · the model holds ${esc(w.n_ctx)} tokens` : ""}${w.left_out ? ` · ${esc(w.left_out)} older messages left out` : ""}</div>${this._sourcesHtml(w)}`}</div>`;
   }
 
   async _toggleWhy(runId) {
@@ -1338,8 +1332,7 @@ class AacPanel extends HTMLElement {
     const chat = this._view === "chat/new" && !this._busy ? null : this._chat;  // a new chat shows what is being sent
     const msgs = chat?.messages || [];
     const isAac = chat?.id === "aac";
-    const log = this._srcView && chat ? this._sourcesPageHtml(chat)
-      : this._expert && chat?.entries?.length ? this._expertHtml(chat.entries, msgs)
+    const log = this._expert && chat?.entries?.length ? this._expertHtml(chat.entries, msgs)
       : msgs.length
       ? msgs.map((m, i) => this._bubbleHtml(m, i, msgs, { editable: !isAac, details: isAac, key: "m" })).join("")
       : `<div class="welcome"><div class="big">AAC</div>${this._chatGone ? "That chat no longer exists (it was deleted). This is a new chat."
@@ -1352,9 +1345,8 @@ class AacPanel extends HTMLElement {
       ? `<button class="btn" id="chat-restore">Restore</button><button class="icon-btn" id="chat-delete" title="Delete permanently">${icon("trash")}</button>`
       : `<button class="icon-btn" id="chat-archive" title="Archive">${icon("trash")}</button>`;
     const prefs = `<span class="prefwrap"><button class="icon-btn" id="chat-prefs" title="How this view shows steps and thinking" aria-expanded="${!!this._prefsOpen}">${icon("settings")}</button>${this._prefsOpen ? this._chatPrefsHtml() : ""}</span>`;
-    const expert = chat?.entries?.length ? `<button class="icon-btn ${this._expert ? "on" : ""}" id="chat-expert" title="Expert view: the whole conversation as the graph wrote it (every card's entries, calls and results)" aria-pressed="${!!this._expert}">${icon("bolt")}</button>` : "";
-    const sources = chat?.messages?.some((m) => m.run_id) ? `<button class="icon-btn ${this._srcView ? "on" : ""}" id="chat-sources" title="What the model got: every part of the request with the card it came from (where all the context comes from)" aria-pressed="${!!this._srcView}">${icon("layers")}</button>` : "";
-    return `${this._header(title, `model: ${esc(this._modelLabel(master))}`, sources + expert + prefs + del)}
+    const expert = chat?.entries?.length ? `<button class="icon-btn ${this._expert ? "on" : ""}" id="chat-expert" title="Expert view: the conversation as the model reads it: every card's entries, and (dashed) what came from outside the document: tool instructions, the tools field, the time" aria-pressed="${!!this._expert}">${icon("bolt")}</button>` : "";
+    return `${this._header(title, `model: ${esc(this._modelLabel(master))}`, expert + prefs + del)}
       <div class="chat">
         <div class="log thin-scroll" aria-live="polite"><div class="log-inner">${log}${busy}</div></div>
         <div class="composer"><div class="composer-inner">
@@ -1364,36 +1356,59 @@ class AacPanel extends HTMLElement {
       </div>`;
   }
 
-  // The chat's document (spec/graph.md): every entry with the card that wrote it; per turn the way it took
+  // The chat's document (spec/graph.md) as the model reads it: every entry with the card that wrote it, folded
+  // or open, and in between, dashed, what went to the model from outside the document (owner: "combine the
+  // second view with the first ... still a chat view but the things can be expanded, and include the tools field")
   _expertHtml(entries, msgs = []) {
     const KIND = { system: "system prompt", note: "note", trailer: "trailer", user: "said", answer: "answered", call: "called", result: "result" };
     const titles = Object.fromEntries((this._nodeTitles || []).map((n) => [n.id, n.title]));
     const name = (id) => titles[id] || id;
-    // Extended (owner: "an extended view for the flash view"): under each answer, what that model call got on top
-    // of the document: its tools' instructions and definitions, built-in parts
+    const tok = (c) => `~${Math.max(1, Math.round(c / 4)).toLocaleString()} tok`;
+    const one = (t) => (t = String(t || "").replace(/\s+/g, " ").trim()).length > 90 ? `${t.slice(0, 90)}…` : t;
     const runOf = Object.fromEntries(msgs.filter((m) => m.entry && m.run_id).map((m) => [m.entry, m.run_id]));
-    const out = [`<label class="check" style="margin:0 0 .8em"><input type="checkbox" id="expert-plus" ${this._expertPlus ? "checked" : ""}>
-      Also show what each model got outside this document (tool instructions and definitions, built-in parts)</label>`];
-    const plus = (runId) => {
-      const w = this._loadWhy(runId);
-      if (w === "loading") return '<div class="why"><span class="hint">Loading…</span></div>';
-      if (w.error || !w.sources) return `<div class="why"><span class="hint">${esc(w.error || "Recorded before the parts got their sources.")}</span></div>`;
-      const outside = w.sources.filter((x) => x.outside), sum = outside.reduce((a, x) => a + x.chars, 0);
-      return `<details class="why"><summary>+ OUTSIDE THE DOCUMENT · ~${Math.round(sum / 4).toLocaleString()} tok of ~${Math.round(w.sources.reduce((a, x) => a + x.chars, 0) / 4).toLocaleString()}</summary>
-        ${this._sourcesHtml({ ...w, sources: outside })}</details>`;
+    const newest = [...msgs].reverse().find((m) => m.run_id)?.run_id;
+    const reqOf = (runId) => { const w = runId ? this._loadWhy(runId) : null; return w && w !== "loading" && !w.error && w.sources ? w : null; };
+    const bubble = (who, kind, text, { user = false, open = false, outside = false, body = null } = {}) =>
+      `<details class="bubble ${user ? "user" : "aac"} xb ${outside ? "outside" : ""}" ${open ? "open" : ""}>
+        <summary><span class="who">${esc(who.toUpperCase())} · ${esc(kind)}${outside ? " · outside the document" : ""}</span><span class="xn">${tok(text.length)}</span>
+          <span class="xone">${esc(one(text))}</span></summary>
+        ${body ?? `<div class="txt" style="white-space:pre-wrap">${esc(text.length > 6000 ? `${text.slice(0, 6000)} …` : text)}</div>`}</details>`;
+    const outsideOf = (w, where) => (w?.sources || []).filter((x) => x.outside && x.where === where);
+    const toolsField = (w) => {
+      const tools = outsideOf(w, "tools");
+      if (!tools.length) return "";
+      const sum = tools.reduce((a, x) => a + x.chars, 0);
+      return `<details class="bubble aac xb outside"><summary><span class="who">TOOLS FIELD · sent with every call · outside the document</span><span class="xn">${tok(sum)}</span>
+          <span class="xone">${tools.length} tools: ${esc(one(tools.map((t) => t.from.split("__").pop()).join(", ")))}</span></summary>
+        <div class="why" style="border:0;margin:0">${this._sourcesHtml({ ...w, sources: tools }, false)}</div></details>`;
     };
-    let way = null;
-    const flush = () => { if (way?.length > 1) out.push(`<div class="hint" style="margin:.2em 0 .8em">${way.map((id) => esc(name(id))).join(" › ")}</div>`); };
-    for (const e of entries) {
-      if (e.kind === "user") { flush(); way = [e.by]; }
+    const top = reqOf(newest);
+    const out = [];
+    if (newest && !top) out.push(`<p class="hint">${this._reqCache?.[newest] === "loading" ? "Loading what the model got…" : "What the model got outside the document is kept only for the newest answers (from 1.0.0-dev.44 on)."}</p>`);
+    let standing = false, way = null;
+    const flushWay = () => { if (way?.length > 1) out.push(`<div class="hint" style="margin:.2em 0 .8em">${way.map((id) => esc(name(id))).join(" › ")}</div>`); };
+    const putStanding = () => {  // after the cards' system parts: the tools' instructions, then the tools field
+      if (standing) return;
+      standing = true;
+      if (!top) return;
+      for (const x of outsideOf(top, "system")) out.push(bubble(x.from, "system prompt", x.text, { outside: true }));
+      out.push(toolsField(top));
+      out.push('<p class="hint" style="margin:-.2em 0 1em">The parts above are from the newest answer; every call sends them again.</p>');
+    };
+    entries.forEach((e, k) => {
+      if (e.kind !== "system") putStanding();
+      if (e.kind === "user") { flushWay(); way = [e.by]; }
       else if (way && e.kind !== "system" && way[way.length - 1] !== e.by) way.push(e.by);
-      const tags = (e.tags || []).filter((t) => t !== e.by);
-      out.push(`<div class="bubble ${e.kind === "user" ? "user" : "aac"}" style="${e.kind === "system" || e.kind === "note" || e.kind === "trailer" ? "opacity:.75" : ""}">
-        <div class="who">${esc(name(e.by).toUpperCase())} · ${esc(KIND[e.kind] || e.kind)}${tags.length ? ` <span class="hint">#${tags.map(esc).join(" #")}</span>` : ""}</div>
-        <div class="txt" style="white-space:pre-wrap">${esc(e.text.length > 1500 ? `${e.text.slice(0, 1500)} …` : e.text)}</div>
-        ${this._expertPlus && e.kind === "answer" && runOf[e.id] ? plus(runOf[e.id]) : ""}</div>`);
-    }
-    flush();
+      const text = e.kind === "call" ? `${e.data?.function || e.data?.tool || ""}(${JSON.stringify(e.data?.args || {})})` : e.text;
+      out.push(bubble(name(e.by), KIND[e.kind] || e.kind, text, { user: e.kind === "user", open: ["user", "answer"].includes(e.kind) }));
+      if (e.kind === "user") {  // what the model card adds after this turn (the time) for the answer to it
+        const answer = entries.slice(k + 1).find((x) => x.kind === "answer" || x.kind === "user");
+        const w = answer?.kind === "answer" ? reqOf(runOf[answer.id]) : null;
+        for (const x of outsideOf(w, "end")) out.push(bubble(x.from, "note", x.text, { outside: true }));
+      }
+    });
+    putStanding();
+    flushWay();
     return out.join("");
   }
 
@@ -2486,12 +2501,8 @@ class AacPanel extends HTMLElement {
     });
     sr.querySelectorAll("[data-why]").forEach((el) => el.addEventListener("click", () => this._toggleWhy(el.dataset.why)));
     sr.querySelector("#chat-prefs")?.addEventListener("click", () => { this._prefsOpen = !this._prefsOpen; this._render(); });
-    sr.querySelector("#expert-plus")?.addEventListener("change", (e) => { this._expertPlus = e.target.checked; this._render(); });
-    sr.querySelector("#chat-sources")?.addEventListener("click", () => { this._srcView = !this._srcView; if (this._srcView) this._expert = false; this._render(); });
-    sr.querySelector("#src-run")?.addEventListener("change", (e) => { this._srcRun = e.target.value; this._render(); });
     sr.querySelector("#chat-expert")?.addEventListener("click", async () => {
       this._expert = !this._expert;
-      if (this._expert) this._srcView = false;
       if (this._expert && !this._nodeTitles) {  // the cards' names for the entries
         try { this._nodeTitles = (await this._ws("aac/nodes")).nodes.map((n) => ({ id: n.id, title: n.title })); } catch (e) { this._nodeTitles = []; }
       }
