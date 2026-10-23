@@ -109,3 +109,15 @@ async def test_relay_positions_and_replace(hass: HomeAssistant, mock_entry):
     assert [(e["kind"], e["text"]) for e in message.entries] == [
         ("system", "You are AAC."), ("said", "hi"), ("trailer", "Be short."), ("said", "and?"), ("trailer", "Be short.")]
     assert all(t.startswith(("role.", "note.", "chat.")) for e in message.entries for t in e["tags"])
+
+
+async def test_setup_file_round_trip(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """Save file → change → Load file brings the setup back; Undo goes back to before the load."""
+    core = await setup_aac(hass, mock_entry)
+    domain = core.domain
+    saved = domain.export()
+    await domain.remove_card("time")
+    changed = domain.export()
+    await domain.import_setup(saved)
+    assert "time" in domain.cards and domain.wires == saved["wires"]
+    assert await domain.undo_last() and "time" not in domain.cards and domain.wires == changed["wires"]

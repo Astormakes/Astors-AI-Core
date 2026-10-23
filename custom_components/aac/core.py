@@ -220,6 +220,17 @@ class Domain:
         await self._restore(setup)
         return True
 
+    def export(self) -> dict[str, Any]:
+        """The setup as a file: cards (with settings), wires, positions (the cards' own data stays here)."""
+        return {"aac": 2, "domain": self.name, **deepcopy({"cards": self._specs, "wires": self.wires, "positions": self.positions})}
+
+    async def import_setup(self, setup: dict[str, Any]) -> None:
+        """A setup from a file replaces this one (Undo brings it back)."""
+        if not isinstance(setup.get("cards"), dict) or not isinstance(setup.get("wires"), list):
+            raise ValueError("not an AAC setup file")
+        self.undo = [*self.undo, {**self._snapshot(), "positions": deepcopy(self.positions)}][-UNDO_STEPS:]
+        await self._restore({"cards": setup["cards"], "wires": setup["wires"], "positions": setup.get("positions") or {}})
+
     # ------------------------------------------------------------------ the rest
     def template_values(self) -> dict[str, Any]:
         """Every card's values for templates: {{ <card>.<value> }} (and {{ cards['<card>'].<value> }} for any id)."""

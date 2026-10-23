@@ -373,7 +373,7 @@ class AacPanel extends HTMLElement {
       : '<span class="hint">Pick a card type above, then click in the grid to place it.</span>';
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
     return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it.")}
-        <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="fit">Fit</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
+        <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="fit">Fit</button><button class="small" id="export" title="Save this setup as a file (cards, settings, wires, positions; the cards' own data such as lists stays here)">Save file</button><button class="small" id="import" title="Load a setup file into this domain (Undo goes back)">Load file</button><input type="file" id="importfile" accept=".json,application/json" hidden><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
       <div class="nodes"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
         <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
         <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div></div>
@@ -397,7 +397,13 @@ class AacPanel extends HTMLElement {
         <div class="row" style="gap:8px"><button class="small" id="monitor" title="A window above the wire with what passes it, live">${on ? "Stop monitoring" : "Monitor"}</button><button class="small danger" id="unwire">Remove wire</button></div>`;
     }
     const c = this.sel && this._card(this.sel);
-    if (!c) return `<p class="hint">Click a card to set it up. Tags in this domain: ${d.tags.length}.</p>`;
+    if (!c) {
+      const groups = {};
+      for (const t of d.tags) (groups[t.card] ||= []).push(t);
+      return `<p class="hint">Click a card to set it up.</p><b>Tags in this domain</b>${tip("Cards tag the entries they write (card.tag). Your own tags (user.…) are for Conditional rules and Relays: tag entries with them, then pick them up later.")}
+        <div class="row" style="margin:8px 0;gap:6px"><input id="newtag" placeholder="your own tag, e.g. urgent"><button class="small" id="addtag">Add</button></div>
+        ${Object.entries(groups).map(([card, tags]) => `<label>${esc(card)}</label>${tags.map((t) => `<div class="hint" style="font-size:12px"><code>${esc(t.tag)}</code> ${esc(t.what)}${card === "You" ? ` <button class="small" data-deltag="${esc(t.tag)}" title="Remove">×</button>` : ""}</div>`).join("")}`).join("")}`;
+    }
     const t = this._type(c.type);
     const field = ([key, f]) => {
       const v = c.settings[key] ?? f.default, h = f.help ? tip(esc(f.help)) : "";
@@ -911,6 +917,22 @@ class AacPanel extends HTMLElement {
     $("#undo")?.addEventListener("click", async () => { await this.ws("aac/undo"); await this._load(); this.render(); });
     $("#fit")?.addEventListener("click", () => this._fit());
     $("#arrange")?.addEventListener("click", () => this._doArrange());
+    $("#export")?.addEventListener("click", async () => {
+      const { setup } = await this.ws("aac/setup/export"), a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(setup, null, 1)], { type: "application/json" }));
+      a.download = `aac-${setup.domain.replace(/\W+/g, "-").toLowerCase()}-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+    $("#import")?.addEventListener("click", () => $("#importfile").click());
+    $("#importfile")?.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file || !confirm(`Load "${file.name}" into this domain? Its cards and wires replace the current ones (Undo goes back).`)) return;
+      try { await this.ws("aac/setup/import", { setup: JSON.parse(await file.text()) }); } catch (err) { alert(`Could not load it: ${err.message || err}`); return; }
+      this.sel = null; await this._load(); this.render(); this._fit();
+    });
+    $("#addtag")?.addEventListener("click", async () => { const t = $("#newtag").value.trim(); if (t) { await this.ws("aac/tags/add", { tag: t }); await this._load(); this.render(); } });
+    $("#newtag")?.addEventListener("keydown", (e) => { if (e.key === "Enter") $("#addtag").click(); });
+    $$("[data-deltag]").forEach((el) => el.addEventListener("click", async () => { await this.ws("aac/tags/remove", { tag: el.dataset.deltag }); await this._load(); this.render(); }));
     $$("[data-slot]").forEach((el) => el.addEventListener("click", async (e) => {
       const slot = el.dataset.slot;
       if (e.shiftKey) { if (confirm(`Load slot ${slot}? (Undo brings the current setup back)`)) await this.ws("aac/slot", { slot, action: "load" }); }

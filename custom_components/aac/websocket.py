@@ -155,6 +155,22 @@ async def ws_slot(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"loaded": await domain.load_slot(msg["slot"])})
 
 
+@command({vol.Required("type"): "aac/setup/export"})
+async def ws_setup_export(hass, connection, msg) -> None:
+    """The running domain's setup, to save as a file."""
+    connection.send_result(msg["id"], {"setup": _core(hass).domain.export()})
+
+
+@command({vol.Required("type"): "aac/setup/import", vol.Required("setup"): dict})
+async def ws_setup_import(hass, connection, msg) -> None:
+    """Load a setup file into the running domain (undoable)."""
+    try:
+        await _core(hass).domain.import_setup(msg["setup"])
+    except ValueError as err:
+        return await _fail(connection, msg, err)
+    connection.send_result(msg["id"], {})
+
+
 @command({vol.Required("type"): "aac/stop"})
 async def ws_stop(hass, connection, msg) -> None:
     """Send stop: every card drops what it is doing."""
@@ -178,6 +194,15 @@ async def ws_tags_add(hass, connection, msg) -> None:
     if tag not in domain.user_tags:
         domain.user_tags.append(tag)
         domain.save()
+    connection.send_result(msg["id"], {"tags": domain.tag_pool()})
+
+
+@command({vol.Required("type"): "aac/tags/remove", vol.Required("tag"): str})
+async def ws_tags_remove(hass, connection, msg) -> None:
+    """Take one of the owner's own tags away."""
+    domain = _core(hass).domain
+    domain.user_tags = [t for t in domain.user_tags if t != msg["tag"]]
+    domain.save()
     connection.send_result(msg["id"], {"tags": domain.tag_pool()})
 
 
