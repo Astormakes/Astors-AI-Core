@@ -46,7 +46,7 @@ async def test_create_chat_and_delete_a_domain(hass: HomeAssistant, hass_ws_clie
     tools = {t["function"]["name"] for t in payloads[0]["tools"]}
     assert "memory__remember" in tools, tools
     assert data.domains["assistant"].chats.list() == [] and len(work.chats.list()) == 1
-    assert "settings" not in data.store.module_record("assistant", "charter")  # the other domain keeps the draft
+    assert data.store.module_record("assistant", "charter")["settings"]["text"].startswith("Charter")  # the other keeps its own
 
     await ws.send_json_auto_id({"type": "aac/state", "domain": "work"})
     state = (await ws.receive_json())["result"]

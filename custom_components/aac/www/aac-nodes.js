@@ -31,6 +31,9 @@ const ROLE = { pool: "pool (dotted)", source: "source", endpoint: "in and out", 
 const UNDO_STEPS = 10;
 // A setting that works against the server's cache shows a warning while it is set that way (owner, 2026-10-23: the
 // "Replace" tick of Header and Trailer); its checkbox toggles it live
+// A field with a ready text to fill in (the first Header's charter draft): a button, never a silent fallback
+const fillHtml = (f) => f.fill && f.placeholder
+  ? `<div class="actions" style="margin:.2em 0 .5em"><button type="button" class="btn" data-fill="${esc(f.placeholder)}">${esc(f.fill)}</button></div>` : "";
 const warnHtml = (key, f, v) => f.warn
   ? `<p class="hint" data-warn-key="${esc(key)}" data-warn-when="${f.warn.when}" style="color:var(--amber);margin:.1em 0 .5em;${Boolean(v) === f.warn.when ? "" : "display:none"}">⚠ ${esc(f.warn.text)}</p>` : "";
 const BAR = 26, PAD = 26, GRIP = 16, EDGE = 50;
@@ -831,6 +834,14 @@ class AacNodes extends HTMLElement {
       if (step) { this._sel = step.dataset.tryNode; this._selFrame = null; this._selWire = null; this._draw(); this._info(); }
       if (b?.dataset.nv === "inst-save") this._saveInstance(b.dataset.node);
       if (b?.dataset.nv === "inst-remove") this._removeInstance(b.dataset.node);
+      const fill = e.target.closest("[data-fill]");
+      if (fill) {
+        const area = fill.parentElement.previousElementSibling;
+        if (area?.tagName === "TEXTAREA" && (!area.value.trim() || window.confirm("Replace the text in the field with the draft?"))) {
+          area.value = fill.dataset.fill; area.focus();
+          this._msg.textContent = "Draft filled in: read it, change it, then Save.";
+        }
+      }
       if (b?.dataset.nv === "hide") this._hide(b.dataset.node, true);
       if (b?.dataset.nv === "title-save") this._retitle(b.dataset.node);
       if (b?.dataset.nv === "monitor" || b?.dataset.nv === "mon-off") this._toggleMonitor(b.dataset.mon);
@@ -1276,7 +1287,7 @@ class AacNodes extends HTMLElement {
       if (f.type === "bool") return `<label class="check"><input type="checkbox" data-mod-key="${esc(key)}" ${(v ?? f.default) ? "checked" : ""}>${esc(f.title || key)}</label>${help}${warnHtml(key, f, v ?? f.default)}`;
       if (f.type === "select" && f.options) return `${label}<select data-mod-key="${esc(key)}">${f.options.map(([val, l]) =>
         `<option value="${esc(val)}" ${String(val) === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>${help}`;
-      if (f.type === "longtext") return `${label}<textarea data-mod-key="${esc(key)}" class="thin-scroll" style="min-height:${(f.rows || 4) * 1.3}em" placeholder="${esc(f.placeholder || "")}">${esc(v ?? "")}</textarea>${help}`;
+      if (f.type === "longtext") return `${label}<textarea data-mod-key="${esc(key)}" class="thin-scroll" style="min-height:${(f.rows || 4) * 1.3}em" placeholder="${esc(f.placeholder || "")}">${esc(v ?? "")}</textarea>${fillHtml(f)}${help}`;
       if (["number", "time", "text", "string"].includes(f.type) || !f.type)
         return `${label}<input data-mod-key="${esc(key)}" ${f.type === "number" ? 'type="number" inputmode="decimal"' : f.type === "time" ? 'type="time"' : ""} value="${esc(v ?? "")}">${help}`;
       more = true;
@@ -1387,7 +1398,7 @@ class AacNodes extends HTMLElement {
         return `<label>${esc(f.title || key)}</label><select data-inst-key="${esc(key)}">${opts.map(([val, label]) =>
           `<option value="${esc(val)}" ${val === v ? "selected" : ""}>${esc(label)}</option>`).join("")}</select>`;
       }
-      if (f.type === "longtext") return `<label>${esc(f.title || key)}</label><textarea data-inst-key="${esc(key)}" class="thin-scroll" style="min-height:5em">${esc(v)}</textarea>`;
+      if (f.type === "longtext") return `<label>${esc(f.title || key)}</label><textarea data-inst-key="${esc(key)}" class="thin-scroll" style="min-height:5em" placeholder="${esc(f.placeholder || "")}">${esc(v)}</textarea>${fillHtml(f)}`;
       if (f.type === "outputs") // one output per line: "name: what it is for"
         return `<label>${esc(f.title || key)} <span class="hint">one per line, "name: what it is for"</span></label><textarea data-inst-key="${esc(key)}" data-kind="outputs" class="thin-scroll" style="min-height:5em">${esc((v || []).map((o) => `${o.name}: ${o.description || ""}`).join("\n"))}</textarea>`;
       return `<label>${esc(f.title || key)}</label><input data-inst-key="${esc(key)}" value="${esc(v)}">`;

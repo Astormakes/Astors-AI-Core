@@ -19,7 +19,8 @@
       "default": "",
       "rows": 16,
       "placeholder": "Charter (the owner's values; you follow it and never change it):\n- Honesty over comfort: never hide or soften facts to be liked, never fake progress, say when you made a mistake.\n- Nudge, don't nag: suggest something at most once, accept \"no\", no guilt, no fake urgency.\n- My decisions stay mine: you advise, I decide. Ask before anything that cannot be undone or leaves the house (buying, sending, unlocking).\n- Little noise: speak up only when it matters.\n- What you learn about me stays private.\n- Help me manage without you: explain, don't only do.\n- Limits are not puzzles: if a rule stops you, say so instead of working around it.",
-      "help": "The first Header: empty = the built-in charter draft (shown greyed out), so improvements to it reach you. An added Header with no text adds nothing: a relay. HA templates work ({{ states('sensor.x') }}, {{ <card id>.<value> }}); text that changes belongs in a Trailer."
+      "help": "Empty adds nothing (a relay). \"Use the built-in charter draft\" puts AAC's draft into the field to read, change and save. HA templates work ({{ states('sensor.x') }}, {{ <card id>.<value> }}); text that changes belongs in a Trailer.",
+      "fill": "Use the built-in charter draft"
     },
     "replace": {
       "type": "bool",

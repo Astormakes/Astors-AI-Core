@@ -72,7 +72,7 @@ their own text), the Trailer a template. Both have a **Replace** tick: Header ti
 start, replaced: the start stays cached), Trailer unticked by default (each turn gets its own line where it was
 written; the conversation only grows at the end). The setting against the cache shows a warning. A trailer goes
 with the user turn it followed; a ticked one moves to the newest. Wired from a model and back, a text card is a
-tool that gives its text. With no text a Header (an added one) or a Trailer adds nothing: a **relay** whose round
+tool that gives its text. With no text a Header or a Trailer adds nothing (the first Header's charter draft is a button that fills it in, never a silent fallback): a **relay** whose round
 output copies the message to every wire (e.g. a model's answer to Voice and to a chat). The local time is a default Trailer card **Time** (`Local time: {{ local_time }}`), in
 the automatic line (`auto` on the stored card); the model card adds nothing unseen.
 

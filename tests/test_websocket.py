@@ -154,7 +154,7 @@ async def test_admin_only(hass: HomeAssistant, hass_ws_client, hass_read_only_ac
 async def test_charter_reaches_every_agent(
     hass: HomeAssistant, hass_ws_client, hass_storage, aioclient_mock: AiohttpClientMocker, mock_entry, configured
 ):
-    """The charter module comes first in the system prompt (built-in draft when empty); 0.47's own text moves
+    """The charter module comes first in the system prompt (nothing when empty); 0.47's own text moves
     over; the setup tools can neither change nor switch it."""
     from custom_components.aac.store import STORAGE_KEY
 
@@ -177,13 +177,15 @@ async def test_charter_reaches_every_agent(
         await ws.receive_json()
         return aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
 
-    assert (await system()).startswith("Charter (the owner's values")  # empty = the built-in draft
+    assert not (await system()).startswith("Charter (the owner's values")  # empty adds nothing (the draft is a button)
 
     from custom_components.aac.setup_api import ModuleSettingTool
 
     tool = ModuleSettingTool(mock_entry, data.domain())
+    await ws.send_json_auto_id({"type": "aac/module/settings", "module": "charter", "values": {"text": "Be kind."}})
+    await ws.receive_json()
     result = await tool._async_run(hass, {"module": "charter", "on": False})
-    assert result.error and (await system()).startswith("Charter")
+    assert result.error and (await system()).startswith("Be kind.")  # an agent cannot switch it off
 
 
 async def test_single_model_server_counts_as_online(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):

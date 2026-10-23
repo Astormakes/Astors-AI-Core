@@ -1626,7 +1626,7 @@ class AacPanel extends HTMLElement {
       return `<label for="${id}">${esc(f.title || key)}</label><select id="${id}" data-ms="${esc(m.id)}" data-key="${esc(key)}">${opts.map(([val, name]) => `<option value="${esc(val)}" ${val === v ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>${help}`;
     }
     const ph = f.placeholder ? ` placeholder="${esc(f.placeholder)}"` : "";
-    if (f.type === "longtext") return `<label for="${id}">${esc(f.title || key)}</label><textarea id="${id}" class="thin-scroll" data-ms="${esc(m.id)}" data-key="${esc(key)}"${ph}${f.rows ? ` style="min-height:${Number(f.rows) * 1.4}em"` : ""}>${esc(v ?? "")}</textarea>${help}`;
+    if (f.type === "longtext") return `<label for="${id}">${esc(f.title || key)}</label><textarea id="${id}" class="thin-scroll" data-ms="${esc(m.id)}" data-key="${esc(key)}"${ph}${f.rows ? ` style="min-height:${Number(f.rows) * 1.4}em"` : ""}>${esc(v ?? "")}</textarea>${f.fill && f.placeholder ? `<div class="actions" style="margin:.2em 0 .5em"><button type="button" class="btn" data-fill-for="${id}">${esc(f.fill)}</button></div>` : ""}${help}`;
     return `<label for="${id}">${esc(f.title || key)}</label><input id="${id}" data-ms="${esc(m.id)}" data-key="${esc(key)}" type="${f.type === "number" ? "number" : f.type === "time" ? "time" : "text"}" value="${esc(v ?? "")}"${ph}>${help}`;
   }
 
@@ -2434,6 +2434,12 @@ class AacPanel extends HTMLElement {
       this._render();
     });
     sr.querySelectorAll("[data-why]").forEach((el) => el.addEventListener("click", () => this._toggleWhy(el.dataset.why)));
+    sr.querySelectorAll("[data-fill-for]").forEach((el) => el.addEventListener("click", () => {  // a ready text, asked for
+      const area = sr.querySelector(`#${el.dataset.fillFor}`);
+      if (area && (!area.value.trim() || window.confirm("Replace the text in the field with the draft?"))) {
+        area.value = area.getAttribute("placeholder") || ""; area.dispatchEvent(new Event("input", { bubbles: true })); area.focus();
+      }
+    }));
     sr.querySelector("#chat-prefs")?.addEventListener("click", () => { this._prefsOpen = !this._prefsOpen; this._render(); });
     sr.querySelector("#chat-expert")?.addEventListener("click", async () => {
       this._expert = !this._expert;
