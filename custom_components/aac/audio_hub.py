@@ -269,6 +269,7 @@ class AudioHub:
         # per source id: when AAC last finished speaking there, and what it said
         self.spoke: dict[str, dict[str, Any]] = {}
         self.voice_chats: dict[str, str] = {}  # per source id: the voice chat of the current session
+        self._mics: tuple[float, list] = (float("-inf"), [])  # the Microphone cards (audio_nodes.py), cached briefly
         # The core's audio node on the stream bus (spec/streams.md): raw audio for media readers (sound
         # captions), each speech segment through the annotating nodes (speech to text, sounds, voices), and
         # every finished line to the hearing modules (wake word, companion) as text.line
@@ -317,6 +318,13 @@ class AudioHub:
         """Raw audio from a source."""
         if source.playing:
             return  # AAC is speaking there; don't listen to itself
+        # the audio cards (audio_nodes.py): every Microphone card that takes this source starts its chain
+        domain_id, now = self._domain_id, time.monotonic()
+        if now - self._mics[0] > 1:  # looked up at most once a second (audio comes about 50 times a second)
+            self._mics = (now, [n for n in self._bus.nodes_in(domain_id).values() if n.type == "microphone"])
+        for node in self._mics[1]:
+            if node.listens_to in ("any", source.id):
+                self._bus.stream(domain_id, node.id, "out", chunk, {"source": source.id, "name": source.name, "area": source.area})
         source.ring.append(chunk)
         seg = source.segmenter
         if seg.active and not source.partial_busy and seg.frames - source.partial_at >= PARTIAL_EVERY:

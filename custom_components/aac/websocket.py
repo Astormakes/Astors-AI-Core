@@ -704,7 +704,7 @@ def ws_nodes(hass: HomeAssistant, connection, msg) -> None:
     summary["modules"] = {m.id: {k: v for k, v in _module_view(hass, entry, m, dom.id).items() if k != "manifest"}
                           for m in entry.runtime_data.modules if m.id in used}
     caps = entry.runtime_data.capabilities
-    summary["options"] = {name: fn(dom.id) for name, fn in caps.options.items() if name == "tiers"}
+    summary["options"] = {name: [list(o) for o in fn(dom.id)] for name, fn in caps.options.items() if name in ("tiers", "sources")}
     connection.send_result(msg["id"], summary)
 
 

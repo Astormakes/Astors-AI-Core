@@ -46,6 +46,7 @@ from .home_api import AACHomeAPI, apply_entities, apply_visibility
 from .jobs import JobQueue
 from .requests import Requests
 from .core_nodes import core_nodes
+from .audio_nodes import audio_nodes
 from .general_nodes import general_nodes
 from .flow import Flow
 from .model_node import ModelNode
@@ -156,10 +157,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     # Messages move through the graph (spec/graph.md, flow.py); the core's nodes (endpoints, the agent, the model,
     # Decide, the nodes with tools) are cards like the modules'; a model card calls its wired nodes as tools
     entry.runtime_data.model_node = ModelNode(hass, entry)
-    for node in [*core_nodes(hass, entry), *general_nodes(hass, entry)]:
+    for node in [*core_nodes(hass, entry), *general_nodes(hass, entry), *audio_nodes(hass, entry)]:
         entry.async_on_unload(entry.runtime_data.bus.add_node(node))
     entry.runtime_data.flow = Flow(hass, entry)
     entry.runtime_data.jobs.restorers["message"] = entry.runtime_data.flow.restore
+    entry.runtime_data.capabilities.options["sources"] = lambda domain_id: [  # the Microphone card's choice
+        ("any", "any microphone"), *((k["id"], k["name"]) for k in store.audio.get("known", []))]
     entry.runtime_data.capabilities.options["tiers"] = lambda domain_id: [
         (t, t) for t in dict.fromkeys([*TIERS, *(tag for tr in store.data["traits"].values() for tag in tr.get("tags", []))])]
 

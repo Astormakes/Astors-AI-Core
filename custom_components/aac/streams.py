@@ -14,6 +14,8 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
+import json
+import time
 from typing import Any
 
 from homeassistant.util import dt as dt_util
@@ -84,6 +86,9 @@ class Node:
     auto: bool = False  # an added card the automatic wiring takes into the line too (the default Time card)
     variables: dict[str, str] = field(default_factory=dict)  # values it hands on: name → what ({{ <id>.<name> }})
     category: str = ""  # where "Add node" lists it (owner, 2026-10-23: categories like Audio: break cut, noise gate)
+    # Live audio: stream(domain_id, in_port, chunk, meta) for every chunk on an `audio` input (a stream, not records)
+    stream: Callable[[str, str, bytes, dict[str, Any]], None] | None = None
+    listens_to: str = ""  # a Microphone card: the source it takes ("any" or a source id)
     annotate: Annotate | None = None
     partial: Callable[[Any, bytes], Awaitable[str | None]] | None = None  # the text so far (live view)
     # Nodes reading raw media (audio.pcm) get it in windows of `window` seconds through `listen`
@@ -146,6 +151,8 @@ class Bus:
         self._last: dict[tuple[str, str, str], dict[str, Any]] = {}
         # Told whenever an output carries something: fn(domain_id, node_id, port) (open panels' monitors)
         self.on_record: Callable[[str, str, str], None] | None = None
+        self._made: dict[tuple[str, str], tuple[str, Node]] = {}  # added cards, made again only when changed
+        self._stream_to: dict[tuple[str, str, str], tuple[float, list]] = {}  # a stream's readers (cached briefly)
 
     def set_titles(self, titles: Callable[[str], dict[str, str]]) -> None:
         """The owner's own names for built-in cards per domain (owner, 2026-10-23: "rename the first header charter")."""
@@ -165,10 +172,15 @@ class Bus:
             kind_id = TYPE_ALIASES.get(spec.get("type", ""), spec.get("type", ""))
             kind = self.nodes.get(kind_id) or self.templates.get(kind_id)
             if kind and kind.make and inst_id not in found:
-                node = kind.make(inst_id, spec.get("title") or kind.title, dict(spec.get("settings") or {}))
-                node.type, node.module, node.auto = kind.id, kind.module, bool(spec.get("auto"))
-                node.description = node.description or kind.description
-                found[inst_id] = node
+                # kept between calls: a card's state (a speech detector, a buffer) lives in it
+                key = json.dumps([kind_id, spec], sort_keys=True, default=str)
+                made = self._made.get((domain_id, inst_id))
+                if made is None or made[0] != key:
+                    node = kind.make(inst_id, spec.get("title") or kind.title, dict(spec.get("settings") or {}))
+                    node.type, node.module, node.auto = kind.id, kind.module, bool(spec.get("auto"))
+                    node.description = node.description or kind.description
+                    made = self._made[(domain_id, inst_id)] = (key, node)
+                found[inst_id] = made[1]
         return found
 
     def set_wiring(self, stored: Callable[[str], list[dict[str, str]] | None]) -> None:
@@ -339,6 +351,21 @@ class Bus:
                              "data": json_safe({k: v for k, v in e["data"].items() if k != "fargs"})} for e in message.entries[-60:]]}
         if self.on_record:
             self.on_record(domain_id, node_id, port)
+
+    def stream(self, domain_id: str, node_id: str, port: str, chunk: bytes, meta: dict[str, Any]) -> None:
+        """Live audio on an output: handed to every reader's stream at once (no records; readers looked up at most
+        once a second, it comes about 50 times a second)."""
+        now = time.monotonic()
+        cached = self._stream_to.get((domain_id, node_id, port))
+        if cached is None or now - cached[0] > 1:
+            nodes = self.nodes_in(domain_id)
+            cached = self._stream_to[(domain_id, node_id, port)] = (now, list(dict.fromkeys(
+                (nodes[b], bp) for a, ap, b, bp in self.wires(domain_id) if (a, ap) == (node_id, port) and nodes[b].stream)))
+        for reader, in_port in cached[1]:
+            try:
+                reader.stream(domain_id, in_port, chunk, meta)
+            except Exception:  # noqa: BLE001 - one card must not stop the audio
+                LOGGER.exception("AAC: %s failed on audio", reader.id)
 
     def last_message(self, domain_id: str, node_id: str, port: str) -> dict[str, Any] | None:
         """The newest whole message that left an output (None for stream types)."""

@@ -158,7 +158,7 @@ Example (the owner's chain): microphones → stream picker (passes one stream an
 text) → a small model as the cut (whole sentences) → Buffer → Decide → main model → Chat and Voice (live) →
 audio out (plays at the id). The Companion becomes a saved group of such nodes instead of one hidden card.
 
-## Audio cards (plan, owner 2026-10-23; not built yet)
+## Audio cards (owner 2026-10-23; steps 1–4 built in 1.0.0-dev.56, the rest planned)
 
 Hearing (one card with three outputs and everything hidden inside: speech detection, partial transcripts,
 sound captions, voice prints, not listening while AAC speaks, the follow-up window) is split into cards, all
@@ -185,6 +185,12 @@ listed under **Audio** in "Add node", each removable and addable:
    the model still writes).
 6. Then removed: Hearing's three outputs, the Wake word module (its decision is Heard lines → Buffer → Decide), the
    Companion (a saved group of these cards).
+
+Built (audio_nodes.py): Microphone (`source`: a satellite or any), Noise gate (`level` 0–100, `hold` ms), Pause
+cut (`pause` ms, `longest` s; out: `audio.piece` records with the PCM, not kept), Speech to text (a source of
+messages: `reply_to: voice`, the user entry's `data.mic`, values text/mic/mic_name/area/start/seconds). Raw audio
+runs on `audio` wires as a stream (`Node.stream`, `Bus.stream`; no records); added cards are kept between lookups
+(their state lives in them). The old Hearing runs alongside until the rest is done.
 
 Later: a **Speaker** card for HA media players (Music Assistant, Spotify, cast) as an audio source or target.
 Guiding rule (owner): stay lightweight; every card removable, new ones addable.

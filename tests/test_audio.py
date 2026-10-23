@@ -699,3 +699,43 @@ async def test_a_line_outside_the_home_languages_is_heard_again(hass: HomeAssist
         line = await stage.annotate(SimpleNamespace(id="pc"), SILENCE, {"seconds": 1.0})
     assert calls == [None, "de"]  # no home language heard on this mic yet: the main one
     assert line["text"] == "Mach das Licht aus." and line["language"] == "de" and line["heard_as"] == "nl"
+
+
+async def test_audio_cards_chain(hass: HomeAssistant, hass_client, aioclient_mock, mock_entry, configured):
+    """The audio cards (spec/graph.md "Audio cards"): Microphone → Noise gate → Pause cut → Speech to text → the
+    line → model → Voice, spoken at the satellite it came from; the gate keeps quiet audio out."""
+    await setup_aac(hass, mock_entry)
+    await async_set_access(mock_entry, "companion", "assistant", {"enabled": False})  # only the new chain answers
+    data = mock_entry.runtime_data
+    graph = data.store.graph("assistant")
+    graph["nodes"].update({
+        "mic": {"type": "microphone", "title": "PC mic", "settings": {"source": "pc"}},
+        "gate": {"type": "noise_gate", "title": "Gate", "settings": {"level": 40, "hold": 100}},
+        "cut": {"type": "pause_cut", "title": "Cut", "settings": {"pause": 300}},
+        "heard_text": {"type": "speech_to_text", "title": "Heard text", "settings": {}}})
+    wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
+    wires += [("mic.out", "gate.in"), ("gate.out", "cut.in"), ("cut.out", "heard_text.in"), ("heard_text.out", "charter.in")]
+    graph["wires"] = [{"from": a, "to": b} for a, b in wires]
+    payloads = _queue(aioclient_mock, *[_text("It is five o'clock.")] * 4)
+    hub = data.audio
+    client = await hass_client()
+    with (
+        patch("custom_components.aac.audio_hub.make_vad", return_value=EnergyVad()),
+        patch.object(hub, "async_stt", AsyncMock(return_value={"text": "What time is it?"})) as stt,
+        patch.object(hub, "async_tts", AsyncMock(return_value=b"RIFFwave")),
+    ):
+        ws = await client.ws_connect("/api/aac/audio")
+        await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "area": "Office", "rate": 16000})
+        assert (await ws.receive_json())["type"] == "welcome"
+        quiet = array("h", [200, -200] * 80).tobytes()  # below the gate: never a piece
+        await ws.send_bytes(_audio((SILENCE, 0.2), (quiet, 0.8), (SILENCE, 0.5)))
+        await ws.send_bytes(_audio((SILENCE, 0.2), (LOUD, 0.8), (SILENCE, 0.5)))
+        play = await asyncio.wait_for(ws.receive_json(), 5)
+        assert play["type"] == "play" and play["text"] == "It is five o'clock."
+        await ws.close()
+    await hass.async_block_till_done(wait_background_tasks=True)
+    pieces = data.bus.recent("assistant", "cut", "out")
+    assert len(pieces) == 1 and pieces[0]["seconds"] >= 0.8  # the quiet stretch never became a piece
+    run = next(r for r in reversed(data.runs.runs) if r.input == "What time is it?")
+    assert run.source == "heard_text" and untimed(payloads[0]["messages"][-1]["content"]).endswith("What time is it?")
+    assert stt.await_count >= 1
