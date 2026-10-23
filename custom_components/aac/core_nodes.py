@@ -30,7 +30,7 @@ from .const import (
     DEFAULT_TEMPERATURE,
     DEFAULT_THINKING,
 )
-from .flow import DECIDE_SETTINGS, MODEL, MODEL_SETTINGS
+from .flow import DECIDE_SETTINGS, MODEL, MODEL_SETTINGS, pending_call
 from .home_api import API_ID as HOME_API_ID
 from .pools import TIERS
 from .request import SOURCES, TEXT, Message
@@ -57,6 +57,7 @@ DECIDE_HELP = ("Sends the message on through one of its named outputs. A model r
                "decision fails, the message takes the default output. It does not change the message.")
 
 
+CLOCK_TEXT = "Local time: {{ now().strftime('%A %Y-%m-%d %H:%M') }}"
 # Text cards render HA's own templates (owner, 2026-10-23: "can we incorporate HA's own variables")
 TEMPLATE_HINT = ("HA templates work: {{ now().strftime('%H:%M') }}, {{ states('sensor.outside_temperature') }}, "
                  "{{ <card id>.<value> }} from cards before it, {{ message.language }}. Changing text (like the time) "
@@ -168,6 +169,32 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
         except TemplateError as err:
             return f"{text}\n[template error: {err}]"
 
+    # The time (owner, 2026-10-23: "it should be its own card with in and out; the user can decide to make it a
+    # tool or have it inline with every round"); before, the model card added it unseen
+    clock_edit = editing({
+        "mode": {"type": "select", "title": "Mode", "options": [["trailer", "with every round (after the newest turn)"],
+                                                               ["tool", "as a tool (wire it from a model and back)"]],
+                 "help": "With every round the model always knows the time; as a tool it asks when it needs it."},
+        "text": {"type": "text", "title": "Text", "hint": TEMPLATE_HINT}},
+        {"mode": ("clock_mode", "trailer", vol.In(["trailer", "tool"])), "text": ("clock_text", CLOCK_TEXT, vol.Coerce(str))})
+
+    def clock_text(message: Message) -> str:
+        return render(str(master(message.domain.id).get("clock_text") or CLOCK_TEXT), message)
+
+    async def clock(message: Message, step) -> None:
+        if (call := pending_call(message, "clock")) is not None:  # a model asks
+            message.add("clock", "result", clock_text(message))
+            return None
+        if (master(message.domain.id).get("clock_mode") or "trailer") == "trailer":
+            message.put("clock", "trailer", clock_text(message))
+        return None
+
+    async def clock_tools(message: Message):
+        if (master(message.domain.id).get("clock_mode") or "trailer") != "tool":
+            return [], None
+        return [{"type": "function", "function": {"name": "time", "description": "The current local date and time.",
+                                                  "parameters": {"type": "object", "properties": {}}}}], None
+
     async def agent(message: Message, step) -> None:
         message.put("agent", "system", render((message.domain.settings.master.get(CONF_PROMPT) or "").strip(), message))
 
@@ -211,6 +238,11 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                            "Wire its dotted output into a model card's pool input.")
           for tier, about in TIERS.items()),
         # Standing text: replaced in place every time (the start of the conversation stays the same: the cache)
+        Node(id="clock", title="Clock", inputs=IN, outputs=OUT, adds=["trailer"], order=90, handle=clock, tools=clock_tools,
+             role="transform", edit=clock_edit,
+             description="The local time for the model: with every round after the newest turn (the model always knows "
+                         "it), or as a tool the model asks (wire it from the model's output and back). Its text is an HA "
+                         "template."),
         Node(id="agent", title="Agent", inputs=IN, outputs=OUT, adds=["system"], order=10, handle=agent, role="transform",
              description="Writes the assistant's role and manner into the system prompt (its Prompt setting, e.g. \"You "
                          "are AAC, a calm home companion …\"). An added Agent card has a prompt of its own, e.g. for a "

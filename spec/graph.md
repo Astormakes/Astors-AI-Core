@@ -67,6 +67,8 @@ every branch); a template reads `{{ <card id>.<name> }}`, plus `{{ message.langu
 added ("Kitchen buffer" → `kitchen_buffer`). So far: Heard lines (`text`, `speaker`, `mic`, `mic_name`, `area`),
 Buffer (`lines`, `count`, `newest`).
 
+The **Clock** card (core, in the line by default, last before the model) writes the local time as a trailer in every round, or, set to "as a tool", only answers a model that calls it (`time`); its text is a template. The model card adds nothing unseen any more.
+
 Text that changes on every message (the time) belongs in a Trailer: at the start it makes the model server
 recompute the prompt.
 

@@ -23,7 +23,6 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm, template
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.json import json_dumps
-from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_MAX_TOKENS,
@@ -155,7 +154,7 @@ def _args_text(args: dict[str, Any]) -> str:
 SOURCE_TEXT = 20000  # characters per recorded part
 
 
-def _sources(message: Message, me: str, titles: dict[str, str], system: list[dict[str, Any]], time_note: str | None,
+def _sources(message: Message, me: str, titles: dict[str, str], system: list[dict[str, Any]],
              offered: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Everything one model call got, in order, each part with the card it came from: the system prompt's parts,
     the document's entries as this model reads them, what goes at the end, the tool definitions. `outside`: no
@@ -175,9 +174,6 @@ def _sources(message: Message, me: str, titles: dict[str, str], system: list[dic
         part = {"where": "end" if e["kind"] == "trailer" else "chat", "from": who, "kind": e["kind"], "text": text}
         (trailers if e["kind"] == "trailer" else found).append(part)
     found += trailers
-    if time_note:
-        found.append({"where": "end", "from": "Model card (built in): the local time", "kind": "note", "text": time_note,
-                      "outside": True})
     for t in offered or []:
         spec = json_dumps(t.get("function") or {})
         found.append({"where": "tools", "from": t.get("function", {}).get("name", "?"), "kind": "tool",
@@ -379,16 +375,12 @@ class ModelNode:
             stream_to = self._stream(run, domain.id)
         left_out, context_retry, no_tools = 0, 0, False
         answer: str | None = None
-        now_note = f"[Local time: {dt_util.now().strftime('%A %Y-%m-%d %H:%M')}]"
         for iteration in range(limit + 1):
             final = iteration == limit  # last round: no tools, so the model has to answer instead of exploring on
             if stream_to:
                 stream_to.round = iteration
             parts, conv = build_conversation(message, me, titles)
             system, sources = await self._system_prompt(message, parts, [] if final or no_tools else tool_prompts, titles)
-            timed = bool(conv and conv[-1]["role"] == "user")
-            if timed:  # the time with the newest turn (not in the system prompt: the cache)
-                conv[-1] = {**conv[-1], "content": f"{conv[-1]['content']}\n\n{now_note}"}
             conv = [{"role": "system", "content": system}, *conv]
             while True:
                 offered = None if final or no_tools or not tools else tools
@@ -451,7 +443,7 @@ class ModelNode:
                     run.model = model_id
                     domain.runs.record_request(run, model_id, messages, offered, left_out=left_out,
                                                tokens=estimate(messages, offered), n_ctx=n_ctx,
-                                               sources=_sources(message, me, titles, sources, now_note if timed else None, offered))
+                                               sources=_sources(message, me, titles, sources, offered))
                 break
 
             calls = None if final or not offered else _parse_tool_calls(reply)
