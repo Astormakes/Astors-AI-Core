@@ -859,9 +859,29 @@ class AacPanel extends HTMLElement {
     if (view === "settings/languages") this._ws("aac/languages").then((r) => { this._langs = r; this._render(); }).catch(() => {});
     if (view === "settings/appearance") this._ws("aac/skins").then((r) => { this._skins = r; this._render(); }).catch(() => {});
     if (view.startsWith("chat/") && view !== "chat/new") { this._openChat(view.slice(5)); return; }
-    if (view === "chat/new") this._chat = null;
+    if (view === "chat/new") { this._chat = null; this._newCard = "chat"; }
     if (view.startsWith("run/")) this._openRun(view.slice(4));
+    if (view.startsWith("notes/")) { this._note = null; this._noteEdit = false; this._loadNote(view.slice(6)); }
     this._render();
+  }
+
+  async _loadNote(id) {
+    try { this._note = { id, ...(await this._ws("aac/notes/get", { node: id })) }; }
+    catch (e) { this._note = { id, error: e.message || String(e) }; }
+    this._render();
+  }
+
+  // A Markdown card's file (owner: "an MD file writer as a chat in the list for now"): read it, or edit it
+  _renderNote() {
+    const n = this._note;
+    if (!n) return this._page("FILE", "", '<div class="card"><p>Loading…<span class="cursor"></span></p></div>');
+    if (n.error) return this._page("FILE", "", `<div class="card"><p>${esc(n.error)}</p></div>`);
+    const body = this._noteEdit
+      ? `<textarea id="note-text" class="thin-scroll" style="min-height:60vh;width:100%">${esc(n.text)}</textarea>
+         <div class="actions"><button class="btn primary" id="note-save">Save</button><button class="btn" id="note-cancel">Cancel</button></div>`
+      : `<div class="txt md">${n.text.trim() ? md(n.text) : '<p class="hint">Empty so far: what passes the card is written here.</p>'}</div>
+         <div class="actions"><button class="btn" id="note-edit">Edit</button><button class="btn" data-go="nodes">Its card</button></div>`;
+    return this._page(n.title.toUpperCase(), "Markdown file", `<div class="card">${body}</div>`);
   }
 
   // ---------------------------------------------------------------- render
@@ -989,10 +1009,19 @@ class AacPanel extends HTMLElement {
       </div>`;
 
     const live = this._chats.filter((c) => !c.archived), archived = this._chats.filter((c) => c.archived);
-    const chats = live.length
-      ? live.map((c) => this._tab(`chat/${c.id}`, c.title, c.id === "aac" ? icon("bolt") : "",
-          "", `${c.unread ? `<span class="unread">${c.unread}</span>` : ""}<button class="icon-btn chatdel" data-chat-archive="${esc(c.id)}" title="Archive">${icon("trash")}</button>`)).join("")
-      : '<div class="empty">no chats yet</div>';
+    const chatTab = (c) => this._tab(`chat/${c.id}`, c.title, c.id === "aac" ? icon("bolt") : "",
+      "", `${c.unread ? `<span class="unread">${c.unread}</span>` : ""}<button class="icon-btn chatdel" data-chat-archive="${esc(c.id)}" title="Archive">${icon("trash")}</button>`);
+    // Every added Chat card is a section of its own (owner: "a chat section with the plus sign and a different
+    // section with the memory title")
+    const cards = (this._state?.chat_cards || []).filter((k) => k.id !== "chat");
+    const ofCard = (id) => live.filter((c) => (c.card || "chat") === id);
+    const known = new Set(cards.map((k) => k.id));
+    const chats = live.filter((c) => !known.has(c.card || "chat")).map(chatTab).join("") || '<div class="empty">no chats yet</div>';
+    const cardSegs = cards.map((k) => `<div class="seg">
+          <div class="seg-title">${icon("workers")}${esc(k.title.toUpperCase())}<span class="acts"><button class="icon-btn" data-new-chat="${esc(k.id)}" title="New chat on ${esc(k.title)}">${icon("plus")}</button></span></div>
+          <div class="seg-line"></div>
+          ${ofCard(k.id).map(chatTab).join("") || '<div class="empty">no chats yet</div>'}
+        </div>`).join("");
     // The archive: chats put away (not deleted); its own eye hides the section, the eye at the top shows it again
     const archive = !archived.length || (this._archHidden && !this._showAll) ? "" : `
       <div class="tab fold ${this._archOpen ? "open" : ""} ${this._archHidden ? "hidden-mod" : ""}" id="arch-fold" tabindex="0" role="button" aria-expanded="${!!this._archOpen}">
@@ -1023,7 +1052,7 @@ class AacPanel extends HTMLElement {
       <div class="scroll thin-scroll">
         ${setup}
         <div class="seg">
-          <div class="seg-title">${icon("workers")}CHATS<span class="acts"><button class="icon-btn" data-go="chat/new" title="New chat">${icon("plus")}</button></span></div>
+          <div class="seg-title">${icon("workers")}CHATS<span class="acts"><button class="icon-btn" data-new-chat="chat" title="New chat">${icon("plus")}</button></span></div>
           <div class="seg-line"></div>
           ${chats}
           ${archive}
@@ -1033,20 +1062,10 @@ class AacPanel extends HTMLElement {
           </div>
           ${autoList}
         </div>
-        ${(this._state?.modules || []).length ? `<div class="seg">
-          <div class="seg-title">${icon("workers")}MODULES</div><div class="seg-line"></div>
-          ${(this._state.modules).filter((m) => !m.hidden || this._showAll || this._modMenu === m.id).map((m) => {
-            const more = `<button class="icon-btn modmore" data-mod-menu="${esc(m.id)}" aria-expanded="${this._modMenu === m.id}" title="${esc(m.name)}: more">⋯</button>`;
-            const menu = this._modMenu !== m.id ? "" : `<div class="dmenu modmenu">
-                <button class="ditem" data-mod-open="${esc(m.id)}">Properties, permissions, settings…</button>
-                <button class="ditem" data-mod-hide="${esc(m.id)}" data-hidden="${m.hidden ? "0" : "1"}">${m.hidden ? "Show in this menu again" : "Hide from this menu"}</button>
-              </div>`;
-            const cls = m.hidden ? "hidden-mod" : "";
-            const tabs = !m.pages.length ? this._tab(`settings/module/${m.id}`, m.name, "", `${m.enabled ? "" : "soon"} ${cls}`, more)
-              : m.pages.map((p, i) => this._tab(`mod/${m.id}/${p.id}`, p.title, "", cls, i === 0 ? more : "")).join("");
-            return `<div class="modwrap" data-mod-wrap="${esc(m.id)}">${tabs}${menu}</div>`;
-          }).join("")}
-          ${!this._showAll && this._state.modules.some((m) => m.hidden) ? `<div class="empty" title="The eye button at the top shows them">${this._state.modules.filter((m) => m.hidden).length} hidden</div>` : ""}
+        ${cardSegs}
+        ${(this._state?.file_cards || []).length ? `<div class="seg">
+          <div class="seg-title">${icon("workers")}FILES</div><div class="seg-line"></div>
+          ${this._state.file_cards.map((f) => this._tab(`notes/${f.id}`, f.title)).join("")}
         </div>` : ""}
         <div class="seg">
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
@@ -1083,6 +1102,7 @@ class AacPanel extends HTMLElement {
     if (v === "settings/video") return this._renderVideo();
     if (v === "settings/appearance") return this._renderAppearance();
     if (v.startsWith("mod/")) return this._renderModulePage(v);
+    if (v.startsWith("notes/")) return this._renderNote();
     if (v === "nodes") return this._page("NODES", "how the parts are wired", '<div id="modhost"></div>');
     if (v === "settings/modules") return this._renderModules();
     if (v === "settings/entities") return this._renderEntities();
@@ -1252,7 +1272,8 @@ class AacPanel extends HTMLElement {
           : !master ? "No master model yet. Open SETUP to choose one."
           : this._state?.pools?.roles?.master?.active ? "Ask me anything." : "No master model is reachable right now (see Compute)."}</div>`;
     const busy = this._busy ? `<div class="bubble aac busy"><div class="who">AAC</div>${this._streamHtml()}</div>` : "";
-    const title = chat ? chat.title : "NEW CHAT";
+    const cardTitle = (this._state?.chat_cards || []).find((k) => k.id === (chat ? chat.card : this._newCard) && k.id !== "chat")?.title;
+    const title = chat ? chat.title : cardTitle ? `NEW CHAT · ${cardTitle.toUpperCase()}` : "NEW CHAT";
     const del = !chat?.id ? "" : chat.archived
       ? `<button class="btn" id="chat-restore">Restore</button><button class="icon-btn" id="chat-delete" title="Delete permanently">${icon("trash")}</button>`
       : `<button class="icon-btn" id="chat-archive" title="Archive">${icon("trash")}</button>`;
@@ -2056,6 +2077,15 @@ class AacPanel extends HTMLElement {
       }
     };
     sr.querySelectorAll("[data-go]").forEach((el) => onActivate(el, () => this._go(el.dataset.go)));
+    sr.querySelector("#note-edit")?.addEventListener("click", () => { this._noteEdit = true; this._render(); });
+    sr.querySelector("#note-cancel")?.addEventListener("click", () => { this._noteEdit = false; this._render(); });
+    sr.querySelector("#note-save")?.addEventListener("click", async () => {
+      const text = sr.querySelector("#note-text").value;
+      try { await this._ws("aac/notes/save", { node: this._note.id, text }); this._note.text = text; this._noteEdit = false; }
+      catch (e) { this._note.error = e.message || String(e); }
+      this._render();
+    });
+    sr.querySelectorAll("[data-new-chat]").forEach((el) => onActivate(el, () => { this._go("chat/new"); this._newCard = el.dataset.newChat; this._render(); }));
     // the cards' sidebar: pick one, add a type, or drag either into the grid
     const nodesEl = () => sr.querySelector("aac-nodes");
     sr.querySelectorAll("[data-node-pick]").forEach((el) => onActivate(el, () => nodesEl()?.pick(el.dataset.nodePick)));
@@ -2505,7 +2535,7 @@ class AacPanel extends HTMLElement {
     this._streamChat = null;
     this._render();
     try {
-      const r = await this._ws("aac/chat", { text, chat_id: chatId });
+      const r = await this._ws("aac/chat", { text, chat_id: chatId, ...(chatId ? {} : { card: this._newCard || "chat" }) });
       this._busy = false;
       this._stream = null;
       await this._openChat(r.chat_id);

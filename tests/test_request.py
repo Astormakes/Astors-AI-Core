@@ -29,12 +29,12 @@ def _answer(aioclient_mock, *replies):
 
 
 async def test_automatic_wiring(hass: HomeAssistant, mock_entry, configured):
-    """Sources through the standing-text cards (by order) and memory into the model; the model into the
+    """Sources through the standing-text cards (by order) into the model; the model into the
     endpoints and into every node with tools, and those back into the model (loops); one type, text."""
     await setup_aac(hass, mock_entry)
     wires = {(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in mock_entry.runtime_data.bus.wires("assistant")}
     assert ("chat.out", "charter.in") in wires and ("charter.out", "agent.in") in wires
-    assert ("agent.out", "memory.in") in wires and ("memory.out", "model.in") in wires  # memory recalls in the line
+    assert ("agent.out", "model.in") in wires and ("agent.out", "memory.in") not in wires  # memory hangs under the model
     assert ("voice.out", "charter.in") in wires and ("triggers.out", "charter.in") in wires
     assert not any(a.startswith("heartbeat.") for a, _ in wires)  # its module is off by default
     assert {("model.out", "chat.in"), ("model.out", "voice.in"), ("model.out", "assist.in")} <= wires
@@ -43,7 +43,7 @@ async def test_automatic_wiring(hass: HomeAssistant, mock_entry, configured):
 
 
 async def test_what_reaches_the_model(hass: HomeAssistant, aioclient_mock, mock_entry, configured):
-    """Charter first, then the agent's prompt; memory writes what it recalls into the conversation; the wired
+    """Charter first, then the agent's prompt; the wired
     nodes are the tools (setup only with the owner, endpoints never); the way is recorded."""
     from custom_components.aac.modules import async_set_access
 
@@ -54,14 +54,13 @@ async def test_what_reaches_the_model(hass: HomeAssistant, aioclient_mock, mock_
     assert answer.text == "On shelf 2." and run.model_node == "model"
     system = calls[0]["messages"][0]["content"]
     assert system.startswith("Charter") and "You are a test." in system
-    assert "basement shelf 2" in calls[0]["messages"][-1]["content"]  # the recall goes with the user turn
     names = {t["function"]["name"].split("__")[0] for t in calls[0]["tools"]}
     assert {"home", "memory", "lists_tools"} <= names and not names & {"setup", "chat", "voice", "assist"}
     nodes = [s["node"] for s in run.trace]
-    assert nodes[:3] == ["chat", "charter", "agent"] and "memory" in nodes and nodes[-1] == "model"
+    assert nodes[:3] == ["chat", "charter", "agent"] and nodes[-1] == "model"
     kinds = [(e["by"], e["kind"]) for e in answer.message.entries]
     assert kinds[:2] == [("charter", "system"), ("agent", "system")]  # standing text first (the cache)
-    assert ("chat", "user") in kinds and ("memory", "note") in kinds and kinds[-1] == ("model", "answer")
+    assert ("chat", "user") in kinds and kinds[-1] == ("model", "answer")
 
     await async_set_access(mock_entry, "lists", "assistant", {"enabled": False})
     await async_run_request(hass, mock_entry, "hi", kind="chat", trigger="chat", title="t")
@@ -150,8 +149,8 @@ async def test_buffer_keeps_lines_and_is_a_tool(hass: HomeAssistant, aioclient_m
     graph = data.store.graph("assistant")
     graph["nodes"] = {"room": {"type": "buffer", "title": "Room", "settings": {"size": 2, "write": "note"}}}
     wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
-    wires = [w for w in wires if w != ("agent.out", "memory.in")]
-    wires += [("agent.out", "room.in"), ("room.out", "memory.in"), ("model.out", "room.in"), ("room.out", "model.in")]
+    wires = [w for w in wires if w != ("agent.out", "model.in")]
+    wires += [("agent.out", "room.in"), ("room.out", "model.in"), ("model.out", "room.in")]
     graph["wires"] = [{"from": a, "to": b} for a, b in dict.fromkeys(wires)]
     calls = _answer(aioclient_mock, "ok")
     for text in ("one", "two", "three"):
@@ -220,3 +219,36 @@ async def test_the_pool_wire_picks_the_models(hass: HomeAssistant, mock_entry, c
     with patch.object(data.pool, "endpoint_for", side_effect=lambda tier, bg=False: seen.append(tier)):
         run, _ = await async_run_request(hass, mock_entry, "hi", kind="chat", trigger="chat", title="t")
     assert seen and seen[0] == "fast" and run.tier == "fast"
+
+
+async def test_chat_cards_and_markdown_files(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured, tmp_path):
+    """An added Chat card is a chat of its own (its chats start there); a Markdown card appends answers to its file
+    and the panel reads and edits it."""
+    from unittest.mock import patch
+
+    await setup_aac(hass, mock_entry)
+    data = mock_entry.runtime_data
+    graph = data.store.graph("assistant")
+    graph["nodes"] = {"mem": {"type": "chat_card", "title": "Memory", "settings": {}},
+                      "log": {"type": "md_file", "title": "Log", "settings": {"file": "log", "append": "answer"}}}
+    wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
+    wires += [("mem.out", "model.in"), ("model.out", "log.in"), ("log.out", "mem.in")]  # the answer passes the log
+    graph["wires"] = [{"from": a, "to": b} for a, b in dict.fromkeys(wires)]
+    _answer(aioclient_mock, "Noted in memory.")
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/state"})
+    state = (await ws.receive_json())["result"]
+    assert {"id": "mem", "title": "Memory"} in state["chat_cards"] and state["file_cards"] == [{"id": "log", "title": "Log"}]
+    with patch.object(hass.config, "path", side_effect=lambda *p: str(tmp_path.joinpath(*p))):
+        await ws.send_json_auto_id({"type": "aac/chat", "text": "remember this", "card": "mem"})
+        reply = (await ws.receive_json())["result"]
+        chat = data.chats.get(reply["chat_id"])
+        assert chat["card"] == "mem" and reply["message"]["text"] == "Noted in memory."
+        assert data.runs.runs[-1].source == "mem"
+        await hass.async_block_till_done()
+        await ws.send_json_auto_id({"type": "aac/notes/get", "node": "log"})
+        assert "Noted in memory." in (await ws.receive_json())["result"]["text"]
+        await ws.send_json_auto_id({"type": "aac/notes/save", "node": "log", "text": "# Mine\n"})
+        assert (await ws.receive_json())["success"]
+        await ws.send_json_auto_id({"type": "aac/notes/get", "node": "log"})
+        assert (await ws.receive_json())["result"]["text"] == "# Mine\n"

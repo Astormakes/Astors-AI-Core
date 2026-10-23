@@ -5,15 +5,21 @@ for different things").
   it can read, add, remove a slot, remove what contains a word, or clear it.
 - Heard lines: the bridge from the audio pipeline: every finished spoken line becomes a message of its own
   (an answer to it goes to the voice endpoint, which speaks it at that microphone).
+- Markdown file: a note file (`<config>/aac/notes/<name>.md`): in a line it appends what passes it, wired to a model
+  it can be read, appended to and rewritten; the panel lists it like a chat (owner: "an MD file writer as a chat in
+  the list for now, later a file access tool").
 Both exist only as added cards (Add node), wired by hand.
 """
 
 from __future__ import annotations
 
 from collections import deque
+from pathlib import Path
+import re
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.json import json_dumps
+from homeassistant.util import dt as dt_util
 
 from .flow import pending_call
 from .request import TEXT, Message
@@ -48,6 +54,24 @@ BUFFER_TOOLS = [
     _fn("remove_text", "Take out every slot that contains this text.", {"text": {"type": "string"}}, ["text"]),
     _fn("clear", "Empty the buffer."),
 ]
+
+
+FILE_SETTINGS = {
+    "file": {"type": "text", "title": "File name", "default": "notes", "help": "Kept as <config>/aac/notes/<name>.md."},
+    "append": {"type": "select", "title": "In a line it writes", "default": "answer",
+               "options": [["answer", "the newest answer"], ["said", "the newest line (said or answered)"], ["none", "nothing (only for its tools)"]]},
+}
+FILE_TOOLS = [
+    _fn("read", "The whole file."),
+    _fn("append", "Add text at the end (Markdown).", {"text": {"type": "string"}}, ["text"]),
+    _fn("write", "Replace the whole file with this text (Markdown).", {"text": {"type": "string"}}, ["text"]),
+]
+
+
+def note_path(hass: HomeAssistant, settings: dict[str, Any]) -> Path:
+    """Where a Markdown card's file lives (only a plain name: no folders)."""
+    name = re.sub(r"[^\w\- ]", "", str(settings.get("file") or "notes")).strip() or "notes"
+    return Path(hass.config.path("aac", "notes", f"{name}.md"))
 
 
 def general_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
@@ -119,7 +143,44 @@ def general_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
         return Node(id=inst_id, title=title, inputs={"lines": "text.line"}, outputs=OUT, role="source", run=run,
                     settings=settings, description=HEARD_HELP)
 
+    def file_make(inst_id: str, title: str, settings: dict[str, Any]) -> Node:
+        path = note_path(hass, settings)
+
+        def read() -> str:
+            return path.read_text(encoding="utf-8") if path.exists() else ""
+
+        def write(text: str, add: bool) -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a" if add else "w", encoding="utf-8") as f:
+                f.write(text)
+
+        async def tools(message: Message):
+            return FILE_TOOLS, None
+
+        async def handle(message: Message, step) -> None:
+            if (call := pending_call(message, inst_id)) is not None:
+                tool, args = call["data"].get("tool"), call["data"].get("args") or {}
+                if tool in ("append", "write"):
+                    text = str(args.get("text") or "")
+                    await hass.async_add_executor_job(write, (text if text.endswith("\n") else text + "\n"), tool == "append")
+                content = await hass.async_add_executor_job(read)
+                message.add(inst_id, "result", content[-6000:] if tool == "read" else json_dumps({"done": tool, "length": len(content)}))
+                return None
+            take = settings.get("append") or "answer"
+            newest = next((e for e in reversed(message.entries) if e["kind"] in ("user", "answer")), None)
+            if take != "none" and newest and (take == "said" or newest["kind"] == "answer") and newest["text"].strip():
+                stamp = dt_util.now().strftime("%Y-%m-%d %H:%M")
+                await hass.async_add_executor_job(write, f"\n## {stamp}\n\n{newest['text'].strip()}\n", True)
+            return None
+
+        node = Node(id=inst_id, title=title, inputs=IN, outputs=OUT, settings=settings, tools=tools, handle=handle,
+                    description=FILE_HELP)
+        node.read_file, node.write_file = read, write  # the panel opens it (aac/notes)
+        return node
+
     return [
+        Node(id="md_file", title="Markdown file", inputs=IN, outputs=OUT, template=True, make=file_make,
+             settings_schema=FILE_SETTINGS, description=FILE_HELP),
         Node(id="buffer", title="Buffer", inputs=IN, outputs=OUT, template=True, make=buffer_make,
              settings_schema=BUFFER_SETTINGS, description=BUFFER_HELP),
         Node(id="heard", title="Heard lines", inputs={"lines": "text.line"}, outputs=OUT, role="source", template=True,
@@ -130,5 +191,8 @@ def general_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
 BUFFER_HELP = ("Keeps the last texts that pass it (a set number of slots) and writes them into the message as one "
                "numbered block, e.g. the last ten lines heard in a room. Wired to a model it is a tool: read, add, "
                "remove a slot, remove what contains a word, clear.")
+FILE_HELP = ("A Markdown note file (<config>/aac/notes/<name>.md), listed under FILES in the sidebar where you can read "
+             "and edit it. In a line it appends what passes it (the newest answer, with the time); wired to a model it "
+             "is a tool: read, append, write.")
 HEARD_HELP = ("Turns every finished spoken line from Hearing into a message of its own (wire Hearing's lines into it). "
               "What comes back to the Voice card is spoken at the microphone the line came from.")

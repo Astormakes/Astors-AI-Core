@@ -84,6 +84,8 @@ def async_register(hass: HomeAssistant) -> None:
         ws_node_settings,
         ws_node_names,
         ws_node_single,
+        ws_notes_get,
+        ws_notes_save,
         ws_node_positions,
         ws_node_wires,
         ws_node_instances,
@@ -150,6 +152,11 @@ def _state(hass: HomeAssistant, entry, dom: Domain) -> dict[str, Any]:
         "setup": setup_steps(hass, store, settings, entry),
         "ui": store.data["ui"],
         "modules": [m.summary(entry, dom.id) for m in entry.runtime_data.modules],
+        # the chat cards: the panel chat and the added ones, each a section in the sidebar
+        "chat_cards": [{"id": n.id, "title": n.title} for n in entry.runtime_data.bus.nodes_in(dom.id).values()
+                       if n.id == "chat" or n.type == "chat_card"],
+        "file_cards": [{"id": n.id, "title": n.title} for n in entry.runtime_data.bus.nodes_in(dom.id).values()
+                       if n.type == "md_file"],
         "requests_open": len(entry.runtime_data.requests.pending(dom.id)),
         "pools": entry.runtime_data.pool.status(),
         "llm_apis": [{"id": api.id, "name": api.name} for api in llm.async_get_apis(hass)
@@ -390,6 +397,7 @@ def _run_summary(run) -> dict[str, Any]:
         vol.Required("type"): "aac/chat",
         vol.Required("text"): vol.All(str, vol.Length(min=1)),
         vol.Optional("chat_id"): vol.Any(str, None),
+        vol.Optional("card"): vol.Any(str, None),  # a new chat on an added Chat card (default: the panel chat)
     }
 )
 @websocket_api.require_admin
@@ -399,8 +407,13 @@ async def ws_chat(hass: HomeAssistant, connection, msg) -> None:
     if not (entry := _entry(hass, connection, msg)):
         return
     chats = _d(entry, msg).chats
-    chat = chats.get(msg.get("chat_id") or "") or chats.create()
-    user = new_entry("chat", "user", msg["text"])
+    chat = chats.get(msg.get("chat_id") or "")
+    if chat is None:
+        chat = chats.create()
+        if msg.get("card") and msg["card"] in entry.runtime_data.bus.nodes_in(_d(entry, msg).id):
+            chat["card"] = msg["card"]
+    card = chat.get("card") or "chat"
+    user = new_entry(card, "user", msg["text"])
     chats.add_message(chat["id"], "user", msg["text"], entry=user["id"])
     run, result = await async_run_request(
         hass,
@@ -415,6 +428,7 @@ async def ws_chat(hass: HomeAssistant, connection, msg) -> None:
         domain=_d(entry, msg),
         entries=chats.document(chat["id"]),
         user_entry=user,
+        source=card,
     )
     if result is not None:
         chats.set_conversation(chat["id"], result.conversation_id)
@@ -800,6 +814,38 @@ async def ws_node_settings(hass: HomeAssistant, connection, msg) -> None:
         return
     async_notify(hass, "modules", domain=dom.id)
     connection.send_result(msg["id"], {"values": node.edit[1](dom.id)})
+
+
+def _file_card(entry, msg):
+    node = entry.runtime_data.bus.nodes_in(_d(entry, msg).id).get(msg["node"])
+    return node if node is not None and node.type == "md_file" else None
+
+
+@aac_command({vol.Required("type"): "aac/notes/get", vol.Required("node"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_notes_get(hass: HomeAssistant, connection, msg) -> None:
+    """A Markdown card's file."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    if (node := _file_card(entry, msg)) is None:
+        connection.send_error(msg["id"], "not_found", "No such Markdown card")
+        return
+    connection.send_result(msg["id"], {"title": node.title, "text": await hass.async_add_executor_job(node.read_file)})
+
+
+@aac_command({vol.Required("type"): "aac/notes/save", vol.Required("node"): str, vol.Required("text"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_notes_save(hass: HomeAssistant, connection, msg) -> None:
+    """Edit a Markdown card's file in the panel."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    if (node := _file_card(entry, msg)) is None:
+        connection.send_error(msg["id"], "not_found", "No such Markdown card")
+        return
+    await hass.async_add_executor_job(node.write_file, msg["text"], False)
+    connection.send_result(msg["id"], {})
 
 
 @aac_command({vol.Required("type"): "aac/nodes/single", vol.Required("single"): [vol.Match(r"^[\w-]+\.[\w-]+$")]})

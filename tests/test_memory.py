@@ -9,7 +9,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 from custom_components.aac.modules.memory.store import MemoryStore, fuse
 from homeassistant.core import HomeAssistant
 
-from .conftest import BASE_URL, heartbeat_now, setup_aac, memory_of
+from .conftest import BASE_URL, heartbeat_now, setup_aac, memory_of, memory_in_line
 
 # A tiny fake "embedding": counts of a few topic words, so meaning-like search is testable
 TOPICS = ["milk", "oat", "soy", "drill", "tool", "basement", "battery", "printer"]
@@ -156,6 +156,7 @@ async def test_memories_handed_to_model(
 ):
     """Matching memories are attached to the user message (prompt cache stays intact)."""
     await setup_aac(hass, mock_entry)
+    memory_in_line(mock_entry)
     await memory_of(hass).async_remember("Oat milk from Alpro was really good.", "preference")
     payloads = []
 
@@ -220,6 +221,7 @@ async def test_remember_and_lookup_tools(
 ):
     """The master stores a structured fact and looks the series up; the context gets the summary."""
     await setup_aac(hass, mock_entry)
+    memory_in_line(mock_entry)
     memory = memory_of(hass)
     await memory.async_remember("Weight 82.4 kg", "event", fact={"subject": "user", "attribute": "weight", "value": 82.4, "unit": "kg"})
     payloads = []

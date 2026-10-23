@@ -110,7 +110,9 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                                 "help": "Assist gives live states, timers and HA's to-do lists. None ticked: it offers nothing."}},
                       {"apis": (CONF_LLM_HASS_API, [], vol.All([vol.In([a for a, _ in ha_apis])]))})
 
-    def endpoint(sid: str) -> Node:
+    def endpoint(sid: str, title: str | None = None, kind: str | None = None, settings: dict | None = None) -> Node:
+        kind = kind or sid  # chat · voice · assist (an added Chat card is a chat of its own, with its own title)
+
         async def handle(message: Message, step) -> list:
             from .broker import is_silent, short  # noqa: PLC0415 - avoid an import cycle
             from .chats import AAC_CHAT_ID  # noqa: PLC0415
@@ -132,9 +134,9 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                         chats.set_entries(chat_id, message.entries)
                 step.deliver(message)
                 return []
-            if message.chat_id and sid in ("chat", "voice") and chats.get(message.chat_id):
+            if message.chat_id and kind in ("chat", "voice") and chats.get(message.chat_id):
                 chats.set_entries(message.chat_id, message.entries)  # the conversation as it now is
-            if sid == "voice" and message.origin != "voice":  # a line from elsewhere (Heard lines): speak at its mic
+            if kind == "voice" and message.origin != "voice":  # a line from elsewhere (Heard lines): speak at its mic
                 user = message.last("user")
                 audio = entry.runtime_data.audio
                 text = message.answer
@@ -145,8 +147,8 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                 step.deliver(message)
             return []
 
-        return Node(id=sid, title=SOURCES[sid], inputs=IN, outputs=OUT, role="endpoint", description=SOURCE_HELP[sid],
-                    handle=handle)
+        return Node(id=sid, title=title or SOURCES[sid], inputs=IN, outputs=OUT, role="endpoint",
+                    description=SOURCE_HELP[kind], handle=handle, settings=settings or {})
 
     async def agent(message: Message, step) -> None:
         message.put("agent", "system", (message.domain.settings.master.get(CONF_PROMPT) or "").strip())
@@ -179,6 +181,12 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
     flow = lambda: entry.runtime_data.flow  # noqa: E731
     return [
         *(endpoint(sid) for sid in SOURCES),
+        # More chats, each with its title (owner: "a chat with just the memory"): its own section in the sidebar
+        Node(id="chat_card", title="Chat", inputs=IN, outputs=OUT, role="endpoint", template=True,
+             description="A chat of its own with a title (e.g. \"Memory\"): it gets its own section in the sidebar. What "
+                         "you write there leaves at its output; wire it to the cards it should use and a model's output back "
+                         "into its input.",
+             make=lambda i, t, s: endpoint(i, t, "chat", s)),
         # The pools (dotted: a model card reserves a model from the one wired to it)
         *(Node(id=f"pool_{tier}", title=f"Models: {tier}", outputs={"models": "pool"}, role="pool",
                description=f"Hands a model card a model from the pool: {about} (SETTINGS → Compute holds the models). "

@@ -203,6 +203,13 @@ async def test_wiring_by_hand(hass, hass_ws_client, aioclient_mock, mock_entry, 
     assert (await ws.receive_json())["result"]["by_hand"] is False
     await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "Where is the drill?"})
     await ws.receive_json()
+    assert any(t["function"]["name"].startswith("memory") for t in calls[-1]["tools"])  # automatic: memory is a tool
+    line = [w for w in auto["wires"] if w != {"from": "agent.out", "to": "model.in"}]
+    line += [{"from": "agent.out", "to": "memory.in"}, {"from": "memory.out", "to": "model.in"}]
+    await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": line})  # wired into the line: it also recalls
+    assert (await ws.receive_json())["success"]
+    await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "Where is the drill?"})
+    await ws.receive_json()
     assert "basement" in calls[-1]["messages"][-1]["content"]
 
 

@@ -140,3 +140,12 @@ def everything(payload: dict) -> str:
 def untimed(text: str) -> str:
     """A user turn without the local time the model card adds to the newest one."""
     return str(text).split("\n\n[Local time:")[0]
+
+
+def memory_in_line(entry) -> None:
+    """Wire memory into the line before the model (it hangs under the model by default): it then writes
+    matching memories into the conversation."""
+    data = entry.runtime_data
+    wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
+    wires = [w for w in wires if w != ("agent.out", "model.in")] + [("agent.out", "memory.in"), ("memory.out", "model.in")]
+    data.store.graph("assistant")["wires"] = [{"from": a, "to": b} for a, b in dict.fromkeys(wires)]

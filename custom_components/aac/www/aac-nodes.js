@@ -750,7 +750,44 @@ class AacNodes extends HTMLElement {
       const what = e.dataTransfer.getData("text/plain") || "";
       if (what.startsWith("node:") || what.startsWith("type:")) this._drop(what, e);
     });
+    // Two fingers (a phone, a tablet): pinch to zoom around the fingers, move them to pan
+    this._touches = new Map();
+    const pinchState = () => {
+      const [a, b] = [...this._touches.values()], r = this._stage.getBoundingClientRect();
+      return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2 - r.left - r.width / 2, my: (a.y + b.y) / 2 - r.top - r.height / 2 };
+    };
     this._svg.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "touch") {
+        this._touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (this._touches.size === 2) { // a second finger: whatever the first one started becomes a pinch
+          if (this._link) { this._link.path.remove(); this._link = null; }
+          if (this._drag) { this._drag = null; }
+          this._pan = null;
+          this._pinch = { start: pinchState(), view: { ...this._view } };
+          return;
+        }
+      }
+    }, { capture: true });
+    this._svg.addEventListener("pointermove", (e) => {
+      if (e.pointerType !== "touch" || !this._touches.has(e.pointerId)) return;
+      this._touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (!this._pinch || this._touches.size < 2) return;
+      e.stopImmediatePropagation();
+      const now = pinchState(), s0 = this._pinch.start, v0 = this._pinch.view;
+      const k = Math.min(3, Math.max(.2, v0.k * now.d / s0.d));
+      // the world point that was under the fingers' midpoint stays under it
+      this._view = { k, x: now.mx - (s0.mx - v0.x) * k / v0.k, y: now.my - (s0.my - v0.y) * k / v0.k };
+      this._layout();
+    }, { capture: true });
+    const lift = (e) => {
+      if (e.pointerType !== "touch") return;
+      this._touches.delete(e.pointerId);
+      if (this._touches.size < 2 && this._pinch) { this._pinch = null; this._pan = null; e.stopImmediatePropagation(); }
+    };
+    this._svg.addEventListener("pointerup", lift, { capture: true });
+    this._svg.addEventListener("pointercancel", lift, { capture: true });
+    this._svg.addEventListener("pointerdown", (e) => {
+      if (this._pinch) return;
       const g = e.target.closest(".nv-node"), fg = e.target.closest(".nv-frame");
       this._svg.setPointerCapture(e.pointerId);
       if (e.button === 1) { // the middle button drags the view, wherever you grab
@@ -1035,7 +1072,8 @@ class AacNodes extends HTMLElement {
       <label class="check"><input type="checkbox" data-mod-on ${m.enabled ? "checked" : ""}>On in this domain</label>
       ${fields}${more ? '<p class="hint">More settings on the module\'s page.</p>' : ""}
       <div class="actions"><button class="btn primary" data-nv="mod-save" data-module="${esc(id)}">Save</button>
-        <button class="btn" data-go="settings/module/${esc(id)}">Module page</button></div>`;
+        ${(m.pages || []).map((pg) => `<button class="btn" data-go="mod/${esc(id)}/${esc(pg.id)}">Open ${esc(pg.title)}</button>`).join("")}
+        <button class="btn" data-go="settings/module/${esc(id)}">Permissions</button></div>`;
   }
 
   async _saveModule(id) {

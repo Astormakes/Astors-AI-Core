@@ -241,8 +241,9 @@ class Bus:
             return next((p for p, k in (node.outputs if side == "out" else node.inputs).items() if k == "text"), None)
 
         found = []
-        # in the line: the standing-text cards, and nodes with tools that also write in a line (memory: recalls)
-        transforms = sorted((n for n in on if n.role == "transform" or (n.role == "tool" and n.adds)), key=lambda n: n.order)
+        # in the line: the standing-text cards (memory hangs under the model as a loop; wired into the line by
+        # hand it also writes matching memories in)
+        transforms = sorted((n for n in on if n.role == "transform"), key=lambda n: n.order)
         for model in [n for n in on if n.role == "model"][:1]:  # the standard model (added ones are wired by hand)
             for src in (n for n in on if n.role in ("source", "endpoint")):
                 at = (src.id, port(src, "out"))
