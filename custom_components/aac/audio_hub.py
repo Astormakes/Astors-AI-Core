@@ -631,10 +631,13 @@ class AudioHub:
         return True
 
     async def async_answer(self, source: Source, text: str, before: list[str] | None = None,
-                           speaker: dict[str, Any] | None = None, before_title: str = "The same person said just before") -> None:
+                           speaker: dict[str, Any] | None = None, before_title: str = "The same person said just before",
+                           via: str | None = None) -> None:
         """The voice domain's master answers a spoken line; the answer goes back by voice.
         before = what was said just before it in the room (the wake word module's look-back);
-        speaker = the line's voice (Voices module), so the model knows who talks ("that's me")."""
+        speaker = the line's voice (Voices module), so the model knows who talks ("that's me");
+        via = the card that decided to answer (wake word, companion): the message leaves at its output and the
+        answer comes back to the Voice card (spec/graph.md)."""
         from .broker import async_run_request  # noqa: PLC0415 - avoid an import cycle
 
         data = self.entry.runtime_data.voice_domain  # one domain owns the voice
@@ -658,6 +661,7 @@ class AudioHub:
             domain=data,
             entries=data.chats.document(chat_id),
             own_words=text,  # the person's own line, not the room's lines around it
+            source=via or "voice", reply_to="voice" if via else None,
         )
         if result is not None:
             data.chats.set_conversation(chat_id, result.conversation_id)

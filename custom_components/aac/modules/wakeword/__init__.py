@@ -109,12 +109,14 @@ async def async_setup_module(ctx: ModuleContext) -> None:
                   and datetime.fromisoformat(x["time"]) >= since and x.get("kind") == "speech"
                   # with voices known: only the same person (not a video or others in the room)
                   and (not voice or (x.get("speaker") or {}).get("id") == voice)]
-        await hub.async_answer(source, text, before, line.get("speaker"))
+        await hub.async_answer(source, text, before, line.get("speaker"), via="wakeword")
 
     async def on_line(domain_id: str, port: str, line: dict[str, Any]) -> None:
         if source := ctx.audio.source_of(line):
             await heard(source, line, ctx.audio.earlier(line))
 
-    ctx.add_node(Node(id="wakeword", title="Wake word", inputs={"lines": "text.line"}, run=on_line,
+    # A line with its name leaves at its output, through the line into the model; the answer goes to Voice
+    ctx.add_node(Node(id="wakeword", title="Wake word", inputs={"lines": "text.line"}, outputs={"out": "text"},
+                      role="source", run=on_line,
                       description="Listens to the heard lines and answers when one of AAC's names is said (or right after "
                                   "it spoke); an attention check filters out a video saying the name."))

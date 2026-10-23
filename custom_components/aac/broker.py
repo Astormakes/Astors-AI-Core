@@ -99,6 +99,7 @@ async def async_run_request(
     source: str | None = None,
     system: str | None = None,
     user_entry: dict[str, Any] | None = None,
+    reply_to: str | None = None,
 ) -> tuple[Run, Answer | None]:
     """A message from someone who waits for the answer (a chat, a spoken line, HA Assist, Try it): the document
     so far (`entries`, or a plain `history`) plus the new line leaves its endpoint and goes through the graph;
@@ -110,7 +111,7 @@ async def async_run_request(
         domain=domain, entries=list(entries) if entries is not None else from_messages(source, history or []),
         kind=kind, trigger=trigger, title=title, chat_id=chat_id, conversation_id=conversation_id or ulid_now(),
         user_id=user_id, tier=tier, allow_tools=allow_tools, language=language or hass.config.language,
-        device_id=device_id, origin=source, priority=PRIORITY.get(source, "high"),
+        device_id=device_id, origin=source, reply_to=reply_to, priority=PRIORITY.get(source, "high"),
     )
     if system:
         message.put(source, "system", system)

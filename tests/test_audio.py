@@ -511,6 +511,8 @@ async def test_split_utterance_is_answered_once(hass: HomeAssistant, hass_client
     await hass.async_block_till_done(wait_background_tasks=True)
     assert len(payloads) == 2  # one attention check, one answer
     assert untimed(payloads[1]["messages"][-1]["content"]).endswith("Computer, are you there? Please say hello.")
+    run = mock_entry.runtime_data.runs.runs[-1]
+    assert run.source == "wakeword" and [s["node"] for s in run.trace][:2] == ["wakeword", "charter"]  # from its own output
     assert [x["addressed"] for x in hub.transcript if x["kind"] != "aac"] == [True, True]
 
 

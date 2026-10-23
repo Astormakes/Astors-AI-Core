@@ -2,7 +2,7 @@
 
 Running log for AAC. Read this first in a new session. Newest state on top. The long v0 history is in `docs/history-v0.md` (private).
 
-## Current state (2026-10-23) – 1.0.0-dev.36
+## Current state (2026-10-23) – 1.0.0-dev.38
 
 - **v1 on `main`**, live on the owner's HA (owner: "I'm not really using it, work on the real HA"; only the lists matter, exported to `docs/aac-lists-2026-10-23.md`). The last v0 is the tag `v0.50.1-last-v0`. `scripts/deploy_ha.sh` needs `AAC_ALLOW_V1=1`.
 - **The graph** (`spec/graph.md`, owner's design of 2026-10-23): a message is a document of tagged entries (`request.py`); every node writes into it; a model card (`model_node.py`) reads it all as an ordinary chat with tools; **its wired nodes are its tools** (calling one sends the document there and waits until it comes back: a loop, `flow.Step.call`); round outputs copy to every wire, square ones (model, Decide) choose; endpoints (`chat`, `voice`, `assist`) take answers home; the chat keeps its document (edits change it; expert view in the chat: every entry and the way, e.g. Panel chat › Model › Home › Model).
@@ -11,9 +11,12 @@ Running log for AAC. Read this first in a new session. Newest state on top. The 
 - The panel: the Master agent page is gone (its settings are on the Agent, Model and Home Assistant tools cards); node positions are kept on the server; round/square ports.
 - **Node view in slots** (owner, 2026-10-23: no forces): a column per step in the flow (a card feeding another sits one column left of it, one fed by it one column right, a loop card in its model's column stacked below); wires: short forward ones curve, loops in nested side lanes, backward or far ones in lanes below the cards of their own chain; drops snap to the column; Tidy lays everything out again (Undo goes back). The info panel sits right of the graph; Try it is gone; the wheel scrolls, Ctrl + wheel zooms, the middle button drags. While Nodes is open the sidebar lists the cards by role (click: pick and centre; drag into the grid: place) and the types to add.
 - Universal nodes: **Buffer** (last N texts as one block; tools read/add/remove_slot/remove_text/clear), **Heard lines** (spoken lines from Hearing become messages; the Voice card speaks the answer at that mic). Outputs can be set to one wire (`aac/nodes/single`). **Pool cards** (`pool_master`, `pool_fast` …): a model card takes its models from the pool wired to its dotted pool input.
+- **Chat cards** (type `chat_card`, added like any card): a chat of its own with a title; each is a section in the sidebar with its own + (a chat remembers its `card`; its messages leave there). **Markdown file cards** (`md_file`): `<config>/aac/notes/<name>.md`; in a line they append what passes, wired to a model they are a tool (read/append/write); listed under FILES in the sidebar, readable and editable (`aac/notes/get|save`).
+- Memory hangs under the model as a loop by default (owner); wired into the line by hand it also writes matching memories in.
+- **Voice through the graph:** Wake word and Companion have an output: a line they decide to answer leaves there, takes the line (charter, agent) into the model, and the answer goes to the Voice card (`reply_to: voice`). Module pages (Lists, Calendar, Memory …) open from their cards; the sidebar has no Modules section any more. Pinch zoom on phones.
 - Settings list: Appearance, Languages, Nodes; the other pages open from their cards (Home → Entities, pools → Compute, Hearing/STT → Audio, toolbar → Modules). The chat input grows with long messages.
 - Memories were cleared on the owner's HA (2026-10-23, backup `/config/aac/bak-before-clean-20261023/`). Backups before deploys: `/config/aac/bak-1.0.0-dev.28-before/` and older.
-- Tests: 153 mocked (`../.venv/bin/python -m pytest -q -p no:logging`).
+- Tests: 154 mocked (`../.venv/bin/python -m pytest -q -p no:logging`).
 
 ## Working agreements
 - **The user pushes** (GitHub Desktop only). Claude commits locally whenever something is in a runnable state, never pushes
@@ -63,6 +66,8 @@ Running log for AAC. Read this first in a new session. Newest state on top. The 
 - Bench 2026-10-23 (35B on the PC, Decide's grammar): "addressed to AAC?" 12/12 right in 0.26 s each (English, German, a video, a follow-up that only counts with the Buffer's line before it). Script: session scratchpad `bench/addressed.py`.
 - Try the owner's audio chain with the real models: Heard lines → Buffer → Decide ("addressed to AAC?") → yes: an Instructions card → Model → Voice (all cards exist now).
 - Sidebar drag into the grid: built, not yet tried in a real browser.
+- **Setup** (owner, 2026-10-23): it doesn't fit the graph any more; it gets replaced once the owner has played with a clean domain. Decide then, not before.
+- German voice: de_prod3 rejected ("wrong voice"); blind converter comparison `runs/tune_de5` on :8094, then fix the recipe.
 - Phase 3: pool nodes; the settings pages fold into nodes (Compute → pools, Entities → the Home node, Audio, Modules); settings left: Appearance, Languages, Nodes.
 - Phase 4: the audio types merged into `audio` / `text`.
 - Open from before: bench Decide routing with real models; voice picker rounds (`~/cluade/voicelab`, pickers on :8092 German, :8093 English when started); the server's 7800 XT runs on Vulkan for now (owner works on it in another session); the bigger chat input (Open Issues list).

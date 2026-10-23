@@ -162,7 +162,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
                     ctx.audio.changed()
                     if found["respond"]:
                         await ctx.audio.async_answer(source, line["text"], found["before"], line.get("speaker"),
-                                                     before_title=RATED_TITLE)
+                                                     before_title=RATED_TITLE, via="companion")
                 if (nxt := waiting.pop(source.id, None)) is None:
                     break
                 source, line = nxt
@@ -173,6 +173,8 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         if source := ctx.audio.source_of(line):
             await heard(source, line, ctx.audio.earlier(line))
 
-    ctx.add_node(Node(id="companion", title="Companion", inputs={"lines": "text.line"}, run=on_line,
+    # A line it decides to answer leaves at its output, through the line into the model; the answer goes to Voice
+    ctx.add_node(Node(id="companion", title="Companion", inputs={"lines": "text.line"}, outputs={"out": "text"},
+                      role="source", run=on_line,
                       description="Follows the conversation in the room instead of waiting for its name: for every spoken "
                                   "line a quick decision whether AAC should answer now. Steps back while the wake word is on."))
