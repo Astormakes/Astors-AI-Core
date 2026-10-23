@@ -168,8 +168,13 @@ listed under **Audio** in "Add node", each removable and addable:
    chain; a sentence heard by two is dropped once later (a **Picker** card that compares the streams by volume can
    come later, it is only wiring).
 2. **Noise gate**: drops audio below a level (fan hum, a TV far away) before speech detection.
-3. **Pause cut**: speech detection with the pause rule as a setting; audio in, speech pieces out (live entries
-   that close at the cut). A model can do the same job on live text (the owner's experiment).
+3. **Pause cut** (optional, like every card): speech detection with the pause rule as a setting; audio in, speech
+   pieces out (live entries that close at the cut). What is not optional: somewhere the stream has to become
+   messages, because Buffer, Gather, Decide and models work on finished ones. Where and by what is the owner's
+   choice: the Pause cut before speech to text, or none and the cut after it on live text (a model or another card
+   decides a thought is finished: the owner's experiment), or both (a long pause as the safety net). Whisper cannot
+   stream: live text re-transcribes the growing piece (every 1.2 s today), which costs more; a streaming STT model
+   would not.
 4. **Speech to text**: pieces in, text out (a live entry that grows, then closes). Heard lines, Buffer, Decide
    work on it as now.
    **Gather** (for the owner's experiment without a Picker): collects the messages that arrive within a time
