@@ -25,7 +25,6 @@ from .const import CONF_BASE_URL, CONF_MODEL, DOMAIN
 from .models import async_list_models, async_overview, model_kind, resolve_model
 from .provider import ProviderError, ProviderNotFoundError
 from .runs import current_run
-from .status import setup_steps
 from .pools import async_set_role, is_entity
 from .capabilities import parse_weekdays
 
@@ -85,7 +84,7 @@ class SetupStatusTool(_SetupTool):
 
     name = "setup_status"
     title = "Setup status"
-    description = "See what of AAC is set up and which steps are still open."
+    description = "See what of AAC is set up: models and pools, modules, audio, languages."
     annotations = llm.ToolAnnotations(read_only=True, open_world=False)
 
     async def _async_run(self, hass, args):
@@ -94,11 +93,6 @@ class SetupStatusTool(_SetupTool):
         audio = audio_overview(hass, data.audio, store.audio)
         return llm.ToolResult(
             data={
-                "steps": [
-                    {"id": s["id"], "title": s["title"], "why": s["hint"], "optional": s["optional"],
-                     "state": "done" if s["done"] else "skipped" if s["skipped"] else "open"}
-                    for s in setup_steps(hass, store, self._domain.settings, self._entry)
-                ],
                 "domain": self._domain.name,
                 "pools": {
                     name: {"list": [f"{i['id']} ({i['state']})" for i in data.pool.status()["roles"][role]["items"]],
@@ -477,24 +471,6 @@ class SpeakTestTool(_SetupTool):
         return llm.ToolResult(data={"spoken": await hub.async_say(source, args["text"])})
 
 
-class SkipStepTool(_SetupTool):
-    """Skip an optional setup step."""
-
-    name = "skip_setup_step"
-    title = "Skip setup step"
-    description = "Skip an optional setup step the owner does not want now (it can be done later)."
-    annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
-    parameters = probatio.Schema({probatio.Required("step", description="Step id from setup_status."): str})
-
-    async def _async_run(self, hass, args):
-        store = self._entry.runtime_data.store
-        step = next((s for s in setup_steps(hass, store, self._domain.settings, self._entry) if s["id"] == args["step"]), None)
-        if step is None or not step["optional"]:
-            return llm.ToolResult(data={"error": "Only optional steps can be skipped."}, error=True)
-        await store.async_set_skipped(step["id"], True)
-        return llm.ToolResult(data={"skipped": step["id"]})
-
-
 @dataclass(kw_only=True)
 class AACSetupAPI(llm.API):
     """The setup tools as an LLM API."""
@@ -504,7 +480,7 @@ class AACSetupAPI(llm.API):
 
     async def async_get_api_instance(self, llm_context: llm.LLMContext) -> llm.APIInstance:
         """Tools + prompt."""
-        tools = [SetupStatusTool, ListModelsTool, AddModelTool, UseModelTool, TagModelTool, AvailabilityTool, MeasureModelsTool, ModuleSettingTool, AudioTool, LanguagesTool, SpeakTestTool, SkipStepTool]
+        tools = [SetupStatusTool, ListModelsTool, AddModelTool, UseModelTool, TagModelTool, AvailabilityTool, MeasureModelsTool, ModuleSettingTool, AudioTool, LanguagesTool, SpeakTestTool]
         return llm.APIInstance(
             api=self,
             api_prompt=API_PROMPT,

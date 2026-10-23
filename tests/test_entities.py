@@ -8,7 +8,7 @@ from homeassistant.setup import async_setup_component
 
 from custom_components.aac.entities import level
 
-from .conftest import setup_aac
+from .conftest import notices, setup_aac
 from .test_planning import _chat, _queue, _text, _tool_reply
 
 
@@ -73,7 +73,7 @@ async def test_request_access_and_control(hass: HomeAssistant, hass_ws_client, a
     await ws.send_json_auto_id({"type": "aac/request/decide", "request_id": request["id"], "approve": ["input_boolean.fan"]})
     assert (await ws.receive_json())["result"]["status"] == "partly"
     assert store.entity_access == {"input_boolean.fan": {"read": True, "write": True}}
-    assert "approved part of" in mock_entry.runtime_data.chats.get("aac")["messages"][-1]["text"]
+    assert "approved part of" in notices(mock_entry.runtime_data)[-1]
 
     aioclient_mock.clear_requests()  # the first mock would still answer
     _queue(aioclient_mock, _call("home__control", {"entity_id": "input_boolean.fan", "action": "turn_on"}), _text("On."))

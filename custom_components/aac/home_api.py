@@ -32,7 +32,7 @@ API_PROMPT = (
     "tell the user what exists even when it is invisible to you (never claim something is missing just "
     "because list_entities did not find it). To get more, ask: request_visibility for an integration's "
     "entities, request_access for reading/switching entities you can see, each with a short reason; the owner "
-    "decides outside the chat and you hear the outcome in 'From AAC'. Ask only for what the task needs. "
+    "decides outside the chat (the outcome is noted under Auto; an allowed entity works at once). Ask only for what the task needs. "
     "The home changes during a chat: when asked to check again, use the tools again instead of repeating "
     "what you found earlier. To the owner, name entities by their names (and room), not by entity ids. "
     "Asked to switch something: call control in the same turn, then report the new state; never say you will "
@@ -229,7 +229,7 @@ class RequestAccessTool(_HomeTool):
     name = "request_access"
     description = (
         "Ask the owner for access to entities (level read = see the state, control = also switch it), with a short "
-        "reason. The owner decides outside the chat; you hear the outcome in 'From AAC'. Tell the user you asked."
+        "reason. The owner decides outside the chat (the outcome is noted under Auto). Tell the user you asked."
     )
     annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
     parameters = probatio.Schema({probatio.Required("entity_ids"): [str], probatio.Required("level"): probatio.In(["read", "control"]),

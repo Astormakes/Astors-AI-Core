@@ -25,7 +25,6 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .chats import AAC_CHAT_ID
 from .const import DOMAIN, LOGGER
 from .runs import async_notify
 
@@ -185,9 +184,9 @@ class JobQueue:
         ], 1)
 
     def _tell(self, domain: Domain, text: str, title: str) -> None:
-        """Reach the owner without a model: HA notification + the domain's From AAC chat."""
+        """Reach the owner without a model: an HA notification and an entry in Auto."""
         persistent_notification.async_create(self.hass, text, title=title, notification_id=f"aac_{uuid.uuid4().hex[:6]}")
-        domain.chats.add_message(AAC_CHAT_ID, "aac", text, proactive=True, trigger="Without a model")
+        domain.runs.note(f"Without a model · {title}", text)
 
     def overview(self) -> dict[str, Any]:
         """For the panel."""

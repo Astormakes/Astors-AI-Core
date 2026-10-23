@@ -160,6 +160,13 @@ class RunRegistry:
         self._save()
         async_notify(self.hass, "run", run=run.as_dict(), domain=self.domain_id)
 
+    def note(self, title: str, text: str) -> Run:
+        """Something AAC tells the owner without a model (a request decided, its own plan): an entry in Auto
+        (owner, 2026-10-23: "From AAC can go")."""
+        run = self.start("auto", "notice", title, input="")
+        self.finish(run, "done", text)
+        return run
+
     def get(self, run_id: str) -> Run | None:
         """Find a run."""
         return next((r for r in self.runs if r.id == run_id), None)

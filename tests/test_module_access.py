@@ -66,28 +66,6 @@ async def test_disabled_module_leaves_the_calendar(hass: HomeAssistant, hass_ws_
     assert await caps.async_calendar("assistant", start, start + timedelta(days=7)) == []
 
 
-async def test_module_setup_steps(hass: HomeAssistant, hass_ws_client, mock_entry, configured):
-    """The calendar module's step shows up per domain, can be skipped, and is done once a calendar exists."""
-    await setup_aac(hass, mock_entry)
-    ws = await hass_ws_client(hass)
-
-    async def step():
-        await ws.send_json_auto_id({"type": "aac/state"})
-        steps = {s["id"]: s for s in (await ws.receive_json())["result"]["setup"]}
-        return steps.get("assistant/mod/calendar/connect")
-
-    first = await step()
-    assert first and first["optional"] and not first["done"] and first["target"] == "settings/module/calendar"
-    await ws.send_json_auto_id({"type": "aac/setup/skip", "step": first["id"], "skipped": True})
-    await ws.receive_json()
-    assert (await step())["skipped"]
-    hass.states.async_set("calendar.home", "off", {"friendly_name": "Home"})
-    assert (await step())["done"]
-    await ws.send_json_auto_id({"type": "aac/module/access", "module": "calendar", "values": {"enabled": False}})
-    await ws.receive_json()
-    assert await step() is None  # a module that is off asks for nothing
-
-
 async def test_hide_from_the_sidebar(hass: HomeAssistant, hass_ws_client, mock_entry, configured):
     """A hidden module stays on; the panel's state marks it hidden."""
     await setup_aac(hass, mock_entry)

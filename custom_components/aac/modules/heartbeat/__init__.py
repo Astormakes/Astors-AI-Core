@@ -41,7 +41,8 @@ def request(ctx: ModuleContext, domain_id: str, now: bool = False) -> dict[str, 
         "instructions": (ctx.setting(domain_id, "instructions") or "").strip() or builtin,
         "tier": ctx.setting(domain_id, "tier") or "fast", "tools": bool(ctx.setting(domain_id, "tools")),
         "priority": "low", "due_minutes": interval, "tags": ["heartbeat"], "coalesce": True,
-        "chat": "own", "chat_prefix": "hb", "now": now,
+        "chat": "own" if ctx.setting(domain_id, "keep_chat") is not False else "none",
+        "chat_auto": ctx.setting(domain_id, "chat_auto") is not False, "chat_prefix": "hb", "now": now,
     }
 
 

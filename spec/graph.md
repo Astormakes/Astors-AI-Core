@@ -103,6 +103,16 @@ coalesce, keep) as before.
 An added card without a wire onward sends nowhere (nothing hidden); only a built-in origin without wires (its
 module off) falls back to the panel chat's way.
 
+## Automatic cards and Auto (owner, 2026-10-23)
+
+Heartbeat, Triggers and Speech to text are self-contained source cards (they usually sit before the Header). Each
+has two ticks: **Keeps a chat** (a finding gets a chat of its own; off: only its run) and **Its chats go under
+Auto** (the chat is marked `auto` and listed in the sidebar's Auto section, not among the chats). "From AAC" is
+gone: what AAC tells the owner without a model (a request decided, its own plans, a reminder without a model) is
+a **notice**, a finished run (`trigger: "notice"`) under Auto; a reminder without a model also raises an HA
+notification. The old setup steps (panel Setup page, `setup_status` steps, `skip_setup_step`, manifests' `setup`)
+are gone; the Setup tools stay.
+
 ## Endpoints
 
 `chat`, `voice`, `assist` have an output and an input. What arrives at the input with their pointer is

@@ -22,5 +22,5 @@
   "issue_tracker": "https://github.com/Astormakes/Astors-AI-Core/issues",
   "requirements": ["pymicro-vad==1.0.1", "py3langid==0.4.0"],
   "single_config_entry": true,
-  "version": "1.0.0-dev.69"
+  "version": "1.0.0-dev.70"
 }

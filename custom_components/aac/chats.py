@@ -3,8 +3,8 @@
 A chat is a document (spec/graph.md): `entries` is the whole conversation as the graph wrote it (calls and
 results included), `messages` what the panel shows (each pointing at its entry). Editing a message edits
 the document; the next message sends the edited document.
-One special chat, "From AAC" (id `aac`), holds what AAC says on its own
-(heartbeat, event triggers), so proactive messages have a home.
+Automatic cards (Heartbeat, Triggers, Speech to text) may keep chats of their own, marked `auto` (listed under
+Auto in the sidebar), so proactive messages have a home.
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .runs import async_notify
 
-AAC_CHAT_ID = "aac"
 MAX_MESSAGES = 200
 
 
@@ -53,7 +52,7 @@ class ChatStore:
         return {k: v for k, v in chat.items() if k not in ("messages", "entries")}
 
     def list(self) -> list[dict[str, Any]]:
-        """All chats, newest activity first. 'From AAC' only once it has messages."""
+        """All chats, newest activity first."""
         chats = [self.summary(c) for c in self.chats.values()]
         return sorted(chats, key=lambda c: c["updated"], reverse=True)
 
@@ -62,8 +61,8 @@ class ChatStore:
         return self.chats.get(chat_id)
 
     @callback
-    def create(self, title: str = "New chat", chat_id: str | None = None) -> dict[str, Any]:
-        """Start a chat."""
+    def create(self, title: str = "New chat", chat_id: str | None = None, auto: bool = False) -> dict[str, Any]:
+        """Start a chat (auto: an automatic card's, listed under Auto in the sidebar)."""
         now = dt_util.utcnow().isoformat()
         chat = {
             "id": chat_id or uuid.uuid4().hex[:12],
@@ -73,6 +72,7 @@ class ChatStore:
             "conversation_id": None,
             "unread": 0,
             "messages": [],
+            **({"auto": True} if auto else {}),
         }
         self.chats[chat["id"]] = chat
         self._save()
@@ -81,11 +81,10 @@ class ChatStore:
 
     @callback
     def add_message(self, chat_id: str, role: str, text: str, **extra: Any) -> dict[str, Any]:
-        """Append a message ('user' or 'aac'); AAC's own chat counts unread."""
+        """Append a message ('user' or 'aac'); AAC's own messages count unread."""
         chat = self.chats.get(chat_id)
         if chat is None:
-            title = "From AAC" if chat_id == AAC_CHAT_ID else "Chat"
-            chat = self.create(title, chat_id)
+            chat = self.create("Chat", chat_id)
         message = {"role": role, "text": text, "ts": dt_util.utcnow().isoformat(), **extra}
         chat.pop("archived", None)  # a new message brings an archived chat back
         chat["messages"] = [*chat["messages"], message][-MAX_MESSAGES:]

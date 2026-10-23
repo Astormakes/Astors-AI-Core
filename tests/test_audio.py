@@ -237,8 +237,6 @@ async def test_home_languages(hass: HomeAssistant, hass_ws_client, mock_entry, c
     await ws.send_json_auto_id({"type": "aac/languages/set", "languages": ["de", "en", "nl"]})
     assert (await ws.receive_json())["result"]["languages"] == ["de", "en", "nl"]
     assert mock_entry.runtime_data.audio.languages() == ["de", "en", "nl"]
-    await ws.send_json_auto_id({"type": "aac/state"})
-    assert next(s for s in (await ws.receive_json())["result"]["setup"] if s["id"] == "languages")["done"]
     await ws.send_json_auto_id({"type": "aac/languages/set", "languages": None})
     assert (await ws.receive_json())["result"]["languages"] == ["en", "de"]
 

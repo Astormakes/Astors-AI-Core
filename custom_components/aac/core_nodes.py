@@ -117,23 +117,20 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
 
         async def handle(message: Message, step) -> list:
             from .broker import is_silent, short  # noqa: PLC0415 - avoid an import cycle
-            from .chats import AAC_CHAT_ID  # noqa: PLC0415
 
             chats = message.domain.chats
             if sid == "chat" and message.kind == "auto":  # a finding (heartbeat, trigger); silence stays silent
                 text = message.answer
-                if text and not is_silent(text) and message.trigger != "try":
-                    chat_id = (f"{message.chat_prefix or message.trigger}_{dt_util.utcnow().strftime('%Y%m%d%H%M%S')}"
-                               if message.chat == "own" else AAC_CHAT_ID)
+                if text and not is_silent(text) and message.trigger != "try" and message.chat == "own":
+                    chat_id = f"{message.chat_prefix or message.trigger}_{dt_util.utcnow().strftime('%Y%m%d%H%M%S')}"
                     if not chats.get(chat_id):
-                        chats.create(f"{message.title} · {short(text)}" if chat_id != AAC_CHAT_ID else "From AAC", chat_id)
+                        chats.create(f"{message.title} · {short(text)}", chat_id, auto=message.chat_auto)
                     run = step.run
                     if run is not None:
                         run.chat_id = chat_id
                     chats.add_message(chat_id, "aac", text, proactive=True, run_id=run.id if run else None,
                                       trigger=message.title)
-                    if message.chat == "own":
-                        chats.set_entries(chat_id, message.entries)
+                    chats.set_entries(chat_id, message.entries)
                 step.deliver(message)
                 return []
             if message.chat_id and kind in ("chat", "voice") and chats.get(message.chat_id):

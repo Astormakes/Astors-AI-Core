@@ -76,7 +76,6 @@ const ICONS = {
   layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   eyeOff: '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
-  setup: '<path d="M12 2l8.7 5v10L12 22l-8.7-5V7z"/><path d="M12 8v4l3 2"/>',
   chat: '<path d="M4 4h16v12H8l-4 4z"/><path d="M8 9h8M8 12h5"/>',
   workers: '<rect x="4" y="4" width="16" height="16"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
@@ -198,7 +197,6 @@ button.icon-btn { background: none; border: 1px solid transparent; color: var(--
 button.icon-btn.on { color: var(--magenta); }
 .scroll { flex: 1; overflow-y: scroll; padding: .4em 0 1.5em; }
 .seg { margin-top: .7em; }
-.seg.dim-seg { opacity: .45; }
 .seg-title { display: flex; align-items: center; gap: .7em; padding: .55em 1.15em; font-size: 1em; font-weight: 700; letter-spacing: .22em;
   color: var(--cyan); text-shadow: 0 0 .3em var(--cyan), 0 0 1em rgba(0, 240, 255, .55); }
 .seg-title .badge { margin-left: auto; font-size: .8em; letter-spacing: .1em; color: var(--amber); text-shadow: 0 0 .4em var(--amber); }
@@ -217,10 +215,6 @@ button.icon-btn.on { color: var(--magenta); }
 .dot.ok { background: var(--green); box-shadow: 0 0 .4em var(--green); }
 .dot.bad { background: var(--red); box-shadow: 0 0 .4em var(--red); }
 .dot.open { background: var(--amber); box-shadow: 0 0 .4em var(--amber); }
-.mark { width: 1em; text-align: center; flex: none; }
-.mark.done { color: var(--green); text-shadow: 0 0 .4em var(--green); }
-.mark.open { color: var(--amber); text-shadow: 0 0 .4em var(--amber); }
-.mark.skip { color: var(--dim); }
 .empty { padding: .3em 1.15em .3em 3.15em; font-size: .85em; color: var(--dim); }
 
 /* ---------- main ---------- */
@@ -612,8 +606,7 @@ class AacPanel extends HTMLElement {
   async _loadAll() {
     await Promise.all([this._loadState(), this._loadModels(), this._loadAudio(), this._loadChats(), this._loadRuns(), this._loadJobs()]);
     if (!this._view) {
-      if (this._setupOpen()) this._view = "setup";
-      else if (this._chats.length) await this._openChat(this._chats[0].id, false);
+      if (this._chats.length) await this._openChat(this._chats[0].id, false);
       else this._view = "chat/new";
     }
     this._render();
@@ -810,10 +803,6 @@ class AacPanel extends HTMLElement {
     this._render();
   }
 
-  _steps() { return this._state?.setup || []; }
-  _openSteps() { return this._steps().filter((s) => !s.done && !s.skipped); }
-  _setupOpen() { return this._openSteps().length > 0; }
-  _stepOpen(id) { return this._openSteps().some((s) => s.id === id); }
 
   _allModels() {
     const w = this._models || { manual: [], auto: [] };
@@ -1001,24 +990,10 @@ class AacPanel extends HTMLElement {
 
   _renderNav() {
     if (this._view === "nodes") return this._renderNodesNav();
-    const steps = this._steps();
-    const open = this._openSteps();
-    const showSetup = open.length > 0 || this._showAll;
-    const doneCount = steps.filter((s) => s.done).length;
-
-    const setup = !showSetup ? "" : `
-      <div class="seg ${open.length ? "" : "dim-seg"}">
-        <div class="seg-title">${icon("setup")}SETUP<span class="badge">${doneCount}/${steps.length}</span></div>
-        <div class="seg-line"></div>
-        ${this._tab("setup", "Overview")}
-        ${steps.map((s) => {
-          const mark = s.done ? '<span class="mark done">✓</span>' : s.skipped ? '<span class="mark skip">–</span>' : '<span class="mark open">›</span>';
-          return this._tab(s.target, s.title, mark, s.done || s.skipped ? "soon" : "");
-        }).join("")}
-      </div>`;
-
-    const live = this._chats.filter((c) => !c.archived), archived = this._chats.filter((c) => c.archived);
-    const chatTab = (c) => this._tab(`chat/${c.id}`, c.title, c.id === "aac" ? icon("bolt") : "",
+    // chats made by automatic cards (Heartbeat, Triggers, Speech to text with their tick) sit under Auto
+    const live = this._chats.filter((c) => !c.archived && !c.auto), archived = this._chats.filter((c) => c.archived);
+    const autoChats = this._chats.filter((c) => !c.archived && c.auto);
+    const chatTab = (c) => this._tab(`chat/${c.id}`, c.title, "",
       "", `${c.unread ? `<span class="unread">${c.unread}</span>` : ""}<button class="icon-btn chatdel" data-chat-archive="${esc(c.id)}" title="Archive">${icon("trash")}</button>`);
     // Every added Chat card is a section of its own (owner: "a chat section with the plus sign and a different
     // section with the memory title")
@@ -1047,10 +1022,16 @@ class AacPanel extends HTMLElement {
     const drop = since < 900 ? ` drop" style="animation-delay:-${since}ms` : "";
     const requestsTab = openRequests || this._showAll || this._view === "requests"
       ? this._tab("requests", "Requests", "", "", openRequests ? `<span class="unread${drop}">${openRequests}</span>` : "") : "";
-    const autoList = !this._autoOpen ? "" : (this._runs.length
-      ? this._runs.slice(0, 25).map((r) => this._tab(`run/${r.id}`, r.title, `<span class="dot ${STATUS_DOT[r.status] || ""}"></span>`, "deep",
+    // Auto: the automatic cards' chats, then every run and notice without a chat of its own (newest first)
+    const withChat = new Set(autoChats.map((c) => c.id));
+    const autoRuns = this._runs.filter((r) => !withChat.has(r.chat_id));
+    const autoList = !this._autoOpen ? "" : (autoChats.length || autoRuns.length
+      ? autoChats.slice(0, 25).map((c) => this._tab(`chat/${c.id}`, c.title, "", "deep",
+          `${c.unread ? `<span class="unread">${c.unread}</span>` : ""}<span class="time">${esc(fmtTime(c.updated))}</span>`)).join("")
+        + autoRuns.slice(0, 25).map((r) => this._tab(`run/${r.id}`, r.title, `<span class="dot ${STATUS_DOT[r.status] || ""}"></span>`, "deep",
           `<span class="time">${esc(fmtTime(r.started))}</span>`)).join("")
       : '<div class="empty" style="padding-left:4.4em">nothing yet</div>');
+    const autoUnread = autoChats.reduce((a, c) => a + (c.unread || 0), 0);
 
     return `<nav aria-label="AAC">
       <div class="brand">
@@ -1059,7 +1040,6 @@ class AacPanel extends HTMLElement {
       </div>
       ${this._renderDomainSwitch()}
       <div class="scroll thin-scroll">
-        ${setup}
         <div class="seg">
           <div class="seg-title">${icon("workers")}CHATS<span class="acts"><button class="icon-btn" data-new-chat="chat" title="New chat">${icon("plus")}</button></span></div>
           <div class="seg-line"></div>
@@ -1067,7 +1047,7 @@ class AacPanel extends HTMLElement {
           ${archive}
           ${requestsTab}
           <div class="tab fold ${this._autoOpen ? "open" : ""}" id="auto-fold" tabindex="0" role="button" aria-expanded="${this._autoOpen}">
-            ${icon("chev")}<span class="grow">Auto<span class="count ${running ? "" : "zero"}">(${running})</span>${this._jobs?.waiting?.length ? `<span class="count" title="waiting for a model">+${this._jobs.waiting.length} waiting</span>` : ""}</span>
+            ${icon("chev")}<span class="grow">Auto<span class="count ${running ? "" : "zero"}">(${running})</span>${autoUnread ? `<span class="unread">${autoUnread}</span>` : ""}${this._jobs?.waiting?.length ? `<span class="count" title="waiting for a model">+${this._jobs.waiting.length} waiting</span>` : ""}</span>
           </div>
           ${autoList}
         </div>
@@ -1079,8 +1059,8 @@ class AacPanel extends HTMLElement {
         <div class="seg">
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
           ${this._tab("settings/appearance", "Appearance")}
-          ${this._tab("settings/languages", "Languages", this._stepOpen("languages") ? '<span class="dot open"></span>' : "")}
-          ${this._tab("nodes", "Nodes", ["entities", "models", "master"].some((x) => this._stepOpen(x)) ? '<span class="dot open"></span>' : "")}
+          ${this._tab("settings/languages", "Languages")}
+          ${this._tab("nodes", "Nodes")}
         </div>
       </div>
     </nav>`;
@@ -1101,7 +1081,7 @@ class AacPanel extends HTMLElement {
     const v = this._view || "";
     if (v.startsWith("chat/")) return this._renderChat();
     if (v.startsWith("run/")) return this._renderRun();
-    if (v === "setup") return this._renderSetup();
+    if (v === "setup") { this._view = "nodes"; return this._renderMain(); }  // old links: the setup steps are gone
     if (v === "models") return this._renderModels();
     if (v.startsWith("machine/")) return this._renderMachine(v.slice(8));
     if (v === "models/new" || v.startsWith("model/edit/")) return this._renderModelForm();
@@ -1304,10 +1284,10 @@ class AacPanel extends HTMLElement {
     const master = this._poolItems("master")[0];
     const chat = this._view === "chat/new" && !this._busy ? null : this._chat;  // a new chat shows what is being sent
     const msgs = chat?.messages || [];
-    const isAac = chat?.id === "aac";
+    const isAuto = !!chat?.auto;  // an automatic card's chat: answers link to their run
     const log = this._expert && chat?.entries?.length ? this._expertHtml(chat.entries, msgs)
       : msgs.length
-      ? msgs.map((m, i) => this._bubbleHtml(m, i, msgs, { editable: !isAac, details: isAac, key: "m" })).join("")
+      ? msgs.map((m, i) => this._bubbleHtml(m, i, msgs, { editable: true, details: isAuto, key: "m" })).join("")
       : `<div class="welcome"><div class="big">AAC</div>${this._chatGone ? "That chat no longer exists (it was deleted). This is a new chat."
           : !master ? "No master model yet. Open SETUP to choose one."
           : this._state?.pools?.roles?.master?.active ? "Ask me anything." : "No master model is reachable right now (see Pools)."}</div>`;
@@ -1323,7 +1303,7 @@ class AacPanel extends HTMLElement {
       <div class="chat">
         <div class="log thin-scroll" aria-live="polite"><div class="log-inner">${log}${busy}</div></div>
         <div class="composer"><div class="composer-inner">
-          <textarea id="chat-input" class="thin-scroll" aria-label="Message" placeholder="${isAac ? "Answer AAC…" : "Message AAC…"}" title="Enter to send, Shift+Enter for a new line" ${this._busy ? "disabled" : ""}></textarea>
+          <textarea id="chat-input" class="thin-scroll" aria-label="Message" placeholder="${isAuto ? "Answer AAC…" : "Message AAC…"}" title="Enter to send, Shift+Enter for a new line" ${this._busy ? "disabled" : ""}></textarea>
           <button class="btn primary" id="chat-send" aria-label="Send" ${this._busy ? "disabled" : ""}>${icon("send")}</button>
         </div></div>
       </div>`;
@@ -1409,22 +1389,7 @@ class AacPanel extends HTMLElement {
       </div>`);
   }
 
-  // ---------------------------------------------------------------- setup
-  _renderSetup() {
-    const steps = this._steps();
-    const open = this._openSteps().length;
-    return this._page("SETUP", open ? `${open} open` : "all done", `<div class="card"><h2>WORKFLOW ${tip(`${open ? "Work through the open steps. Each one opens the place where it is configured." : "Everything is set up. This segment hides itself now; the eye at the top shows it again."}`)}</h2>
-        ${steps.map((s) => `
-          <div class="step" data-go="${esc(s.target)}" tabindex="0" role="button">
-            <span class="mark ${s.done ? "done" : s.skipped ? "skip" : "open"}">${s.done ? "✓" : s.skipped ? "–" : "›"}</span>
-            <div style="flex:1"><div class="t">${esc(s.title)}${s.optional ? ' <span class="tag">OPTIONAL</span>' : ""}</div><div class="h">${esc(s.hint)}</div></div>
-            ${s.optional && !s.done ? `<button class="btn" data-skip="${esc(s.id)}" data-skipped="${s.skipped ? "0" : "1"}">${s.skipped ? "Undo skip" : "Skip"}</button>` : ""}
-          </div>`).join("")}
-      </div>${open && steps.find((s) => s.id === "master")?.done ? `
-      <div class="card"><h2>TOGETHER ${tip(`The master model is wired in, so AAC can walk you through the rest in a chat: it checks what is open, explains each step and asks before it changes anything.`)}</h2>
-        <div class="actions"><button class="btn primary" id="setup-chat">Set up with AAC</button></div>
-      </div>` : ""}`);
-  }
+
 
   // ---------------------------------------------------------------- the queue (the broker's, shown on Pools)
   _renderQueueCard() {
@@ -2238,16 +2203,6 @@ class AacPanel extends HTMLElement {
       this._render();
     });
 
-    sr.querySelector("#setup-chat")?.addEventListener("click", () => {
-      this._go("chat/new");
-      const input = this.shadowRoot.querySelector("#chat-input");
-      if (input) { input.value = "Help me set up the rest of AAC."; this._send(); }
-    });
-    sr.querySelectorAll("[data-skip]").forEach((el) => el.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      this._state = await this._ws("aac/setup/skip", { step: el.dataset.skip, skipped: el.dataset.skipped === "1" });
-      this._render();
-    }));
     const poolMove = (attr, fn) => sr.querySelectorAll(`[${attr}]`).forEach((el) => el.addEventListener("click", async (e) => {
       e.stopPropagation();
       const [role, i] = el.getAttribute(attr).split("|");

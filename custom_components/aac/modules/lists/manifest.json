@@ -33,6 +33,5 @@
       "help": "Entries with a 'when' field appear in AAC's calendar (and its agenda).",
       "default": true
     }
-  },
-  "setup": []
+  }
 }

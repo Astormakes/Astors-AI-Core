@@ -10,7 +10,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.jobs import Job
 
-from .conftest import MODEL_CFG, set_heartbeat, setup_aac, triggers_of, everything
+from .conftest import MODEL_CFG, last_auto, notices, set_heartbeat, setup_aac, triggers_of, everything
 from .test_planning import _queue, _text
 
 
@@ -27,8 +27,8 @@ async def test_heartbeat_waits_and_is_told_it_was_late(hass: HomeAssistant, aioc
     await async_queue(hass)
     await async_queue(hass)  # a second one does not pile up
     assert [j.title for j in data.jobs.waiting] == ["Heartbeat"]
-    told = data.chats.get("aac")["messages"]
-    assert len(told) == 1 and "no model available" in told[0]["text"]
+    told = notices(data)
+    assert len(told) == 1 and "no model available" in told[0]
 
     payloads = _queue(aioclient_mock, _text("NOTHING"), _text('{"speak": false, "message": ""}'))
     data.pool.mark_up(MODEL_CFG["id"])
@@ -53,7 +53,7 @@ async def test_time_critical_job_reaches_the_owner_without_a_model(hass: HomeAss
     await data.jobs._tick()  # noqa: SLF001
     start.assert_not_called()
     assert {j.title: j.status for j in data.jobs.history} == {"Pills": "notified", "Heartbeat": "expired"}
-    assert any(m["text"] == "Pills: remind me to take my pills" for m in dom.chats.get("aac")["messages"])
+    assert "Pills: remind me to take my pills" in notices(dom)
 
 
 async def test_queue_ws(hass: HomeAssistant, hass_ws_client, mock_entry, configured):
@@ -86,7 +86,7 @@ async def test_waiting_reminder_survives_a_restart(hass: HomeAssistant, hass_sto
     data = mock_entry.runtime_data
     assert data.jobs.waiting == []
     assert data.jobs.history[0].title == "Pills" and data.jobs.history[0].status == "notified"
-    assert data.chats.get("aac")["messages"][-1]["text"] == "Pills: Remind me to take my pills."
+    assert notices(data)[-1] == "Pills: Remind me to take my pills."
 
 
 async def test_a_waiting_message_comes_back(hass: HomeAssistant, hass_storage, aioclient_mock, mock_entry, configured):
@@ -103,7 +103,7 @@ async def test_a_waiting_message_comes_back(hass: HomeAssistant, hass_storage, a
     data = mock_entry.runtime_data
     job = next(j for j in data.jobs.waiting + data.jobs.history if j.id == "j2")
     assert job.created == created and job.reason == "waited before Home Assistant restarted"
-    assert data.chats.get("aac")["messages"][-1]["text"] == "Pills now."  # it ran and came home
+    assert last_auto(data) == "Pills now."  # it ran and came home (a chat of its own, under Auto)
 
 
 async def test_waiting_jobs_are_saved(hass: HomeAssistant, hass_storage, mock_entry, configured, freezer):

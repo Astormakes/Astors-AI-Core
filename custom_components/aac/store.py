@@ -430,13 +430,3 @@ class AACStore:
         known = [k for k in self.audio["known"] if k["id"] != source_id]
         self.audio["known"] = [*known, {"id": source_id, "name": name}]
         await self.async_save()
-
-    async def async_set_skipped(self, step: str, skipped: bool) -> None:
-        """Mark a setup step as skipped or not."""
-        steps = set(self.data["setup"]["skipped"])
-        if skipped:
-            steps.add(step)
-        else:
-            steps.discard(step)
-        self.data["setup"]["skipped"] = sorted(steps)
-        await self.async_save()

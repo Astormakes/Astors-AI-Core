@@ -11,7 +11,8 @@ An automatic request (plain JSON, from the heartbeat and the triggers):
      "context": ["time", "home", "open_loops"], "instructions": "…",
      "tier": "fast", "tools": false, "priority": "low", "due_minutes": 30, "tags": ["heartbeat"],
      "coalesce": true,          # skip while one of this trigger waits or runs
-     "chat": "own",             # "aac" = the From AAC chat (default), "own" = a chat of its own per finding
+     "chat": "own",             # "own" = a chat of its own per finding (default), "none" = only its entry in Auto
+     "chat_auto": True,         # that chat is listed under Auto in the sidebar (default)
      "chat_prefix": "hb",       # its id starts with this (default: the trigger)
      "critical": false,         # still reach the owner when no model came before it was due …
      "fallback": "…",           # … with this text (a plain notification, no model)
@@ -147,7 +148,7 @@ async def async_send(hass: HomeAssistant, entry: AACConfigEntry, domain: Domain,
         tier=req.get("tier") or "master", allow_tools=bool(req.get("tools", True)),
         priority=req.get("priority") or "normal", due_minutes=req.get("due_minutes") or 15, critical=bool(req.get("critical")),
         fallback=req.get("fallback") or "", coalesce=bool(req.get("coalesce")), keep=bool(req.get("keep")),
-        tags=list(req.get("tags") or []), context_parts=list(req.get("context") or []), chat=req.get("chat") or "aac",
+        tags=list(req.get("tags") or []), context_parts=list(req.get("context") or []), chat=req.get("chat") or "own", chat_auto=req.get("chat_auto", True) is not False,
         chat_prefix=req.get("chat_prefix"), now=bool(req.get("now")),
     )
     message.add(source, "note", "\n\n".join(filter(None, [req.get("intro") or "Nobody asked you anything.",

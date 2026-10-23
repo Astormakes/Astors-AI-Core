@@ -6,7 +6,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .conftest import BASE_URL, heartbeat_now, setup_aac, triggers_of, memory_of, everything
+from .conftest import BASE_URL, heartbeat_now, notices, setup_aac, triggers_of, memory_of, everything
 
 URL = f"{BASE_URL}/chat/completions"
 
@@ -50,7 +50,7 @@ async def test_master_schedules_itself(hass: HomeAssistant, hass_ws_client, aioc
     trig = triggers_of(hass).triggers[0]
     assert trig["created_by"] == "agent" and trig["enabled"] and not trig["proposed"]
     assert trig["when"] == {"type": "time", "weekdays": [0, 2, 4], "at": "18:30"}
-    told = mock_entry.runtime_data.chats.get("aac")["messages"][-1]["text"]
+    told = notices(mock_entry.runtime_data)[-1]
     assert told.startswith('I planned "Walk check"')
 
 

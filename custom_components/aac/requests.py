@@ -4,7 +4,7 @@ Owner design (2026-10-19): some things AAC may only do once the owner is OK with
 (e.g. seeing or switching more entities). AAC files a request with a reason; it waits
 in the panel (with a badge) and as an HA notification until the owner approves all,
 some or none of its items. Only then is it applied, by the handler of its kind, and
-AAC is told the outcome in "From AAC". Any part of AAC (and later modules) can add a
+the outcome is noted under Auto. Any part of AAC (and later modules) can add a
 kind with `register_kind`.
 """
 
@@ -18,7 +18,6 @@ from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .chats import AAC_CHAT_ID
 from .runs import async_notify
 
 if TYPE_CHECKING:
@@ -88,6 +87,6 @@ class Requests:
             text = f"{outcome} my request: {request['title']}"
             if request["status"] == "partly":
                 text += " (allowed: " + ", ".join(labels[i] for i in approved) + ")"
-            dom.chats.add_message(AAC_CHAT_ID, "aac", text + ".", proactive=False, trigger="Request decided")
+            dom.runs.note("Request decided", text + ".")
         async_notify(self.hass, "requests", domain=request["domain"])
         return request

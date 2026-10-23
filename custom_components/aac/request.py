@@ -113,7 +113,8 @@ class Message:
     keep: bool = False
     tags: list[str] = field(default_factory=list)
     context_parts: list[str] = field(default_factory=list)  # built when a model really starts: time, home, open_loops
-    chat: str = "aac"  # an automatic finding: "aac" = the From AAC chat, "own" = a chat of its own
+    chat: str = "own"  # an automatic finding: "own" = a chat of its own, "none" = only its entry in Auto
+    chat_auto: bool = True  # that chat is listed under Auto in the sidebar
     chat_prefix: str | None = None
     now: bool = False  # automatic but at once, without the queue ("Run once now")
     # Values cards hand on (owner, 2026-10-23): card id → {name: value}; the text cards read them with HA's

@@ -5,7 +5,7 @@ reminders and check-ins (time triggers marked created_by "agent"); it may
 never change or delete the owner's triggers. How much it may do alone is
 the module's setting own_plans: off (tools not offered), ask (a proposal the
 owner approves in the panel) or allowed (active at once, the owner is told).
-Every change is posted to the "From AAC" chat, so nothing happens unseen.
+Every change is noted under Auto, so nothing happens unseen.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from homeassistant.helpers import llm
 from homeassistant.util import dt as dt_util
 
 from ...capabilities import parse_weekdays
-from ...chats import AAC_CHAT_ID
 from ...const import DOMAIN
 
 if TYPE_CHECKING:
@@ -124,7 +123,7 @@ class ScheduleTool(llm.Tool):
             if proposed
             else f"I planned \"{args['name']}\" ({_when_text(when)}): {args['instruction']}"
         )
-        dom.chats.add_message(AAC_CHAT_ID, "aac", text, proactive=True, trigger="Own plan")
+        dom.runs.note("Own plan", text)
         return llm.ToolResult(
             data={"id": trig["id"], "status": "waiting for the owner's approval" if proposed else "active",
                   "when": _when_text(when)}
@@ -169,7 +168,7 @@ class WatchTool(llm.Tool):
         self._triggers = triggers
 
     async def async_call(self, hass: HomeAssistant, tool_input: llm.ToolInput, llm_context: llm.LLMContext):
-        """Same rules as schedule: the owner's own_plans setting, a cap, everything visible in From AAC."""
+        """Same rules as schedule: the owner's own_plans setting, a cap, everything noted under Auto."""
         from ...entities import level  # noqa: PLC0415
 
         args = tool_input.tool_args
@@ -203,7 +202,7 @@ class WatchTool(llm.Tool):
         })
         text = (f"I'd like to watch \"{args['name']}\" (when {what}): {args['instruction']} Approve or reject it under Triggers."
                 if proposed else f"I'm now watching \"{args['name']}\" (when {what}): {args['instruction']}")
-        dom.chats.add_message(AAC_CHAT_ID, "aac", text, proactive=True, trigger="Own plan")
+        dom.runs.note("Own plan", text)
         return llm.ToolResult(data={"id": trig["id"], "status": "waiting for the owner's approval" if proposed else "active"})
 
 
@@ -263,7 +262,7 @@ class CancelScheduleTool(llm.Tool):
         if trig.get("created_by") != "agent":
             return llm.ToolResult(data={"error": "That is the owner's trigger; agents cannot change it."}, error=True)
         await self._triggers.async_delete_trigger(trig["id"])
-        dom.chats.add_message(AAC_CHAT_ID, "aac", f"I cancelled my plan \"{trig['name']}\".", proactive=True, trigger="Own plan")
+        dom.runs.note("Own plan", f"I cancelled my plan \"{trig['name']}\".")
         return llm.ToolResult(data={"cancelled": trig["id"]})
 
 

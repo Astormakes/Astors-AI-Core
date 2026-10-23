@@ -27,7 +27,7 @@ from .broker import async_run_request
 from .request import BUILTIN_VARS, HA_TEMPLATE_HELP
 from .request import entry as new_entry
 from .runs import SIGNAL_UPDATE, async_notify
-from .status import aac_agent_entity_id, setup_steps
+from .status import aac_agent_entity_id
 from .pools import ROLES, async_set_role
 from .modules import access as module_access, async_set_access, async_set_settings, setting as module_setting
 from .entities import all_entities, async_set_access as async_set_entity_access, async_set_visible
@@ -50,7 +50,6 @@ def async_register(hass: HomeAssistant) -> None:
         ws_model_save,
         ws_model_delete,
         ws_server_models,
-        ws_setup_skip,
         ws_audio,
         ws_audio_settings,
         ws_languages,
@@ -153,7 +152,6 @@ def _state(hass: HomeAssistant, entry, dom: Domain) -> dict[str, Any]:
         "voice_domain": store.data["voice_domain"],
         "agent_entity_id": dom.entity_id(hass, entry.entry_id),
         "master": settings.master,
-        "setup": setup_steps(hass, store, settings, entry),
         "ui": store.data["ui"],
         "modules": [m.summary(entry, dom.id) for m in entry.runtime_data.modules],
         # the chat cards: the panel chat and the added ones, each a section in the sidebar
@@ -284,24 +282,6 @@ async def ws_server_models(hass: HomeAssistant, connection, msg) -> None:
         connection.send_error(msg["id"], "cannot_connect", str(err) or "timeout")
     else:
         connection.send_result(msg["id"], {"models": models})
-
-
-@aac_command(
-    {
-        vol.Required("type"): "aac/setup/skip",
-        vol.Required("step"): str,
-        vol.Required("skipped"): bool,
-    }
-)
-@websocket_api.require_admin
-@websocket_api.async_response
-async def ws_setup_skip(hass: HomeAssistant, connection, msg) -> None:
-    """Skip (or un-skip) an optional setup step."""
-    if not (loaded := _loaded(hass, connection, msg)):
-        return
-    store, entry_id = loaded
-    await store.async_set_skipped(msg["step"], msg["skipped"])
-    connection.send_result(msg["id"], _state(hass, *_ctx(hass, msg)))
 
 
 @aac_command({vol.Required("type"): "aac/audio"})

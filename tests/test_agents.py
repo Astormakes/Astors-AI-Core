@@ -14,7 +14,7 @@ from custom_components.aac.capabilities import in_quiet_hours
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .conftest import everything, BASE_URL, set_heartbeat, setup_aac, triggers_of, untimed
+from .conftest import everything, BASE_URL, last_auto, set_heartbeat, setup_aac, triggers_of, untimed
 
 URL = f"{BASE_URL}/chat/completions"
 
@@ -106,15 +106,14 @@ async def test_heartbeat_silent_and_speaking(
     run = mock_entry.runtime_data.runs.get(run_id)
     assert run.kind == "auto" and run.status == "silent"
     assert "Heartbeat" in everything(payloads[0])
-    assert mock_entry.runtime_data.chats.get("aac") is None
+    assert not any(c.get("auto") for c in mock_entry.runtime_data.chats.list())
 
     await ws.send_json_auto_id({"type": "aac/heartbeat/run"})
     run = mock_entry.runtime_data.runs.get((await ws.receive_json())["result"]["run_id"])
     chat = mock_entry.runtime_data.chats.get(run.chat_id)
     assert run.chat_id.startswith("hb_") and chat["title"] == "Heartbeat · The window is still open."
     assert chat["messages"][-1]["text"] == "The window is still open."
-    assert chat["unread"] == 1
-    assert mock_entry.runtime_data.chats.get("aac") is None
+    assert chat["unread"] == 1 and chat["auto"]  # listed under Auto (the card's tick, on by default)
 
 
 async def test_heartbeat_schedule(hass: HomeAssistant, aioclient_mock, mock_entry, configured, freezer):
@@ -219,7 +218,7 @@ async def test_state_trigger_with_cooldown(
     assert len(payloads) == 2  # answer + decision, then the cooldown blocks the repeat
     assert "Door (binary_sensor.door) changed from off to on" in payloads[0]["messages"][-1]["content"]
     assert "Tell me when the door opens." in everything(payloads[0])
-    assert mock_entry.runtime_data.chats.get("aac")["messages"][-1]["text"] == "The door opened."
+    assert last_auto(mock_entry.runtime_data) == "The door opened."
     run = mock_entry.runtime_data.runs.runs[-1]
     assert run.kind == "auto" and run.title == "Door"
 
@@ -347,7 +346,7 @@ async def test_time_trigger_weekdays(
     assert len(payloads) == 2
     assert "Remind me to take my pills." in everything(payloads[0])
     assert "remind or tell the user" in everything(payloads[0])
-    assert mock_entry.runtime_data.chats.get("aac")["messages"][-1]["text"] == "Time for your pills."
+    assert last_auto(mock_entry.runtime_data) == "Time for your pills."
 
     freezer.move_to("2026-10-20 07:30:00+00:00")  # Tuesday: not a trigger day
     async_fire_time_changed(hass, dt_util.utcnow())
@@ -537,3 +536,21 @@ async def test_tools_as_a_menu(hass: HomeAssistant, hass_ws_client, aioclient_mo
     assert [(s["type"], s["tool"]) for s in message["steps"]][:2] == [("tool_call", "home.list_entities"),
                                                                      ("tool_result", "home")]
     assert payloads[0]["tools"] == payloads[2]["tools"]  # the tool list never changes (the prompt cache holds)
+
+async def test_heartbeat_ticks_decide_its_chat(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """"Keeps a chat" off: a finding is only its run under Auto; "Its chats go under Auto" off: a normal chat."""
+    from custom_components.aac.modules import async_set_settings
+
+    await setup_aac(hass, mock_entry)
+    _replies(aioclient_mock, _reply("The window is open."), _reply("Still open."))
+    data = mock_entry.runtime_data
+    module = next(m for m in data.modules if m.id == "heartbeat")
+    ws = await hass_ws_client(hass)
+    await async_set_settings(mock_entry, module, "assistant", {"keep_chat": False})
+    await ws.send_json_auto_id({"type": "aac/heartbeat/run"})
+    run = data.runs.get((await ws.receive_json())["result"]["run_id"])
+    assert run.chat_id is None and run.result == "The window is open." and data.chats.list() == []
+    await async_set_settings(mock_entry, module, "assistant", {"keep_chat": True, "chat_auto": False})
+    await ws.send_json_auto_id({"type": "aac/heartbeat/run"})
+    run = data.runs.get((await ws.receive_json())["result"]["run_id"])
+    assert not data.chats.get(run.chat_id).get("auto")

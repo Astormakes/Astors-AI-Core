@@ -8,7 +8,7 @@ from .test_planning import _chat, _queue, _text, _tool_reply
 
 SETUP_TOOLS = {
     "setup__setup_status", "setup__list_models", "setup__add_model",
-    "setup__use_model", "setup__module_setting", "setup__skip_setup_step",
+    "setup__use_model", "setup__module_setting",
 }
 
 
@@ -29,7 +29,7 @@ async def test_owner_chat_sets_up_heartbeat(hass: HomeAssistant, hass_ws_client,
     message = await _chat(ws, "Help me set up the rest of AAC.")
     assert SETUP_TOOLS <= _names(payloads[0])
     status = next(s for s in message["steps"] if s["type"] == "tool_result")
-    assert '"steps"' in status["data"] and "Connect a model" in status["data"]  # (cut at 500 characters in the run)
+    assert '"pools"' in status["data"] and '"steps"' not in status["data"]  # (cut at 500 characters in the run)
     from custom_components.aac.modules import access, setting
 
     module = next(m for m in mock_entry.runtime_data.modules if m.id == "heartbeat")

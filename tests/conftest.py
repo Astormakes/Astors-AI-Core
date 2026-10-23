@@ -156,3 +156,14 @@ def memory_in_line(entry) -> None:
     wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
     wires = [w for w in wires if w != ("time.out", "model.in")] + [("time.out", "memory.in"), ("memory.out", "model.in")]
     data.store.graph("assistant")["wires"] = [{"from": a, "to": b} for a, b in dict.fromkeys(wires)]
+
+
+def notices(holder) -> list[str]:
+    """What AAC noted under Auto without a model (holder: runtime data or a domain)."""
+    return [r.result for r in holder.runs.runs if r.trigger == "notice"]
+
+
+def last_auto(holder) -> str:
+    """The newest message in the newest chat an automatic card made (listed under Auto)."""
+    chat = next(c for c in holder.chats.list() if c.get("auto"))
+    return holder.chats.get(chat["id"])["messages"][-1]["text"]

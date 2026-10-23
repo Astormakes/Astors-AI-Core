@@ -28,10 +28,7 @@ async def test_state_fresh(hass: HomeAssistant, hass_ws_client, mock_entry):
     manifest = json.loads((Path(__file__).parents[1] / "custom_components/aac/manifest.json").read_text())
     assert state["version"] == manifest["version"]
     assert state["agent_entity_id"] == "conversation.aac"
-    steps = {s["id"]: s for s in state["setup"]}
-    assert not steps["models"]["done"]
-    assert not steps["master"]["done"]
-    assert "pipeline" not in steps  # HA's voice setup is not AAC's business
+    assert "setup" not in state  # the old setup steps are gone (owner, 2026-10-23)
 
 
 async def test_model_master_chat_flow(
@@ -57,8 +54,6 @@ async def test_model_master_chat_flow(
     await ws.receive_json()
     await ws.send_json_auto_id({"type": "aac/state"})
     state = (await ws.receive_json())["result"]
-    steps = {s["id"]: s for s in state["setup"]}
-    assert steps["models"]["done"] and steps["master"]["done"]
 
     await ws.send_json_auto_id({"type": "aac/models"})
     models = (await ws.receive_json())["result"]

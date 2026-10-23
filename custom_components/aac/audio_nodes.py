@@ -43,6 +43,8 @@ STT_SETTINGS = {
     "remember": {"type": "number", "title": "Keeps a conversation (minutes)", "default": 20,
                  "help": "What was said at a satellite stays one chat (\"Voice · <name>\" in the sidebar) until it is "
                          "quiet this long; then a new one starts. 0: every sentence on its own."},
+    "chat_auto": {"type": "bool", "title": "Its chats go under Auto", "default": True,
+                  "help": "The voice chats are listed in the sidebar's Auto section instead of among your chats."},
     "home_languages": {"type": "bool", "title": "Only the home's languages", "default": True,
                        "help": "When the recognizer guesses another language (German with an accent heard as Dutch), "
                                "the piece is transcribed again in the home's language (SETTINGS → Languages)."},
@@ -119,7 +121,7 @@ def audio_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
             if chat and chat["messages"] and (chat.get("archived") or dt_util.utcnow() - datetime.fromisoformat(chat["updated"]) > remember):
                 current = f"voice_{inst_id}_{source}_{dt_util.utcnow().strftime('%Y%m%d%H%M')}"
             if not domain.chats.get(current):
-                domain.chats.create(f"Voice · {piece.get('name') or source}", current)
+                domain.chats.create(f"Voice · {piece.get('name') or source}", current, auto=settings.get("chat_auto", True) is not False)
             sessions[source] = current
             return current
 

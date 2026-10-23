@@ -3,7 +3,7 @@
 Moved out of the core in 0.45 (owner, 2026-10-21: "a light and open core"). A trigger watches an
 entity, an HA event or a time; when it fires, its card "triggers" sends a message through the graph and the
 core's broker queues the run (reminders are time-critical: without a model their text reaches the owner
-anyway; event reactions expire). When the model has something to say it lands in "From AAC"; otherwise
+anyway; event reactions expire). When the model has something to say it lands in a chat of its own (the card's ticks); otherwise
 it answers NOTHING and stays silent (little noise is a core principle).
 
 AAC plans for itself through the module's tools (plans.py): reminders, check-ins and things to watch,
@@ -182,6 +182,9 @@ class Triggers:
             "critical": bool(do.get("critical", timed)), "fallback": f"{name}: {instruction}",
             "tags": ["reminder" if timed else "event", *(["own plan"] if trig.get("created_by") == "agent" else [])],
             "coalesce": True, "keep": True,
+            # the card's ticks (owner, 2026-10-23: findings in a chat of their own, listed under Auto)
+            "chat": "own" if self.ctx.setting(self.domain.id, "keep_chat") is not False else "none",
+            "chat_auto": self.ctx.setting(self.domain.id, "chat_auto") is not False,
         }
 
     def _fire(self, trig: dict, title: str, text: str) -> None:

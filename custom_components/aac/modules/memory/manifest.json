@@ -18,21 +18,5 @@
       "default": true,
       "help": "Small models rarely ask their memory on their own. Off: the model only gets memories when it calls recall."
     }
-  },
-  "setup": [
-    {
-      "id": "embeddings",
-      "title": "Give AAC a memory",
-      "optional": true,
-      "target": "models",
-      "hint": "Pick an embedding model so it finds memories by meaning, not only by words.",
-      "done_when": {
-        "role": "memory"
-      },
-      "how": [
-        "chat",
-        "panel"
-      ]
-    }
-  ]
+  }
 }

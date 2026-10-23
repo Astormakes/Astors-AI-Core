@@ -73,20 +73,5 @@
       "default": 7,
       "help": "For the week grid, table and agenda (1–31). The month view always shows a month."
     }
-  },
-  "setup": [
-    {
-      "id": "connect",
-      "title": "Connect a calendar",
-      "optional": true,
-      "hint": "Add a calendar in Home Assistant (Google Calendar, CalDAV/Nextcloud, or HA's own Local Calendar); AAC then shows it in its agenda and can put appointments there.",
-      "done_when": {
-        "entities_of": "calendar"
-      },
-      "how": [
-        "chat",
-        "panel"
-      ]
-    }
-  ]
+  }
 }
