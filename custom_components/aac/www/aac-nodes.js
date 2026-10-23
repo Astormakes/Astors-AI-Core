@@ -1220,6 +1220,8 @@ class AacNodes extends HTMLElement {
 
   async _addOf(typeId, at = null) {
     this.querySelector(".nv-addmenu").style.display = "none";
+    // not dropped somewhere: in the middle of what the screen shows (owner: "new nodes spawn in the screen's center")
+    at ||= { x: -this._view.x / this._view.k, y: -this._view.y / this._view.k };
     const type = (this._data.types || []).find((n) => n.id === typeId);
     if (!type) return;
     const title = await this._ask(`Name of the new ${type.title.toLowerCase()} node`, `${type.title} 2`);
