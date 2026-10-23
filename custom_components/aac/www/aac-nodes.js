@@ -681,6 +681,7 @@ class AacNodes extends HTMLElement {
   }
 
   _drawNow() {
+    if (!this._data) return;
     const nodesG = this._svg.querySelector(".nv-nodes"), wiresG = this._svg.querySelector(".nv-wires");
     this._mirror = this._mirrorSet(this._wires()); this._mirrorKey = [...this._mirror].sort().join(",");
     this._svg.querySelector(".nv-frames").innerHTML = this._frames.map((f) => `<g class="nv-frame ${f.collapsed ? "folded" : ""} ${this._selFrame === f.id ? "sel" : ""}" data-frame="${esc(f.id)}">
@@ -724,7 +725,7 @@ class AacNodes extends HTMLElement {
   }
 
   _layout() {
-    if (!this._stage) return;
+    if (!this._stage || !this._data) return;  // a resize before the cards are loaded
     this._layoutMonitors();
     const v = this._view;
     this._world.setAttribute("transform", `translate(${v.x + this._stage.clientWidth / 2},${v.y + this._stage.clientHeight / 2}) scale(${v.k})`);
