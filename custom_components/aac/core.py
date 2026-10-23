@@ -190,6 +190,11 @@ class Domain:
         return True
 
     async def _restore(self, setup: dict[str, Any]) -> None:
+        if setup["cards"] == self._specs and setup["wires"] == self.wires:  # only the layout changed (Arrange)
+            self.positions = deepcopy(setup.get("positions", self.positions))
+            self.save()
+            self.core.notify("setup", domain=self.id)
+            return
         self._specs = deepcopy(setup["cards"])
         self.wires = deepcopy(setup["wires"])
         for card in list(self.cards.values()):

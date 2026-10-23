@@ -5,6 +5,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\n/g, "<br>");
 const tip = (html) => `<span class="qm" tabindex="0">?<span class="tip">${html}</span></span>`;
 const W = 180, HEAD = 34, ROW = 20;
+const COL = W + 110; // one slot column (v1: a column per step in the flow)
 const KIND_COLOR = { text: "#f5a623", audio: "#4caf50", pool: "#03a9f4", piece: "#9c27b0" };
 const DAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
@@ -13,7 +14,7 @@ const STYLE = `
   font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
 * { box-sizing: border-box; }
 .root { display: flex; height: 100%; }
-nav { width: 250px; flex: none; background: var(--sidebar-background-color, var(--card-background-color));
+nav { width: var(--nav-w, 250px); flex: none; background: var(--sidebar-background-color, var(--card-background-color));
   border-right: 1px solid var(--divider-color); display: flex; flex-direction: column; }
 nav .top { padding: 14px 16px 6px; display: flex; align-items: baseline; gap: 8px; }
 nav .top b { font-size: 20px; } nav .top span { color: var(--secondary-text-color); font-size: 12px; }
@@ -65,12 +66,12 @@ textarea { resize: vertical; }
 .models td { padding: 4px 8px; border-bottom: 1px solid var(--divider-color); font-size: 14px; }
 /* nodes */
 .nodes { display: flex; height: 100%; min-height: 0; }
-.palette { width: 190px; flex: none; border-right: 1px solid var(--divider-color); display: flex; flex-direction: column; }
+.palette { width: var(--pal-w, 190px); flex: none; border-right: 1px solid var(--divider-color); display: flex; flex-direction: column; }
 .palette .types { flex: 1; overflow-y: auto; padding-bottom: 8px; }
 .palette .info { border-top: 1px solid var(--divider-color); padding: 10px; font-size: 12px; max-height: 45%; overflow-y: auto; }
 .grid { flex: 1; position: relative; overflow: hidden; background-image: radial-gradient(rgba(127,127,127,.25) 1px, transparent 1px); background-size: 20px 20px; }
 .grid svg { width: 100%; height: 100%; display: block; user-select: none; }
-.side { width: 300px; flex: none; border-left: 1px solid var(--divider-color); overflow-y: auto; padding: 12px; }
+.side { width: var(--side-w, 300px); flex: none; border-left: 1px solid var(--divider-color); overflow-y: auto; padding: 12px; }
 .side label { display: block; font-size: 12px; color: var(--secondary-text-color); margin: 10px 0 3px; }
 .side .check { display: flex; gap: 6px; align-items: center; color: var(--primary-text-color); font-size: 14px; }
 .side .check input { width: auto; }
@@ -82,9 +83,11 @@ textarea { resize: vertical; }
 .wire { fill: none; stroke-width: 2; opacity: .7; } .wire.pool { stroke-dasharray: 4 4; } .wire.sel { stroke-width: 4; opacity: 1; }
 .wire.flow { stroke-dasharray: 7 5; animation: flow 1s linear infinite; opacity: 1; }
 @keyframes flow { to { stroke-dashoffset: -24; } }
+.grip { flex: none; width: 7px; margin: 0 -4px 0 -3px; cursor: col-resize; position: relative; z-index: 5; touch-action: none; }
+.grip:hover, .grip.drag { background: var(--divider-color); }
 .hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
 @media (max-width: 800px) { nav { position: absolute; z-index: 20; height: 100%; transform: translateX(-100%); } .root.navopen nav { transform: none; }
-  .palette, .side { width: 170px; } }
+  .palette, .side { width: 170px; } .grip { display: none; } }
 `;
 
 class AacPanel extends HTMLElement {
@@ -112,6 +115,7 @@ class AacPanel extends HTMLElement {
   ws(type, data = {}) { return this._hass.callWS({ type, ...data }); }
 
   async _start() {
+    this._applyWidths();
     await this._load();
     this._hass.connection.subscribeMessage((ev) => this._event(ev), { type: "aac/subscribe" });
     const chat = this._cards("chat")[0];
@@ -187,7 +191,7 @@ class AacPanel extends HTMLElement {
     const main = v.kind === "nodes" ? this._nodes() : v.kind === "models" ? this._models() : v.kind === "lists" ? this._listsView()
       : v.kind === "log" ? this._logView() : v.kind === "memory" ? this._memoryView() : v.kind === "file" ? this._fileView()
       : v.kind === "audio" ? this._audioView() : this._chatView();
-    this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="root">${this._nav()}<main>${main}</main></div>`;
+    this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="root">${this._nav()}<div class="grip" data-grip="nav" data-target="nav" title="Drag: width of the sidebar (double-click: back to normal)"></div><main>${main}</main></div>`;
     this._bind();
     if (v.kind === "nodes") this._drawGrid();
     if (v.kind === "chat") { const log = this.shadowRoot.querySelector(".log"); if (log) log.scrollTop = log.scrollHeight; }
@@ -343,9 +347,11 @@ class AacPanel extends HTMLElement {
       : '<span class="hint">Pick a card type above, then click in the grid to place it.</span>';
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
     return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it.")}
-        <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="fit">Fit</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
+        <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="fit">Fit</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
       <div class="nodes"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
+        <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
         <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg></div>
+        <div class="grip" data-grip="side" data-target=".side" data-side="left" title="Drag: width (double-click: back to normal)"></div>
         <div class="side">${this._side()}</div></div></div>`;
   }
 
@@ -409,7 +415,7 @@ class AacPanel extends HTMLElement {
       const p = pos(c.id), names = Object.keys(side === "out" ? c.outputs : c.inputs);
       return { x: p.x + (side === "out" ? W : 0), y: p.y + HEAD + ROW * names.indexOf(name) + ROW / 2 };
     };
-    const height = (c) => HEAD + ROW * Math.max(Object.keys(c.inputs).length, Object.keys(c.outputs).length, 1) + 8;
+    const height = (c) => this._height(c);
     this.shadowRoot.querySelector("#cards").innerHTML = d.cards.map((c) => {
       const p = pos(c.id), ins = Object.entries(c.inputs), outs = Object.entries(c.outputs);
       return `<g class="node ${this.sel === c.id ? "sel" : ""}" data-node="${esc(c.id)}" transform="translate(${p.x},${p.y})">
@@ -420,17 +426,210 @@ class AacPanel extends HTMLElement {
           : `<circle class="dot" data-out="${esc(n)}" data-kind="${k}" cx="${W}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" x="${W - 10}" y="${HEAD + ROW * i + ROW / 2 + 3}" text-anchor="end">${esc(n)}</text>`).join("")}
       </g>`;
     }).join("");
-    const byId = Object.fromEntries(d.cards.map((c) => [c.id, c]));
-    this.shadowRoot.querySelector("#wires").innerHTML = d.wires.map((w) => {
-      const [a, ap] = w.from.split("."), [b, bp] = w.to.split(".");
-      if (!byId[a] || !byId[b]) return "";
-      const o = port(byId[a], ap, "out"), i = port(byId[b], bp, "in"), k = byId[a].outputs[ap];
-      const bend = Math.max(50, Math.abs(i.x - o.x) / 2), path = `M${o.x},${o.y} C${o.x + bend},${o.y} ${i.x - bend},${i.y} ${i.x},${i.y}`;
-      const sel = this.selWire && this.selWire.from === w.from && this.selWire.to === w.to;
-      return `<path class="wire ${k === "pool" ? "pool" : ""} ${sel ? "sel" : ""}" data-from="${esc(w.from)}" d="${path}" stroke="${KIND_COLOR[k] || "#999"}"></path>
-        <path class="hit" data-wire="${esc(w.from)}|${esc(w.to)}" d="${path}"></path>`;
+    const wires = this._wireList(), routes = this._routes(wires, port);
+    this.shadowRoot.querySelector("#wires").innerHTML = wires.map((w) => {
+      const path = routes[w.key], sel = this.selWire && `${this.selWire.from}|${this.selWire.to}` === w.key;
+      return `<path class="wire ${w.kind === "pool" ? "pool" : ""} ${w.loop ? "loop" : ""} ${sel ? "sel" : ""}" data-from="${esc(`${w.a.id}.${w.ap}`)}" d="${path}" stroke="${KIND_COLOR[w.kind] || "#999"}"></path>
+        <path class="hit" data-wire="${esc(w.key)}" d="${path}"><title>${esc(w.a.title)}.${esc(w.ap)} → ${esc(w.b.title)}.${esc(w.bp)} (${esc(w.kind)})</title></path>`;
     }).join("");
     this._view();
+  }
+
+  // ------------------------------------------------------------------ layout (v1's slots and wire lanes)
+  _height(c) { return HEAD + ROW * Math.max(Object.keys(c.inputs).length, Object.keys(c.outputs).length, 1) + 8; }
+
+  _wireList() {
+    const byId = Object.fromEntries(this.state.domain.cards.map((c) => [c.id, c]));
+    const wires = this.state.domain.wires.map((w) => {
+      const [a, ap] = w.from.split("."), [b, bp] = w.to.split(".");
+      return byId[a] && byId[b] ? { a: byId[a], ap, b: byId[b], bp, kind: byId[a].outputs[ap], key: `${w.from}|${w.to}` } : null;
+    }).filter(Boolean);
+    // a loop: wired both ways between two cards (a card and its tool); the host is the card with more loops (then more wires)
+    const has = new Set(wires.map((w) => `${w.a.id}>${w.b.id}`)), partners = {}, degree = {};
+    for (const w of wires) { degree[w.a.id] = (degree[w.a.id] || 0) + 1; degree[w.b.id] = (degree[w.b.id] || 0) + 1; }
+    for (const w of wires) if (w.a.id !== w.b.id && has.has(`${w.b.id}>${w.a.id}`)) (partners[w.a.id] ||= new Set()).add(w.b.id);
+    const score = (id) => (partners[id]?.size || 0) * 1000 + (degree[id] || 0);
+    for (const w of wires) {
+      if (w.a.id === w.b.id || !has.has(`${w.b.id}>${w.a.id}`)) continue;
+      const aHosts = score(w.a.id) > score(w.b.id) || (score(w.a.id) === score(w.b.id) && w.a.id < w.b.id);
+      Object.assign(w, { loop: true, host: aHosts ? w.a.id : w.b.id, tool: aHosts ? w.b.id : w.a.id });
+    }
+    // going back: into a card's answers/status input (the reply), or closing a circle
+    for (const w of wires) if (!w.loop && ["answers", "status"].includes(w.bp)) w.back = true;
+    const next = {};
+    for (const w of wires) if (!w.loop && !w.back) (next[w.a.id] ||= []).push(w);
+    const state = {};
+    const visit = (id) => { state[id] = 1; for (const w of next[id] || []) { if (state[w.b.id] === 1) w.back = true; else if (!state[w.b.id]) visit(w.b.id); } state[id] = 2; };
+    for (const c of [...this.state.domain.cards].sort((x, y) => Object.keys(x.inputs).length - Object.keys(y.inputs).length)) if (!state[c.id]) visit(c.id);
+    return wires;
+  }
+
+  _arrange() {
+    // Slots (v1): a column per step in the flow; a card's tools stacked under it in its column; separate chains below
+    // each other, unwired cards in a strip at the bottom; rows ordered so wires cross less
+    const cards = this.state.domain.cards, byId = Object.fromEntries(cards.map((c) => [c.id, c]));
+    const wires = this._wireList(), hangs = new Set(wires.filter((w) => w.loop).map((w) => w.tool)), rank = {};
+    for (const w of wires) if (w.loop) hangs.delete(w.host);
+    const forward = wires.filter((w) => !w.back && !w.loop && !hangs.has(w.a.id) && !hangs.has(w.b.id) && w.a.id !== w.b.id);
+    for (let i = 0; i < cards.length; i++) {
+      let changed = false;
+      for (const w of forward) if ((rank[w.b.id] ?? 0) < (rank[w.a.id] ?? 0) + 1) { rank[w.b.id] = (rank[w.a.id] ?? 0) + 1; changed = true; }
+      if (!changed) break;
+    }
+    for (let i = 0; i < 3; i++) // a card that only feeds others sits right before the first of them
+      for (const c of cards) {
+        if (forward.some((w) => w.b.id === c.id)) continue;
+        const nx = forward.filter((w) => w.a.id === c.id).map((w) => rank[w.b.id] ?? 0);
+        if (nx.length) rank[c.id] = Math.min(...nx) - 1;
+      }
+    const wired = new Set(wires.flatMap((w) => [w.a.id, w.b.id])), comp = {}, link = {}, comps = [];
+    for (const w of wires) if (!w.loop) { (link[w.a.id] ||= []).push(w.b.id); (link[w.b.id] ||= []).push(w.a.id); }
+    for (const c of cards) {
+      if (!wired.has(c.id) || hangs.has(c.id) || comp[c.id] !== undefined) continue;
+      const todo = [c.id], members = [];
+      comp[c.id] = comps.length;
+      while (todo.length) { const id = todo.pop(); members.push(id); for (const o of link[id] || []) if (comp[o] === undefined && !hangs.has(o)) { comp[o] = comps.length; todo.push(o); } }
+      comps.push(members);
+    }
+    comps.sort((x, y) => (y.some((id) => byId[id].type === "model") - x.some((id) => byId[id].type === "model")) || y.length - x.length);
+    const GAP = 30, at = {};
+    const toolsOf = (id) => [...new Set(wires.filter((w) => w.loop && w.host === id).map((w) => w.tool))];
+    const slotH = (id) => toolsOf(id).reduce((h, t) => h + GAP + this._height(byId[t]), this._height(byId[id]));
+    let top = 0;
+    for (const members of comps) {
+      const base = Math.min(...members.map((id) => rank[id] ?? 0)), cols = {};
+      for (const id of members) (cols[(rank[id] ?? 0) - base] ||= []).push(id);
+      const order = Object.keys(cols).map(Number).sort((x, y) => x - y), yOf = {};
+      const lay = () => { for (const c of order) { let y = 0; for (const id of cols[c]) { yOf[id] = y; y += slotH(id) + GAP; } } };
+      lay();
+      for (let pass = 0; pass < 6; pass++) // barycenter sweeps, left to right and back
+        for (const c of pass % 2 ? [...order].reverse() : order) {
+          const near = (id) => {
+            const ys = forward.filter((w) => (pass % 2 ? w.a.id === id : w.b.id === id)).map((w) => yOf[pass % 2 ? w.b.id : w.a.id]).filter((v) => v !== undefined);
+            return ys.length ? ys.reduce((t, v) => t + v, 0) / ys.length : yOf[id];
+          };
+          cols[c].sort((x, y) => near(x) - near(y));
+          lay();
+        }
+      let height = 0;
+      for (const c of order) {
+        let y = top;
+        for (const id of cols[c]) {
+          at[id] = { x: c * COL, y };
+          let yy = y + this._height(byId[id]) + GAP;
+          for (const t of toolsOf(id)) if (!at[t]) { at[t] = { x: c * COL, y: yy }; yy += this._height(byId[t]) + GAP; }
+          y += slotH(id) + GAP;
+        }
+        height = Math.max(height, y - top);
+      }
+      top += height + 90;
+    }
+    let parked = 0;
+    for (const c of cards) if (!at[c.id]) at[c.id] = { x: (parked++) * COL, y: top };
+    return at;
+  }
+
+  _snap(id) {
+    // a dropped card goes into the nearest column, on the 20 px grid, below any card it would cover there
+    const d = this.state.domain, p = d.positions[id], c = this._card(id);
+    if (!p || !c) return;
+    p.x = Math.round(p.x / COL) * COL; p.y = Math.round(p.y / 20) * 20;
+    for (let tries = 0; tries < 50; tries++) {
+      const hit = d.cards.find((o) => o.id !== id && d.positions[o.id] && Math.abs(d.positions[o.id].x - p.x) < W
+        && d.positions[o.id].y < p.y + this._height(c) + 10 && p.y < d.positions[o.id].y + this._height(o) + 10);
+      if (!hit) break;
+      p.y = Math.round((d.positions[hit.id].y + this._height(hit) + 20) / 20) * 20;
+    }
+  }
+
+  _routes(wires, port) {
+    // Wire paths (v1: lines should not cross cards or each other): a short wire forward is a curve; a loop between a
+    // card and the tools stacked under it runs in a side lane (the deeper the tool, the further out); a wire going
+    // back or far runs below the cards between its ends, in a lane of its own
+    const d = this.state.domain, pos = (id) => d.positions[id] || { x: 0, y: 0 };
+    const box = (c) => { const p = pos(c.id); return { x: p.x + W / 2, top: p.y, bottom: p.y + this._height(c) }; };
+    const chain = {}, near = {};
+    for (const w of wires) { (near[w.a.id] ||= []).push(w.b.id); (near[w.b.id] ||= []).push(w.a.id); }
+    let cid = 0;
+    for (const c of d.cards) {
+      if (chain[c.id] !== undefined || !near[c.id]) continue;
+      const todo = [c.id]; chain[c.id] = cid;
+      while (todo.length) for (const o of near[todo.pop()] || []) if (chain[o] === undefined) { chain[o] = cid; todo.push(o); }
+      cid++;
+    }
+    const order = {};
+    for (const w of wires) if (w.loop) (order[w.host] ||= new Set()).add(w.tool);
+    for (const [m, set] of Object.entries(order)) order[m] = [...set].sort((a, b) => pos(a).y - pos(b).y);
+    const path = (pts) => pts.map((q, k) => `${k ? "L" : "M"}${Math.round(q[0])},${Math.round(q[1])}`).join(" ");
+    const out = {}, below = [];
+    for (const w of wires) {
+      const o = port(w.a, w.ap, "out"), i = port(w.b, w.bp, "in");
+      if (w.loop && Math.abs(pos(w.a.id).x - pos(w.b.id).x) < 4) { // stacked under its host
+        const k = order[w.host].indexOf(w.tool), t = box(w.a.id === w.tool ? w.a : w.b);
+        if (w.b.id === w.tool) { // host → tool: down the right side, in above the tool
+          const lane = o.x + 18 + k * 7;
+          out[w.key] = path([[o.x, o.y], [lane, o.y], [lane, t.top - 9], [i.x - 12, t.top - 9], [i.x - 12, i.y], [i.x, i.y]]);
+        } else { // tool → host: out below the tool, up the left side
+          const lane = i.x - 18 - k * 7;
+          out[w.key] = path([[o.x, o.y], [o.x + 8, o.y], [o.x + 8, t.bottom + 9], [lane, t.bottom + 9], [lane, i.y], [i.x, i.y]]);
+        }
+        continue;
+      }
+      if (i.x > o.x + 20 && i.x - o.x < 3.5 * COL) {
+        const bend = Math.max(40, Math.abs(i.x - o.x) / 2);
+        out[w.key] = `M${o.x},${o.y} C${o.x + bend},${o.y} ${i.x - bend},${i.y} ${i.x},${i.y}`;
+        continue;
+      }
+      below.push({ o, i, w });
+    }
+    below.sort((p, q) => Math.abs(p.i.x - p.o.x) - Math.abs(q.i.x - q.o.x)); // short ones inside, long ones outside
+    const taken = [];
+    for (const { o, i, w } of below) {
+      const lo = Math.min(o.x, i.x) - W, hi = Math.max(o.x, i.x) + W;
+      let floor = Math.max(o.y, i.y);
+      for (const c of d.cards) {
+        if (chain[c.id] !== chain[w.a.id]) continue;
+        const b = box(c);
+        if (b.x > lo && b.x < hi) floor = Math.max(floor, b.bottom);
+      }
+      for (const t of taken) if (t.hi > lo && t.lo < hi && t.chain === chain[w.a.id]) floor = Math.max(floor, t.y);
+      const y = floor + 22, k = taken.length % 6;
+      taken.push({ lo, hi, y, chain: chain[w.a.id] });
+      const loopsA = (order[w.a.id] || []).length, loopsB = (order[w.b.id] || []).length;
+      const ox = o.x + 14 + k * 5 + (loopsA ? 18 + loopsA * 7 : 0), ix = i.x - 14 - k * 5 - (loopsB ? 18 + loopsB * 7 : 0);
+      out[w.key] = path([[o.x, o.y], [ox, o.y], [ox, y], [ix, y], [ix, i.y], [i.x, i.y]]);
+    }
+    return out;
+  }
+
+  async _doArrange() {
+    this.state.domain.positions = this._arrange();
+    await this.ws("aac/positions", { positions: this.state.domain.positions, undoable: true });
+    await this._load(); this.render(); this._fit();
+  }
+
+  // ------------------------------------------------------------------ resizable panels (v1: drag the edge, double-click resets)
+  _widths() { try { return JSON.parse(localStorage.getItem("aac.widths") || "{}"); } catch (err) { return {}; } }
+
+  _applyWidths() { for (const [k, v] of Object.entries(this._widths())) if (v) this.style.setProperty(`--${k}-w`, `${v}px`); }
+
+  _grips() {
+    for (const grip of this.shadowRoot.querySelectorAll("[data-grip]")) {
+      const key = grip.dataset.grip, el = this.shadowRoot.querySelector(grip.dataset.target), sign = grip.dataset.side === "left" ? -1 : 1;
+      const save = (v) => { const all = this._widths(); all[key] = v; try { localStorage.setItem("aac.widths", JSON.stringify(all)); } catch (err) { /* private window */ } };
+      grip.addEventListener("dblclick", () => { this.style.removeProperty(`--${key}-w`); save(0); });
+      grip.addEventListener("pointerdown", (ev) => {
+        ev.preventDefault();
+        grip.setPointerCapture(ev.pointerId); grip.classList.add("drag");
+        const x0 = ev.clientX, w0 = el.getBoundingClientRect().width;
+        let w = w0;
+        const move = (e) => { w = Math.max(140, Math.min(700, w0 + sign * (e.clientX - x0))); this.style.setProperty(`--${key}-w`, `${w}px`); };
+        const up = () => { grip.classList.remove("drag"); grip.removeEventListener("pointermove", move); save(Math.round(w)); };
+        grip.addEventListener("pointermove", move);
+        grip.addEventListener("pointerup", up, { once: true });
+        grip.addEventListener("pointercancel", up, { once: true });
+      });
+    }
   }
 
   _view() { const g = this.shadowRoot.querySelector("#world"); if (g) g.setAttribute("transform", `translate(${this.vp.x},${this.vp.y}) scale(${this.vp.k})`); }
@@ -438,12 +637,13 @@ class AacPanel extends HTMLElement {
   _world(e) { const r = this.shadowRoot.querySelector("#svg").getBoundingClientRect(); return { x: (e.clientX - r.left - this.vp.x) / this.vp.k, y: (e.clientY - r.top - this.vp.y) / this.vp.k }; }
 
   _fit() {
-    const ps = Object.values(this.state.domain.positions), svg = this.shadowRoot.querySelector("#svg");
-    if (!ps.length || !svg) return;
-    const xs = ps.map((p) => p.x), ys = ps.map((p) => p.y), r = svg.getBoundingClientRect();
-    const w = Math.max(...xs) - Math.min(...xs) + W + 80, h = Math.max(...ys) - Math.min(...ys) + 200;
-    const k = Math.min(1.2, r.width / w, r.height / h);
-    this.vp = { k, x: (r.width - w * k) / 2 - (Math.min(...xs) - 40) * k, y: (r.height - h * k) / 2 - (Math.min(...ys) - 60) * k };
+    const d = this.state.domain, svg = this.shadowRoot.querySelector("#svg"), placed = d.cards.filter((c) => d.positions[c.id]);
+    if (!placed.length || !svg) return;
+    const xs = placed.map((c) => d.positions[c.id].x), ys = placed.map((c) => d.positions[c.id].y), r = svg.getBoundingClientRect();
+    const x0 = Math.min(...xs) - 90, x1 = Math.max(...xs) + W + 90; // room for the side lanes
+    const y0 = Math.min(...ys) - 40, y1 = Math.max(...placed.map((c) => d.positions[c.id].y + this._height(c))) + 120; // and the lanes below
+    const k = Math.min(1.2, r.width / (x1 - x0), r.height / (y1 - y0));
+    this.vp = { k, x: (r.width - (x1 - x0) * k) / 2 - x0 * k, y: (r.height - (y1 - y0) * k) / 2 - y0 * k };
     this._view();
   }
 
@@ -492,7 +692,7 @@ class AacPanel extends HTMLElement {
       const d = drag; drag = null; this._dragging = false;
       if (!d) return;
       if (d.kind === "move") {
-        if (d.moved) await this._savePositions();
+        if (d.moved) { this._snap(d.id); this._drawGrid(); await this._savePositions(); }
         else { this.sel = d.id; this.selWire = null; this.render(); }
       }
       if (d.kind === "wire") {
@@ -507,7 +707,8 @@ class AacPanel extends HTMLElement {
   }
 
   async _place(type, at) {
-    const card = await this.ws("aac/card/add", { card_type: type, x: Math.round(at.x / 20) * 20, y: Math.round(at.y / 20) * 20 });
+    const col = Math.round((at.x - W / 2) / COL) * COL;
+    const card = await this.ws("aac/card/add", { card_type: type, x: col, y: Math.round(at.y / 20) * 20 });
     this.selType = null; this.sel = card.id;
     await this._load(); this.render();
   }
@@ -528,6 +729,7 @@ class AacPanel extends HTMLElement {
   _bind() {
     const $ = (s) => this.shadowRoot.querySelector(s), $$ = (s) => this.shadowRoot.querySelectorAll(s);
     $$("[data-go]").forEach((el) => el.addEventListener("click", () => this.go(el.dataset.go, el.dataset.card || null, el.dataset.id || null)));
+    this._grips();
     $$("[data-newchat]").forEach((el) => el.addEventListener("click", () => this.go("chat", el.dataset.newchat, null)));
     $("#domain")?.addEventListener("change", async (e) => { await this.ws("aac/domain/switch", { domain_id: e.target.value }); await this._load(); this.chats = {}; for (const c of this._cards("chat")) await this._openChats(c.id); this.go("chat", this._cards("chat")[0]?.id || null); });
     $("#clone")?.addEventListener("click", async () => { const name = prompt("Name of the copy?", `${this.state.domain.name} (test)`); if (name) { await this.ws("aac/domain/clone", { name }); await this._load(); this.render(); } });
@@ -566,6 +768,7 @@ class AacPanel extends HTMLElement {
     $$("[data-pick]").forEach((el) => el.addEventListener("click", () => { this.selType = this.selType === el.dataset.pick ? null : el.dataset.pick; this.render(); }));
     $("#undo")?.addEventListener("click", async () => { await this.ws("aac/undo"); await this._load(); this.render(); });
     $("#fit")?.addEventListener("click", () => this._fit());
+    $("#arrange")?.addEventListener("click", () => this._doArrange());
     $$("[data-slot]").forEach((el) => el.addEventListener("click", async (e) => {
       const slot = el.dataset.slot;
       if (e.shiftKey) { if (confirm(`Load slot ${slot}? (Undo brings the current setup back)`)) await this.ws("aac/slot", { slot, action: "load" }); }

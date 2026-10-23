@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 import voluptuous as vol
@@ -13,6 +14,7 @@ from homeassistant.loader import async_get_integration
 
 from .cards import CARD_TYPES, CATEGORIES
 from .const import DOMAIN, SIGNAL
+from .core import UNDO_STEPS
 from .models import Client, ModelError
 
 COMMANDS: list = []
@@ -125,10 +127,12 @@ async def ws_wires(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"wires": domain.wires})
 
 
-@command({vol.Required("type"): "aac/positions", vol.Required("positions"): dict})
+@command({vol.Required("type"): "aac/positions", vol.Required("positions"): dict, vol.Optional("undoable", default=False): bool})
 async def ws_positions(hass, connection, msg) -> None:
-    """Where the cards sit in the grid."""
+    """Where the cards sit in the grid (Arrange: undoable)."""
     domain = _core(hass).domain
+    if msg["undoable"]:
+        domain.undo = [*domain.undo, {**domain._snapshot(), "positions": deepcopy(domain.positions)}][-UNDO_STEPS:]
     domain.positions = {k: {"x": float(v.get("x", 0)), "y": float(v.get("y", 0))} for k, v in msg["positions"].items()
                         if k in domain.cards}
     domain.save()

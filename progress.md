@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`, its progress file `docs/progress-v1.md` (private).
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-23) – 2.0.0-alpha.5, live on the owner's HA
+## Current state (2026-10-23) – 2.0.0-alpha.6, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -32,6 +32,10 @@ the owner wires them (no automatic wiring), the message is a document of entries
   HA work); functions calendar/add/change/remove; one-time: a Calendar card as the default model's tool.
 - **Request view (alpha.5):** a chat's Request button shows what the model got for the newest turn: each message with
   the cards its text came from, and the tools it had (`aac/chat/request`; kept in memory, 30 chats per Model card).
+- **Grid like v1 (alpha.6):** sidebar, card list and settings resize by dragging their edge (double-click resets;
+  kept per browser); cards snap into columns (a column per step); Arrange puts them in v1's slots (tools stacked
+  under their card, separate chains below each other; undoable, only positions change); wires use v1's routes
+  (curves forward, side lanes for tool loops, lanes below the cards for replies and far wires).
 - **One-time steps on the owner's HA:** v1's 05:25 trigger → Schedule card; v1's voice settings; the voice chain
   (Wake word = a Conditional: "computer" or a follow-up; Voice rules = a Relay after the turn); an HA Assist card.
 - **First start** (`defaults.py`): the default domain (Chat → Charter → Time → Model → Chat; Pool "Models"; Lists and
