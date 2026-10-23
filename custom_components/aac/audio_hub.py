@@ -380,7 +380,7 @@ class AudioHub:
             self._add_line(source, line)
 
     def _segment_line(self, source: Source, pcm: bytes, start) -> dict[str, Any]:
-        return {"time": start.isoformat(), "source": source.id, "name": source.name, "kind": "speech", "text": "",
+        return {"time": start.isoformat(), "source": source.id, "name": source.name, "area": source.area, "kind": "speech", "text": "",
                 "addressed": False, "seconds": round(len(pcm) / (SAMPLE_RATE * 2), 1),
                 "loudness_db": loudness_db(pcm), "highs": highs(pcm)}
 

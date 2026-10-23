@@ -16,7 +16,9 @@ from typing import TYPE_CHECKING, Any
 import voluptuous as vol
 
 from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT
+from homeassistant.exceptions import TemplateError
 from homeassistant.helpers import llm
+from homeassistant.helpers.template import Template
 from homeassistant.util import dt as dt_util
 
 from .api_node import api_node
@@ -54,6 +56,11 @@ DECIDE_HELP = ("Sends the message on through one of its named outputs. A model r
                "description of each output and picks one; the server only allows your output names. If the "
                "decision fails, the message takes the default output. It does not change the message.")
 
+
+# Text cards render HA's own templates (owner, 2026-10-23: "can we incorporate HA's own variables")
+TEMPLATE_HINT = ("HA templates work: {{ now().strftime('%H:%M') }}, {{ states('sensor.outside_temperature') }}, "
+                 "{{ <card id>.<value> }} from cards before it, {{ message.language }}. Changing text (like the time) "
+                 "belongs in a Trailer: at the start it makes the server recompute the prompt.")
 
 def model_node(inst_id: str = MODEL, title: str = "Model", settings: dict[str, Any] | None = None) -> Node:
     """A model card: reads the whole conversation; its output is square (its wired nodes are its tools)."""
@@ -96,7 +103,8 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
         return schema, get, put
 
     agent_edit = editing({"prompt": {"type": "longtext", "title": "Prompt", "rows": 8,
-                                     "help": "The assistant's role and manner, e.g. \"You are AAC, a calm home companion.\""}},
+                                     "help": "The assistant's role and manner, e.g. \"You are AAC, a calm home companion.\"",
+                                     "hint": TEMPLATE_HINT}},
                          {"prompt": (CONF_PROMPT, "", vol.Coerce(str))})
     model_edit = editing({
         "temperature": {"type": "number", "title": "Temperature", "help": "0 = always the same answer, higher = more varied (0–2)."},
@@ -150,19 +158,29 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
         return Node(id=sid, title=title or SOURCES[sid], inputs=IN, outputs=OUT, role="endpoint",
                     description=SOURCE_HELP[kind], handle=handle, settings=settings or {})
 
+    def render(text: str, message: Message) -> str:
+        """A card's text through HA's own template engine ({{ now() }}, {{ states('sensor.x') }}, the cards'
+        values); an error shows in the text instead of breaking the message."""
+        if "{" not in text:
+            return text
+        try:
+            return str(Template(text, hass).async_render(message.template_vars(), parse_result=False)).strip()
+        except TemplateError as err:
+            return f"{text}\n[template error: {err}]"
+
     async def agent(message: Message, step) -> None:
-        message.put("agent", "system", (message.domain.settings.master.get(CONF_PROMPT) or "").strip())
+        message.put("agent", "system", render((message.domain.settings.master.get(CONF_PROMPT) or "").strip(), message))
 
     def agent_make(inst_id: str, title: str, settings: dict) -> Node:
         async def handle(message: Message, step) -> None:  # its own prompt instead of the domain's
-            message.put(inst_id, "system", (settings.get("prompt") or "").strip())
+            message.put(inst_id, "system", render((settings.get("prompt") or "").strip(), message))
         return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=["system"], order=10, handle=handle,
                     role="transform", settings=settings)
 
     def text_make(kind: str):
         def make(inst_id: str, title: str, settings: dict) -> Node:
             async def handle(message: Message, step) -> None:
-                message.put(inst_id, kind, (settings.get("text") or "").strip())
+                message.put(inst_id, kind, render((settings.get("text") or "").strip(), message))
             return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=[kind], order=15, handle=handle,
                         role="transform", settings=settings)
         return make
@@ -177,7 +195,7 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
     async def ha_apis_of(message: Message) -> list[str]:
         return list(message.domain.settings.master.get(CONF_LLM_HASS_API) or [])
 
-    text = {"type": "longtext", "title": "Text", "default": "", "rows": 5}
+    text = {"type": "longtext", "title": "Text", "default": "", "rows": 5, "hint": TEMPLATE_HINT}
     flow = lambda: entry.runtime_data.flow  # noqa: E731
     return [
         *(endpoint(sid) for sid in SOURCES),

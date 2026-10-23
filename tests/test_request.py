@@ -3,6 +3,7 @@
 import json
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from custom_components.aac.broker import async_run_request
 from custom_components.aac.request import Message
@@ -267,3 +268,20 @@ async def test_chat_cards_and_markdown_files(hass: HomeAssistant, hass_ws_client
         assert (await ws.receive_json())["success"]
         await ws.send_json_auto_id({"type": "aac/notes/get", "node": "log"})
         assert (await ws.receive_json())["result"]["text"] == "# Mine\n"
+
+
+async def test_text_cards_render_ha_templates(hass: HomeAssistant, mock_entry, configured):
+    """Header/Trailer/Context texts go through HA's template engine: HA states, the message, cards' values."""
+    await setup_aac(hass, mock_entry)
+    hass.states.async_set("sensor.outside", "12")
+    message = Message(domain=mock_entry.runtime_data.domain(), language="de")
+    message.add("chat", "user", "hi")
+    message.set_vars("room", lines="1. hello", count=1)
+    make = mock_entry.runtime_data.bus.templates["trailer"].make
+    card = make("tr", "Trailer", {"text": "Outside {{ states('sensor.outside') }} °C, {{ message.language }}, "
+                                          "{{ room.count }} line(s), year {{ now().year }}."})
+    await card.handle(message, None)
+    assert message.last("trailer")["text"] == f"Outside 12 °C, de, 1 line(s), year {dt_util.now().year}."
+    broken = make("bad", "Bad", {"text": "{{ nope( }}"})
+    await broken.handle(message, None)
+    assert "[template error:" in message.last("trailer", "bad")["text"]

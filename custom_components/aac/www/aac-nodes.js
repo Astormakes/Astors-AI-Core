@@ -1058,7 +1058,7 @@ class AacNodes extends HTMLElement {
     let more = false;
     const fields = Object.entries(m.settings || {}).map(([key, f]) => {
       const v = m.values?.[key], label = `<label>${esc(f.title || key)}</label>`;
-      const help = f.help ? `<div class="hint" style="margin:-.2em 0 .5em">${esc(f.help)}</div>` : "";
+      const help = f.help || f.hint ? `<div class="hint" style="margin:-.2em 0 .5em">${esc([f.help, f.hint].filter(Boolean).join(" "))}</div>` : "";
       if (f.type === "bool") return `<label class="check"><input type="checkbox" data-mod-key="${esc(key)}" ${v ? "checked" : ""}>${esc(f.title || key)}</label>${help}`;
       if (f.type === "select" && f.options) return `${label}<select data-mod-key="${esc(key)}">${f.options.map(([val, l]) =>
         `<option value="${esc(val)}" ${String(val) === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>${help}`;
@@ -1096,7 +1096,7 @@ class AacNodes extends HTMLElement {
   _coreForm(n) {
     // A core card's own settings (what SETTINGS → Master agent had): the Agent's prompt, the model's temperature, …
     const field = ([key, f]) => {
-      const v = n.edit_values?.[key], help = f.help ? `<p class="hint" style="margin:.2em 0 0">${esc(f.help)}</p>` : "";
+      const v = n.edit_values?.[key], help = f.help || f.hint ? `<p class="hint" style="margin:.2em 0 0">${esc([f.help, f.hint].filter(Boolean).join(" "))}</p>` : "";
       if (f.type === "bool") return `<label class="check"><input type="checkbox" data-core-key="${esc(key)}" ${v ? "checked" : ""}>${esc(f.title || key)}</label>${help}`;
       if (f.type === "multiselect") return `<label>${esc(f.title || key)}</label>${(f.options || []).map(([val, label]) =>
         `<label class="check"><input type="checkbox" data-core-key="${esc(key)}" data-val="${esc(val)}" ${(v || []).includes(val) ? "checked" : ""}>${esc(label)}</label>`).join("")

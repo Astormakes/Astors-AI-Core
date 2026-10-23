@@ -54,6 +54,22 @@ kind:  system  (stable text for the system prompt: charter, agent prompt, instru
 - While a model waits for a loop, everything nodes write is tagged with that call (`data.call_id`), and becomes
   the tool result the model reads.
 
+## Templates and values
+
+The text cards (Agent prompt, Header, Trailer, Context) render their text with Home Assistant's own template
+engine (Jinja, the syntax of HA automations): `{{ now().strftime('%H:%M') }}`, `{{ states('sensor.x') }}`,
+`{% if is_state('person.x', 'home') %}…{% endif %}`. A template error shows in the text, it does not stop the
+message.
+
+Cards hand on values: `message.vars` is `{card id: {name: value}}` and travels with the message (copied on
+every branch); a template reads `{{ <card id>.<name> }}`, plus `{{ message.language }}` (also `user_id`,
+`origin`, `trigger`, `title`, `kind`, `device_id`). The card id comes from the name the card got when it was
+added ("Kitchen buffer" → `kitchen_buffer`). So far: Heard lines (`text`, `speaker`, `mic`, `mic_name`, `area`),
+Buffer (`lines`, `count`, `newest`).
+
+Text that changes on every message (the time) belongs in a Trailer: at the start it makes the model server
+recompute the prompt.
+
 ## The model card
 
 Inputs `in` (text) and later `pool`; one square output `out`.

@@ -84,6 +84,9 @@ class Message:
     chat: str = "aac"  # an automatic finding: "aac" = the From AAC chat, "own" = a chat of its own
     chat_prefix: str | None = None
     now: bool = False  # automatic but at once, without the queue ("Run once now")
+    # Values cards hand on (owner, 2026-10-23): card id → {name: value}; the text cards read them with HA's
+    # template syntax, e.g. {{ kitchen_buffer.lines }}
+    vars: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ writing
     def add(self, by: str, kind: str, text: str = "", tags: list[str] | None = None, **data: Any) -> dict[str, Any]:
@@ -115,6 +118,16 @@ class Message:
         else:
             self.entries.append(item)
         return item
+
+    def set_vars(self, by: str, **values: Any) -> None:
+        """A card's values for the cards after it ({{ <card id>.<name> }})."""
+        self.vars.setdefault(by, {}).update(values)
+
+    def template_vars(self) -> dict[str, Any]:
+        """What a template sees: every card's values, plus `message` (its own pointers)."""
+        return {**self.vars, "message": {"language": self.language, "user_id": self.user_id, "origin": self.origin,
+                                         "trigger": self.trigger, "title": self.title, "kind": self.kind,
+                                         "device_id": self.device_id}}
 
     # ------------------------------------------------------------------ reading
     def last(self, kind: str | None = None, tag: str | None = None) -> dict[str, Any] | None:
@@ -148,7 +161,7 @@ class Message:
     def branch(self) -> Message:
         """A copy for one wire of several (entries copied, the way so far kept)."""
         return replace(self, entries=deepcopy(self.entries), trace=list(self.trace), calls=list(self.calls),
-                       tags=list(self.tags), context_parts=list(self.context_parts))
+                       tags=list(self.tags), context_parts=list(self.context_parts), vars=deepcopy(self.vars))
 
 
 ModelRequest = Message

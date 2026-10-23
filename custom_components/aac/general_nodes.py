@@ -118,6 +118,7 @@ def general_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                     text = (newest["data"].get("own_words") or newest["text"]).strip()
                     if not items or items[-1] != text:
                         items.append(text)
+            message.set_vars(inst_id, lines=block(items), count=len(items), newest=items[-1] if items else "")
             kind = settings.get("write") or "note"
             if kind != "none":
                 message.put(inst_id, kind, block(items))
@@ -137,6 +138,8 @@ def general_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
             who = line.get("speaker") or {}
             message.add(inst_id, "user", line["text"].strip(), mic=line.get("source"), mic_name=line.get("name"),
                         voice=who.get("name") if isinstance(who, dict) else None)
+            message.set_vars(inst_id, text=line["text"].strip(), mic=line.get("source"), mic_name=line.get("name"),
+                             area=line.get("area"), speaker=who.get("name") if isinstance(who, dict) else None)
             entry.async_create_background_task(hass, entry.runtime_data.flow.async_send(message, start=inst_id),
                                                f"aac heard {inst_id}")
 
@@ -190,9 +193,11 @@ def general_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
 
 BUFFER_HELP = ("Keeps the last texts that pass it (a set number of slots) and writes them into the message as one "
                "numbered block, e.g. the last ten lines heard in a room. Wired to a model it is a tool: read, add, "
-               "remove a slot, remove what contains a word, clear.")
+               "remove a slot, remove what contains a word, clear. Values for templates: {{ <card id>.lines }}, "
+               ".count, .newest.")
 FILE_HELP = ("A Markdown note file (<config>/aac/notes/<name>.md), listed under FILES in the sidebar where you can read "
              "and edit it. In a line it appends what passes it (the newest answer, with the time); wired to a model it "
              "is a tool: read, append, write.")
 HEARD_HELP = ("Turns every finished spoken line from Hearing into a message of its own (wire Hearing's lines into it). "
-              "What comes back to the Voice card is spoken at the microphone the line came from.")
+              "What comes back to the Voice card is spoken at the microphone the line came from. Values for templates: "
+              "{{ <card id>.text }}, .speaker, .mic_name, .area.")
