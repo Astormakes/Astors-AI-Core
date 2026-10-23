@@ -18,6 +18,7 @@ const short = (t, n) => (t.length > n ? `${t.slice(0, n - 1)}…` : t); // the b
 const W = 176, HEAD = 40, ROW = 17; // node box: width, title area, one port row
 const LINK = 70; // how far right of its source a wired node wants to sit (at least)
 const STACK = 14; // gap between the cards of a column (a chain adding to the same record)
+const COL = W + 110; // one slot column (owner, 2026-10-23: cards in slots, a column per step in the flow)
 const FIELD = 150; // reach of a node's soft push beyond its box
 const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "#8ab4ff", "#ff8a65", "#c792ea", "#7fdbca"];
 const KIND = { source: "source", sink: "sink", transform: "transform", annotating: "adds to the record" };
@@ -91,7 +92,7 @@ class AacNodes extends HTMLElement {
         </ol></details>
       <div class="card" style="padding:0;overflow:hidden;position:relative">
         <div class="nv-bar" style="display:flex;gap:.6em;align-items:center;flex-wrap:wrap;padding:.6em .9em;border-bottom:1px solid var(--line)">
-          <label class="check" style="margin:0"><input type="checkbox" class="nv-physics">Physics</label>
+          <label class="check" style="margin:0;display:none"><input type="checkbox" class="nv-physics">Physics</label>
           <span class="hint nv-help"></span>
           <span style="flex:1"></span>
           <span class="hint nv-wiring"></span>
@@ -99,9 +100,10 @@ class AacNodes extends HTMLElement {
           <span style="position:relative"><button class="btn" data-nv="add" title="Add another node of a type that can exist more than once (e.g. a second model)">Add node</button>
             <span class="nv-addmenu" style="display:none;position:absolute;top:100%;right:0;z-index:5;min-width:12em;background:var(--bg2, #111);border:1px solid var(--line);border-radius:.4em;padding:.3em 0"></span></span>
           <button class="btn" data-nv="group" title="Put the nodes selected with Shift/Ctrl-click into a named container">Group</button>
-          <button class="btn" data-nv="undo" title="Back to the layout saved when Physics went on">Undo</button>
+          <button class="btn" data-nv="tidy" title="Lay every card out again in its slot (column = its place in the flow)">Tidy</button>
+          <button class="btn" data-nv="undo" title="Back to the layout before Tidy">Undo</button>
           <button class="btn" data-nv="fit">Fit</button>
-          <button class="btn" data-nv="free" title="Release every pinned node">Unpin all</button>
+
         </div>
         <div class="nv-stage" style="position:relative;height:clamp(420px, calc(100vh - 260px), 1400px);touch-action:none"></div>
         <div class="nv-legend" style="display:flex;gap:.9em;flex-wrap:wrap;padding:.5em .9em;border-top:1px solid var(--line);font-size:.8em"></div>
@@ -194,58 +196,83 @@ class AacNodes extends HTMLElement {
       for (const [id, p] of Object.entries(server || saved.pos || {})) this._pos[id] = { x: p.x, y: p.y, vx: 0, vy: 0, pinned: !!p.pinned };
       this._sent = server ? JSON.stringify(server) : null;
       this._undo = Array.isArray(saved.undo) ? saved.undo : [];
-      this._physics = saved.physics !== false;
+      this._physics = false; // owner, 2026-10-23: no forces any more, cards sit in slots
       this._loaded = this._key;
       this._mode();
     }
-    const nodes = this._data.nodes;
-    // New nodes start at their place in the flow: column = steps after a source (answer wires left out),
-    // so the field only has to refine, not untangle (a folded chain jams in a local minimum)
-    const wires = this._wires(), back = this._backEdges(wires), rank = {}, depth = {};
-    const forward = wires.filter((w) => !back.has(w) && !w.loop);
-    for (let i = 0; i < nodes.length; i++) {
+    const nodes = this._data.nodes, byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+    // Slots (owner, 2026-10-23): a column per step in the flow: wired to a card's input = one column left of it,
+    // to its output = one column right, to both (a loop) = its column, stacked below it. Separate chains (the
+    // audio) below each other, unwired cards in a strip at the bottom. Rows ordered so wires cross less.
+    const wires = this._wires(), back = this._backEdges(wires), rank = {};
+    const hangs = new Set(wires.filter((w) => w.loop).map((w) => w.tool));
+    const forward = wires.filter((w) => !back.has(w) && !w.loop && !hangs.has(w.a.id) && !hangs.has(w.b.id));
+    for (let i = 0; i < nodes.length; i++) { // the longest way from a source
       let changed = false;
-      for (const w of forward) {
-        const stacked = w.a.kind === "annotating" && w.b.kind === "annotating"; // a column: same place, one lower
-        const r = (rank[w.a.id] ?? 0) + (stacked ? 0 : 1), d = stacked ? (depth[w.a.id] ?? 0) + 1 : 0;
-        if ((rank[w.b.id] ?? 0) < r || (stacked && (rank[w.b.id] ?? 0) === r && (depth[w.b.id] ?? 0) < d)) {
-          rank[w.b.id] = r; depth[w.b.id] = d; changed = true;
-        }
-      }
+      for (const w of forward) if ((rank[w.b.id] ?? 0) < (rank[w.a.id] ?? 0) + 1) { rank[w.b.id] = (rank[w.a.id] ?? 0) + 1; changed = true; }
       if (!changed) break;
     }
+    for (let i = 0; i < 3; i++) // a card that only feeds others sits right before the first of them
+      for (const n of nodes) {
+        if (forward.some((w) => w.b.id === n.id)) continue;
+        const next = forward.filter((w) => w.a.id === n.id).map((w) => rank[w.b.id] ?? 0);
+        if (next.length) rank[n.id] = Math.min(...next) - 1;
+      }
     const wired = new Set(wires.flatMap((w) => [w.a.id, w.b.id]));
-    const columns = {};
-    for (const n of nodes) if (wired.has(n.id)) (columns[rank[n.id] ?? 0] ||= []).push(n.id);
-    const ranks = Object.keys(columns).map(Number), mid = (Math.max(0, ...ranks)) / 2;
+    const comp = {}, link = {}, comps = [];
+    for (const w of forward) { (link[w.a.id] ||= []).push(w.b.id); (link[w.b.id] ||= []).push(w.a.id); }
+    for (const n of nodes) {
+      if (!wired.has(n.id) || hangs.has(n.id) || comp[n.id] !== undefined) continue;
+      const todo = [n.id], members = [];
+      comp[n.id] = comps.length;
+      while (todo.length) { const id = todo.pop(); members.push(id); for (const o of link[id] || []) if (comp[o] === undefined) { comp[o] = comps.length; todo.push(o); } }
+      comps.push(members);
+    }
+    comps.sort((x, y) => (y.some((id) => byId[id].role === "model") - x.some((id) => byId[id].role === "model")) || y.length - x.length);
+    const want = {}, GAP = 30;
+    const loopsOf = (m) => [...new Set(wires.filter((w) => w.loop && w.model === m && w.a.id === w.tool).map((w) => w.tool))];
+    // a card with its loop cards under it is one tall slot
+    const slotH = (id) => loopsOf(id).reduce((h, c) => h + GAP + this._height(byId[c]), this._height(byId[id]));
+    let top = 0;
+    for (const members of comps) {
+      const base = Math.min(...members.map((id) => rank[id] ?? 0));
+      const cols = {};
+      for (const id of members) (cols[(rank[id] ?? 0) - base] ||= []).push(id);
+      const order = Object.keys(cols).map(Number).sort((x, y) => x - y);
+      const yOf = {};
+      const lay = () => { for (const c of order) { let y = 0; for (const id of cols[c]) { yOf[id] = y; y += slotH(id) + GAP; } } };
+      lay();
+      for (let pass = 0; pass < 6; pass++) { // barycenter sweeps, left to right and back
+        for (const c of pass % 2 ? [...order].reverse() : order) {
+          const near = (id) => {
+            const ys = forward.filter((w) => (pass % 2 ? w.a.id === id : w.b.id === id)).map((w) => yOf[pass % 2 ? w.b.id : w.a.id]).filter((v) => v !== undefined);
+            return ys.length ? ys.reduce((t, v) => t + v, 0) / ys.length : yOf[id];
+          };
+          cols[c].sort((x, y) => near(x) - near(y));
+          lay();
+        }
+      }
+      const colH = (c) => cols[c].reduce((h, id) => h + slotH(id) + GAP, -GAP);
+      const height = Math.max(0, ...order.map(colH));
+      for (const c of order) {
+        let y = top;
+        for (const id of cols[c]) {
+          const x = c * COL;
+          want[id] = { x, y: y + this._height(byId[id]) / 2 };
+          let yy = y + this._height(byId[id]) + GAP;
+          for (const t of loopsOf(id)) { want[t] = { x, y: yy + this._height(byId[t]) / 2 }; yy += this._height(byId[t]) + GAP; }
+          y += slotH(id) + GAP;
+        }
+      }
+      top += height + 120;
+    }
     let parked = 0;
     const fresh = new Set(); // placed now (saved positions are never moved)
     for (const n of nodes) {
       if (this._pos[n.id]) continue;
       fresh.add(n.id);
-      if (wired.has(n.id)) {
-        const col = columns[rank[n.id] ?? 0].filter((id) => !depth[id]), row = col.indexOf(n.id) - (col.length - 1) / 2;
-        const y = depth[n.id] ? null : row * 110;
-        this._pos[n.id] = { x: ((rank[n.id] ?? 0) - mid) * (W + LINK), y: y ?? 0, vx: 0, vy: 0, pinned: false, depth: depth[n.id] || 0 };
-      } else { // nothing wired: the strip at the bottom
-        this._pos[n.id] = { x: (parked++ - 3) * (W + 30), y: 400, vx: 0, vy: 0, pinned: false };
-      }
-    }
-    // attached cards in a row under their model
-    const hanging = {};
-    for (const w of wires) if (w.loop && w.a.id === w.tool && this._pos[w.model]) (hanging[w.model] ||= []).push(w.tool);
-    for (const [model, cards] of Object.entries(hanging)) {
-      const m = this._pos[model];
-      cards.forEach((id, i) => {
-        const p = this._pos[id];
-        if (p && fresh.has(id)) { p.x = m.x + (i - (cards.length - 1) / 2) * (W + 24); p.y = m.y + 170; }
-      });
-    }
-    // the cards of a column under the head of their chain
-    for (const w of forward) {
-      if (w.a.kind !== "annotating" || w.b.kind !== "annotating") continue;
-      const head = this._pos[w.a.id], p = this._pos[w.b.id];
-      if (p && head && p.depth) { p.x = head.x; p.y = head.y + this._height(w.a) / 2 + STACK + this._height(w.b) / 2; }
+      const at = want[n.id] || { x: (parked++) * (W + 30), y: top + 60 }; // nothing wired: the strip at the bottom
+      this._pos[n.id] = { x: at.x, y: at.y, vx: 0, vy: 0, pinned: false };
     }
     for (const id of Object.keys(this._pos)) if (!nodes.some((n) => n.id === id)) delete this._pos[id];
   }
@@ -290,8 +317,8 @@ class AacNodes extends HTMLElement {
   _mode() {
     this.querySelector(".nv-physics").checked = this._physics;
     this.querySelector(".nv-help").textContent = this._physics
-      ? "Drag a node: the others give way · double-click pins it · Shift-click several, then Group · wheel zooms · drag the background to move"
-      : "Physics off: nodes stay where you put them · wheel zooms · drag the background to move";
+      ? ""
+      : "Drag a card into a slot (it snaps to the column) · Tidy lays everything out again · Shift-click several, then Group · wheel zooms · drag the background to move";
     this.querySelector('[data-nv="undo"]').disabled = !this._undo.length;
     const byHand = !!this._data?.by_hand;
     this.querySelector(".nv-wiring").textContent = byHand ? "Wired by hand" : "Wired automatically";
@@ -310,6 +337,30 @@ class AacNodes extends HTMLElement {
     this._mode();
     this._save();
     this._kick();
+  }
+
+  _tidy() {
+    // every card back into its slot (Undo brings the layout before back)
+    this._undo.push(this._snapshot());
+    this._undo = this._undo.slice(-UNDO_STEPS);
+    this._pos = {};
+    this._place();
+    this._save(); this._draw(); this._fit();
+  }
+
+  _snap(id) {
+    // a dropped card goes into the nearest column, on the 20 px grid, below any card it would cover there
+    const p = this._pos[id], n = this._data.nodes.find((x) => x.id === id);
+    if (!p || !n) return;
+    p.x = Math.round(p.x / COL) * COL;
+    p.y = Math.round(p.y / 20) * 20;
+    const h = this._height(n);
+    for (let tries = 0; tries < 50; tries++) {
+      const hit = this._data.nodes.find((o) => o.id !== id && this._pos[o.id] && Math.abs(this._pos[o.id].x - p.x) < W
+        && Math.abs(this._pos[o.id].y - p.y) < (h + this._height(o)) / 2 + 10);
+      if (!hit) break;
+      p.y = this._pos[hit.id].y + (h + this._height(hit)) / 2 + 20;
+    }
   }
 
   _undoLayout() {
@@ -486,7 +537,7 @@ class AacNodes extends HTMLElement {
       // those wires always arc back
       const back = new Set(wires.filter((w) => w.b.role === "endpoint" || (w.loop && w.a.id === w.tool)).map(name));
       const out = {}, state = {};
-      for (const w of wires) if (!back.has(name(w))) (out[w.a.id] ||= []).push(w);
+      for (const w of wires) if (!back.has(name(w)) && w.type !== "pool") (out[w.a.id] ||= []).push(w); // a pool is no step
       const visit = (id) => {
         state[id] = 1;
         for (const w of out[id] || []) {
@@ -496,7 +547,8 @@ class AacNodes extends HTMLElement {
         state[id] = 2;
       };
       const hasIn = new Set(wires.map((w) => w.b.id));
-      for (const n of this._data.nodes) if (!hasIn.has(n.id) && !state[n.id]) visit(n.id); // sources first
+      for (const n of this._data.nodes) if (["source", "endpoint"].includes(n.role) && !state[n.id]) visit(n.id); // messages start here
+      for (const n of this._data.nodes) if (!hasIn.has(n.id) && !state[n.id]) visit(n.id); // other sources
       for (const n of this._data.nodes) if (!state[n.id]) visit(n.id);
       this._backKey = key; this._back = back;
     }
@@ -563,14 +615,70 @@ class AacNodes extends HTMLElement {
       fold.setAttribute("x", fw - 20); fold.setAttribute("y", BAR / 2 + 5);
       count.setAttribute("x", 12); count.setAttribute("y", BAR + 18);
     }
-    const wires = this._wires();
-    for (const path of this._svg.querySelectorAll(".nv-wire, .nv-hit")) {
-      const w = wires[path.dataset.wire];
-      if (!w) continue;
-      const o = this._port(w.a, w.ap, "out"), i = this._port(w.b, w.bp, "in");
-      const bend = Math.max(40, Math.abs(i.x - o.x) / 2);
-      path.setAttribute("d", `M${o.x},${o.y} C${o.x + bend},${o.y} ${i.x - bend},${i.y} ${i.x},${i.y}`);
+    const wires = this._wires(), d = this._routes(wires);
+    for (const path of this._svg.querySelectorAll(".nv-wire, .nv-hit")) if (d[path.dataset.wire]) path.setAttribute("d", d[path.dataset.wire]);
+  }
+
+  _routes(wires) {
+    // Wire paths (owner: lines should not cross cards or each other): a short wire forward is a curve; a loop
+    // between a model and the cards stacked under it runs in a side lane (the deeper the card, the further out,
+    // so they do not cross); a wire going back or far runs below the cards between its ends, in a lane of its own
+    const box = (n) => { const p = this._pos[n.id], h = this._height(n); return { x: p.x, top: p.y - h / 2, bottom: p.y + h / 2 }; };
+    const out = {}, below = [];
+    // which chain a card belongs to (connected by any wire): a lane only steps around cards of its own chain
+    const chain = {}, near = {};
+    for (const w of wires) { (near[w.a.id] ||= []).push(w.b.id); (near[w.b.id] ||= []).push(w.a.id); }
+    let cid = 0;
+    for (const n of this._data.nodes) {
+      if (chain[n.id] !== undefined || !near[n.id]) continue;
+      const todo = [n.id]; chain[n.id] = cid;
+      while (todo.length) for (const o of near[todo.pop()] || []) if (chain[o] === undefined) { chain[o] = cid; todo.push(o); }
+      cid++;
     }
+    const order = {}; // a model's loop cards from the top down
+    for (const w of wires) if (w.loop && this._pos[w.tool]) (order[w.model] ||= new Set()).add(w.tool);
+    for (const [m, set] of Object.entries(order)) order[m] = [...set].sort((a, b) => this._pos[a].y - this._pos[b].y);
+    const path = (pts) => pts.map((q, k) => `${k ? "L" : "M"}${Math.round(q[0])},${Math.round(q[1])}`).join(" ");
+    wires.forEach((w, idx) => {
+      if (!this._pos[w.a.id] || !this._pos[w.b.id]) return;
+      const o = this._port(w.a, w.ap, "out"), i = this._port(w.b, w.bp, "in");
+      const stacked = w.loop && Math.abs(this._pos[w.a.id].x - this._pos[w.b.id].x) < 4;
+      if (stacked) {
+        const k = order[w.model].indexOf(w.tool), t = box(w.loop && w.a.id === w.tool ? w.a : w.b);
+        if (w.b.id === w.tool) { // model → its card: down the right side, in above the card
+          const lane = o.x + 18 + k * 7;
+          out[idx] = path([[o.x, o.y], [lane, o.y], [lane, t.top - 9], [i.x - 12, t.top - 9], [i.x - 12, i.y], [i.x, i.y]]);
+        } else { // card → model: out below the card, up the left side
+          const lane = i.x - 18 - k * 7;
+          out[idx] = path([[o.x, o.y], [o.x + 8, o.y], [o.x + 8, t.bottom + 9], [lane, t.bottom + 9], [lane, i.y], [i.x, i.y]]);
+        }
+        return;
+      }
+      if (i.x > o.x + 20 && i.x - o.x < 3.5 * COL) {
+        const bend = Math.max(40, Math.abs(i.x - o.x) / 2);
+        out[idx] = `M${o.x},${o.y} C${o.x + bend},${o.y} ${i.x - bend},${i.y} ${i.x},${i.y}`;
+        return;
+      }
+      below.push({ idx, o, i, w });
+    });
+    // back or far: below the lowest card between the ends (and below the lanes already taken there)
+    below.sort((p, q) => Math.abs(p.i.x - p.o.x) - Math.abs(q.i.x - q.o.x)); // short ones inside, long ones outside
+    const taken = [];
+    for (const { idx, o, i, w } of below) {
+      const lo = Math.min(o.x, i.x) - W, hi = Math.max(o.x, i.x) + W;
+      let floor = Math.max(o.y, i.y);
+      for (const n of this._data.nodes) {
+        if (!this._pos[n.id] || this._folded(n.id) || chain[n.id] !== chain[w.a.id]) continue;
+        const b = box(n);
+        if (b.x > lo && b.x < hi) floor = Math.max(floor, b.bottom);
+      }
+      for (const t of taken) if (t.hi > lo && t.lo < hi && t.chain === chain[w.a.id]) floor = Math.max(floor, t.y);
+      const y = floor + 22, k = taken.length % 6;
+      taken.push({ lo, hi, y, chain: chain[w.a.id] });
+      const ox = o.x + 14 + k * 5, ix = i.x - 14 - k * 5;
+      out[idx] = path([[o.x, o.y], [ox, o.y], [ox, y], [ix, y], [ix, i.y], [i.x, i.y]]);
+    }
+    return out;
   }
 
   _fit() {
@@ -606,7 +714,7 @@ class AacNodes extends HTMLElement {
       const b = e.target.closest("[data-nv]");
       if (b?.dataset.nv === "fit") this._fit();
       if (b?.dataset.nv === "undo") this._undoLayout();
-      if (b?.dataset.nv === "free") { for (const p of Object.values(this._pos)) p.pinned = false; this._save(); this._draw(); this._kick(); }
+      if (b?.dataset.nv === "tidy") this._tidy();
       if (b?.dataset.nv === "group") this._group();
       if (b?.dataset.nv === "auto") this._automatic();
       if (b?.dataset.nv === "add") this._addNode();
@@ -715,8 +823,7 @@ class AacNodes extends HTMLElement {
       }
       if (this._drag) {
         const p = this._pos[this._drag.id];
-        // Let go: with Physics on it keeps its swing and floats into its place
-        if (this._drag.moved && this._physics && p.pinned) { p.x = this._drag.tx; p.y = this._drag.ty; }
+        if (this._drag.moved) this._snap(this._drag.id); // into its slot
         if (this._drag.moved) this._joinFrame(this._drag.id, this._physics ? this._drag.tx : p.x, this._physics ? this._drag.ty : p.y);
         this._drag = null;
         this._save();
