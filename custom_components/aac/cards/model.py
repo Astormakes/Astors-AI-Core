@@ -7,17 +7,21 @@ import asyncio
 import json
 from typing import Any
 
+from homeassistant.util import dt as dt_util
+
 from ..const import LOGGER
 from ..message import Message
 from ..models import Client, ModelError, ModelUnreachable
 from . import Card, register, tool_spec
 
 MAX_ROUNDS = 8  # model → tool → model … per message
+KEEP_REQUESTS = 30  # chats whose last request is kept for the panel
 
 
 def conversation(message: Message, me: str, names: dict[str, str]) -> tuple[str, list[dict[str, Any]]]:
     """The document as this model sees it: (system prompt, the chat). Its own answers and calls are the assistant's,
-    their results tool messages; others' answers "[X said]"; notes "[…]"; trailers go with the turn they follow."""
+    their results tool messages; others' answers "[X said]"; notes "[…]"; trailers go with the turn they follow.
+    Each chat item names the cards its text came from in "_from" (left out of the request; the panel shows it)."""
     system = "\n\n".join(e["text"] for e in message.entries if e["kind"] == "system" and e["text"].strip())
     chat: list[dict[str, Any]] = []
     results: dict[str, str] = {}
@@ -28,25 +32,26 @@ def conversation(message: Message, me: str, names: dict[str, str]) -> tuple[str,
         if kind == "call" and data.get("model") == me:
             chat.append({"role": "assistant", "content": None, "tool_calls": [{
                 "id": data["call_id"], "type": "function",
-                "function": {"name": data["function"], "arguments": json.dumps(data.get("args") or {})}}]})
-            chat.append({"role": "tool", "tool_call_id": data["call_id"], "content": None})
+                "function": {"name": data["function"], "arguments": json.dumps(data.get("args") or {})}}], "_from": [by]})
+            chat.append({"role": "tool", "tool_call_id": data["call_id"], "content": None, "_from": [data.get("function", "").split("__")[0]]})
         elif kind == "result" and data.get("model") == me:
             results[data["call_id"]] = e["text"]
         elif kind == "answer" and by == me:
-            chat.append({"role": "assistant", "content": e["text"]})
+            chat.append({"role": "assistant", "content": e["text"], "_from": [by]})
         elif kind == "answer":
-            chat.append({"role": "user", "content": f"[{names.get(by, by)} said] {e['text']}"})
+            chat.append({"role": "user", "content": f"[{names.get(by, by)} said] {e['text']}", "_from": [by]})
         elif kind == "note":
-            chat.append({"role": "user", "content": f"[{e['text']}]"})
+            chat.append({"role": "user", "content": f"[{e['text']}]", "_from": [by]})
         elif kind in ("said", "trailer"):
-            chat.append({"role": "user", "content": e["text"]})
+            chat.append({"role": "user", "content": e["text"], "_from": [by]})
     for item in chat:
         if item["role"] == "tool":
             item["content"] = results.get(item["tool_call_id"]) or "done"
     merged: list[dict[str, Any]] = []
     for item in chat:  # some chat templates allow no two user turns in a row
         if merged and item["role"] == "user" and merged[-1]["role"] == "user":
-            merged[-1] = {**merged[-1], "content": f"{merged[-1]['content']}\n\n{item['content']}"}
+            merged[-1] = {**merged[-1], "content": f"{merged[-1]['content']}\n\n{item['content']}",
+                          "_from": [*merged[-1]["_from"], *item["_from"]]}
         else:
             merged.append(item)
     return system, merged
@@ -78,6 +83,7 @@ class Model(Card):
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
         self._task: asyncio.Task | None = None
+        self.requests: dict[str, dict[str, Any]] = {}
 
     def _models(self, step) -> list[dict[str, Any]]:
         pools = step.wired_into("pool")
@@ -122,7 +128,10 @@ class Model(Card):
         answer["state"] = "open"
         for _ in range(MAX_ROUNDS):
             system, chat = conversation(message, self.id, names)
-            payload = ([{"role": "system", "content": system}] if system else []) + chat
+            sources = [e["by"] for e in message.entries if e["kind"] == "system" and e["text"].strip()]
+            shown = ([{"role": "system", "content": system, "_from": sources}] if system else []) + chat
+            payload = [{k: v for k, v in item.items() if not k.startswith("_")} for item in shown]
+            self._keep(message, shown, specs, params)
             reply = None
             for model in models:
                 try:
@@ -160,6 +169,15 @@ class Model(Card):
                 message.add(card.id if card else self.id, "result", text[:8000], call_id=call_id, model=self.id)
             message.entries.append(answer)
         answer["state"] = "closed"
+
+    def _keep(self, message: Message, shown: list[dict[str, Any]], specs: list[dict[str, Any]], params: dict[str, Any]) -> None:
+        """What the model got (the panel's Request view), per chat; the newest few chats are kept, in memory."""
+        key = message.chat_id or message.origin or ""
+        self.requests.pop(key, None)
+        self.requests[key] = {"at": dt_util.utcnow().isoformat(), "card": self.id, "messages": shown,
+                              "tools": [t["function"]["name"] for t in specs], "params": params}
+        while len(self.requests) > KEEP_REQUESTS:
+            self.requests.pop(next(iter(self.requests)))
 
     def _live(self, answer: dict[str, Any], text: str, step) -> None:
         answer["text"] = text

@@ -53,6 +53,7 @@ textarea { resize: vertical; }
 .composer textarea { min-height: 42px; max-height: 40vh; }
 .entry { font-size: 13px; border-left: 3px solid var(--divider-color); padding: 4px 10px; margin: 4px 0; }
 .entry .k { font-size: 11px; color: var(--secondary-text-color); }
+.entry pre.req { white-space: pre-wrap; margin: 2px 0; font: inherit; }
 /* lists */
 .lst ul { list-style: none; padding-left: 22px; margin: 0; } .lst > ul { padding-left: 0; }
 .lst li { margin: 3px 0; } .row { display: flex; align-items: center; gap: 6px; }
@@ -91,7 +92,7 @@ class AacPanel extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this.view = { kind: "chat", card: null, id: null };
-    this.chats = {}; this.chat = null; this.live = {}; this.busy = false; this.expert = false;
+    this.chats = {}; this.chat = null; this.live = {}; this.busy = false; this.expert = ""; this.requests = [];
     this.lists = {}; this.sel = null; this.selType = null; this.selWire = null; this.vp = { x: 80, y: 120, k: 1 };
     // one listener for buttons that are redrawn often (the Audio page's meters)
     this.shadowRoot.addEventListener("click", (e) => {
@@ -167,7 +168,10 @@ class AacPanel extends HTMLElement {
     this.render();
   }
 
-  async _getChat() { this.chat = (await this.ws("aac/chat/get", { card: this.view.card, chat_id: this.view.id })).chat; }
+  async _getChat() {
+    this.chat = (await this.ws("aac/chat/get", { card: this.view.card, chat_id: this.view.id })).chat;
+    if (this.expert === "request") this.requests = (await this.ws("aac/chat/request", { chat_id: this.view.id })).requests;
+  }
   async _loadLists(card) { this.lists[card] = (await this.ws("aac/card/data", { card })).data?.lists || []; }
   async _loadPage() {
     const card = this.view.card, kind = this.view.kind;
@@ -212,12 +216,15 @@ class AacPanel extends HTMLElement {
     if (!card) return `${this._header("AAC")}<div class="content"><p>No chat card in this domain. Add one in Nodes.</p></div>`;
     this.view.card = card.id;
     const msgs = this.chat?.messages || [];
-    const log = this.expert && this.chat ? (this.chat.entries || []).map((e) => `<div class="entry"><div class="k">${esc(e.by)} · ${esc(e.kind)} ${e.tags.map((t) => `#${esc(t)}`).join(" ")}</div>${md(e.text || (e.data?.function ? `${e.data.function}(${JSON.stringify(e.data.args || {})})` : ""))}</div>`).join("")
+    const name = (id) => this._card(id)?.title || id;
+    const log = this.expert === "request" && this.chat ? (this.requests || []).map((r) => `<div class="entry"><div class="k">${esc(name(r.card))} · ${esc(new Date(r.at).toLocaleTimeString())} · tools: ${esc(r.tools.join(", ") || "none")}</div></div>${r.messages.map((m) => `<div class="entry"><div class="k">${esc(m.role)} · from ${esc([...new Set(m._from || [])].map(name).join(", ") || "?")}</div>${m.tool_calls ? esc(m.tool_calls.map((c) => `${c.function.name}(${c.function.arguments})`).join("; ")) : `<pre class="req">${esc(m.content || "")}</pre>`}</div>`).join("")}`).join("")
+        || `<div class="hint" style="margin:auto">No request kept for this chat (kept in memory until HA restarts).</div>`
+      : this.expert === "doc" && this.chat ? (this.chat.entries || []).map((e) => `<div class="entry"><div class="k">${esc(e.by)} · ${esc(e.kind)} ${e.tags.map((t) => `#${esc(t)}`).join(" ")}</div>${md(e.text || (e.data?.function ? `${e.data.function}(${JSON.stringify(e.data.args || {})})` : ""))}</div>`).join("")
       : msgs.map((m) => `<div class="bubble ${m.role === "user" ? "user" : "aac"} ${m.error ? "err" : ""}">${md(m.text)}${m.cut ? '<div class="cut">stopped</div>' : ""}</div>`).join("")
         || `<div class="hint" style="margin:auto">${esc(card.title)}: ask anything.</div>`;
     const busy = this.busy ? `<div class="bubble aac" id="live">${md(this.live.text || "…")}</div>` : "";
     return `<div class="chat">${this._header(this.chat?.title || `New chat · ${card.title}`,
-      `${this.chat ? `<button class="small" id="expert" title="The document as the model read it: every entry with its card, kind and tags">${this.expert ? "Chat" : "Document"}</button><button class="small danger" id="delchat">Delete</button>` : ""}<button class="small" id="stop" title="Stop everything that is working">Stop</button>`)}
+      `${this.chat ? `<button class="small" data-mode="" ${!this.expert ? "disabled" : ""}>Chat</button><button class="small" data-mode="doc" title="The document: every entry with its card, kind and tags" ${this.expert === "doc" ? "disabled" : ""}>Document</button><button class="small" data-mode="request" title="What the model got for the newest turn: each message with the cards its text came from, and the tools it had" ${this.expert === "request" ? "disabled" : ""}>Request</button><button class="small danger" id="delchat">Delete</button>` : ""}<button class="small" id="stop" title="Stop everything that is working">Stop</button>`)}
       <div class="log">${log}${busy}</div>
       <div class="composer"><textarea id="input" placeholder="Message AAC…" ${this.busy ? "disabled" : ""}></textarea><button class="primary" id="send" ${this.busy ? "disabled" : ""}>Send</button></div></div>`;
   }
@@ -527,7 +534,7 @@ class AacPanel extends HTMLElement {
     // chat
     $("#send")?.addEventListener("click", () => this._send());
     $("#input")?.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this._send(); } });
-    $("#expert")?.addEventListener("click", () => { this.expert = !this.expert; this.render(); });
+    $$("[data-mode]").forEach((el) => el.addEventListener("click", async () => { this.expert = el.dataset.mode; if (this.expert === "request") this.requests = (await this.ws("aac/chat/request", { chat_id: this.view.id })).requests; this.render(); }));
     $("#delchat")?.addEventListener("click", async () => { if (confirm("Delete this chat?")) { await this.ws("aac/chat/delete", { card: this.view.card, chat_id: this.view.id }); await this._openChats(this.view.card); this.go("chat", this.view.card, null); } });
     $$("#stop").forEach((el) => el.addEventListener("click", () => this.ws("aac/stop")));
     // lists

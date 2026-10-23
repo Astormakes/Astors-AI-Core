@@ -208,6 +208,14 @@ async def ws_chat_get(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"chat": _chat_card(hass, msg["card"]).get(msg["chat_id"])})
 
 
+@command({vol.Required("type"): "aac/chat/request", vol.Required("chat_id"): str})
+async def ws_chat_request(hass, connection, msg) -> None:
+    """What the models got for a chat's newest turn: each message with the cards its text came from, the tools."""
+    found = [card.requests[msg["chat_id"]] for card in _core(hass).domain.cards.values()
+             if msg["chat_id"] in getattr(card, "requests", {})]
+    connection.send_result(msg["id"], {"requests": sorted(found, key=lambda r: r["at"])})
+
+
 @command({vol.Required("type"): "aac/chat/delete", vol.Required("card"): str, vol.Required("chat_id"): str})
 async def ws_chat_delete(hass, connection, msg) -> None:
     """Delete a chat."""

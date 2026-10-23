@@ -38,6 +38,8 @@ async def test_a_chat_round_trip(hass: HomeAssistant, mock_entry, aioclient_mock
     assert answer == "You said hi." and [m["role"] for m in second] == ["system", "user", "assistant", "user"]
     assert second[1]["content"] == first[-1]["content"]  # earlier turns stay as they were: the server's cache
     assert [m["text"] for m in chat.get(chat_id)["messages"]] == ["hi", "Hello!", "what did I say?", "You said hi."]
+    kept = core.domain.cards["model"].requests[chat_id]  # the panel's Request view: each part's cards
+    assert kept["messages"][0]["_from"] == ["charter"] and kept["messages"][-1]["_from"] == ["chat", "time"]
 
 
 async def test_tools_are_the_cards_wired_out_and_back(hass: HomeAssistant, mock_entry, aioclient_mock):
