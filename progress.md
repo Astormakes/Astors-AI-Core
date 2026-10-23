@@ -2,15 +2,18 @@
 
 Running log for AAC. Read this first in a new session. Newest state on top. The long v0 history is in `docs/history-v0.md` (private).
 
-## Current state (2026-10-23) – 1.0.0-dev.28
+## Current state (2026-10-23) – 1.0.0-dev.36
 
 - **v1 on `main`**, live on the owner's HA (owner: "I'm not really using it, work on the real HA"; only the lists matter, exported to `docs/aac-lists-2026-10-23.md`). The last v0 is the tag `v0.50.1-last-v0`. `scripts/deploy_ha.sh` needs `AAC_ALLOW_V1=1`.
 - **The graph** (`spec/graph.md`, owner's design of 2026-10-23): a message is a document of tagged entries (`request.py`); every node writes into it; a model card (`model_node.py`) reads it all as an ordinary chat with tools; **its wired nodes are its tools** (calling one sends the document there and waits until it comes back: a loop, `flow.Step.call`); round outputs copy to every wire, square ones (model, Decide) choose; endpoints (`chat`, `voice`, `assist`) take answers home; the chat keeps its document (edits change it; expert view in the chat: every entry and the way, e.g. Panel chat › Model › Home › Model).
 - Nodes with tools are HA LLM APIs behind `api_node.py` (home, setup, HA's Assist tools, each module's tools); memory is one node (in the line it writes matching memories, called it remembers/recalls); no memory keeper (nothing is stored on its own). Inputs can be named for the models (`aac/nodes/names`): a card's input named `yes` is the tool `yes`.
 - Standing text (charter, agent prompt, instructions) replaces its own entry, so the start of the conversation stays the same (prompt cache); the local time goes with the newest user turn, not into the system prompt.
-- The panel: the Master agent page is gone (its settings are on the Agent, Model and Home Assistant tools cards); node positions are kept on the server; round/square ports; tool cards hang under their model.
+- The panel: the Master agent page is gone (its settings are on the Agent, Model and Home Assistant tools cards); node positions are kept on the server; round/square ports.
+- **Node view in slots** (owner, 2026-10-23: no forces): a column per step in the flow (a card feeding another sits one column left of it, one fed by it one column right, a loop card in its model's column stacked below); wires: short forward ones curve, loops in nested side lanes, backward or far ones in lanes below the cards of their own chain; drops snap to the column; Tidy lays everything out again (Undo goes back). The info panel sits right of the graph; Try it is gone; the wheel scrolls, Ctrl + wheel zooms, the middle button drags. While Nodes is open the sidebar lists the cards by role (click: pick and centre; drag into the grid: place) and the types to add.
+- Universal nodes: **Buffer** (last N texts as one block; tools read/add/remove_slot/remove_text/clear), **Heard lines** (spoken lines from Hearing become messages; the Voice card speaks the answer at that mic). Outputs can be set to one wire (`aac/nodes/single`). **Pool cards** (`pool_master`, `pool_fast` …): a model card takes its models from the pool wired to its dotted pool input.
+- Settings list: Appearance, Languages, Nodes; the other pages open from their cards (Home → Entities, pools → Compute, Hearing/STT → Audio, toolbar → Modules). The chat input grows with long messages.
 - Memories were cleared on the owner's HA (2026-10-23, backup `/config/aac/bak-before-clean-20261023/`). Backups before deploys: `/config/aac/bak-1.0.0-dev.28-before/` and older.
-- Tests: 149 mocked (`../.venv/bin/python -m pytest -q -p no:logging`).
+- Tests: 153 mocked (`../.venv/bin/python -m pytest -q -p no:logging`).
 
 ## Working agreements
 - **The user pushes** (GitHub Desktop only). Claude commits locally whenever something is in a runnable state, never pushes
@@ -57,8 +60,8 @@ Running log for AAC. Read this first in a new session. Newest state on top. The 
 
 ## Next steps
 
-- Graph phase 2 rest: the copy setting per output (one wire or several), the pool wire (dotted, a model card reserves a model from a pool node), layout polish for loops.
-- Owner's ideas (2026-10-23): universal nodes, not special ones: a **Buffer** (keeps the last N texts, writes them in as one; tools: read, clear, remove slot, remove "XYZ"); the **audio chain** as nodes: speech to text → buffer → a deciding model ("is this addressed to AAC?") whose named outputs lead into cards that say so → the model → the voice endpoint.
+- Try the owner's audio chain with the real models: Heard lines → Buffer → Decide ("addressed to AAC?") → yes: an Instructions card → Model → Voice (all cards exist now).
+- Sidebar drag into the grid: built, not yet tried in a real browser.
 - Phase 3: pool nodes; the settings pages fold into nodes (Compute → pools, Entities → the Home node, Audio, Modules); settings left: Appearance, Languages, Nodes.
 - Phase 4: the audio types merged into `audio` / `text`.
 - Open from before: bench Decide routing with real models; voice picker rounds (`~/cluade/voicelab`, pickers on :8092 German, :8093 English when started); the server's 7800 XT runs on Vulkan for now (owner works on it in another session); the bigger chat input (Open Issues list).
