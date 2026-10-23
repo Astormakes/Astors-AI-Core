@@ -288,7 +288,7 @@ async def test_audio_cards_chain(hass: HomeAssistant, hass_client, aioclient_moc
     run = next(r for r in reversed(data.runs.runs) if r.input == "What time is it?")
     assert run.source == "heard_text" and untimed(payloads[0]["messages"][-1]["content"]).endswith("What time is it?")
     assert stt.await_count >= 1
-    chat = next(c for c in data.domain("assistant").chats.list() if c["title"] == "Voice · PC")  # kept as a voice chat
+    chat = next(c for c in data.domain("assistant").chats.list() if c["title"].startswith("Voice · PC · "))  # kept as a voice chat (its start time in the title)
     assert [m["text"] for m in data.domain("assistant").chats.get(chat["id"])["messages"]] == ["What time is it?", "It is five o'clock."]
 
 

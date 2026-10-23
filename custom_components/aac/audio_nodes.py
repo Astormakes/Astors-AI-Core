@@ -121,7 +121,9 @@ def audio_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
             if chat and chat["messages"] and (chat.get("archived") or dt_util.utcnow() - datetime.fromisoformat(chat["updated"]) > remember):
                 current = f"voice_{inst_id}_{source}_{dt_util.utcnow().strftime('%Y%m%d%H%M')}"
             if not domain.chats.get(current):
-                domain.chats.create(f"Voice · {piece.get('name') or source}", current, auto=settings.get("chat_auto", True) is not False)
+                # the start time in the title: a new session is never mistaken for the last one (owner, 2026-10-23)
+                domain.chats.create(f"Voice · {piece.get('name') or source} · {dt_util.now().strftime('%H:%M')}", current,
+                                    auto=settings.get("chat_auto", True) is not False)
             sessions[source] = current
             return current
 

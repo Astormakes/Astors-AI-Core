@@ -2,7 +2,7 @@
 
 Running log for AAC. Read this first in a new session. Newest state on top. The long v0 history is in `docs/history-v0.md` (private).
 
-## Current state (2026-10-23) – 1.0.0-dev.73
+## Current state (2026-10-23) – 1.0.0-dev.74
 
 - **v1 on `main`**, live on the owner's HA (owner: "I'm not really using it, work on the real HA"; only the lists matter, exported to `docs/aac-lists-2026-10-23.md`). The last v0 is the tag `v0.50.1-last-v0`. `scripts/deploy_ha.sh` needs `AAC_ALLOW_V1=1`.
 - **The graph** (`spec/graph.md`, owner's design of 2026-10-23): a message is a document of tagged entries (`request.py`); every node writes into it; a model card (`model_node.py`) reads it all as an ordinary chat with tools; **its wired nodes are its tools** (calling one sends the document there and waits until it comes back: a loop, `flow.Step.call`); round outputs copy to every wire, square ones (model, Decide) choose; endpoints (`chat`, `voice`, `assist`) take answers home; the chat keeps its document (edits change it; expert view in the chat: every entry and the way, e.g. Panel chat › Model › Home › Model).

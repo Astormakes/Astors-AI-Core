@@ -606,10 +606,14 @@ class AacPanel extends HTMLElement {
         if (this._view.startsWith("settings/audio") && !this._typing()) this._render();
       }, 300);
     } else if (ev.what === "chat" || ev.what === "chats") {
+      // every chat that changed is kept until the refresh (two chats changing at once must not drop the open one)
+      (this._chatsChanged ||= new Set()).add(ev.what === "chats" ? "*" : ev.chat_id);
       clearTimeout(this._chatTimer);
       this._chatTimer = setTimeout(async () => {
+        const changed = this._chatsChanged;
+        this._chatsChanged = new Set();
         await this._loadChats();
-        if (this._chat?.id && (ev.what === "chats" || ev.chat_id === this._chat.id)) await this._openChat(this._chat.id, false);
+        if (this._chat?.id && (changed.has("*") || changed.has(this._chat.id))) await this._openChat(this._chat.id, false);
       }, 150);
     }
   }
