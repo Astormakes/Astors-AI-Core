@@ -310,3 +310,16 @@ async def test_speech_to_text_stays_in_the_home_languages(hass: HomeAssistant, m
             patch.object(mock_entry.runtime_data.flow, "async_send", AsyncMock(side_effect=lambda m, **k: sent.append(m))):
         await card.run("assistant", "in", {"pcm": SILENCE, "source": "pc", "name": "PC", "seconds": 1.0})
     assert calls == [None, "de"] and sent[0].text.startswith("Mach das Licht aus.")
+
+
+async def test_an_unwired_card_answers_nothing(hass: HomeAssistant, mock_entry, configured):
+    """A Speech to text card with no wire onward: its message goes nowhere (no hidden way through the chat)."""
+    from custom_components.aac.request import Message
+
+    await setup_aac(hass, mock_entry)
+    data = mock_entry.runtime_data
+    data.store.graph("assistant")["nodes"]["ears"] = {"type": "speech_to_text", "title": "Ears", "settings": {"remember": 0}}
+    message = Message(domain=data.domain("assistant"), origin="ears")
+    message.add("ears", "user", "What time is it?")
+    result = await data.flow.async_send(message, start="ears")
+    assert result.run is None and not result.replied

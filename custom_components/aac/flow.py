@@ -168,7 +168,10 @@ class Flow:
         walk = _Walk()
         start = start or message.origin
         if not any(a == start and ap == port for a, ap, *_ in self.bus.wires(message.domain.id)):
-            # an origin without wires (its module off, wired by hand before it existed): the panel chat's way
+            if start not in self.bus.nodes:  # an added card without a wire onward: nothing happens (nothing hidden)
+                LOGGER.info("AAC: %s has no wire onward; its message goes nowhere", start)
+                return FlowResult(message)
+            # a built-in origin without wires (its module off, wired by hand before it existed): the panel chat's way
             start, port = "chat", "out"
         node = self.bus.nodes_in(message.domain.id).get(start)
         message.trace.append({"node": node.id, "title": node.title, "role": node.role})  # where it starts

@@ -99,6 +99,9 @@ Inputs `in` (text) and later `pool`; one square output `out`.
 Automatic messages (heartbeat, triggers) wait in the queue at the model card (priority, due, critical,
 coalesce, keep) as before.
 
+An added card without a wire onward sends nowhere (nothing hidden); only a built-in origin without wires (its
+module off) falls back to the panel chat's way.
+
 ## Endpoints
 
 `chat`, `voice`, `assist` have an output and an input. What arrives at the input with their pointer is
