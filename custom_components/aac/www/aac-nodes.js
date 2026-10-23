@@ -22,6 +22,11 @@ const COL = W + 110; // one slot column (owner, 2026-10-23: cards in slots, a co
 const FIELD = 150; // reach of a node's soft push beyond its box
 const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "#8ab4ff", "#ff8a65", "#c792ea", "#7fdbca"];
 const KIND = { source: "source", sink: "sink", transform: "transform", annotating: "adds to the record" };
+// Settings that still live on a page of their own (owner: the settings are Appearance, Languages and Nodes; the
+// rest moves into the cards): the card links there
+const PAGES = { home: ["settings/entities", "Entities: what AAC may see and switch"], hearing: ["settings/audio", "Audio pipeline"],
+  stt: ["settings/audio", "Audio pipeline"], voice: ["settings/audio/sources", "Microphones and speakers"],
+  ha_tools: ["settings/entities", "Entities"], modules: ["settings/modules", "All modules"] };
 const ROLE = { pool: "pool (dotted)", source: "source", endpoint: "in and out", transform: "in the line", model: "model", decide: "decide", sink: "reads along", tool: "tools (a loop)" };
 const UNDO_STEPS = 10;
 const BAR = 26, PAD = 26, GRIP = 16, EDGE = 50;
@@ -103,6 +108,7 @@ class AacNodes extends HTMLElement {
           <button class="btn" data-nv="tidy" title="Lay every card out again in its slot (column = its place in the flow)">Tidy</button>
           <button class="btn" data-nv="undo" title="Back to the layout before Tidy">Undo</button>
           <button class="btn" data-nv="fit">Fit</button>
+          <button class="btn" data-go="settings/modules" title="Every module: switch on or off, hide, open its page">Modules</button>
 
         </div>
         <div class="nv-stage" style="position:relative;height:clamp(420px, calc(100vh - 260px), 1400px);touch-action:none"></div>
@@ -1229,6 +1235,7 @@ class AacNodes extends HTMLElement {
       ${n.type ? `<h3 style="margin-top:1em">THIS NODE</h3>${this._settingsForm(n)}`
         : n.addable ? '<p class="hint">The standard one. "Add node" makes another with its own settings.</p>' : ""}
       ${n.role === "pool" ? this._poolInfo(n) : ""}
+      ${PAGES[n.id] ? `<div class="actions"><button class="btn" data-go="${esc(PAGES[n.id][0])}">${esc(PAGES[n.id][1])}</button></div>` : ""}
       ${n.edit_schema ? this._coreForm(n) : ""}
       ${this._outputsForm(n)}
       ${this._namesForm(n)}

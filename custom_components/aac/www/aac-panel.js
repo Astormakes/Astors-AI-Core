@@ -1001,14 +1001,7 @@ class AacPanel extends HTMLElement {
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
           ${this._tab("settings/appearance", "Appearance")}
           ${this._tab("settings/languages", "Languages", this._stepOpen("languages") ? '<span class="dot open"></span>' : "")}
-          ${this._tab("settings/entities", "Entities", this._stepOpen("entities") ? '<span class="dot open"></span>' : "")}
-          ${this._tab("models", "Compute", ["models", "master"].some((x) => this._stepOpen(x)) ? '<span class="dot open"></span>' : "")}
-          ${this._tab("settings/audio", "Audio pipeline")}
-          ${this._tab("settings/audio/sources", "Sources", "", "deep")}
-          ${this._tab("settings/video", "Video")}
-          ${this._tab("settings/modules", "Modules")}
-          ${this._tab("nodes", "Nodes", "", "deep")}
-          ${this._tab("settings/mcp", "MCP", "", "soon")}
+          ${this._tab("nodes", "Nodes", ["entities", "models", "master"].some((x) => this._stepOpen(x)) ? '<span class="dot open"></span>' : "")}
         </div>
       </div>
     </nav>`;
