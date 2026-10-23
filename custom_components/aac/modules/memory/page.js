@@ -1,5 +1,5 @@
 // Memory module: what AAC remembers (browse, search, confirm, edit, forget), its facts and "Remember".
-// On/off is the module's switch, the embedding model the pool role "memory" (SETTINGS → Compute).
+// On/off is the module's switch, the embedding model the pool role "memory" (the Pools page).
 // No shadow DOM, so the panel's styles and skins apply. The panel sets .ws(), .panel and calls .refresh().
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -123,7 +123,7 @@ class AacMemoryPage extends HTMLElement {
         <div class="card"><h2>MEMORY</h2>
           <p class="hint">One local file in Home Assistant's config folder (included in HA backups). Search uses keywords and, with an embedding model, meaning ("cellar" finds "basement").</p>
           <div class="kv"><span class="k">Embedding model</span><span class="v">${esc(model)}</span><span class="k">Stored</span><span class="v">${esc(stats.total ?? "…")}</span><span class="k">With vectors</span><span class="v">${esc(stats.embedded ?? "…")}</span><span class="k">Unconfirmed</span><span class="v">${esc(stats.unconfirmed ?? "…")}</span></div>
-          <div class="actions"><button class="btn" id="mem-reembed">Re-embed all</button><button class="btn" data-go="models">Compute</button><button class="btn" data-go="settings/module/memory">Settings</button></div>
+          <div class="actions"><button class="btn" id="mem-reembed">Re-embed all</button><button class="btn" data-go="models">Pools</button><button class="btn" data-go="settings/module/memory">Settings</button></div>
           ${this._note ? `<div class="msg ${this._note.ok ? "ok" : "err"}">${esc(this._note.text)}</div>` : ""}
         </div>
         <div class="card"><h2>REMEMBER</h2>

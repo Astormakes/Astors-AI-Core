@@ -109,7 +109,7 @@ def setup_steps(hass: HomeAssistant, store: AACStore, domain: DomainSettings | N
             "id": "rules",
             "title": "Tell AAC when it may use your machines",
             "hint": "Optional rules per model, e.g. \"use my PC for heavy jobs only while I'm at work\". Say it in a chat; "
-                    "AAC writes the rule and you see it under Compute. Without rules every model is used whenever it answers.",
+                    "AAC writes the rule and you see it on the Pools page. Without rules every model is used whenever it answers.",
             "target": "models",
             "optional": True,
             "done": any(t.get("rule") for t in store.data["traits"].values()),

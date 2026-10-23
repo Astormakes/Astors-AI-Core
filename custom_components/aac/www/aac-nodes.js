@@ -1109,12 +1109,12 @@ class AacNodes extends HTMLElement {
   }
 
   _poolInfo(n) {
-    // the models a pool hands out (the thinking pool's list, in the owner's order; SETTINGS → Compute changes it)
+    // the models a pool hands out (the thinking pool's list, in the owner's order; the Pools page changes it)
     const items = this.panel?._state?.pools?.roles?.master?.items || [];
     const label = (id) => this.panel?._resourceLabel ? this.panel._resourceLabel(id) : id;
     return `<h3 style="margin-top:1em">MODELS</h3>${items.length ? items.map((it) => `<div class="src"><span class="dot ${it.state === "ok" ? "ok" : it.state === "down" ? "bad" : ""}"></span><div><div class="n">${esc(label(it.id))}${it.active ? ' <span class="tag">IN USE</span>' : ""}</div><div class="m">${esc(it.state)}</div></div></div>`).join("")
       : '<p class="hint">No model yet.</p>'}
-      <div class="actions"><button class="btn" data-go="models">Compute</button></div>`;
+      <div class="actions"><button class="btn" data-go="models">Pools page</button></div>`;
   }
 
   _outputsForm(n) {

@@ -189,7 +189,7 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
              make=lambda i, t, s: endpoint(i, t, "chat", s)),
         # The pools (dotted: a model card reserves a model from the one wired to it)
         *(Node(id=f"pool_{tier}", title=f"Models: {tier}", outputs={"models": "pool"}, role="pool",
-               description=f"Hands a model card a model from the pool: {about} (SETTINGS → Compute holds the models). "
+               description=f"Hands a model card a model from the pool: {about} (the Pools page holds the models). "
                            "Wire its dotted output into a model card's pool input.")
           for tier, about in TIERS.items()),
         # Standing text: replaced in place every time (the start of the conversation stays the same: the cache)

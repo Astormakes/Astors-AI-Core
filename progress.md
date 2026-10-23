@@ -2,7 +2,7 @@
 
 Running log for AAC. Read this first in a new session. Newest state on top. The long v0 history is in `docs/history-v0.md` (private).
 
-## Current state (2026-10-23) – 1.0.0-dev.38
+## Current state (2026-10-23) – 1.0.0-dev.39
 
 - **v1 on `main`**, live on the owner's HA (owner: "I'm not really using it, work on the real HA"; only the lists matter, exported to `docs/aac-lists-2026-10-23.md`). The last v0 is the tag `v0.50.1-last-v0`. `scripts/deploy_ha.sh` needs `AAC_ALLOW_V1=1`.
 - **The graph** (`spec/graph.md`, owner's design of 2026-10-23): a message is a document of tagged entries (`request.py`); every node writes into it; a model card (`model_node.py`) reads it all as an ordinary chat with tools; **its wired nodes are its tools** (calling one sends the document there and waits until it comes back: a loop, `flow.Step.call`); round outputs copy to every wire, square ones (model, Decide) choose; endpoints (`chat`, `voice`, `assist`) take answers home; the chat keeps its document (edits change it; expert view in the chat: every entry and the way, e.g. Panel chat › Model › Home › Model).
@@ -14,7 +14,7 @@ Running log for AAC. Read this first in a new session. Newest state on top. The 
 - **Chat cards** (type `chat_card`, added like any card): a chat of its own with a title; each is a section in the sidebar with its own + (a chat remembers its `card`; its messages leave there). **Markdown file cards** (`md_file`): `<config>/aac/notes/<name>.md`; in a line they append what passes, wired to a model they are a tool (read/append/write); listed under FILES in the sidebar, readable and editable (`aac/notes/get|save`).
 - Memory hangs under the model as a loop by default (owner); wired into the line by hand it also writes matching memories in.
 - **Voice through the graph:** Wake word and Companion have an output: a line they decide to answer leaves there, takes the line (charter, agent) into the model, and the answer goes to the Voice card (`reply_to: voice`). Module pages (Lists, Calendar, Memory …) open from their cards; the sidebar has no Modules section any more. Pinch zoom on phones.
-- Settings list: Appearance, Languages, Nodes; the other pages open from their cards (Home → Entities, pools → Compute, Hearing/STT → Audio, toolbar → Modules). The chat input grows with long messages.
+- Settings list: Appearance, Languages, Nodes; the other pages open from their cards (Home → Entities, pools → the Pools page (also the gear next to POOLS in the Nodes sidebar; was "Compute"), Hearing/STT → Audio, toolbar → Modules). The chat input grows with long messages.
 - Memories were cleared on the owner's HA (2026-10-23, backup `/config/aac/bak-before-clean-20261023/`). Backups before deploys: `/config/aac/bak-1.0.0-dev.28-before/` and older.
 - Tests: 154 mocked (`../.venv/bin/python -m pytest -q -p no:logging`).
 
@@ -62,6 +62,7 @@ Running log for AAC. Read this first in a new session. Newest state on top. The 
 
 
 ## Next steps
+- Open design question (owner, 2026-10-23): Hearing has three outputs (audio.pcm, audio.segment, text.line) and hidden VAD/STT/addressing; owner leans to one audio source per satellite, a stream picker node (by volume), audio in the message document so Voices can add the voice id before STT. Decide before Phase 4.
 
 - Bench 2026-10-23 (35B on the PC, Decide's grammar): "addressed to AAC?" 12/12 right in 0.26 s each (English, German, a video, a follow-up that only counts with the Buffer's line before it). Script: session scratchpad `bench/addressed.py`.
 - Try the owner's audio chain with the real models: Heard lines → Buffer → Decide ("addressed to AAC?") → yes: an Instructions card → Model → Voice (all cards exist now).

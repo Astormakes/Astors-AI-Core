@@ -300,7 +300,7 @@ class ModelNode:
         background = message.kind == "auto"  # the owner's availability rules apply
         picked = pool.endpoint_for(tier, background)
         if picked is None:
-            raise ModelError(f"{NO_MODEL}. Open the AAC panel (SETTINGS → Compute).")
+            raise ModelError(f"{NO_MODEL}. Open the AAC panel (Nodes → the gear next to POOLS).")
         model_id, endpoint = picked
         provider = self._provider(endpoint)
         me = node.id

@@ -19,7 +19,7 @@
   },
   "setup": [
     {"id": "prints", "done_when": {"role": "voices"}, "title": "Add voice prints", "optional": true,
-     "hint": "Run the AAC senses service (services/aac_senses in the AAC repository) on a machine, add it under Compute and put it into the voice pool's Voice prints role.",
+     "hint": "Run the AAC senses service (services/aac_senses in the AAC repository) on a machine, add it on the Pools page (Nodes → the gear next to POOLS) and put it into the voice pool's Voice prints role.",
      "how": ["chat", "panel"]}
   ]
 }

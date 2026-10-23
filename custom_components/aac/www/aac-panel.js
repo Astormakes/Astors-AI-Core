@@ -68,9 +68,9 @@ const md = (text) => {
   return out.join("");
 };
 
-// Where each pool is set: thinking in Compute, voice in the audio pipeline, vision under Video
+// Where each pool is set: thinking on the Pools page, voice in the audio pipeline, vision under Video
 const POOL_HOME = { thinking: "models", voice: "settings/audio", vision: "settings/video" };
-const POOL_HOME_NAME = { models: "Compute", "settings/audio": "Audio pipeline", "settings/video": "Video" };
+const POOL_HOME_NAME = { models: "Pools", "settings/audio": "Audio pipeline", "settings/video": "Video" };
 
 const ICONS = {
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
@@ -956,13 +956,16 @@ class AacPanel extends HTMLElement {
     const GROUPS = [["Messages in and out", (n) => ["endpoint", "source"].includes(n.role)], ["In the line", (n) => n.role === "transform"],
       ["Models", (n) => ["model", "decide"].includes(n.role)], ["Tools", (n) => n.role === "tool"], ["Pools", (n) => n.role === "pool"],
       ["Audio and the rest", () => true]];
+    const GROUP_PAGES = { Pools: "models" };
     const seen = new Set();
     const item = (n) => `<div class="tab ${n.on ? "" : "soon"}" data-node-pick="${esc(n.id)}" draggable="true" tabindex="0" role="button" title="${esc(n.description || "")}">
         <span class="dot ${wired.has(n.id) ? "ok" : ""}"></span><span class="grow">${esc(n.title)}</span></div>`;
     const groups = GROUPS.map(([name, test]) => {
       const list = nodes.filter((n) => !seen.has(n.id) && test(n));
       list.forEach((n) => seen.add(n.id));
-      return list.length ? `<div class="hint" style="padding:.5em 1.2em .1em;font-size:.72em;letter-spacing:.1em">${esc(name.toUpperCase())}</div>${list.map(item).join("")}` : "";
+      // a group whose settings still have a page of their own gets a gear there (owner: the Pools page)
+      const gear = GROUP_PAGES[name] ? `<button class="icon-btn" data-go="${GROUP_PAGES[name]}" title="${esc(name)}: settings" style="width:1.8em;height:1.8em;margin-left:auto">${icon("settings")}</button>` : "";
+      return list.length ? `<div class="hint" style="display:flex;align-items:center;padding:.5em 1.2em .1em;font-size:.72em;letter-spacing:.1em"><span>${esc(name.toUpperCase())}</span>${gear}</div>${list.map(item).join("")}` : "";
     }).join("");
     const types = (d.types || []).map((t) => `<div class="tab" data-type-pick="${esc(t.id)}" draggable="true" tabindex="0" role="button" title="${esc(t.description || "")}">
         ${icon("plus")}<span class="grow">${esc(t.title)}</span></div>`).join("");
@@ -1098,7 +1101,7 @@ class AacPanel extends HTMLElement {
     if (v === "models/new" || v.startsWith("model/edit/")) return this._renderModelForm();
     if (v.startsWith("model/")) return this._renderModel(v.slice(6));
     if (v === "settings/master") { this._view = "nodes"; return this._renderMain(); } // old links: the agent's settings are on its cards now
-    if (v === "settings/pools") return this._renderModels();  // old links: the thinking pool lives in Compute now
+    if (v === "settings/pools") return this._renderModels();  // old links: the thinking pool lives on the Pools page now
     if (v === "settings/video") return this._renderVideo();
     if (v === "settings/appearance") return this._renderAppearance();
     if (v.startsWith("mod/")) return this._renderModulePage(v);
@@ -1270,7 +1273,7 @@ class AacPanel extends HTMLElement {
       ? msgs.map((m, i) => this._bubbleHtml(m, i, msgs, { editable: !isAac, details: isAac, key: "m" })).join("")
       : `<div class="welcome"><div class="big">AAC</div>${this._chatGone ? "That chat no longer exists (it was deleted). This is a new chat."
           : !master ? "No master model yet. Open SETUP to choose one."
-          : this._state?.pools?.roles?.master?.active ? "Ask me anything." : "No master model is reachable right now (see Compute)."}</div>`;
+          : this._state?.pools?.roles?.master?.active ? "Ask me anything." : "No master model is reachable right now (see Pools)."}</div>`;
     const busy = this._busy ? `<div class="bubble aac busy"><div class="who">AAC</div>${this._streamHtml()}</div>` : "";
     const cardTitle = (this._state?.chat_cards || []).find((k) => k.id === (chat ? chat.card : this._newCard) && k.id !== "chat")?.title;
     const title = chat ? chat.title : cardTitle ? `NEW CHAT · ${cardTitle.toUpperCase()}` : "NEW CHAT";
@@ -1350,7 +1353,7 @@ class AacPanel extends HTMLElement {
       </div>` : ""}`);
   }
 
-  // ---------------------------------------------------------------- the queue (the broker's, shown on Compute)
+  // ---------------------------------------------------------------- the queue (the broker's, shown on Pools)
   _renderQueueCard() {
     const q = this._jobs;
     if (!q) return "";
@@ -1367,7 +1370,7 @@ class AacPanel extends HTMLElement {
   }
 
   // ---------------------------------------------------------------- settings: models
-  // COMPUTE: the machines AAC can think with; unfold one for its models, ⚙ for its settings
+  // POOLS: the machines AAC can think with; unfold one for its models, ⚙ for its settings
   _modelRoles(id) {
     const roles = this._state?.pools?.roles || {};
     return Object.entries(roles).flatMap(([role, r]) => {
@@ -1378,7 +1381,7 @@ class AacPanel extends HTMLElement {
 
   _renderModels() {
     const w = this._models;
-    if (!w) return this._page("COMPUTE", "", '<div class="card"><h2>SCANNING</h2><p>Looking for model servers…<span class="cursor"></span></p></div>');
+    if (!w) return this._page("POOLS", "", '<div class="card"><h2>SCANNING</h2><p>Looking for model servers…<span class="cursor"></span></p></div>');
     const open = this._openMachines || new Set();
     const kindLabel = { chat: "chat", embedding: "embeddings", stt: "speech-to-text", speech: "speech-to-text" };
     const machines = (w.machines || []).map((mc) => {
@@ -1403,7 +1406,7 @@ class AacPanel extends HTMLElement {
           ${isOpen ? `<div class="mbody">${rows || '<p class="hint">No models offered.</p>'}</div>` : ""}
         </div>`;
     }).join("");
-    return this._page("COMPUTE", "the machines AAC thinks with", `
+    return this._page("POOLS", "the machines AAC thinks with", `
       ${machines || '<div class="card"><p>No machines yet. Add a model server: any OpenAI-compatible one (llama.cpp, Ollama, vLLM, LM Studio, cloud APIs).</p></div>'}
       <div class="actions"><button class="btn primary" data-go="models/new">${icon("plus")} Add model</button>${tip(`Found on their own: model servers set up in Home Assistant (only read, never changed) and everything the servers of your models offer. Speech and voice engines are ordered under Audio pipeline, vision under Video.`)}</div>
       ${this._poolCard("thinking")}
@@ -1419,7 +1422,7 @@ class AacPanel extends HTMLElement {
         <label>Servers on it</label>
         ${mc.servers.map((sv) => `<div class="wrow"><span><span class="dot ${sv.online ? "ok" : "bad"}"></span> ${esc(sv.url)}</span>${sv.error ? `<span class="msg err">${esc(sv.error)}</span>` : ""}</div>`).join("")}
         <div class="actions"><button class="btn" id="mc-add" data-url="${esc(mc.servers[0]?.url || "")}">${icon("plus")} Add model here</button>
-          <button class="btn" data-go="models">Compute</button></div>
+          <button class="btn" data-go="models">Pools</button></div>
         ${this._flashHtml()}
       </div>
       <div class="card"><h2>LOADING <span class="tag plan">PLANNED</span></h2><p>Which models this machine can load, which one is loaded now, how long loading takes, and "free this machine" (e.g. when you start a game).</p></div>`);
@@ -1447,7 +1450,7 @@ class AacPanel extends HTMLElement {
         <div class="actions">
           ${id === master ? "" : `<button class="btn primary" data-master="${esc(id)}">Use as master</button>`}
           ${manual ? `<button class="btn" data-go="model/edit/${esc(id)}">Edit</button><button class="btn danger" data-delete="${esc(id)}">Delete</button>` : ""}
-          <button class="btn" data-go="models">Compute</button>
+          <button class="btn" data-go="models">Pools</button>
         </div>
         ${this._flashHtml()}
       </div>`);
@@ -1866,7 +1869,7 @@ class AacPanel extends HTMLElement {
           <label for="au-volume">AAC's voice volume: <span id="au-volume-val">${esc(set.volume ?? 40)}</span> % ${tip(`Saved when you let go, with a short test sentence. 0 = AAC never speaks aloud (answers still appear in the Voice chat). The speaker's own buttons still work on top.`)}</label>
           <input id="au-volume" data-nosave type="range" min="0" max="100" step="5" value="${esc(set.volume ?? 40)}" style="width:100%">
           <label>Speech to text</label>${this._roleSummary("stt", eng.stt)}
-          <label>Voice (text to speech) ${tip(`Engines come from the voice pool below: speech models from Compute (e.g. a multilingual whisper; without a language it detects German, English, … per sentence) or HA's engines, in your order, with fallback. HA's own voice assistants stay as they are.`)}</label>${this._roleSummary("tts", eng.tts)}
+          <label>Voice (text to speech) ${tip(`Engines come from the voice pool below: speech models from the Pools page (e.g. a multilingual whisper; without a language it detects German, English, … per sentence) or HA's engines, in your order, with fallback. HA's own voice assistants stay as they are.`)}</label>${this._roleSummary("tts", eng.tts)}
           ${this._voicePicks(set, eng)}
           ${this._flashHtml()}
         </div>
