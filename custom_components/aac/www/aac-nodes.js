@@ -29,6 +29,8 @@ const PAGES = { home: ["settings/entities", "Entities: what AAC may see and swit
   ha_tools: ["settings/entities", "Entities"], modules: ["settings/modules", "All modules"] };
 const ROLE = { pool: "pool (dotted)", source: "source", endpoint: "in and out", transform: "in the line", model: "model", decide: "decide", sink: "reads along", tool: "tools (a loop)" };
 const UNDO_STEPS = 10;
+// a question mark with a short explanation (the panel's style: .qm / .tip)
+const tip = (html) => `<span class="qm" tabindex="0" role="button" aria-label="Explain">?<span class="tip" role="tooltip">${html}</span></span>`;
 // A setting that works against the server's cache shows a warning while it is set that way (owner, 2026-10-23: the
 // "Replace" tick of Header and Trailer); its checkbox toggles it live
 // A field with a ready text to fill in (the first Header's charter draft): a button, never a silent fallback
@@ -1432,7 +1434,14 @@ class AacNodes extends HTMLElement {
     const ins = Object.entries(n.inputs).filter(([, t]) => t === "text");
     if (!ins.length || n.role === "endpoint") return "";
     const names = this._data.names || {};
-    return `<h3 style="margin-top:1em">FOR THE MODELS ${ins.length > 1 ? "" : `<span class="hint">· when a model's output is wired to it</span>`}</h3>
+    // how a card is used as a tool, in a few words (owner, 2026-10-23: "a question mark … how to use its functions")
+    const how = `Wire a model's output into this card and this card's output back into the model: the model can then call
+      it like a tool. ${n.has_tools ? "It brings its own functions; the tool name goes in front of them (e.g. <i>name__read</i>), and the model picks one."
+        : (n.adds || []).some((a) => ["system", "trailer", "note"].includes(a)) ? "Called, it gives its text back (e.g. the time from a Trailer)."
+        : "Calling it hands the conversation to this card; what the card writes comes back as the answer."}
+      <br><b>Tool name</b>: what the model calls it (empty: <i>${esc(n.id)}</i>). <b>What it is for</b>: one sentence the model
+      reads to decide when to call it; the clearer, the better (e.g. "Call this when the user talks to you").`;
+    return `<h3 style="margin-top:1em">FOR THE MODELS ${tip(how)} ${ins.length > 1 ? "" : `<span class="hint">· when a model's output is wired to it</span>`}</h3>
       ${ins.map(([p]) => { const v = names[`${n.id}.${p}`] || {};
         return `${ins.length > 1 ? `<div class="hint">input ${esc(p)}</div>` : ""}
           <label>Tool name</label><input data-name-port="${esc(p)}" data-name-key="name" value="${esc(v.name || "")}" placeholder="${esc(n.id)}">

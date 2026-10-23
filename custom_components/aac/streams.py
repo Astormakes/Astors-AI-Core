@@ -321,7 +321,7 @@ class Bus:
                        "recent": {p: len(self.recent(domain_id, n.id, p)) for p in n.outputs},
                        "type": n.type, "settings": n.settings, "square": sorted(n.square),
                        "settings_schema": (self.nodes.get(n.type or n.id) or self.templates.get(n.type or "") or n).settings_schema,
-                       "addable": bool(n.make), "variables": n.variables}
+                       "addable": bool(n.make), "variables": n.variables, "has_tools": n.tools is not None}
                       for n in self.nodes_in(domain_id).values()],
             "wires": [{"from": f"{a}.{b}", "to": f"{c}.{d}"} for a, b, c, d in self.wires(domain_id)],
             # What "Add node" offers: node types that can be added (more than once), templates included
