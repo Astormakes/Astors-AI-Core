@@ -17,7 +17,8 @@ document, not a log.
 Only these: `text` (the message document), `audio`, `video`, each in and out, plus `pool` (the dotted line:
 a model card reserves a model from a pool node; the only two-way wire).
 Until the audio pipeline is moved over, its old types (`audio.pcm`, `audio.segment`, `text.line`,
-`sound.event`) stay as they are.
+`sound.event`) stay as they are; the unused ones (`time.tick`, `ha.event`, `say`, `notify`, `video.frame`,
+`vision.detection`) are gone. New: `audio.piece` (a Pause cut's stretch of speech).
 
 ## Outputs: round and square
 

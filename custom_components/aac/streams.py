@@ -22,25 +22,21 @@ from homeassistant.util import dt as dt_util
 
 from .const import LOGGER
 
-# type → class: "continuous" (raw media, RAM ring buffer, never stored) or "record" (small JSON objects)
+# type → class: "continuous" (raw media, RAM ring buffer, never stored) or "record" (small JSON objects). The old
+# audio types (audio.pcm, audio.segment, text.line, sound.event) go with the Hearing card (spec/graph.md "Audio cards")
 STREAM_TYPES: dict[str, str] = {
     "audio.pcm": "continuous",
     "audio.segment": "record",
     "text.line": "record",
     "sound.event": "record",
-    "ha.event": "record",
-    "time.tick": "record",
     # The message (spec/graph.md, owner 2026-10-23): a document of tagged entries; every node writes into it, a model
     # reads it all and picks where it goes next (its wired nodes are its tools: loops)
     "text": "record",
     "audio": "continuous",
+    "audio.piece": "record",  # a stretch of speech from a Pause cut (its audio is handed on, never kept)
     "video": "continuous",
     # The dotted line: a model card reserves a model from a pool node (the only two-way wire)
     "pool": "link",
-    "say": "record",
-    "notify": "record",
-    "video.frame": "continuous",
-    "vision.detection": "record",
 }
 
 # "Add node" groups the types (a node's own category, else by its role)
