@@ -491,6 +491,12 @@ class AacPanel extends HTMLElement {
     this.shadowRoot.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && this._modMenu) { this._modMenu = null; this._render(); }
     });
+    // The node view tells which cards exist: the sidebar lists them while Nodes is open
+    this.shadowRoot.addEventListener("aac-nodes", (e) => {
+      const d = e.detail || {}, sig = JSON.stringify([(d.nodes || []).map((n) => [n.id, n.title, n.on, n.role]), (d.types || []).map((t) => t.id), d.wires?.length]);
+      this._nodesData = d;
+      if (sig !== this._nodesSig) { this._nodesSig = sig; if (this._view === "nodes") this._render(); }
+    });
     this._view = null;
     this._showAll = false;
     this._autoOpen = false;
@@ -833,6 +839,7 @@ class AacPanel extends HTMLElement {
     if (view === "settings/triggers") view = "mod/triggers/list"; // old links: the triggers are a module since 0.45
     if (view === "settings/memory") view = "mod/memory/browse"; // and memory since 0.47
     if (view === "settings/charter") view = "settings/module/charter"; // and the charter since 0.48
+    if (view.startsWith("chat/") && view !== "chat/new") this._lastChat = view; // where "Back to the chats" goes
     this._view = view;
     this._navOpen = false;
     this._flash = null;
@@ -920,7 +927,51 @@ class AacPanel extends HTMLElement {
     return `<div class="tab ${cls} ${active ? "active" : ""}" data-go="${esc(view)}" tabindex="0" role="button" ${active ? 'aria-current="page"' : ""}>${extra}<span class="grow">${esc(label)}</span>${after}</div>`;
   }
 
+  // While Nodes is open the sidebar is the list of cards (owner, 2026-10-23: "get rid of as many things as
+  // possible when nodes are clicked"): click one to see and set it up, drag it into the grid to place it; the
+  // types below are added where they are dropped
+  _renderNodesNav() {
+    const d = this._nodesData || {}, nodes = d.nodes || [];
+    const wired = new Set((d.wires || []).flatMap((w) => [w.from.split(".")[0], w.to.split(".")[0]]));
+    const GROUPS = [["Messages in and out", (n) => ["endpoint", "source"].includes(n.role)], ["In the line", (n) => n.role === "transform"],
+      ["Models", (n) => ["model", "decide"].includes(n.role)], ["Tools", (n) => n.role === "tool"], ["Pools", (n) => n.role === "pool"],
+      ["Audio and the rest", () => true]];
+    const seen = new Set();
+    const item = (n) => `<div class="tab ${n.on ? "" : "soon"}" data-node-pick="${esc(n.id)}" draggable="true" tabindex="0" role="button" title="${esc(n.description || "")}">
+        <span class="dot ${wired.has(n.id) ? "ok" : ""}"></span><span class="grow">${esc(n.title)}</span></div>`;
+    const groups = GROUPS.map(([name, test]) => {
+      const list = nodes.filter((n) => !seen.has(n.id) && test(n));
+      list.forEach((n) => seen.add(n.id));
+      return list.length ? `<div class="hint" style="padding:.5em 1.2em .1em;font-size:.72em;letter-spacing:.1em">${esc(name.toUpperCase())}</div>${list.map(item).join("")}` : "";
+    }).join("");
+    const types = (d.types || []).map((t) => `<div class="tab" data-type-pick="${esc(t.id)}" draggable="true" tabindex="0" role="button" title="${esc(t.description || "")}">
+        ${icon("plus")}<span class="grow">${esc(t.title)}</span></div>`).join("");
+    return `<nav aria-label="AAC">
+      <div class="brand">
+        <span class="name">AAC</span><span class="ver">v${esc(this._state?.version || "")}</span><span class="sp"></span>
+      </div>
+      ${this._renderDomainSwitch()}
+      <div class="scroll thin-scroll">
+        ${this._tab(this._lastChat || "chat/new", "‹ Back to the chats")}
+        <div class="seg">
+          <div class="seg-title">${icon("workers")}CARDS<span class="badge">${nodes.length}</span></div><div class="seg-line"></div>
+          <div class="empty" style="padding-left:1.2em">click: see and set up · drag into the grid: place</div>
+          ${groups || '<div class="empty">loading…</div>'}
+        </div>
+        ${types ? `<div class="seg"><div class="seg-title">${icon("plus")}ADD<span class="badge"></span></div><div class="seg-line"></div>
+          <div class="empty" style="padding-left:1.2em">drag into the grid, or click</div>${types}</div>` : ""}
+        <div class="seg">
+          <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
+          ${this._tab("settings/appearance", "Appearance")}
+          ${this._tab("settings/languages", "Languages")}
+          ${this._tab("nodes", "Nodes")}
+        </div>
+      </div>
+    </nav>`;
+  }
+
   _renderNav() {
+    if (this._view === "nodes") return this._renderNodesNav();
     const steps = this._steps();
     const open = this._openSteps();
     const showSetup = open.length > 0 || this._showAll;
@@ -2005,6 +2056,14 @@ class AacPanel extends HTMLElement {
       }
     };
     sr.querySelectorAll("[data-go]").forEach((el) => onActivate(el, () => this._go(el.dataset.go)));
+    // the cards' sidebar: pick one, add a type, or drag either into the grid
+    const nodesEl = () => sr.querySelector("aac-nodes");
+    sr.querySelectorAll("[data-node-pick]").forEach((el) => onActivate(el, () => nodesEl()?.pick(el.dataset.nodePick)));
+    sr.querySelectorAll("[data-type-pick]").forEach((el) => onActivate(el, () => nodesEl()?._addOf(el.dataset.typePick)));
+    sr.querySelectorAll("[data-node-pick], [data-type-pick]").forEach((el) => el.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", el.dataset.nodePick ? `node:${el.dataset.nodePick}` : `type:${el.dataset.typePick}`);
+      e.dataTransfer.effectAllowed = "copyMove";
+    }));
     const langs = () => this._langs?.languages || [];
     sr.querySelectorAll("[data-lang-up]").forEach((el) => onActivate(el, () =>
       this._setLanguages([el.dataset.langUp, ...langs().filter((c) => c !== el.dataset.langUp)])));

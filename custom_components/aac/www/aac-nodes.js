@@ -70,6 +70,8 @@ class AacNodes extends HTMLElement {
     if (!this.panel?._state?.domain) { setTimeout(() => this.refresh(quiet), 300); return; } // layouts are per domain
     try { this._data = await this.ws("aac/nodes"); this._error = null; } catch (e) { this._error = e.message || String(e); }
     if (this._error) { this._msg.textContent = this._error; return; }
+    // the panel's sidebar lists the cards (click: select, drag into the grid: place or add)
+    this.dispatchEvent(new CustomEvent("aac-nodes", { bubbles: true, composed: true, detail: this._data }));
     const first = this._loaded !== this._key;
     if (!this._frameDrag) this._frames = (this._data.containers || []).map((f) => ({ ...f, nodes: [...f.nodes] }));
     this._place();
@@ -91,11 +93,19 @@ class AacNodes extends HTMLElement {
           <li><b>A model reads it all</b>. The cards wired to its output (square port: it decides) are its tools: calling one sends the conversation there; what that card writes comes back (wire it back into the model: a loop, dotted).</li>
           <li><b>The answer goes home</b>: to the card it started at (wired from the model's output). Round ports always fire; several wires each get a copy.</li>
           <li><b>Build your own:</b> Add node (e.g. Charter, Instructions, Context, another Model, Decide), then drag from an output dot to an input dot of the same colour. Name a card's input (its settings) and models see that name as the tool. Click a wire and press Delete to remove it. The first change switches to "Wired by hand"; Automatic wiring goes back.</li>
-          <li><b>Set a card up</b>: click it, change its settings in the box below the graph, Save.</li>
-          <li><b>Try it</b>: pick the source, type a message, Send. The way lights up and you see what each card wrote.</li>
+          <li><b>Set a card up</b>: click it, change its settings in the panel on the right, Save.</li>
+          <li><b>Look around</b>: the wheel scrolls the graph (Shift: sideways), Ctrl + wheel zooms, the middle button or the background drags it. The chat's ⚡ expert view shows the way each message took.</li>
           <li><b>Tidy up</b>: Shift-click cards, Group, name it; fold the frame (▾) into one card.</li>
         </ol></details>
-      <div class="card" style="padding:0;overflow:hidden;position:relative">
+      <style>
+        .nv-main { display: flex; gap: 1em; align-items: flex-start; }
+        .nv-main > .nv-graph { flex: 1; min-width: 0; margin: 0; }
+        .nv-main > .nv-info { flex: none; width: 380px; margin: 0; position: sticky; top: .5em;
+          max-height: calc(100vh - 120px); overflow-y: auto; }
+        @media (max-width: 1100px) { .nv-main { flex-direction: column; align-items: stretch; } .nv-main > .nv-info { width: auto; position: static; max-height: none; } }
+      </style>
+      <div class="nv-main">
+      <div class="card nv-graph" style="padding:0;overflow:hidden;position:relative">
         <div class="nv-bar" style="display:flex;gap:.6em;align-items:center;flex-wrap:wrap;padding:.6em .9em;border-bottom:1px solid var(--line)">
           <label class="check" style="margin:0;display:none"><input type="checkbox" class="nv-physics">Physics</label>
           <span class="hint nv-help"></span>
@@ -115,17 +125,7 @@ class AacNodes extends HTMLElement {
         <div class="nv-legend" style="display:flex;gap:.9em;flex-wrap:wrap;padding:.5em .9em;border-top:1px solid var(--line);font-size:.8em"></div>
         <p class="hint nv-msg" style="margin:.5em .9em"></p>
       </div>
-      <div class="card nv-info" style="display:none"></div>
-      <div class="card nv-try"><h2>TRY IT</h2>
-        <p class="hint">Send a message through the graph and watch its way: the cards it passes light up, and you see what each one added.</p>
-        <div class="row" style="align-items:flex-end;gap:.6em">
-          <div style="flex:none;min-width:10em"><label>From</label><select class="nv-try-source">
-            <option value="chat">Panel chat</option><option value="voice">Voice</option><option value="assist">HA Assist</option>
-            <option value="heartbeat">Heartbeat</option><option value="triggers">Triggers</option></select></div>
-          <div style="flex:1"><label>Message</label><input class="nv-try-text" placeholder="e.g. Is the bed light on?"></div>
-          <div style="flex:none" class="actions"><button class="btn primary" data-nv="try">Send</button></div>
-        </div>
-        <div class="nv-try-out"></div>
+      <div class="card nv-info thin-scroll"></div>
       </div>`;
     this._stage = this.querySelector(".nv-stage");
     this._msg = this.querySelector(".nv-msg");
@@ -324,7 +324,7 @@ class AacNodes extends HTMLElement {
     this.querySelector(".nv-physics").checked = this._physics;
     this.querySelector(".nv-help").textContent = this._physics
       ? ""
-      : "Drag a card into a slot (it snaps to the column) · Tidy lays everything out again · Shift-click several, then Group · wheel zooms · drag the background to move";
+      : "";
     this.querySelector('[data-nv="undo"]').disabled = !this._undo.length;
     const byHand = !!this._data?.by_hand;
     this.querySelector(".nv-wiring").textContent = byHand ? "Wired by hand" : "Wired automatically";
@@ -725,7 +725,6 @@ class AacNodes extends HTMLElement {
       if (b?.dataset.nv === "auto") this._automatic();
       if (b?.dataset.nv === "add") this._addNode();
       if (b?.dataset.nv === "add-type") this._addOf(b.dataset.type);
-      if (b?.dataset.nv === "try") this._try();
       const step = e.target.closest("[data-try-node]");
       if (step) { this._sel = step.dataset.tryNode; this._selFrame = null; this._selWire = null; this._draw(); this._info(); }
       if (b?.dataset.nv === "inst-save") this._saveInstance(b.dataset.node);
@@ -744,9 +743,21 @@ class AacNodes extends HTMLElement {
       const go = e.target.closest("[data-go]");
       if (go) this.panel?._go(go.dataset.go);
     });
+    this._svg.addEventListener("mousedown", (e) => { if (e.button === 1) e.preventDefault(); }); // no browser autoscroll
+    this._stage.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
+    this._stage.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const what = e.dataTransfer.getData("text/plain") || "";
+      if (what.startsWith("node:") || what.startsWith("type:")) this._drop(what, e);
+    });
     this._svg.addEventListener("pointerdown", (e) => {
       const g = e.target.closest(".nv-node"), fg = e.target.closest(".nv-frame");
       this._svg.setPointerCapture(e.pointerId);
+      if (e.button === 1) { // the middle button drags the view, wherever you grab
+        e.preventDefault();
+        this._pan = { x: e.clientX - this._view.x, y: e.clientY - this._view.y };
+        return;
+      }
       this.focus({ preventScroll: true }); // for Delete on a selected wire
       if (g && e.target.dataset.dot === "out") { // start a wire
         this._link = { from: `${g.dataset.node}.${e.target.dataset.port}`, type: e.target.dataset.type,
@@ -853,7 +864,6 @@ class AacNodes extends HTMLElement {
       p.pinned = !p.pinned;
       this._save(); this._draw(); this._kick();
     });
-    this.querySelector(".nv-try-text").addEventListener("keydown", (e) => { if (e.key === "Enter") this._try(); });
     this.tabIndex = 0;
     this.addEventListener("keydown", (e) => {
       if ((e.key === "Delete" || e.key === "Backspace") && this._selWire && !e.target.closest("input, textarea")) {
@@ -864,7 +874,13 @@ class AacNodes extends HTMLElement {
     this._svg.addEventListener("wheel", (e) => {
       e.preventDefault();
       const r = this._stage.getBoundingClientRect(), v = this._view;
-      const k = Math.min(3, Math.max(.25, v.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+      if (!e.ctrlKey && !e.metaKey) { // the wheel scrolls the graph (Shift: sideways); Ctrl + wheel (or a pinch) zooms
+        const f = e.deltaMode === 1 ? 16 : 1;
+        v.x -= (e.shiftKey ? e.deltaY : e.deltaX) * f; v.y -= (e.shiftKey ? 0 : e.deltaY) * f;
+        this._layout();
+        return;
+      }
+      const k = Math.min(3, Math.max(.2, v.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
       const mx = e.clientX - r.left - r.width / 2, my = e.clientY - r.top - r.height / 2;
       v.x = mx - (mx - v.x) * k / v.k; v.y = my - (my - v.y) * k / v.k; v.k = k;
       this._layout();
@@ -902,38 +918,6 @@ class AacNodes extends HTMLElement {
     if (ok) this._setWires(null);
   }
 
-  // ------------------------------------------------------------------ try it
-  async _try() {
-    const text = this.querySelector(".nv-try-text").value.trim(), source = this.querySelector(".nv-try-source").value;
-    const out = this.querySelector(".nv-try-out");
-    if (!text) return;
-    out.innerHTML = '<p class="hint">On its way…</p>';
-    let r;
-    try { r = await this.ws("aac/nodes/try", { text, source }); }
-    catch (err) { out.innerHTML = `<div class="msg err">${esc(err.message || err)}</div>`; return; }
-    // The way through the graph (the trace starts at the message's own card); it lights up in the graph
-    const path = r.trace.map((t) => t.node);
-    this._lit = new Set(path);
-    this._litWires = new Set(path.slice(1).map((id, i) => `${path[i]}>${id}`));
-    this._draw();
-    clearTimeout(this._litTimer);
-    this._litTimer = setTimeout(() => { this._lit = null; this._litWires = null; this._draw(); }, 30000);
-    const KINDS = { system: "system prompt", note: "note", user: "said", answer: "answered", call: "called", result: "result" };
-    const wrote = (items) => (items || []).map((e) => `<div class="m"><b>${esc(KINDS[e.kind] || e.kind)}:</b> ${esc(short(e.text, 200))}</div>`).join("");
-    out.innerHTML = `
-      <div class="msg ${r.status === "failed" ? "err" : "ok"}" style="white-space:pre-wrap">${esc(r.answer || "(no answer)")}</div>
-      <h3 style="margin-top:.8em">THE WAY</h3>
-      ${r.trace.map((t, i) => `<div class="src" data-try-node="${esc(t.node)}" style="cursor:pointer"><span class="dot ${t.error ? "bad" : "ok"}"></span>
-        <div style="flex:1;min-width:0"><div class="n">${esc(t.title)}</div>
-          ${i === 0 ? '<div class="m">the message starts here</div>' : ""}
-          ${t.error ? `<div class="m">failed: ${esc(t.error)}</div>` : ""}${wrote(t.added)}
-          ${t.role === "model" && !t.error && t.model ? `<div class="m">with ${esc(t.model)}</div>` : ""}
-          ${t.role === "decide" ? `<div class="m">chose <b>${esc(t.output)}</b>${t.note ? ` (${esc(t.note)})` : ""}</div>` : ""}
-          ${i && !t.error && !t.added && t.role !== "decide" ? '<div class="m">wrote nothing this time</div>' : ""}</div></div>`).join("")}
-      ${r.steps?.filter((s) => s.type === "tool_call").length ? `<p class="hint">Tools the last model called: ${esc(r.steps.filter((s) => s.type === "tool_call").map((s) => s.tool).join(", "))}</p>` : ""}
-      <div class="actions"><button class="btn" data-go="run/${esc(r.run_id)}">Run details</button></div>`;
-  }
-
   // ------------------------------------------------------------------ added nodes (types vs. instances)
   _instances() {
     return Object.fromEntries(this._data.nodes.filter((n) => n.type)
@@ -967,7 +951,28 @@ class AacNodes extends HTMLElement {
     menu.style.display = "";
   }
 
-  async _addOf(typeId) {
+  pick(id) {
+    // chosen in the sidebar: selected, shown on the right, the view centred on it
+    this._sel = id; this._selFrame = null; this._selWire = null; this._multi = new Set([id]);
+    const p = this._pos[id];
+    if (p) { this._view.x = -p.x * this._view.k; this._view.y = -p.y * this._view.k; }
+    this._draw(); this._layout(); this._info();
+  }
+
+  async _drop(what, e) {
+    // a card from the sidebar dropped into the grid: an existing one moves there, a type is added there
+    const at = this._world2(e);
+    if (what.startsWith("node:")) {
+      const id = what.slice(5);
+      if (!this._pos[id]) return;
+      Object.assign(this._pos[id], at);
+      this._snap(id); this._save(); this._draw(); this._layout(); this.pick(id);
+    } else if (what.startsWith("type:")) {
+      await this._addOf(what.slice(5), at);
+    }
+  }
+
+  async _addOf(typeId, at = null) {
     this.querySelector(".nv-addmenu").style.display = "none";
     const type = (this._data.types || []).find((n) => n.id === typeId);
     if (!type) return;
@@ -979,6 +984,7 @@ class AacNodes extends HTMLElement {
     const settings = Object.fromEntries(Object.entries(type.settings_schema || {}).map(([key, f]) => [key, f.default ?? ""]));
     this._sel = id;
     await this._setInstances({ ...this._instances(), [id]: { type: type.id, title: String(title).trim(), settings } });
+    if (at && this._pos[id]) { Object.assign(this._pos[id], at); this._snap(id); this._save(); this._draw(); this._layout(); this._info(); }
     this._msg.textContent = `${String(title).trim()} added: wire it in (drag from an output to its input) to use it.`;
   }
 
@@ -1216,7 +1222,11 @@ class AacNodes extends HTMLElement {
           <button class="btn danger" data-nv="ungroup" data-frame="${esc(fr.id)}">Ungroup</button></div>`;
       return;
     }
-    if (!n) { box.style.display = "none"; return; }
+    if (!n) {
+      box.style.display = "";
+      box.innerHTML = '<h2>CARDS</h2><p class="hint">Click a card to see what it does and set it up. Drag from an output dot to an input dot to wire; click a wire, then Delete, to remove it.</p>';
+      return;
+    }
     const ports = (o) => Object.entries(o).map(([p, t]) => `<span class="tag" style="border-color:${this._color(t)}">${esc(p)}: ${esc(t)}</span>`).join(" ") || "—";
     const into = this._wires().filter((w) => w.b.id === n.id).map((w) => `${esc(w.a.title)}.${esc(w.ap)}`).join(", ") || "—";
     const out = this._wires().filter((w) => w.a.id === n.id).map((w) => `${esc(w.b.title)}.${esc(w.bp)}`).join(", ") || "—";
