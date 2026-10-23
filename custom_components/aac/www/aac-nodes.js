@@ -21,7 +21,7 @@ const STACK = 14; // gap between the cards of a column (a chain adding to the sa
 const FIELD = 150; // reach of a node's soft push beyond its box
 const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "#8ab4ff", "#ff8a65", "#c792ea", "#7fdbca"];
 const KIND = { source: "source", sink: "sink", transform: "transform", annotating: "adds to the record" };
-const ROLE = { source: "source", transform: "in the line", model: "model", decide: "decide", reply: "reply", sink: "reads along", tool: "attaches to a model" };
+const ROLE = { source: "source", endpoint: "in and out", transform: "in the line", model: "model", decide: "decide", sink: "reads along", tool: "tools (a loop)" };
 const UNDO_STEPS = 10;
 const BAR = 26, PAD = 26, GRIP = 16, EDGE = 50;
 const FOLD_W = W + 30, FOLD_H = BAR + 30; // a folded frame: one card // frame: name bar, room around members, resize corner, border push reach
@@ -80,13 +80,13 @@ class AacNodes extends HTMLElement {
     this.innerHTML = `
       <details class="card nv-how"><summary style="cursor:pointer"><b>HOW IT WORKS</b> <span class="hint">· building your own chain, step by step</span></summary>
         <ol style="margin:.6em 0 0 1.2em;line-height:1.6">
-          <li><b>A request starts at a source</b>: Panel chat, Voice, HA Assist or Automatic (heartbeat, triggers).</li>
-          <li><b>It runs along the line</b>: each card in it adds its part (charter, instructions, context), in the order of the wires.</li>
-          <li><b>The model answers</b> with the cards attached to it (dotted lines: home, lists, memory …: its menu). Its answer is a message again: it can go on into more cards, a Decide (named outputs) or another model.</li>
-          <li><b>Reply brings it home</b>, to the chat, microphone or HA it came from.</li>
-          <li><b>Build your own:</b> Add node (e.g. Charter, Instructions, Context, Home, a tool set, another Model), then drag from an output dot to an input dot of the same colour. Click a wire and press Delete to remove it. The first change switches to "Wired by hand"; Automatic wiring goes back.</li>
+          <li><b>A message starts at its card</b>: Panel chat, Voice, HA Assist, or automatic ones (heartbeat, triggers). The message is the whole conversation; every card writes into it.</li>
+          <li><b>It runs along the line</b>: charter, agent, instructions, context write their part (they replace their own entry, so the start of the conversation stays the same: fast answers).</li>
+          <li><b>A model reads it all</b>. The cards wired to its output (square port: it decides) are its tools: calling one sends the conversation there; what that card writes comes back (wire it back into the model: a loop, dotted).</li>
+          <li><b>The answer goes home</b>: to the card it started at (wired from the model's output). Round ports always fire; several wires each get a copy.</li>
+          <li><b>Build your own:</b> Add node (e.g. Charter, Instructions, Context, another Model, Decide), then drag from an output dot to an input dot of the same colour. Name a card's input (its settings) and models see that name as the tool. Click a wire and press Delete to remove it. The first change switches to "Wired by hand"; Automatic wiring goes back.</li>
           <li><b>Set a card up</b>: click it, change its settings in the box below the graph, Save.</li>
-          <li><b>Try it</b>: pick the source, type a message, Send. The way lights up and you see what each card added.</li>
+          <li><b>Try it</b>: pick the source, type a message, Send. The way lights up and you see what each card wrote.</li>
           <li><b>Tidy up</b>: Shift-click cards, Group, name it; fold the frame (▾) into one card.</li>
         </ol></details>
       <div class="card" style="padding:0;overflow:hidden;position:relative">
@@ -202,7 +202,7 @@ class AacNodes extends HTMLElement {
     // New nodes start at their place in the flow: column = steps after a source (answer wires left out),
     // so the field only has to refine, not untangle (a folded chain jams in a local minimum)
     const wires = this._wires(), back = this._backEdges(wires), rank = {}, depth = {};
-    const forward = wires.filter((w) => !back.has(w) && w.type !== "tool");
+    const forward = wires.filter((w) => !back.has(w) && !w.loop);
     for (let i = 0; i < nodes.length; i++) {
       let changed = false;
       for (const w of forward) {
@@ -233,7 +233,7 @@ class AacNodes extends HTMLElement {
     }
     // attached cards in a row under their model
     const hanging = {};
-    for (const w of wires) if (w.type === "tool" && this._pos[w.b.id]) (hanging[w.b.id] ||= []).push(w.a.id);
+    for (const w of wires) if (w.loop && w.a.id === w.tool && this._pos[w.model]) (hanging[w.model] ||= []).push(w.tool);
     for (const [model, cards] of Object.entries(hanging)) {
       const m = this._pos[model];
       cards.forEach((id, i) => {
@@ -272,10 +272,18 @@ class AacNodes extends HTMLElement {
   _wires() {
     if (!this._data) return [];
     const byId = Object.fromEntries(this._data.nodes.map((n) => [n.id, n]));
-    return this._data.wires.map((w) => {
+    const list = this._data.wires.map((w) => {
       const [a, ap] = w.from.split("."), [b, bp] = w.to.split(".");
       return byId[a] && byId[b] ? { a: byId[a], ap, b: byId[b], bp, type: byId[a].outputs[ap] } : null;
     }).filter(Boolean);
+    // A node that offers tools and is reached only from models hangs under its model: those wires are its loop
+    const fromModels = (id) => list.filter((w) => w.b.id === id).every((w) => w.a.role === "model");
+    for (const w of list) {
+      const tool = w.a.role === "tool" ? w.a : w.b.role === "tool" ? w.b : null, model = w.a.role === "model" ? w.a : w.b;
+      w.loop = !!tool && model.role === "model" && tool !== model && fromModels(tool.id);
+      w.model = w.loop ? model.id : null; w.tool = w.loop ? tool.id : null;
+    }
+    return list;
   }
 
   // ------------------------------------------------------------------ physics
@@ -351,19 +359,20 @@ class AacNodes extends HTMLElement {
     for (const w of wires) {
       if (this._folded(w.a.id) || this._folded(w.b.id)) continue; // a folded frame stays where it is
       const o = this._port(w.a, w.ap, "out"), i = this._port(w.b, w.bp, "in");
-      if (back.has(w)) { // closes a loop (an answer going back to its chat): no left-to-right, it arcs back
-        const dy = (o.y - i.y) * .004;
-        P[w.b.id].vy += dy; P[w.a.id].vy -= dy;
-        continue;
-      }
-      (ins[w.b.id] ||= []).push(w); (outs[w.a.id] ||= []).push(w);
-      if (w.type === "tool") { // an attached card hangs below its model (spread out by the push between cards)
+      if (w.loop && w.b.id === w.tool) continue; // the model's call into its tool: the hanging below does it
+      if (w.loop) { // a tool card hangs below its model (spread out by the push between cards)
         const m = P[w.b.id], c = P[w.a.id];
         const low = m.y + this._height(w.b) / 2 + 70 + this._height(w.a) / 2 - c.y;
         if (low > 0) c.vy += low * .08; else c.vy += low * .004;
         c.vx += (m.x - c.x) * .006;
         continue;
       }
+      if (back.has(w)) { // closes a loop (an answer going back to its chat): no left-to-right, it arcs back
+        const dy = (o.y - i.y) * .004;
+        P[w.b.id].vy += dy; P[w.a.id].vy -= dy;
+        continue;
+      }
+      (ins[w.b.id] ||= []).push(w); (outs[w.a.id] ||= []).push(w);
       if (w.a.kind === "annotating" && w.b.kind === "annotating") {
         // A chain of nodes adding to the same record stacks into a column (owner: one row was far too wide):
         // the next card sits right under the previous one, aligned
@@ -383,7 +392,7 @@ class AacNodes extends HTMLElement {
     // Wires push nodes off them (owner): a card lying on a wire it does not belong to moves aside, so lines do
     // not run through cards and it stays clear which line goes where
     for (const w of wires) {
-      if (back.has(w) || w.type === "tool" || (w.a.kind === "annotating" && w.b.kind === "annotating") || this._folded(w.a.id) || this._folded(w.b.id)) continue;
+      if (back.has(w) || w.loop || (w.a.kind === "annotating" && w.b.kind === "annotating") || this._folded(w.a.id) || this._folded(w.b.id)) continue;
       const o = this._port(w.a, w.ap, "out"), i = this._port(w.b, w.bp, "in");
       const lx = i.x - o.x, ly = i.y - o.y, len2 = lx * lx + ly * ly;
       if (len2 < 1) continue;
@@ -473,8 +482,9 @@ class AacNodes extends HTMLElement {
     const name = (w) => `${w.a.id}.${w.ap}>${w.b.id}.${w.bp}`;
     const key = wires.map(name).join(",");
     if (this._backKey !== key) {
-      // Answers flow back to where the request came from: those wires always arc back
-      const back = new Set(wires.filter((w) => w.type.endsWith(".answer")).map(name));
+      // Answers flow back to where the message came from (into an endpoint), a tool hands back to its model:
+      // those wires always arc back
+      const back = new Set(wires.filter((w) => w.b.role === "endpoint" || (w.loop && w.a.id === w.tool)).map(name));
       const out = {}, state = {};
       for (const w of wires) if (!back.has(name(w))) (out[w.a.id] ||= []).push(w);
       const visit = (id) => {
@@ -512,7 +522,9 @@ class AacNodes extends HTMLElement {
         <text class="sub" x="${-W / 2 + 10}" y="${-h / 2 + 31}">${esc(short(`${n.module_name}${n.kind === "annotating" ? ` · adds ${n.adds.join(", ")}` : ""}${flow ? ` · ${flow} recent` : ""}`, 30))}</text>
         ${ins.map(([p, t], i) => `<circle class="nv-dot" data-dot="in" data-port="${esc(p)}" data-type="${esc(t)}" cx="${-W / 2}" cy="${row(i)}" r="5.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)}</title></circle>
           <text class="port" x="${-W / 2 + 9}" y="${row(i) + 3.5}">${esc(p)}</text>`).join("")}
-        ${outs.map(([p, t], i) => `<circle class="nv-dot" data-dot="out" data-port="${esc(p)}" data-type="${esc(t)}" cx="${W / 2}" cy="${row(i)}" r="5.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)} (drag to an input to wire)</title></circle>
+        ${outs.map(([p, t], i) => `${(n.square || []).includes(p)
+          ? `<rect class="nv-dot" data-dot="out" data-port="${esc(p)}" data-type="${esc(t)}" x="${W / 2 - 5.5}" y="${row(i) - 5.5}" width="11" height="11" rx="1.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)} · square: the card decides which wire (drag to an input to wire)</title></rect>`
+          : `<circle class="nv-dot" data-dot="out" data-port="${esc(p)}" data-type="${esc(t)}" cx="${W / 2}" cy="${row(i)}" r="5.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)} · round: every wire gets it (drag to an input to wire)</title></circle>`}
           <text class="port" x="${W / 2 - 9}" y="${row(i) + 3.5}" text-anchor="end">${esc(p)}</text>`).join("")}
       </g>`;
     }).join("");
@@ -522,7 +534,7 @@ class AacNodes extends HTMLElement {
       const lit = this._litWires?.has(`${w.a.id}>${w.b.id}`) || (this._folded(w.a.id) && this._lit?.has(w.a.id) && this._lit?.has(w.b.id));
       const inner = this._folded(w.a.id) && this._folded(w.a.id) === this._folded(w.b.id); // inside a folded frame: not drawn
       if (inner) return "";
-      return `<path class="nv-wire ${w.type === "tool" ? "card" : ""} ${flow ? "flow" : ""} ${lit ? "lit" : ""} ${this._selWire === key ? "sel" : ""}" data-wire="${i}" stroke="${this._color(w.type)}"></path>
+      return `<path class="nv-wire ${w.loop ? "card" : ""} ${flow ? "flow" : ""} ${lit ? "lit" : ""} ${this._selWire === key ? "sel" : ""}" data-wire="${i}" stroke="${this._color(w.type)}"></path>
         <path class="nv-hit" data-wire="${i}" data-key="${esc(key)}"><title>${esc(w.a.title)}.${esc(w.ap)} → ${esc(w.b.title)}.${esc(w.bp)} (${esc(w.type)}) · click to select</title></path>`;
     }).join("");
     this.querySelector(".nv-legend").innerHTML = Object.keys(this._colors).sort()
@@ -598,6 +610,7 @@ class AacNodes extends HTMLElement {
       if (b?.dataset.nv === "inst-remove") this._removeInstance(b.dataset.node);
       if (b?.dataset.nv === "mod-save") this._saveModule(b.dataset.module);
       if (b?.dataset.nv === "core-save") this._saveCore(b.dataset.node);
+      if (b?.dataset.nv === "names-save") this._saveNames(b.dataset.node);
       if (b?.dataset.nv === "unwire") this._unwire(this._selWire);
       if (b?.dataset.nv === "rename") this._rename(b.dataset.frame);
       if (b?.dataset.nv === "fold") this._fold(b.dataset.frame);
@@ -776,27 +789,26 @@ class AacNodes extends HTMLElement {
     let r;
     try { r = await this.ws("aac/nodes/try", { text, source }); }
     catch (err) { out.innerHTML = `<div class="msg err">${esc(err.message || err)}</div>`; return; }
-    // The way: source → the chain's nodes → the model node; it lights up in the graph
-    const path = [r.source, ...r.trace.filter((t) => !t.attached).map((t) => t.node)];
-    this._lit = new Set([...path, ...r.trace.filter((t) => t.attached).map((t) => t.node)]);
+    // The way through the graph (the trace starts at the message's own card); it lights up in the graph
+    const path = r.trace.map((t) => t.node);
+    this._lit = new Set(path);
     this._litWires = new Set(path.slice(1).map((id, i) => `${path[i]}>${id}`));
     this._draw();
     clearTimeout(this._litTimer);
     this._litTimer = setTimeout(() => { this._lit = null; this._litWires = null; this._draw(); }, 30000);
-    const title = (id) => this._data.nodes.find((n) => n.id === id)?.title || id;
-    const part = (label, items) => items?.length ? `<div class="m"><b>${label}:</b> ${items.map((x) => esc(x.length > 160 ? x.slice(0, 160) + "…" : x)).join(" · ")}</div>` : "";
+    const KINDS = { system: "system prompt", note: "note", user: "said", answer: "answered", call: "called", result: "result" };
+    const wrote = (items) => (items || []).map((e) => `<div class="m"><b>${esc(KINDS[e.kind] || e.kind)}:</b> ${esc(short(e.text, 200))}</div>`).join("");
     out.innerHTML = `
       <div class="msg ${r.status === "failed" ? "err" : "ok"}" style="white-space:pre-wrap">${esc(r.answer || "(no answer)")}</div>
       <h3 style="margin-top:.8em">THE WAY</h3>
-      <div class="src" data-try-node="${esc(r.source)}" style="cursor:pointer"><span class="dot ok"></span><div><div class="n">${esc(title(r.source))}</div><div class="m">the message comes in here</div></div></div>
-      ${r.trace.map((t) => `<div class="src" data-try-node="${esc(t.node)}" style="cursor:pointer;${t.attached ? "margin-left:1.4em" : ""}"><span class="dot ${t.error ? "bad" : "ok"}"></span>
-        <div style="flex:1;min-width:0"><div class="n">${esc(t.title)}${t.attached ? ' <span class="hint">· attached</span>' : ""}</div>
-          ${t.error ? `<div class="m">failed: ${esc(t.error)}</div>` : ""}${part("system", t.system)}${part("context", t.context)}${part("tools", t.tools)}
-          ${t.role === "model" && !t.error ? `<div class="m">answered${t.model ? ` with ${esc(t.model)}` : ""}</div>` : ""}
+      ${r.trace.map((t, i) => `<div class="src" data-try-node="${esc(t.node)}" style="cursor:pointer"><span class="dot ${t.error ? "bad" : "ok"}"></span>
+        <div style="flex:1;min-width:0"><div class="n">${esc(t.title)}</div>
+          ${i === 0 ? '<div class="m">the message starts here</div>' : ""}
+          ${t.error ? `<div class="m">failed: ${esc(t.error)}</div>` : ""}${wrote(t.added)}
+          ${t.role === "model" && !t.error && t.model ? `<div class="m">with ${esc(t.model)}</div>` : ""}
           ${t.role === "decide" ? `<div class="m">chose <b>${esc(t.output)}</b>${t.note ? ` (${esc(t.note)})` : ""}</div>` : ""}
-          ${t.role === "reply" ? '<div class="m">brought it home</div>' : ""}
-          ${!t.error && !t.role && !t.system && !t.context && !t.tools ? '<div class="m">added nothing this time</div>' : ""}</div></div>`).join("")}
-      ${r.steps?.filter((s) => s.type === "tool_call").length ? `<p class="hint">Tools the last model used: ${esc(r.steps.filter((s) => s.type === "tool_call").map((s) => s.tool.split("__").pop()).join(", "))}</p>` : ""}
+          ${i && !t.error && !t.added && t.role !== "decide" ? '<div class="m">wrote nothing this time</div>' : ""}</div></div>`).join("")}
+      ${r.steps?.filter((s) => s.type === "tool_call").length ? `<p class="hint">Tools the last model called: ${esc(r.steps.filter((s) => s.type === "tool_call").map((s) => s.tool).join(", "))}</p>` : ""}
       <div class="actions"><button class="btn" data-go="run/${esc(r.run_id)}">Run details</button></div>`;
   }
 
@@ -820,9 +832,9 @@ class AacNodes extends HTMLElement {
     if (types.length === 1) { this._addOf(types[0].id); return; }
     if (menu.style.display !== "none") { menu.style.display = "none"; return; }
     // grouped by what they add: text for the system prompt, context, tools; the model
-    const group = (t) => t.role === "model" ? "Model" : t.role === "decide" ? "Route" : t.role === "tool" ? "Attach to a model"
-      : t.adds?.includes("context") ? "In the line: context" : "In the line: system prompt";
-    const order = ["In the line: system prompt", "In the line: context", "Model", "Attach to a model", "Route"];
+    const group = (t) => t.role === "model" ? "Model" : t.role === "decide" ? "Route" : t.role === "tool" ? "Tools (a loop)"
+      : t.adds?.includes("note") ? "In the line: note" : "In the line: system prompt";
+    const order = ["In the line: system prompt", "In the line: note", "Model", "Tools (a loop)", "Route"];
     menu.innerHTML = order.map((g) => {
       const items = types.filter((t) => group(t) === g);
       return items.length ? `<div class="hint" style="padding:.4em .9em .1em;font-size:.75em;letter-spacing:.08em">${esc(g.toUpperCase())}</div>
@@ -928,6 +940,31 @@ class AacNodes extends HTMLElement {
     };
     return `<h3 style="margin-top:1em">SETTINGS</h3>${Object.entries(n.edit_schema).map(field).join("")}
       <div class="actions"><button class="btn primary" data-nv="core-save" data-node="${esc(n.id)}">Save</button></div>`;
+  }
+
+  _namesForm(n) {
+    // What the models call this card when it is wired to them (owner: "naming inputs so models can use them as
+    // custom tools"): empty = its own name
+    const ins = Object.entries(n.inputs).filter(([, t]) => t === "text");
+    if (!ins.length || n.role === "endpoint") return "";
+    const names = this._data.names || {};
+    return `<h3 style="margin-top:1em">FOR THE MODELS ${ins.length > 1 ? "" : `<span class="hint">· when a model's output is wired to it</span>`}</h3>
+      ${ins.map(([p]) => { const v = names[`${n.id}.${p}`] || {};
+        return `${ins.length > 1 ? `<div class="hint">input ${esc(p)}</div>` : ""}
+          <label>Tool name</label><input data-name-port="${esc(p)}" data-name-key="name" value="${esc(v.name || "")}" placeholder="${esc(n.id)}">
+          <label>What it is for</label><input data-name-port="${esc(p)}" data-name-key="description" value="${esc(v.description || "")}" placeholder="e.g. Call this when the user talks to you">`; }).join("")}
+      <div class="actions"><button class="btn primary" data-nv="names-save" data-node="${esc(n.id)}">Save</button></div>`;
+  }
+
+  async _saveNames(id) {
+    const box = this.querySelector(".nv-info"), names = { ...(this._data.names || {}) };
+    for (const el of box.querySelectorAll("[data-name-port]")) {
+      const key = `${id}.${el.dataset.namePort}`;
+      names[key] = { ...(names[key] || {}), [el.dataset.nameKey]: el.value.trim() };
+    }
+    try { await this.ws("aac/nodes/names", { names }); this._msg.textContent = "Saved."; }
+    catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
+    await this.refresh();
   }
 
   async _saveCore(id) {
@@ -1059,6 +1096,7 @@ class AacNodes extends HTMLElement {
       ${n.type ? `<h3 style="margin-top:1em">THIS NODE</h3>${this._settingsForm(n)}`
         : n.addable ? '<p class="hint">The standard one. "Add node" makes another with its own settings.</p>' : ""}
       ${n.edit_schema ? this._coreForm(n) : ""}
+      ${this._namesForm(n)}
       ${n.module && !n.type ? this._moduleForm(n.module) : ""}`;
   }
 }

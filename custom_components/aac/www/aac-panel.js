@@ -1201,7 +1201,8 @@ class AacPanel extends HTMLElement {
     const chat = this._view === "chat/new" && !this._busy ? null : this._chat;  // a new chat shows what is being sent
     const msgs = chat?.messages || [];
     const isAac = chat?.id === "aac";
-    const log = msgs.length
+    const log = this._expert && chat?.entries?.length ? this._expertHtml(chat.entries)
+      : msgs.length
       ? msgs.map((m, i) => this._bubbleHtml(m, i, msgs, { editable: !isAac, details: isAac, key: "m" })).join("")
       : `<div class="welcome"><div class="big">AAC</div>${this._chatGone ? "That chat no longer exists (it was deleted). This is a new chat."
           : !master ? "No master model yet. Open SETUP to choose one."
@@ -1212,7 +1213,8 @@ class AacPanel extends HTMLElement {
       ? `<button class="btn" id="chat-restore">Restore</button><button class="icon-btn" id="chat-delete" title="Delete permanently">${icon("trash")}</button>`
       : `<button class="icon-btn" id="chat-archive" title="Archive">${icon("trash")}</button>`;
     const prefs = `<span class="prefwrap"><button class="icon-btn" id="chat-prefs" title="How this view shows steps and thinking" aria-expanded="${!!this._prefsOpen}">${icon("settings")}</button>${this._prefsOpen ? this._chatPrefsHtml() : ""}</span>`;
-    return `${this._header(title, `model: ${esc(this._modelLabel(master))}`, prefs + del)}
+    const expert = chat?.entries?.length ? `<button class="icon-btn ${this._expert ? "on" : ""}" id="chat-expert" title="Expert view: the whole conversation as the graph wrote it (every card's entries, calls and results)" aria-pressed="${!!this._expert}">${icon("bolt")}</button>` : "";
+    return `${this._header(title, `model: ${esc(this._modelLabel(master))}`, expert + prefs + del)}
       <div class="chat">
         <div class="log thin-scroll" aria-live="polite"><div class="log-inner">${log}${busy}</div></div>
         <div class="composer"><div class="composer-inner">
@@ -1220,6 +1222,26 @@ class AacPanel extends HTMLElement {
           <button class="btn primary" id="chat-send" aria-label="Send" ${this._busy ? "disabled" : ""}>${icon("send")}</button>
         </div></div>
       </div>`;
+  }
+
+  // The chat's document (spec/graph.md): every entry with the card that wrote it; per turn the way it took
+  _expertHtml(entries) {
+    const KIND = { system: "system prompt", note: "note", user: "said", answer: "answered", call: "called", result: "result" };
+    const titles = Object.fromEntries((this._nodeTitles || []).map((n) => [n.id, n.title]));
+    const name = (id) => titles[id] || id;
+    const out = [];
+    let way = null;
+    const flush = () => { if (way?.length > 1) out.push(`<div class="hint" style="margin:.2em 0 .8em">${way.map((id) => esc(name(id))).join(" › ")}</div>`); };
+    for (const e of entries) {
+      if (e.kind === "user") { flush(); way = [e.by]; }
+      else if (way && e.kind !== "system" && way[way.length - 1] !== e.by) way.push(e.by);
+      const tags = (e.tags || []).filter((t) => t !== e.by);
+      out.push(`<div class="bubble ${e.kind === "user" ? "user" : "aac"}" style="${e.kind === "system" || e.kind === "note" ? "opacity:.75" : ""}">
+        <div class="who">${esc(name(e.by).toUpperCase())} · ${esc(KIND[e.kind] || e.kind)}${tags.length ? ` <span class="hint">#${tags.map(esc).join(" #")}</span>` : ""}</div>
+        <div class="txt" style="white-space:pre-wrap">${esc(e.text.length > 1500 ? `${e.text.slice(0, 1500)} …` : e.text)}</div></div>`);
+    }
+    flush();
+    return out.join("");
   }
 
   _renderRun() {
@@ -2268,6 +2290,13 @@ class AacPanel extends HTMLElement {
     });
     sr.querySelectorAll("[data-why]").forEach((el) => el.addEventListener("click", () => this._toggleWhy(el.dataset.why)));
     sr.querySelector("#chat-prefs")?.addEventListener("click", () => { this._prefsOpen = !this._prefsOpen; this._render(); });
+    sr.querySelector("#chat-expert")?.addEventListener("click", async () => {
+      this._expert = !this._expert;
+      if (this._expert && !this._nodeTitles) {  // the cards' names for the entries
+        try { this._nodeTitles = (await this._ws("aac/nodes")).nodes.map((n) => ({ id: n.id, title: n.title })); } catch (e) { this._nodeTitles = []; }
+      }
+      this._render();
+    });
     sr.querySelectorAll("[data-chat-pref]").forEach((el) => el.addEventListener("change", () => this._setChatPref(el.dataset.chatPref, el.value)));
     sr.querySelectorAll("[data-work] .work-head").forEach((el) => {
       const toggle = () => {
