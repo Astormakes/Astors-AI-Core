@@ -132,6 +132,13 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                 return []
             if message.chat_id and sid in ("chat", "voice") and chats.get(message.chat_id):
                 chats.set_entries(message.chat_id, message.entries)  # the conversation as it now is
+            if sid == "voice" and message.origin != "voice":  # a line from elsewhere (Heard lines): speak at its mic
+                user = message.last("user")
+                audio = entry.runtime_data.audio
+                text = message.answer
+                source = audio.sources.get(user["data"].get("mic")) if user and audio else None
+                if source is not None and text and not is_silent(text):
+                    entry.async_create_background_task(hass, audio.async_say(source, text), "aac voice answer")
             if message.origin == sid or message.reply_to == sid:
                 step.deliver(message)
             return []

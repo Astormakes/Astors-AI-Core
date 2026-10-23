@@ -592,6 +592,14 @@ class AacNodes extends HTMLElement {
 
   _bind() {
     this.querySelector(".nv-physics").addEventListener("change", (e) => this._setPhysics(e.target.checked));
+    this.addEventListener("change", async (e) => {  // an output's "only one wire"
+      const key = e.target?.dataset?.single;
+      if (!key) return;
+      const single = new Set(this._data.single || []);
+      if (e.target.checked) single.add(key); else single.delete(key);
+      try { await this.ws("aac/nodes/single", { single: [...single] }); } catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
+      await this.refresh();
+    });
     // Typing in the info box: the 10 s refresh leaves it alone until it is saved or another card is chosen
     this.querySelector(".nv-info").addEventListener("input", () => { this._editing = this._sel || this._selFrame; });
     this.addEventListener("click", (e) => {
@@ -762,8 +770,9 @@ class AacNodes extends HTMLElement {
   }
 
   _wire(from, to) {
-    const wires = this._current();
+    let wires = this._current();
     if (wires.some((w) => w.from === from && w.to === to)) return;
+    if ((this._data.single || []).includes(from)) wires = wires.filter((w) => w.from !== from); // one wire: it moves
     this._setWires([...wires, { from, to }]);
   }
 
@@ -942,6 +951,14 @@ class AacNodes extends HTMLElement {
       <div class="actions"><button class="btn primary" data-nv="core-save" data-node="${esc(n.id)}">Save</button></div>`;
   }
 
+  _outputsForm(n) {
+    // Round text outputs: every wire gets a copy, or (owner's setting) only one wire
+    const outs = Object.entries(n.outputs).filter(([p, t]) => t === "text" && !(n.square || []).includes(p));
+    if (!outs.length) return "";
+    const single = this._data.single || [];
+    return `<h3 style="margin-top:1em">OUTPUTS</h3>${outs.map(([p]) => `<label class="check"><input type="checkbox" data-single="${esc(`${n.id}.${p}`)}" ${single.includes(`${n.id}.${p}`) ? "checked" : ""}>${outs.length > 1 ? `${esc(p)}: ` : ""}only one wire (a new wire replaces it; otherwise every wire gets a copy)</label>`).join("")}`;
+  }
+
   _namesForm(n) {
     // What the models call this card when it is wired to them (owner: "naming inputs so models can use them as
     // custom tools"): empty = its own name
@@ -1096,6 +1113,7 @@ class AacNodes extends HTMLElement {
       ${n.type ? `<h3 style="margin-top:1em">THIS NODE</h3>${this._settingsForm(n)}`
         : n.addable ? '<p class="hint">The standard one. "Add node" makes another with its own settings.</p>' : ""}
       ${n.edit_schema ? this._coreForm(n) : ""}
+      ${this._outputsForm(n)}
       ${this._namesForm(n)}
       ${n.module && !n.type ? this._moduleForm(n.module) : ""}`;
   }

@@ -141,6 +141,10 @@ class Flow:
                  and nodes[b].inputs.get(bp) == TEXT}
         return list(found.values())
 
+    def _single(self, domain_id: str) -> set[str]:
+        """Round outputs the owner set to one wire ("node.port")."""
+        return set(self.entry.runtime_data.store.graph(domain_id).get("single") or [])
+
     def leads_back(self, domain_id: str, start: str, home: str) -> bool:
         """Is there a way by text wires from node `start` into node `home`? (Not through an endpoint: what
         comes into the chat does not leave at its output.)"""
@@ -185,7 +189,10 @@ class Flow:
             port, only = item if isinstance(item, tuple) else (item, None)
             self.bus.record(domain_id, node.id, port, {"id": message.id, "trigger": message.trigger,
                                                        "source": message.origin, "text": message.text[:200]})
-            sends += [(n, p) for n, p in self.targets(domain_id, node, port) if only is None or n.id == only]
+            found = [(n, p) for n, p in self.targets(domain_id, node, port) if only is None or n.id == only]
+            if only is None and f"{node.id}.{port}" in self._single(domain_id):
+                found = found[:1]  # the owner set this output to one wire (no copies)
+            sends += found
         sends = list({(n.id, p): (n, p) for n, p in sends}.values())
         if message.calls and ports is None and node.role != "model":
             # an open call: back toward the model that asked (a node wired into several models answers only that one)
@@ -368,8 +375,11 @@ class Flow:
                 "type": "object", "properties": {"output": {"type": "string", "enum": names}},
                 "required": ["output"], "additionalProperties": False}}}
             try:
+                # what it decides on: the newest turn with the notes around it (a buffer's lines, a recall)
+                recent = [e for e in message.entries if e["kind"] in ("user", "answer", "note")][-8:]
+                text = "\n\n".join(e["text"] if e["kind"] != "note" else f"[{e['text']}]" for e in recent) or message.text
                 reply = await provider.chat(endpoint.model, [{"role": "system", "content": system},
-                                                             {"role": "user", "content": message.text}], None,
+                                                             {"role": "user", "content": text}], None,
                                             temperature=0, max_tokens=60, response_format=schema,
                                             chat_template_kwargs={"enable_thinking": False})
                 choice = json.loads(reply.get("content") or "{}").get("output")

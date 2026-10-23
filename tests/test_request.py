@@ -140,3 +140,66 @@ async def test_named_inputs_are_tools(hass: HomeAssistant, hass_ws_client, aiocl
     tool = next(t["function"] for t in calls[0]["tools"] if t["function"]["name"] == "addressed")
     assert tool["description"] == "Call this when the user talks to you."
     assert answer.text == "Yes, to me." and "The user talks to AAC." in calls[1]["messages"][0]["content"]
+
+
+async def test_buffer_keeps_lines_and_is_a_tool(hass: HomeAssistant, aioclient_mock, mock_entry, configured):
+    """A Buffer in the line keeps the newest lines and writes them in as one block; a model wired to it can
+    clear it (owner's universal-node idea)."""
+    await setup_aac(hass, mock_entry)
+    data = mock_entry.runtime_data
+    graph = data.store.graph("assistant")
+    graph["nodes"] = {"room": {"type": "buffer", "title": "Room", "settings": {"size": 2, "write": "note"}}}
+    wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
+    wires = [w for w in wires if w != ("agent.out", "memory.in")]
+    wires += [("agent.out", "room.in"), ("room.out", "memory.in"), ("model.out", "room.in"), ("room.out", "model.in")]
+    graph["wires"] = [{"from": a, "to": b} for a, b in dict.fromkeys(wires)]
+    calls = _answer(aioclient_mock, "ok")
+    for text in ("one", "two", "three"):
+        await async_run_request(hass, mock_entry, text, kind="chat", trigger="chat", title="t")
+    last = calls[-1]["messages"][-1]["content"]
+    assert "Room (newest last):\n1. two\n2. three" in last and "1. one" not in last
+    assert any(t["function"]["name"] == "room__clear" for t in calls[-1]["tools"])
+    aioclient_mock.clear_requests()
+    calls = _answer(aioclient_mock, ("room__clear", {}), "Cleared.")
+    run, answer = await async_run_request(hass, mock_entry, "forget the room", kind="chat", trigger="chat", title="t")
+    result = next(e for e in answer.message.entries if e["kind"] == "result")
+    assert json.loads(result["text"]) == {"slots": []}
+
+
+async def test_heard_lines_become_messages(hass: HomeAssistant, aioclient_mock, mock_entry, configured):
+    """Heard lines: a spoken line from Hearing is a message of its own; the answer goes to the Voice card."""
+    await setup_aac(hass, mock_entry)
+    data = mock_entry.runtime_data
+    graph = data.store.graph("assistant")
+    graph["nodes"] = {"ears": {"type": "heard", "title": "Ears", "settings": {}}}
+    wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
+    wires += [("hearing.lines", "ears.lines"), ("ears.out", "agent.in")]
+    graph["wires"] = [{"from": a, "to": b} for a, b in dict.fromkeys(wires)]
+    calls = _answer(aioclient_mock, "Hello from AAC.")
+    await data.bus.emit("assistant", "hearing", "lines", {"time": "2026-10-23T08:00:00+00:00", "source": "pc",
+                                                          "name": "PC", "kind": "speech", "text": "Computer, hello"})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert calls and "Computer, hello" in calls[-1]["messages"][-1]["content"]
+    run = data.runs.runs[-1]
+    assert run.source == "ears" and run.result == "Hello from AAC."
+
+
+async def test_an_output_with_one_wire(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """A round output set to one wire hands the message to one card only (no copies)."""
+    await setup_aac(hass, mock_entry)
+    data = mock_entry.runtime_data
+    graph = data.store.graph("assistant")
+    graph["nodes"] = {"m2": {"type": "model", "title": "Second", "settings": {}}}
+    wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
+    wires += [("agent.out", "m2.in"), ("m2.out", "chat.in")]
+    graph["wires"] = [{"from": a, "to": b} for a, b in dict.fromkeys(wires)]
+    calls = _answer(aioclient_mock, "ok")
+    await async_run_request(hass, mock_entry, "hi", kind="chat", trigger="chat", title="t")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(calls) == 2  # agent.out → memory (→ model) and → m2: two copies, two models answer
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/nodes/single", "single": ["agent.out"]})
+    assert (await ws.receive_json())["result"]["single"] == ["agent.out"]
+    await async_run_request(hass, mock_entry, "hi", kind="chat", trigger="chat", title="t")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(calls) == 3
