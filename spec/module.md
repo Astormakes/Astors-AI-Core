@@ -63,7 +63,7 @@ rules for the machines, heartbeat) are declared the same way, so SETUP has one c
 ## Built (v0.18.0): built-in modules
 
 `custom_components/aac/modules/<id>/` with `manifest.json` and `async_setup_module(ctx)`. The context
-gives: `storage(domain, name)` (per AAC domain), `add_calendar(provider)`, `add_open_loops(provider)` (lines for automatic runs), `add_card(id, title, provide, description)` (a card that attaches to a model), `provide_slot(slot, provider)` (be a core slot's provider, e.g. memory), `add_prompt(part, order)` (stable text at the start of every system prompt, e.g. the charter), `add_llm_api(factory)` (one
+gives: `storage(domain, name)` (per AAC domain), `add_calendar(provider)`, `add_open_loops(provider)` (lines for automatic runs), `provide_slot(slot, provider)` (be a core slot's provider, e.g. memory), `add_prompt(part, order)` (a card with standing text for the system prompt, e.g. the charter; it replaces its own entry each time), `add_llm_api(factory, inline=…)` (its tools offered by a node of the module, wired out of a model and back in: a loop, spec/graph.md; `inline(message)` = what the node does in a line, e.g. memory's recalls) (one
 LLM API per domain, offered to that domain's agent), `add_ws_commands(...)`, `add_node(node)` / `emit(domain, node, port, item)` / `enabled(domain)` (the [stream bus](streams.md),
 0.44), `add_panel_page(id, title,
 element, script, visible_setting)` (a web component without shadow DOM, so the panel's styles and skins
