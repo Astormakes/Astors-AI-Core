@@ -168,7 +168,7 @@ async def test_charter_reaches_every_agent(
     await ws.send_json_auto_id({"type": "aac/chat", "text": "hi"})
     await ws.receive_json()
     system = aioclient_mock.mock_calls[-1][2]["messages"][0]["content"]
-    assert system.startswith("Be kind. Never lie.") and "You are a test." in system
+    assert system.startswith("Be kind. Never lie.")
 
     await ws.send_json_auto_id({"type": "aac/module/settings", "module": "charter", "values": {"text": ""}})
     await ws.receive_json()

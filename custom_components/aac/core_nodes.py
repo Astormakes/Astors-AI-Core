@@ -2,7 +2,7 @@
 
 - endpoints (an output for what comes in, an input for what goes back): the panel chat, voice, HA Assist
   (the heartbeat and the triggers are outputs only, in their modules)
-- cards with a standing text: the agent's prompt; Instructions and Context (added ones)
+- cards with a standing text: Trailer and Context (added ones); the Header is the charter module
 - the model card (square output: its wired nodes are its tools), Decide (named outputs)
 - nodes with tools (loops): the home, setup (only with the owner in the chat), Home Assistant's Assist tools
 Automatic wiring: every source through the standing-text cards (by order) into the model; the model into the
@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 
-from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT
+from homeassistant.const import CONF_LLM_HASS_API
 from homeassistant.helpers import llm
 from homeassistant.util import dt as dt_util
 
@@ -100,10 +100,6 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                 {keys[k][0]: keys[k][2](v) for k, v in values.items() if k in keys})
         return schema, get, put
 
-    agent_edit = editing({"prompt": {"type": "longtext", "title": "Prompt", "rows": 8,
-                                     "help": "The assistant's role and manner, e.g. \"You are AAC, a calm home companion.\"",
-                                     "hint": TEMPLATE_HINT}},
-                         {"prompt": (CONF_PROMPT, "", vol.Coerce(str))})
     model_edit = editing({
         "temperature": {"type": "number", "title": "Temperature", "help": "0 = always the same answer, higher = more varied (0–2)."},
         "max_tokens": {"type": "number", "title": "Longest answer (tokens)", "help": "16–131072."},
@@ -159,15 +155,6 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
     def render(text: str, message: Message) -> str:
         return render_text(hass, text, message)
 
-    async def agent(message: Message, step) -> None:
-        message.put("agent", "system", render((message.domain.settings.master.get(CONF_PROMPT) or "").strip(), message))
-
-    def agent_make(inst_id: str, title: str, settings: dict) -> Node:
-        async def handle(message: Message, step) -> None:  # its own prompt instead of the domain's
-            message.put(inst_id, "system", render((settings.get("prompt") or "").strip(), message))
-        return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=["system"], order=10, handle=handle,
-                    role="transform", settings=settings)
-
     def text_make(kind: str, replace: bool = True):
         def make(inst_id: str, title: str, settings: dict) -> Node:
             async def handle(message: Message, step) -> None:
@@ -206,13 +193,6 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                            "Wire its dotted output into a model card's pool input.")
           for tier, about in TIERS.items()),
         # Standing text: replaced in place every time (the start of the conversation stays the same: the cache)
-        Node(id="agent", title="Agent", inputs=IN, outputs=OUT, adds=["system"], order=10, handle=agent, role="transform",
-             description="Writes the assistant's role and manner into the system prompt (its Prompt setting, e.g. \"You "
-                         "are AAC, a calm home companion …\"). An added Agent card has a prompt of its own, e.g. for a "
-                         "second model with another job.", edit=agent_edit,
-             make=agent_make, settings_schema={"prompt": {**text, "title": "Prompt",
-                                                          "help": "This agent's own prompt (the domain's is on the standard Agent card)."}}),
-        # The trailer (owner, 2026-10-23): text after the turn; the start is the Header (the charter module)
         Node(id="trailer", title="Trailer", inputs=IN, outputs=OUT, adds=["trailer"], template=True, role="transform",
              description="Writes your own text after what was just said, e.g. the time, \"Answer in German\" or \"Reply "
                          "with yes or no\": the model reads it close to the question. Wired from a model and back it is "

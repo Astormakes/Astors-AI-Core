@@ -87,7 +87,7 @@ async def test_chat_records_tool_steps(
     # what the model got in its last call: the system prompt, the tool round trip, the tools offered
     await ws.send_json_auto_id({"type": "aac/run/request", "run_id": message["run_id"]})
     req = (await ws.receive_json())["result"]
-    assert run["request"] and "You are a test." in req["system"]
+    assert run["request"] and req["system"].startswith("Charter")
     assert [m["role"] for m in req["messages"]] == ["user", "assistant", "tool"]
     assert req["messages"][1]["tool_calls"][0]["name"] == "ha_tools__llm__GetDateTime"
     assert "ha_tools__llm__GetDateTime" in req["tools"]

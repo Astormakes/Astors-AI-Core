@@ -34,9 +34,9 @@ async def test_automatic_wiring(hass: HomeAssistant, mock_entry, configured):
     endpoints and into every node with tools, and those back into the model (loops); one type, text."""
     await setup_aac(hass, mock_entry)
     wires = {(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in mock_entry.runtime_data.bus.wires("assistant")}
-    assert ("chat.out", "charter.in") in wires and ("charter.out", "agent.in") in wires
-    assert ("agent.out", "time.in") in wires and ("time.out", "model.in") in wires  # the default Time trailer
-    assert ("agent.out", "memory.in") not in wires and ("time.out", "memory.in") not in wires  # memory hangs under the model
+    assert ("chat.out", "charter.in") in wires and not any("agent" in a + b for a, b in wires)  # no Agent card (owner)
+    assert ("charter.out", "time.in") in wires and ("time.out", "model.in") in wires  # the default Time trailer
+    assert ("charter.out", "memory.in") not in wires and ("time.out", "memory.in") not in wires  # memory hangs under the model
     assert ("voice.out", "charter.in") in wires and ("triggers.out", "charter.in") in wires
     assert not any(a.startswith("heartbeat.") for a, _ in wires)  # its module is off by default
     assert {("model.out", "chat.in"), ("model.out", "voice.in"), ("model.out", "assist.in")} <= wires
@@ -55,18 +55,18 @@ async def test_what_reaches_the_model(hass: HomeAssistant, aioclient_mock, mock_
     run, answer = await async_run_request(hass, mock_entry, "Where is the drill?", kind="chat", trigger="chat", title="t")
     assert answer.text == "On shelf 2." and run.model_node == "model"
     system = calls[0]["messages"][0]["content"]
-    assert system.startswith("Charter") and "You are a test." in system
+    assert system.startswith("Charter") and "You are a test." not in system  # no Agent card: the old prompt is unused
     names = {t["function"]["name"].split("__")[0] for t in calls[0]["tools"]}
     assert {"home", "memory", "lists_tools"} <= names and not names & {"setup", "chat", "voice", "assist"}
     nodes = [s["node"] for s in run.trace]
-    assert nodes[:3] == ["chat", "charter", "agent"] and nodes[-1] == "model"
+    assert nodes[:3] == ["chat", "charter", "time"] and nodes[-1] == "model"
     kinds = [(e["by"], e["kind"]) for e in answer.message.entries]
-    assert kinds[:2] == [("charter", "system"), ("agent", "system")]  # standing text first (the cache)
+    assert kinds[0] == ("charter", "system")  # standing text first (the cache)
     assert ("chat", "user") in kinds and kinds[-1] == ("model", "answer")
     # what the model got, each part with its source (the 🔍 view)
     sources = mock_entry.runtime_data.domain().runs.request(run.id)["sources"]
     froms = [(x["where"], x["from"]) for x in sources]
-    assert froms[0] == ("system", "Header") and ("system", "Agent") in froms
+    assert froms[0] == ("system", "Header") and ("system", "Agent") not in froms
     assert ("chat", "Panel chat") in froms and froms.count(("chat", "Time")) == 1
     assert any(w == "tools" for w, _ in froms) and all(x["chars"] > 0 for x in sources)
     assert all(x.get("outside") for x in sources if x["where"] == "tools") and not any(x.get("outside") for x in sources if x["from"] == "Charter")
@@ -187,8 +187,8 @@ async def test_buffer_keeps_lines_and_is_a_tool(hass: HomeAssistant, aioclient_m
     graph = data.store.graph("assistant")
     graph["nodes"] = {"room": {"type": "buffer", "title": "Room", "settings": {"size": 2, "write": "note"}}}
     wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
-    wires = [w for w in wires if w != ("agent.out", "model.in")]
-    wires += [("agent.out", "room.in"), ("room.out", "model.in"), ("model.out", "room.in")]
+    wires = [w for w in wires if w != ("charter.out", "model.in")]
+    wires += [("charter.out", "room.in"), ("room.out", "model.in"), ("model.out", "room.in")]
     graph["wires"] = [{"from": a, "to": b} for a, b in dict.fromkeys(wires)]
     calls = _answer(aioclient_mock, "ok")
     for text in ("one", "two", "three"):
@@ -210,7 +210,7 @@ async def test_heard_lines_become_messages(hass: HomeAssistant, aioclient_mock, 
     graph = data.store.graph("assistant")
     graph["nodes"] = {"ears": {"type": "heard", "title": "Ears", "settings": {}}}
     wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
-    wires += [("hearing.lines", "ears.lines"), ("ears.out", "agent.in")]
+    wires += [("hearing.lines", "ears.lines"), ("ears.out", "charter.in")]
     graph["wires"] = [{"from": a, "to": b} for a, b in dict.fromkeys(wires)]
     calls = _answer(aioclient_mock, "Hello from AAC.")
     await data.bus.emit("assistant", "hearing", "lines", {"time": "2026-10-23T08:00:00+00:00", "source": "pc",
@@ -228,15 +228,15 @@ async def test_an_output_with_one_wire(hass: HomeAssistant, hass_ws_client, aioc
     graph = data.store.graph("assistant")
     graph["nodes"] = {"m2": {"type": "model", "title": "Second", "settings": {}}}
     wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
-    wires += [("agent.out", "m2.in"), ("m2.out", "chat.in")]
+    wires += [("charter.out", "m2.in"), ("m2.out", "chat.in")]
     graph["wires"] = [{"from": a, "to": b} for a, b in dict.fromkeys(wires)]
     calls = _answer(aioclient_mock, "ok")
     await async_run_request(hass, mock_entry, "hi", kind="chat", trigger="chat", title="t")
     await hass.async_block_till_done(wait_background_tasks=True)
     assert len(calls) == 2  # agent.out → memory (→ model) and → m2: two copies, two models answer
     ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/nodes/single", "single": ["agent.out"]})
-    assert (await ws.receive_json())["result"]["single"] == ["agent.out"]
+    await ws.send_json_auto_id({"type": "aac/nodes/single", "single": ["charter.out"]})
+    assert (await ws.receive_json())["result"]["single"] == ["charter.out"]
     await async_run_request(hass, mock_entry, "hi", kind="chat", trigger="chat", title="t")
     await hass.async_block_till_done(wait_background_tasks=True)
     assert len(calls) == 3

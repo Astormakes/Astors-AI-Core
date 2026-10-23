@@ -54,7 +54,7 @@ async def test_migrate_v1(hass: HomeAssistant, hass_storage):
     assert store.models[0]["base_url"] == BASE_URL
     assert store.models[0]["api_key"] == "secret"
     assert store.pools["master"] == [store.models[0]["id"]]
-    assert store.master["prompt"] == "Old prompt"
+    assert "prompt" not in store.master  # the agent prompt is gone (owner, 2026-10-23: the user builds it with Header cards)
     assert store.master["temperature"] == 0.3
     assert hass_storage[STORAGE_KEY]["data"]["models"][0]["model"] == MODEL
 

@@ -94,8 +94,6 @@ async def test_core_card_settings_and_positions(hass, hass_ws_client, mock_entry
 
     await setup_aac(hass, mock_entry)
     ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/nodes/settings", "node": "agent", "values": {"prompt": "Be calm."}})
-    assert (await ws.receive_json())["result"]["values"] == {"prompt": "Be calm."}
     await ws.send_json_auto_id({"type": "aac/nodes/settings", "node": "model", "values": {"temperature": 5}})
     assert (await ws.receive_json())["error"]["code"] == "invalid"  # 0–2
     await ws.send_json_auto_id({"type": "aac/nodes/settings", "node": "model", "values": {"temperature": "0.3", "thinking": True}})
@@ -103,14 +101,14 @@ async def test_core_card_settings_and_positions(hass, hass_ws_client, mock_entry
     await ws.send_json_auto_id({"type": "aac/nodes/settings", "node": "reply", "values": {}})
     assert (await ws.receive_json())["error"]["code"] == "invalid"
     master = mock_entry.runtime_data.domain().settings.master
-    assert master["prompt"] == "Be calm." and master["thinking"] is True
+    assert master["thinking"] is True
     await ws.send_json_auto_id({"type": "aac/nodes/positions", "positions": {"chat": {"x": 10.4, "y": 20, "pinned": True}}})
     assert (await ws.receive_json())["success"]
     await ws.send_json_auto_id({"type": "aac/nodes"})
     result = (await ws.receive_json())["result"]
     assert result["positions"] == {"chat": {"x": 10, "y": 20, "pinned": True}}
-    agent = next(n for n in result["nodes"] if n["id"] == "agent")
-    assert agent["edit_values"] == {"prompt": "Be calm."} and "prompt" in agent["edit_schema"]
+    model = next(n for n in result["nodes"] if n["id"] == "model")
+    assert model["edit_values"]["thinking"] is True and "temperature" in model["edit_schema"]
 
 
 async def test_old_places_move_into_the_graph(hass, hass_storage, mock_entry, configured):
@@ -189,7 +187,7 @@ async def test_wiring_by_hand(hass, hass_ws_client, aioclient_mock, mock_entry, 
     await ws.send_json_auto_id({"type": "aac/nodes"})
     auto = (await ws.receive_json())["result"]
     assert auto["by_hand"] is False
-    wires = [w for w in auto["wires"] if "memory." not in w["from"] + w["to"]] + [{"from": "agent.out", "to": "model.in"}]
+    wires = [w for w in auto["wires"] if "memory." not in w["from"] + w["to"]]  # memory hangs under the model: its loop goes
     await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": wires})
     assert (await ws.receive_json())["result"]["by_hand"] is True
     await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "Where is the drill?"})
@@ -204,8 +202,8 @@ async def test_wiring_by_hand(hass, hass_ws_client, aioclient_mock, mock_entry, 
     await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "Where is the drill?"})
     await ws.receive_json()
     assert any(t["function"]["name"].startswith("memory") for t in calls[-1]["tools"])  # automatic: memory is a tool
-    line = [w for w in auto["wires"] if w != {"from": "agent.out", "to": "model.in"}]
-    line += [{"from": "agent.out", "to": "memory.in"}, {"from": "memory.out", "to": "model.in"}]
+    line = [w for w in auto["wires"] if w != {"from": "charter.out", "to": "model.in"}]
+    line += [{"from": "charter.out", "to": "memory.in"}, {"from": "memory.out", "to": "model.in"}]
     await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": line})  # wired into the line: it also recalls
     assert (await ws.receive_json())["success"]
     await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "Where is the drill?"})
@@ -230,7 +228,7 @@ async def test_a_second_model_node(hass, hass_ws_client, aioclient_mock, mock_en
     view = (await ws.receive_json())["result"]
     assert not any("research" in w["to"] for w in view["wires"])  # added cards are wired by hand
     wires = [w for w in view["wires"] if w["to"] != "model.in"]
-    wires += [{"from": "agent.out", "to": "research.in"}, {"from": "research.out", "to": "chat.in"}]
+    wires += [{"from": "charter.out", "to": "research.in"}, {"from": "research.out", "to": "chat.in"}]
     await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": wires})
     assert (await ws.receive_json())["success"]
 
@@ -258,7 +256,7 @@ async def test_try_it_shows_the_way(hass, hass_ws_client, aioclient_mock, mock_e
     steps = {s["node"]: s for s in result["trace"]}
     assert steps["charter"]["added"][0]["kind"] == "system" and steps["charter"]["added"][0]["text"].startswith("Charter")
     assert steps["model"]["role"] == "model"
-    assert [s["node"] for s in result["trace"]][:3] == ["voice", "charter", "agent"]
+    assert [s["node"] for s in result["trace"]][:3] == ["voice", "charter", "time"]
 
 
 async def test_build_a_voice_way(hass, hass_ws_client, aioclient_mock, mock_entry, configured):

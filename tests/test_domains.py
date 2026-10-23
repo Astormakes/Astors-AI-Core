@@ -14,7 +14,7 @@ async def test_old_config_becomes_the_assistant_domain(hass: HomeAssistant, hass
     await setup_aac(hass, mock_entry)
     store = mock_entry.runtime_data.store
     assert list(store.domains) == ["assistant"] and store.default_domain.name == "Assistant"
-    assert store.default_domain.master["prompt"] == "You are a test."
+    assert "prompt" not in store.default_domain.master
     assert store.data["voice_domain"] == "assistant"
     assert hass.states.get("conversation.aac") is not None  # same entity as before
 
@@ -31,7 +31,7 @@ async def test_create_chat_and_delete_a_domain(hass: HomeAssistant, hass_ws_clie
     assert set(data.domains) == {"assistant", "work"}
     work = data.domains["work"]
     assert work.entity_id(hass, mock_entry.entry_id) == "conversation.aac_work"
-    assert work.settings.master["prompt"] == "You are a test."  # copied settings
+    assert work.settings.master["temperature"] == data.domains["assistant"].settings.master["temperature"]  # copied settings
 
     ws = await hass_ws_client(hass)  # the old connection survives a reload, but start clean
     await ws.send_json_auto_id({"type": "aac/module/settings", "module": "charter", "values": {"text": "Only work topics."},

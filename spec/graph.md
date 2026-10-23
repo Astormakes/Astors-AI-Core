@@ -56,7 +56,7 @@ kind:  system  (stable text for the system prompt: charter, agent prompt, instru
 
 ## Templates and values
 
-The text cards (Agent prompt, Header, Trailer, Context) render their text with Home Assistant's own template
+The text cards (Header, Trailer, Context) render their text with Home Assistant's own template
 engine (Jinja, the syntax of HA automations): `{{ now().strftime('%H:%M') }}`, `{{ states('sensor.x') }}`,
 `{% if is_state('person.x', 'home') %}…{% endif %}`. A template error shows in the text, it does not stop the
 message.
@@ -67,7 +67,7 @@ every branch); a template reads `{{ <card id>.<name> }}`, plus `{{ message.langu
 added ("Kitchen buffer" → `kitchen_buffer`). So far: Heard lines (`text`, `speaker`, `mic`, `mic_name`, `area`),
 Buffer (`lines`, `count`, `newest`).
 
-**Header and Trailer** (owner, 2026-10-23): the Header is the charter module's card (renamed; added Headers have
+**Header and Trailer** (owner, 2026-10-23): there is no Agent card and no agent prompt setting any more ("the user builds that himself"); the Header is the charter module's card (renamed; added Headers have
 their own text), the Trailer a template. Both have a **Replace** tick: Header ticked by default (one entry at the
 start, replaced: the start stays cached), Trailer unticked by default (each turn gets its own line where it was
 written; the conversation only grows at the end). The setting against the cache shows a warning. A trailer goes

@@ -7,7 +7,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
-from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_PROMPT
+from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er, llm
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -178,7 +178,6 @@ def ws_state(hass: HomeAssistant, connection, msg) -> None:
 @aac_command(
     {
         vol.Required("type"): "aac/master/update",
-        vol.Optional(CONF_PROMPT): str,
         vol.Optional(CONF_LLM_HASS_API): [str],
         vol.Optional(CONF_TEMPERATURE): vol.All(vol.Coerce(float), vol.Range(0, 2)),
         vol.Optional(CONF_MAX_TOKENS): vol.All(vol.Coerce(int), vol.Range(16, 131072)),
@@ -806,7 +805,7 @@ async def ws_node_instances(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_node_settings(hass: HomeAssistant, connection, msg) -> None:
-    """A core card's own settings (the Agent's prompt, the standard model's temperature, …: what SETTINGS →
+    """A core card's own settings (the standard model's temperature, …: what SETTINGS →
     Master agent had), changed in the node view."""
     if not (entry := _entry(hass, connection, msg)):
         return

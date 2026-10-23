@@ -50,7 +50,7 @@ async def test_simple_answer(
     payload = aioclient_mock.mock_calls[-1][2]
     assert payload["model"] == "test-model"
     assert payload["messages"][0]["role"] == "system"
-    assert "You are a test." in payload["messages"][0]["content"]
+    assert payload["messages"][0]["content"].startswith("Charter")
     assert payload["messages"][-1]["role"] == "user" and untimed(payload["messages"][-1]["content"]) == "hi"
     # No HA tools, only AAC's own memory and planning
     assert sorted(t["function"]["name"] for t in payload["tools"]) == [

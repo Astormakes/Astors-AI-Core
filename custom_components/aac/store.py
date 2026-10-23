@@ -7,7 +7,7 @@ from typing import Any
 import re
 import uuid
 
-from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_PROMPT
+from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm
 from homeassistant.helpers.storage import Store
@@ -19,7 +19,6 @@ from .const import (
     CONF_TEMPERATURE,
     CONF_THINKING,
     DEFAULT_MAX_TOKENS,
-    DEFAULT_PROMPT,
     DEFAULT_TEMPERATURE,
     DEFAULT_THINKING,
     DOMAIN,
@@ -80,7 +79,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
 DEFAULT_DOMAIN_ID = "assistant"
 DOMAIN_DEFAULTS: dict[str, Any] = {
     "master": {
-        CONF_PROMPT: DEFAULT_PROMPT,
         CONF_LLM_HASS_API: [llm.LLM_API_ASSIST],
         CONF_TEMPERATURE: DEFAULT_TEMPERATURE,
         CONF_MAX_TOKENS: DEFAULT_MAX_TOKENS,

@@ -118,7 +118,7 @@ class AacNodes extends HTMLElement {
       <details class="card nv-how"><summary style="cursor:pointer"><b>HOW IT WORKS</b> <span class="hint">· building your own chain, step by step</span></summary>
         <ol style="margin:.6em 0 0 1.2em;line-height:1.6">
           <li><b>A message starts at its card</b>: Panel chat, Voice, HA Assist, or automatic ones (heartbeat, triggers). The message is the whole conversation; every card writes into it.</li>
-          <li><b>It runs along the line</b>: header, agent, context and trailers write their part (they replace their own entry, so the start of the conversation stays the same: fast answers).</li>
+          <li><b>It runs along the line</b>: headers, context and trailers write their part (a header replaces its own entry, so the start of the conversation stays the same: fast answers).</li>
           <li><b>A model reads it all</b>. The cards wired to its output (square port: it decides) are its tools: calling one sends the conversation there; what that card writes comes back (wire it back into the model: a loop, dotted).</li>
           <li><b>The answer goes home</b>: to the card it started at (wired from the model's output). Round ports always fire; several wires each get a copy.</li>
           <li><b>Build your own:</b> Add node (e.g. Header, Trailer, Context, another Model, Decide), then drag from an output dot to an input dot of the same colour. Name a card's input (its settings) and models see that name as the tool. Click a wire and press Delete to remove it. The first change switches to "Wired by hand"; Automatic wiring goes back.</li>
@@ -1164,7 +1164,7 @@ class AacNodes extends HTMLElement {
   }
 
   _coreForm(n) {
-    // A core card's own settings (what SETTINGS → Master agent had): the Agent's prompt, the model's temperature, …
+    // A core card's own settings (what SETTINGS → Master agent had): the model's temperature, …
     const field = ([key, f]) => {
       const v = n.edit_values?.[key], help = f.help || f.hint ? `<p class="hint" style="margin:.2em 0 0">${esc([f.help, f.hint].filter(Boolean).join(" "))}</p>` : "";
       if (f.type === "bool") return `<label class="check"><input type="checkbox" data-core-key="${esc(key)}" ${v ? "checked" : ""}>${esc(f.title || key)}</label>${help}`;
@@ -1320,7 +1320,7 @@ class AacNodes extends HTMLElement {
         <code style="color:var(--cyan)">{{ ${esc(name)} }}</code>${from ? ` <span class="tag">${esc(from)}</span>` : ""}<div class="hint" style="margin:.1em 0 0">${esc(about)}</div></div>`;
     const cards = (this._all || this._data.nodes).filter((n) => Object.keys(n.variables || {}).length);
     return `<h2>VARIABLES</h2>
-      <p class="hint">For the texts of Header, Trailer, Context and Agent (HA's template syntax). Click one to copy it.</p>
+      <p class="hint">For the texts of Header, Trailer and Context (HA's template syntax). Click one to copy it.</p>
       <h3 style="margin-top:1em">BUILT IN</h3>${Object.entries(v.builtin || {}).map(([k, a]) => row(k, a, "AAC")).join("")}
       <h3 style="margin-top:1em">FROM CARDS</h3>
       <p class="hint">A card's values exist once the message has passed it: use them in cards after it.</p>

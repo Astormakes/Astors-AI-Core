@@ -15,7 +15,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_API_KEY,
     CONF_LLM_HASS_API,
-    CONF_PROMPT,
     EVENT_HOMEASSISTANT_STARTED,
     Platform,
 )
@@ -221,7 +220,6 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             master = {
                 k: entry.options[k]
                 for k in (
-                    CONF_PROMPT,
                     CONF_LLM_HASS_API,
                     CONF_TEMPERATURE,
                     CONF_MAX_TOKENS,
