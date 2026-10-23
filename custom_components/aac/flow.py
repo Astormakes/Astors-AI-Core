@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from .core import Domain
 
 LEVEL_EVERY = 0.25  # seconds between an audio wire's loudness updates
+KEEP_RECORDS, KEEP_SECONDS = 10, 600  # what passed an output lately (the monitor windows)
 MAX_STEPS = 80  # a message that visits more cards than this is stopped (the wiring loops)
 
 
@@ -60,6 +61,7 @@ class Flow:
         """Initialize."""
         self.domain = domain
         self.last: dict[str, dict[str, Any]] = {}  # "card.port" → the newest message that left there
+        self.records: dict[str, list[dict[str, Any]]] = {}  # "card.port" → what passed lately: {time, text}
         self._level_at: dict[str, float] = {}
 
     def wired_from(self, card_id: str, port: str) -> list[tuple[Card, str]]:
@@ -84,8 +86,16 @@ class Flow:
 
     def record(self, card_id: str, port: str, message: Message) -> None:
         """What left an output: kept for the monitor; open panels pulse the wire."""
-        self.last[f"{card_id}.{port}"] = message.summary()
+        key = f"{card_id}.{port}"
+        self.last[key] = {**message.summary(), "time": time.time()}
+        newest = next((e for e in reversed(message.entries) if e["kind"] not in ("system", "signal") and e["text"].strip()), None)
+        self._keep(key, newest["text"][:400] if newest else "")
         self.domain.core.notify("flow", domain=self.domain.id, wire=f"{card_id}.{port}")
+
+    def _keep(self, key: str, text: str) -> None:
+        now = time.time()
+        kept = [r for r in self.records.get(key, []) if now - r["time"] < KEEP_SECONDS]
+        self.records[key] = [*kept, {"time": now, "text": text}][-KEEP_RECORDS:]
 
     def stream(self, card_id: str, port: str, chunk: bytes, meta: dict[str, Any]) -> None:
         """Live audio on an output: handed at once to every wired card that takes a stream (no records). Open panels
@@ -105,7 +115,8 @@ class Flow:
 
     def piece(self, card_id: str, port: str, piece: dict[str, Any]) -> None:
         """A piece of speech (a Pause cut's): to every wired card that takes pieces, in the background."""
-        self.last[f"{card_id}.{port}"] = {"piece": f"{piece.get('seconds')} s of speech", "source": piece.get("name")}
+        self.last[f"{card_id}.{port}"] = {"piece": f"{piece.get('seconds')} s of speech", "source": piece.get("name"), "time": time.time()}
+        self._keep(f"{card_id}.{port}", f"{piece.get('seconds')} s of speech from {piece.get('name') or piece.get('source')}")
         self.domain.core.notify("flow", domain=self.domain.id, wire=f"{card_id}.{port}")
         for target, in_port in self.wired_from(card_id, port):
             if hasattr(target, "piece"):

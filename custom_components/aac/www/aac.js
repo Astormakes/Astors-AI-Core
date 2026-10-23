@@ -100,6 +100,14 @@ textarea { resize: vertical; }
 .rule .rf { display: flex; gap: 4px; align-items: center; margin: 3px 0; } .rule .rf > span { font-size: 12px; color: var(--secondary-text-color); white-space: nowrap; }
 .rule input, .rule select { padding: 4px 6px; font-size: 13px; min-width: 0; }
 .ract { border-left: 3px solid var(--divider-color); padding: 2px 0 4px 8px; margin: 4px 0; }
+.mons { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.mon { position: absolute; transform: translate(-50%, calc(-100% - 8px)); pointer-events: auto; cursor: pointer; max-width: 260px; min-width: 110px;
+  padding: 4px 8px; font-size: 11px; line-height: 1.35; border: 1px solid var(--primary-color); background: var(--card-background-color);
+  border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+.mon.sel { border-width: 2px; } .mon .t { display: flex; gap: 6px; color: var(--secondary-text-color); font-size: 10px; }
+.mon .t b { color: var(--primary-color); font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mon .x { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; white-space: pre-wrap; }
+.mon.flash { animation: monflash .8s; } @keyframes monflash { from { box-shadow: 0 0 14px var(--primary-color); } }
 .hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
 @media (max-width: 800px) { nav { position: absolute; z-index: 20; height: 100%; transform: translateX(-100%); } .root.navopen nav { transform: none; }
   .palette, .side { width: 170px; } .grip { display: none; } }
@@ -172,6 +180,9 @@ class AacPanel extends HTMLElement {
         clearTimeout(p._lt); p._lt = setTimeout(() => { p.style.strokeWidth = ""; }, 1200);
       }
     } else if (ev.what === "flow") {
+      if (this.view.kind === "nodes") for (const key of this._monitors().filter((k) => k.split("|")[0] === ev.wire)) {
+        clearTimeout((this._mt ||= {})[key]); this._mt[key] = setTimeout(() => this._loadMonitor(key, true), 250);
+      }
       for (const p of this.shadowRoot.querySelectorAll(`.wire[data-from="${CSS.escape(ev.wire)}"]`)) {
         p.classList.add("flow"); clearTimeout(p._t); p._t = setTimeout(() => p.classList.remove("flow"), 1800);
       }
@@ -365,7 +376,7 @@ class AacPanel extends HTMLElement {
         <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="fit">Fit</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
       <div class="nodes"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
         <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
-        <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg></div>
+        <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div></div>
         <div class="grip" data-grip="side" data-target=".side" data-side="left" title="Drag: width (double-click: back to normal)"></div>
         <div class="side">${this._side()}</div></div></div>`;
   }
@@ -379,8 +390,12 @@ class AacPanel extends HTMLElement {
 
   _side() {
     const d = this.state.domain;
-    if (this.selWire) return `<b>Wire</b><p class="hint">${esc(this.selWire.from)} → ${esc(this.selWire.to)}</p><button class="danger" id="unwire">Remove wire</button>
-      <div style="margin-top:12px"><button class="small" id="monitor">Show what passed last</button></div><div id="mon"></div>`;
+    if (this.selMon) return this._monitorSide(this.selMon);
+    if (this.selWire) {
+      const key = `${this.selWire.from}|${this.selWire.to}`, on = this._monitors().includes(key);
+      return `<b>Wire</b><p class="hint">${esc(this.selWire.from)} → ${esc(this.selWire.to)}</p>
+        <div class="row" style="gap:8px"><button class="small" id="monitor" title="A window above the wire with what passes it, live">${on ? "Stop monitoring" : "Monitor"}</button><button class="small danger" id="unwire">Remove wire</button></div>`;
+    }
     const c = this.sel && this._card(this.sel);
     if (!c) return `<p class="hint">Click a card to set it up. Tags in this domain: ${d.tags.length}.</p>`;
     const t = this._type(c.type);
@@ -698,7 +713,67 @@ class AacPanel extends HTMLElement {
     }
   }
 
-  _view() { const g = this.shadowRoot.querySelector("#world"); if (g) g.setAttribute("transform", `translate(${this.vp.x},${this.vp.y}) scale(${this.vp.k})`); }
+  _view() { const g = this.shadowRoot.querySelector("#world"); if (g) g.setAttribute("transform", `translate(${this.vp.x},${this.vp.y}) scale(${this.vp.k})`); this._layoutMonitors(); }
+
+  // ------------------------------------------------------------------ wire monitors (v1: a window above a wire with what passes it, live)
+  _monitors() { try { return JSON.parse(localStorage.getItem(`aac.monitors.${this.state.domain.id}`) || "[]"); } catch (err) { return []; } }
+
+  _setMonitors(list) { try { localStorage.setItem(`aac.monitors.${this.state.domain.id}`, JSON.stringify(list)); } catch (err) { /* private window */ } }
+
+  async _loadMonitor(key, flash = false) {
+    try { (this.monData ||= {})[key] = await this.ws("aac/monitor", { wire: key.split("|")[0] }); } catch (err) { return; }
+    this._layoutMonitors();
+    if (flash) { const el = this.shadowRoot.querySelector(`[data-mon="${CSS.escape(key)}"]`); el?.classList.remove("flash"); void el?.offsetWidth; el?.classList.add("flash"); }
+    if (this.selMon === key && !this.shadowRoot.querySelector(".side")?.contains(this.shadowRoot.activeElement)) {
+      const side = this.shadowRoot.querySelector(".side");
+      if (side) { side.innerHTML = this._side(); this._bindMonitorSide(); }
+    }
+  }
+
+  _layoutMonitors() {
+    const box = this.shadowRoot.querySelector(".mons");
+    if (!box) return;
+    const wires = Object.fromEntries(this._wireList().map((w) => [w.key, w])), keys = this._monitors().filter((k) => wires[k]);
+    for (const key of keys) {
+      const w = wires[key], path = this.shadowRoot.querySelector(`.hit[data-wire="${CSS.escape(key)}"]`);
+      if (!path) continue;
+      const mid = path.getPointAtLength(path.getTotalLength() / 2); // on the wire as drawn (lanes included)
+      const x = mid.x * this.vp.k + this.vp.x, y = mid.y * this.vp.k + this.vp.y;
+      let el = box.querySelector(`[data-mon="${CSS.escape(key)}"]`);
+      if (!el) {
+        el = document.createElement("div"); el.className = "mon"; el.dataset.mon = key;
+        el.addEventListener("pointerdown", (e) => e.stopPropagation());
+        el.addEventListener("click", () => { this.selMon = key; this.sel = null; this.selWire = null; this.render(); });
+        box.appendChild(el);
+        if (!this.monData?.[key]) this._loadMonitor(key);
+      }
+      const m = this.monData?.[key] || {}, last = (m.records || []).at(-1);
+      el.classList.toggle("sel", this.selMon === key);
+      el.innerHTML = `<div class="t"><b>${esc(w.a.title)} › ${esc(w.b.title)}</b><span>${(m.records || []).length}</span></div>
+        <div class="x">${last ? esc(last.text || "(no text)") : '<span class="hint">waiting for something to pass…</span>'}</div>`;
+      el.style.left = `${x}px`; el.style.top = `${y}px`;
+    }
+    for (const el of box.querySelectorAll("[data-mon]")) if (!keys.includes(el.dataset.mon)) el.remove();
+  }
+
+  _monitorSide(key) {
+    const m = this.monData?.[key] || {}, msg = m.message, [from, to] = key.split("|");
+    const name = (id) => this._card(String(id || "").split(".")[0])?.title || id;
+    const recs = (m.records || []).slice().reverse().map((r) => `<div class="entry"><div class="k">${esc(new Date(r.time * 1000).toLocaleTimeString())}</div>${esc(r.text)}</div>`).join("");
+    const entries = (msg?.entries || []).map((e) => `<details class="entry"><summary><b>${esc(name(e.by))}</b> · ${esc(e.kind)} ${e.tags.map((t) => `#${esc(t)}`).join(" ")} <span class="hint">${esc(e.text.replace(/\s+/g, " ").slice(0, 60))}</span></summary>
+        <pre class="req">${esc(e.text)}${Object.keys(e.data || {}).length ? `\n\n${esc(JSON.stringify(e.data, null, 1))}` : ""}</pre></details>`).join("");
+    return `<b>Monitor</b><p class="hint">${esc(name(from))}.${esc(from.split(".")[1])} › ${esc(name(to))}.${esc(to.split(".")[1])} · live</p>
+      <button class="small" data-monoff="${esc(key)}">Stop monitoring</button>
+      ${msg?.entries ? `<label>NEWEST MESSAGE · ${esc(new Date(msg.time * 1000).toLocaleTimeString())}</label><p class="hint">Way: ${esc((msg.way || []).map(name).join(" › "))}</p>${entries}`
+        : msg?.piece ? `<label>NEWEST</label><p>${esc(msg.piece)} from ${esc(msg.source)}</p>` : ""}
+      <label>PASSED LATELY</label>${recs || '<p class="hint">Nothing yet (kept 10 minutes).</p>'}`;
+  }
+
+  _bindMonitorSide() {
+    for (const el of this.shadowRoot.querySelectorAll("[data-monoff]")) el.addEventListener("click", () => {
+      this._setMonitors(this._monitors().filter((k) => k !== el.dataset.monoff)); this.selMon = null; this.render();
+    });
+  }
 
   _world(e) { const r = this.shadowRoot.querySelector("#svg").getBoundingClientRect(); return { x: (e.clientX - r.left - this.vp.x) / this.vp.k, y: (e.clientY - r.top - this.vp.y) / this.vp.k }; }
 
@@ -729,7 +804,7 @@ class AacPanel extends HTMLElement {
       const node = e.target.closest(".node"), out = e.target.dataset?.out, hit = e.target.dataset?.wire;
       svg.setPointerCapture(e.pointerId);
       if (node && out) { drag = { kind: "wire", from: `${node.dataset.node}.${out}`, type: e.target.dataset.kind }; return; }
-      if (hit) { const [from, to] = hit.split("|"); this.selWire = { from, to }; this.sel = null; this.render(); return; }
+      if (hit) { const [from, to] = hit.split("|"); this.selWire = { from, to }; this.sel = null; this.selMon = null; this.render(); return; }
       if (node) {
         const id = node.dataset.node, p = this.state.domain.positions[id] || (this.state.domain.positions[id] = { x: 0, y: 0 }), w = this._world(e);
         drag = { kind: "move", id, dx: w.x - p.x, dy: w.y - p.y, moved: false };
@@ -759,7 +834,7 @@ class AacPanel extends HTMLElement {
       if (!d) return;
       if (d.kind === "move") {
         if (d.moved) { this._snap(d.id); this._drawGrid(); await this._savePositions(); }
-        else { this.sel = d.id; this.selWire = null; this.render(); }
+        else { this.sel = d.id; this.selWire = null; this.selMon = null; this.render(); }
       }
       if (d.kind === "wire") {
         this.shadowRoot.querySelector("#tmpwire")?.remove();
@@ -888,10 +963,13 @@ class AacPanel extends HTMLElement {
     $("#volume")?.addEventListener("input", (e) => { $("#volval").textContent = e.target.value; });
     $("#volume")?.addEventListener("change", (e) => audioSet({ volume: Number(e.target.value) }));
 
-    $("#monitor")?.addEventListener("click", async () => {
-      const r = await this.ws("aac/monitor", { wire: this.selWire.from }), m = r.message;
-      $("#mon").innerHTML = m ? m.entries.map((e) => `<div class="entry"><div class="k">${esc(e.by)} · ${esc(e.kind)} ${e.tags.map((t) => `#${esc(t)}`).join(" ")}</div>${md(e.text)}</div>`).join("") : '<p class="hint">Nothing passed yet.</p>';
+    $("#monitor")?.addEventListener("click", () => {
+      const key = `${this.selWire.from}|${this.selWire.to}`, list = this._monitors();
+      this._setMonitors(list.includes(key) ? list.filter((k) => k !== key) : [...list, key]);
+      if (!list.includes(key)) { this.selMon = key; this.selWire = null; this._loadMonitor(key); }
+      this.render();
     });
+    this._bindMonitorSide();
     if (!this._keys) {
       this._keys = true;
       window.addEventListener("keydown", (e) => { if (this.view.kind === "nodes" && this.selWire && (e.key === "Delete" || e.key === "Backspace") && !/INPUT|TEXTAREA/.test(e.composedPath()[0]?.tagName)) this._unwire(); });
