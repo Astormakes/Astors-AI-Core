@@ -356,7 +356,7 @@ textarea { min-height: 10em; resize: vertical; }
 @keyframes blink { 50% { opacity: 0; } }
 .composer { padding: 1em 1.7em 1.4em; border-top: 1px solid var(--line); flex: none; }
 .composer-inner { max-width: 72em; margin: 0 auto; display: flex; gap: .7em; }
-.composer textarea { min-height: 3.1em; height: 3.1em; max-height: 14em; }
+.composer textarea { min-height: 3.1em; height: 3.1em; max-height: 45vh; resize: vertical; }
 .welcome { margin: auto; text-align: center; color: var(--dim); font-size: .93em; }
 .welcome .big { font-size: 2.2em; letter-spacing: .3em; color: var(--magenta); text-shadow: 0 0 .25em var(--magenta), 0 0 .8em rgba(255, 43, 214, .5); margin-bottom: .4em; }
 
@@ -2267,6 +2267,13 @@ class AacPanel extends HTMLElement {
     // chat
     sr.querySelector("#chat-input")?.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); this._send(); }
+    });
+    // Longer messages (Open Issues: "a way to make the chat box bigger"): it grows with the text, up to 45 % of the
+    // screen, and can be dragged bigger at its corner
+    sr.querySelector("#chat-input")?.addEventListener("input", (e) => {
+      const el = e.target;
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight + 2, window.innerHeight * 0.45)}px`;
     });
     sr.querySelector("#chat-send")?.addEventListener("click", () => this._send());
     sr.querySelectorAll("[data-msg-edit]").forEach((el) => el.addEventListener("click", () => {
