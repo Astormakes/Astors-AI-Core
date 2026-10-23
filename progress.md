@@ -2,7 +2,7 @@
 
 Running log for AAC. Read this first in a new session. Newest state on top. The long v0 history is in `docs/history-v0.md` (private).
 
-## Current state (2026-10-23) – 1.0.0-dev.41
+## Current state (2026-10-23) – 1.0.0-dev.43
 
 - **v1 on `main`**, live on the owner's HA (owner: "I'm not really using it, work on the real HA"; only the lists matter, exported to `docs/aac-lists-2026-10-23.md`). The last v0 is the tag `v0.50.1-last-v0`. `scripts/deploy_ha.sh` needs `AAC_ALLOW_V1=1`.
 - **The graph** (`spec/graph.md`, owner's design of 2026-10-23): a message is a document of tagged entries (`request.py`); every node writes into it; a model card (`model_node.py`) reads it all as an ordinary chat with tools; **its wired nodes are its tools** (calling one sends the document there and waits until it comes back: a loop, `flow.Step.call`); round outputs copy to every wire, square ones (model, Decide) choose; endpoints (`chat`, `voice`, `assist`) take answers home; the chat keeps its document (edits change it; expert view in the chat: every entry and the way, e.g. Panel chat › Model › Home › Model).
@@ -17,6 +17,7 @@ Running log for AAC. Read this first in a new session. Newest state on top. The 
 - Settings list: Appearance, Languages, Nodes; the other pages open from their cards (Home → Entities, pools → the Pools page (also the gear next to POOLS in the Nodes sidebar; was "Compute"), Hearing/STT → Audio, toolbar → Modules). The chat input grows with long messages.
 - **Header and Trailer cards** (added like any card): Header (type `instructions`) writes into the system prompt at the start; Trailer (kind `trailer`) after the newest user turn, read last. The hidden local-time suffix is still built into the model card (a candidate to become a Trailer-like card).
 - **HA templates in the text cards** (Agent, Header, Trailer, Context) and **card values** (`message.vars`, `{{ <card id>.<name> }}`; Heard lines and Buffer set some): spec/graph.md "Templates and values". Next: more cards hand on values; the hidden local time could become a visible default Trailer.
+- **Nodes page fills the window** (no page scroll; the graph scrolls). Drag handles: left sidebar edge and between graph and info panel (widths per browser, double-click resets). **Hidden cards:** unwired cards of modules that are off stay out of the grid; unwired built-in cards have "Hide from the grid" (`aac/nodes/hidden`); the sidebar marks them, a click or drag brings one back.
 - Memories were cleared on the owner's HA (2026-10-23, backup `/config/aac/bak-before-clean-20261023/`). Backups before deploys: `/config/aac/bak-1.0.0-dev.28-before/` and older.
 - Tests: 156 mocked (`../.venv/bin/python -m pytest -q -p no:logging`).
 

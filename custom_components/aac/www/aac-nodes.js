@@ -72,6 +72,10 @@ class AacNodes extends HTMLElement {
     if (this._error) { this._msg.textContent = this._error; return; }
     // the panel's sidebar lists the cards (click: select, drag into the grid: place or add)
     this.dispatchEvent(new CustomEvent("aac-nodes", { bubbles: true, composed: true, detail: this._data }));
+    // the grid leaves out unwired built-in cards that were hidden, and those of modules that are off (owner:
+    // "nodes at the bottom that just linger around"); the sidebar still lists them, a click brings one back
+    this._all = this._data.nodes;
+    this._data = { ...this._data, nodes: this._all.filter((n) => this._shown(n)) };
     const first = this._loaded !== this._key;
     if (!this._frameDrag) this._frames = (this._data.containers || []).map((f) => ({ ...f, nodes: [...f.nodes] }));
     this._place();
@@ -83,8 +87,29 @@ class AacNodes extends HTMLElement {
   }
 
   // ------------------------------------------------------------------ layout and storage
+  _infoGrip() {
+    const grip = this.querySelector(".nv-grip"), info = this.querySelector(".nv-info");
+    const set = (w) => { if (w) this.style.setProperty("--nv-info-w", `${w}px`); else this.style.removeProperty("--nv-info-w"); };
+    try { set(+localStorage.getItem("aac-nodes-info-w") || 0); } catch (e) { /* no storage: the default width */ }
+    const save = (w) => { try { if (w) localStorage.setItem("aac-nodes-info-w", w); else localStorage.removeItem("aac-nodes-info-w"); } catch (e) { /* ignore */ } };
+    grip.addEventListener("dblclick", () => { set(0); save(0); this._layout(); });
+    grip.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault();
+      grip.setPointerCapture(ev.pointerId);
+      grip.classList.add("drag");
+      const right = info.getBoundingClientRect().right;
+      let w = 0;
+      const move = (e) => { w = Math.round(Math.max(260, Math.min(right - e.clientX, window.innerWidth * .6))); set(w); };
+      const up = () => { grip.classList.remove("drag"); grip.removeEventListener("pointermove", move); save(w); this._layout(); };
+      grip.addEventListener("pointermove", move);
+      grip.addEventListener("pointerup", up, { once: true });
+      grip.addEventListener("pointercancel", up, { once: true });
+    });
+  }
+
   _build() {
     this.style.display = "block";
+    this.classList.add("nv-host");
     this.innerHTML = `
       <details class="card nv-how"><summary style="cursor:pointer"><b>HOW IT WORKS</b> <span class="hint">· building your own chain, step by step</span></summary>
         <ol style="margin:.6em 0 0 1.2em;line-height:1.6">
@@ -98,11 +123,22 @@ class AacNodes extends HTMLElement {
           <li><b>Tidy up</b>: Shift-click cards, Group, name it; fold the frame (▾) into one card.</li>
         </ol></details>
       <style>
-        .nv-main { display: flex; gap: 1em; align-items: flex-start; }
-        .nv-main > .nv-graph { flex: 1; min-width: 0; margin: 0; }
-        .nv-main > .nv-info { flex: none; width: 380px; margin: 0; position: sticky; top: .5em;
-          max-height: calc(100vh - 120px); overflow-y: auto; }
-        @media (max-width: 1100px) { .nv-main { flex-direction: column; align-items: stretch; } .nv-main > .nv-info { width: auto; position: static; max-height: none; } }
+        /* the page fills the window and never scrolls itself (owner: a wheel a bit off moved the page) */
+        .nv-host { display: flex !important; flex-direction: column; height: 100%; gap: 1em; }
+        .nv-host > .nv-how { flex: none; margin: 0; max-height: 40%; overflow-y: auto; }
+        .nv-main { display: flex; align-items: stretch; flex: 1; min-height: 0; }
+        .nv-main > .nv-graph { flex: 1; min-width: 0; margin: 0; display: flex; flex-direction: column; }
+        .nv-main > .nv-graph > .nv-stage { flex: 1; min-height: 240px; }
+        .nv-main > .nv-info { flex: none; width: var(--nv-info-w, 380px); margin: 0; overflow-y: auto; }
+        /* drag: the info panel's width (owner: "drag the sizes of the left and right sidebars") */
+        .nv-grip { flex: none; width: 1em; cursor: col-resize; position: relative; touch-action: none; }
+        .nv-grip::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(50% - 1px); width: 2px; }
+        .nv-grip:hover::after, .nv-grip.drag::after { background: var(--line); }
+        @media (max-width: 1100px) {
+          .nv-host { height: auto; }
+          .nv-main { flex-direction: column; } .nv-main > .nv-info { width: auto; } .nv-grip { display: none; }
+          .nv-main > .nv-graph > .nv-stage { flex: none; height: clamp(420px, calc(100vh - 260px), 1400px); }
+        }
       </style>
       <div class="nv-main">
       <div class="card nv-graph" style="padding:0;overflow:hidden;position:relative">
@@ -121,12 +157,14 @@ class AacNodes extends HTMLElement {
           <button class="btn" data-go="settings/modules" title="Every module: switch on or off, hide, open its page">Modules</button>
 
         </div>
-        <div class="nv-stage" style="position:relative;height:clamp(420px, calc(100vh - 260px), 1400px);touch-action:none"></div>
+        <div class="nv-stage" style="position:relative;touch-action:none"></div>
         <div class="nv-legend" style="display:flex;gap:.9em;flex-wrap:wrap;padding:.5em .9em;border-top:1px solid var(--line);font-size:.8em"></div>
         <p class="hint nv-msg" style="margin:.5em .9em"></p>
       </div>
+      <div class="nv-grip" title="Drag: width of this panel (double-click: back to normal)"></div>
       <div class="card nv-info thin-scroll"></div>
       </div>`;
+    this._infoGrip();
     this._stage = this.querySelector(".nv-stage");
     this._msg = this.querySelector(".nv-msg");
     this._svg = document.createElementNS(SVG, "svg");
@@ -597,7 +635,9 @@ class AacNodes extends HTMLElement {
     }).join("");
     this.querySelector(".nv-legend").innerHTML = Object.keys(this._colors).sort()
       .map((t) => `<span><span style="display:inline-block;width:.75em;height:.75em;border-radius:50%;background:${this._color(t)};vertical-align:-.05em"></span> ${esc(t)}</span>`).join("");
-    this._msg.textContent = this._data.nodes.some((n) => !n.on) ? "Faded nodes belong to modules that are off in this domain." : "";
+    const away = (this._all || []).length - this._data.nodes.length;
+    this._msg.textContent = [this._data.nodes.some((n) => !n.on) ? "Faded nodes belong to modules that are off in this domain." : "",
+      away ? `${away} card${away > 1 ? "s" : ""} hidden (modules that are off, or hidden by you): the sidebar lists them, a click brings one back.` : ""].filter(Boolean).join(" ");
     this._layout();
   }
 
@@ -729,6 +769,7 @@ class AacNodes extends HTMLElement {
       if (step) { this._sel = step.dataset.tryNode; this._selFrame = null; this._selWire = null; this._draw(); this._info(); }
       if (b?.dataset.nv === "inst-save") this._saveInstance(b.dataset.node);
       if (b?.dataset.nv === "inst-remove") this._removeInstance(b.dataset.node);
+      if (b?.dataset.nv === "hide") this._hide(b.dataset.node, true);
       if (b?.dataset.nv === "mod-save") this._saveModule(b.dataset.module);
       if (b?.dataset.nv === "core-save") this._saveCore(b.dataset.node);
       if (b?.dataset.nv === "names-save") this._saveNames(b.dataset.node);
@@ -957,7 +998,7 @@ class AacNodes extends HTMLElement {
 
   // ------------------------------------------------------------------ added nodes (types vs. instances)
   _instances() {
-    return Object.fromEntries(this._data.nodes.filter((n) => n.type)
+    return Object.fromEntries((this._all || this._data.nodes).filter((n) => n.type)
       .map((n) => [n.id, { type: n.type, title: n.title, settings: { ...n.settings } }]));
   }
 
@@ -988,8 +1029,25 @@ class AacNodes extends HTMLElement {
     menu.style.display = "";
   }
 
-  pick(id) {
+  _shown(n) {
+    const wired = (this._data.wires || []).some((w) => w.from.split(".")[0] === n.id || w.to.split(".")[0] === n.id);
+    return wired || this._reveal?.has(n.id) || (n.on && !(this._data.hidden || []).includes(n.id));
+  }
+
+  async _hide(id, hide) {
+    const hidden = new Set(this._data.hidden || []);
+    if (hide) { hidden.add(id); this._reveal?.delete(id); if (this._sel === id) this._sel = null; } else hidden.delete(id);
+    try { await this.ws("aac/nodes/hidden", { hidden: [...hidden] }); } catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
+    await this.refresh(true);
+    this._info();
+  }
+
+  async pick(id) {
     // chosen in the sidebar: selected, shown on the right, the view centred on it
+    if (!this._data.nodes.some((n) => n.id === id)) {  // hidden or off: back into the grid
+      (this._reveal ||= new Set()).add(id);
+      if ((this._data.hidden || []).includes(id)) await this._hide(id, false); else await this.refresh(true);
+    }
     this._sel = id; this._selFrame = null; this._selWire = null; this._multi = new Set([id]);
     const p = this._pos[id];
     if (p) { this._view.x = -p.x * this._view.k; this._view.y = -p.y * this._view.k; }
@@ -1001,6 +1059,7 @@ class AacNodes extends HTMLElement {
     const at = this._world2(e);
     if (what.startsWith("node:")) {
       const id = what.slice(5);
+      if (!this._data.nodes.some((n) => n.id === id)) await this.pick(id);  // hidden: back into the grid first
       if (!this._pos[id]) return;
       Object.assign(this._pos[id], at);
       this._snap(id); this._save(); this._draw(); this._layout(); this.pick(id);
@@ -1017,7 +1076,7 @@ class AacNodes extends HTMLElement {
     if (title === null || title === undefined || !String(title).trim()) return;
     const base = String(title).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 30) || "node";
     let id = base, k = 2;
-    while (this._data.nodes.some((n) => n.id === id) || id.length < 2) id = `${base}_${k++}`;
+    while ((this._all || this._data.nodes).some((n) => n.id === id) || id.length < 2) id = `${base}_${k++}`;
     const settings = Object.fromEntries(Object.entries(type.settings_schema || {}).map(([key, f]) => [key, f.default ?? ""]));
     this._sel = id;
     await this._setInstances({ ...this._instances(), [id]: { type: type.id, title: String(title).trim(), settings } });
@@ -1284,6 +1343,8 @@ class AacNodes extends HTMLElement {
         : n.addable ? '<p class="hint">The standard one. "Add node" makes another with its own settings.</p>' : ""}
       ${n.role === "pool" ? this._poolInfo(n) : ""}
       ${PAGES[n.id] ? `<div class="actions"><button class="btn" data-go="${esc(PAGES[n.id][0])}">${esc(PAGES[n.id][1])}</button></div>` : ""}
+      ${!n.type && !(this._data.wires || []).some((w) => w.from.split(".")[0] === n.id || w.to.split(".")[0] === n.id)
+        ? `<div class="actions"><button class="btn" data-nv="hide" data-node="${esc(n.id)}" title="Built-in cards cannot be removed; hidden ones stay in the sidebar list (click one to bring it back)">Hide from the grid</button></div>` : ""}
       ${n.edit_schema ? this._coreForm(n) : ""}
       ${this._outputsForm(n)}
       ${this._namesForm(n)}

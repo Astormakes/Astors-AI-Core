@@ -230,6 +230,12 @@ header h1 { margin: 0; font-size: 1.15em; letter-spacing: .22em; font-weight: 70
 header .meta + .icon-btn { margin-left: .3em; }
 header .meta { margin-left: auto; font-size: .85em; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .content { flex: 1; overflow-y: auto; padding: 1.7em; container-type: inline-size; }
+.content.fill { overflow: hidden; padding: 1em 1.2em; display: flex; flex-direction: column; }
+.content.fill > #modhost { flex: 1; min-height: 0; }
+@media (max-width: 1100px) { .content.fill { overflow-y: auto; display: block; } }
+/* drag: the sidebar's width (owner, 2026-10-23) */
+.nav-grip { flex: none; width: 7px; margin: 0 -4px 0 -3px; cursor: col-resize; position: relative; z-index: 5; touch-action: none; }
+.nav-grip:hover, .nav-grip.drag { background: var(--line); }
 .cards { display: grid; gap: 1.3em; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30em), 1fr)); align-items: start; }
 .card { position: relative; border: 1px solid var(--line); background: rgba(13, 11, 24, .85); padding: 1.3em;
   box-shadow: 0 0 .7em rgba(0, 240, 255, .12), inset 0 0 1.3em rgba(0, 240, 255, .05); min-width: 0; }
@@ -419,6 +425,7 @@ pre.code { white-space: pre-wrap; word-break: break-all; font-size: .85em; paddi
 button.menu-btn { display: none; }
 .backdrop { display: none; }
 @media (max-width: 900px) {
+  .nav-grip { display: none; }
   nav { position: absolute; z-index: 40; top: 0; bottom: 0; left: 0; width: min(var(--nav-w), 85vw); transform: translateX(-100%); transition: transform .2s; }
   .root.nav-open nav { transform: none; box-shadow: 0 0 2em rgba(0, 0, 0, .8), 1px 0 1em rgba(0, 240, 255, .3); }
   .root.nav-open .backdrop { display: block; position: absolute; inset: 0; z-index: 30; background: rgba(0, 0, 0, .55); }
@@ -908,9 +915,14 @@ class AacPanel extends HTMLElement {
     const logScroll = log?.scrollTop || 0;
 
     this._syncSkin();
+    if (this._navW === undefined) {  // the sidebar width the owner dragged (this browser only)
+      try { this._navW = +localStorage.getItem("aac-nav-w") || 0; } catch (e) { this._navW = 0; }
+      if (this._navW) this.style.setProperty("--nav-w", `${this._navW}px`);
+    }
     sr.innerHTML = `<style>${STYLE}</style><style>${this._skinCss || ""}</style>
       <div class="root ${this._navOpen ? "nav-open" : ""}">
         ${this._renderNav()}
+        <div class="nav-grip" id="nav-grip" title="Drag: width of the sidebar (double-click: back to normal)"></div>
         <div class="backdrop" id="backdrop"></div>
         ${this._dialogHtml()}
         <main>${this._renderMain()}</main>
@@ -958,8 +970,10 @@ class AacPanel extends HTMLElement {
       ["Audio and the rest", () => true]];
     const GROUP_PAGES = { Pools: "models" };
     const seen = new Set();
+    const hidden = new Set(d.hidden || []);
+    const away = (n) => !wired.has(n.id) && (hidden.has(n.id) || !n.on);  // not in the grid (a click brings it back)
     const item = (n) => `<div class="tab ${n.on ? "" : "soon"}" data-node-pick="${esc(n.id)}" draggable="true" tabindex="0" role="button" title="${esc(n.description || "")}">
-        <span class="dot ${wired.has(n.id) ? "ok" : ""}"></span><span class="grow">${esc(n.title)}</span></div>`;
+        <span class="dot ${wired.has(n.id) ? "ok" : ""}"></span><span class="grow">${esc(n.title)}</span>${away(n) ? `<span title="Not in the grid: click to bring it back">${icon("eyeOff")}</span>` : ""}</div>`;
     const groups = GROUPS.map(([name, test]) => {
       const list = nodes.filter((n) => !seen.has(n.id) && test(n));
       list.forEach((n) => seen.add(n.id));
@@ -1106,7 +1120,9 @@ class AacPanel extends HTMLElement {
     if (v === "settings/appearance") return this._renderAppearance();
     if (v.startsWith("mod/")) return this._renderModulePage(v);
     if (v.startsWith("notes/")) return this._renderNote();
-    if (v === "nodes") return this._page("NODES", "how the parts are wired", '<div id="modhost"></div>');
+    if (v === "nodes") {  // fills the window: the graph scrolls, the page does not
+      return `${this._header("NODES", "how the parts are wired")}<div class="content fill"><div id="modhost"></div></div>`;
+    }
     if (v === "settings/modules") return this._renderModules();
     if (v === "settings/entities") return this._renderEntities();
     if (v === "domain/visible") return this._renderVisible();
@@ -2080,6 +2096,25 @@ class AacPanel extends HTMLElement {
       }
     };
     sr.querySelectorAll("[data-go]").forEach((el) => onActivate(el, () => this._go(el.dataset.go)));
+    const grip = sr.querySelector("#nav-grip");
+    if (grip) {
+      const save = (w) => { try { if (w) localStorage.setItem("aac-nav-w", w); else localStorage.removeItem("aac-nav-w"); } catch (e) { /* ignore */ } };
+      grip.addEventListener("dblclick", () => { this._navW = 0; this.style.removeProperty("--nav-w"); save(0); });
+      grip.addEventListener("pointerdown", (ev) => {
+        ev.preventDefault();
+        grip.setPointerCapture(ev.pointerId);
+        grip.classList.add("drag");
+        const left = sr.querySelector("nav").getBoundingClientRect().left;
+        const move = (e) => {
+          this._navW = Math.round(Math.max(200, Math.min(e.clientX - left, window.innerWidth * .5)));
+          this.style.setProperty("--nav-w", `${this._navW}px`);
+        };
+        const up = () => { grip.classList.remove("drag"); grip.removeEventListener("pointermove", move); save(this._navW); };
+        grip.addEventListener("pointermove", move);
+        grip.addEventListener("pointerup", up, { once: true });
+        grip.addEventListener("pointercancel", up, { once: true });
+      });
+    }
     sr.querySelector("#note-edit")?.addEventListener("click", () => { this._noteEdit = true; this._render(); });
     sr.querySelector("#note-cancel")?.addEventListener("click", () => { this._noteEdit = false; this._render(); });
     sr.querySelector("#note-save")?.addEventListener("click", async () => {

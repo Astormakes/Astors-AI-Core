@@ -84,6 +84,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_node_settings,
         ws_node_names,
         ws_node_single,
+        ws_node_hidden,
         ws_notes_get,
         ws_notes_save,
         ws_node_positions,
@@ -692,6 +693,7 @@ def ws_nodes(hass: HomeAssistant, connection, msg) -> None:
     summary["positions"] = entry.runtime_data.store.graph(dom.id).get("positions")  # None: never saved here yet
     summary["names"] = entry.runtime_data.store.graph(dom.id).get("names") or {}  # inputs named for the models
     summary["single"] = entry.runtime_data.store.graph(dom.id).get("single") or []  # round outputs with one wire
+    summary["hidden"] = entry.runtime_data.store.graph(dom.id).get("hidden") or []  # cards kept out of the grid
     summary["by_hand"] = entry.runtime_data.bus.wired_by_hand(dom.id)
     # The modules behind the nodes, with their settings form and values: editable right in the node view
     used = {n["module"] for n in summary["nodes"] if n["module"]}
@@ -846,6 +848,19 @@ async def ws_notes_save(hass: HomeAssistant, connection, msg) -> None:
         return
     await hass.async_add_executor_job(node.write_file, msg["text"], False)
     connection.send_result(msg["id"], {})
+
+
+@aac_command({vol.Required("type"): "aac/nodes/hidden", vol.Required("hidden"): [vol.Match(r"^[\w-]+$")]})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_node_hidden(hass: HomeAssistant, connection, msg) -> None:
+    """Built-in cards kept out of the grid (owner: "nodes that just linger around"); listed in the sidebar still."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    store = entry.runtime_data.store
+    store.graph(_d(entry, msg).id)["hidden"] = sorted(set(msg["hidden"]))
+    await store.async_save()
+    connection.send_result(msg["id"], {"hidden": store.graph(_d(entry, msg).id)["hidden"]})
 
 
 @aac_command({vol.Required("type"): "aac/nodes/single", vol.Required("single"): [vol.Match(r"^[\w-]+\.[\w-]+$")]})
