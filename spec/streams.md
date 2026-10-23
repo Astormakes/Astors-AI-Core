@@ -100,6 +100,7 @@ Kinds by ports: **source** (only outputs: a mic, a timer, HA's events), **transf
 
 ## Wiring
 
+- A core card with settings of its own (Agent, Model, Home Assistant tools) carries `edit_schema` and `edit_values` in `aac/nodes`; `aac/nodes/settings {"node", "values"}` changes them (kept in the domain's agent settings). `aac/nodes/positions {"positions": {id: {x, y, pinned}}}` stores the view's card positions (`aac/nodes` returns them as `positions`, null until saved).
 - Stored per domain (built v1, `aac/nodes/wires`, store `node_view.<domain>.wires`): `[{"from": "stt.lines",
   "to": "companion.heard"}]`; absent = automatic. Chains follow the wires (`Bus.chain`): an annotating node
   taken out of the chain no longer runs, one wired in elsewhere runs there. Later: `"filter": {"source": "bedroom"}`.

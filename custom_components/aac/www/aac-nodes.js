@@ -71,7 +71,7 @@ class AacNodes extends HTMLElement {
     this._draw();
     if (first) { if (this._physics) this._fitWhenQuiet = true; else this._fit(); }
     if (!quiet) this._kick();
-    this._info();
+    if (!(quiet && this._editing && this._editing === (this._sel || this._selFrame))) this._info();
   }
 
   // ------------------------------------------------------------------ layout and storage
@@ -188,9 +188,11 @@ class AacNodes extends HTMLElement {
 
   _place() {
     if (this._loaded !== this._key) { // another domain (or the first time): its saved layout
-      const saved = this._read();
+      // Positions live on the server (every browser the same); a layout from before that comes from this browser once
+      const saved = this._read(), server = this._data.positions;
       this._pos = {};
-      for (const [id, p] of Object.entries(saved.pos || {})) this._pos[id] = { x: p.x, y: p.y, vx: 0, vy: 0, pinned: !!p.pinned };
+      for (const [id, p] of Object.entries(server || saved.pos || {})) this._pos[id] = { x: p.x, y: p.y, vx: 0, vy: 0, pinned: !!p.pinned };
+      this._sent = server ? JSON.stringify(server) : null;
       this._undo = Array.isArray(saved.undo) ? saved.undo : [];
       this._physics = saved.physics !== false;
       this._loaded = this._key;
@@ -256,8 +258,15 @@ class AacNodes extends HTMLElement {
   _save() {
     if (!this._loaded) return;
     try {
-      localStorage.setItem(this._key, JSON.stringify({ pos: this._snapshot().pos, physics: this._physics, undo: this._undo.slice(-UNDO_STEPS) }));
-    } catch (e) { /* private window: the layout is not kept */ }
+      localStorage.setItem(this._key, JSON.stringify({ physics: this._physics, undo: this._undo.slice(-UNDO_STEPS) }));
+    } catch (e) { /* private window: Physics and Undo are not kept */ }
+    clearTimeout(this._posTimer); // the positions to the server, when the moving stops
+    this._posTimer = setTimeout(() => {
+      const pos = this._snapshot().pos, text = JSON.stringify(pos);
+      if (text === this._sent || !this.ws) return;
+      this._sent = text;
+      this.ws("aac/nodes/positions", { positions: pos }).catch((e) => { this._sent = null; this._msg.textContent = `Positions not saved: ${e.message || e}`; });
+    }, 800);
   }
 
   _wires() {
@@ -571,6 +580,8 @@ class AacNodes extends HTMLElement {
 
   _bind() {
     this.querySelector(".nv-physics").addEventListener("change", (e) => this._setPhysics(e.target.checked));
+    // Typing in the info box: the 10 s refresh leaves it alone until it is saved or another card is chosen
+    this.querySelector(".nv-info").addEventListener("input", () => { this._editing = this._sel || this._selFrame; });
     this.addEventListener("click", (e) => {
       const b = e.target.closest("[data-nv]");
       if (b?.dataset.nv === "fit") this._fit();
@@ -586,6 +597,7 @@ class AacNodes extends HTMLElement {
       if (b?.dataset.nv === "inst-save") this._saveInstance(b.dataset.node);
       if (b?.dataset.nv === "inst-remove") this._removeInstance(b.dataset.node);
       if (b?.dataset.nv === "mod-save") this._saveModule(b.dataset.module);
+      if (b?.dataset.nv === "core-save") this._saveCore(b.dataset.node);
       if (b?.dataset.nv === "unwire") this._unwire(this._selWire);
       if (b?.dataset.nv === "rename") this._rename(b.dataset.frame);
       if (b?.dataset.nv === "fold") this._fold(b.dataset.frame);
@@ -903,6 +915,36 @@ class AacNodes extends HTMLElement {
     await this.refresh();
   }
 
+  _coreForm(n) {
+    // A core card's own settings (what SETTINGS → Master agent had): the Agent's prompt, the model's temperature, …
+    const field = ([key, f]) => {
+      const v = n.edit_values?.[key], help = f.help ? `<p class="hint" style="margin:.2em 0 0">${esc(f.help)}</p>` : "";
+      if (f.type === "bool") return `<label class="check"><input type="checkbox" data-core-key="${esc(key)}" ${v ? "checked" : ""}>${esc(f.title || key)}</label>${help}`;
+      if (f.type === "multiselect") return `<label>${esc(f.title || key)}</label>${(f.options || []).map(([val, label]) =>
+        `<label class="check"><input type="checkbox" data-core-key="${esc(key)}" data-val="${esc(val)}" ${(v || []).includes(val) ? "checked" : ""}>${esc(label)}</label>`).join("")
+        || '<p class="hint">Home Assistant offers none.</p>'}${help}`;
+      if (f.type === "longtext") return `<label>${esc(f.title || key)}</label><textarea data-core-key="${esc(key)}" class="thin-scroll" style="min-height:${(f.rows || 5) * 1.3}em">${esc(v ?? "")}</textarea>${help}`;
+      return `<label>${esc(f.title || key)}</label><input data-core-key="${esc(key)}" ${f.type === "number" ? 'type="number" step="any"' : ""} value="${esc(v ?? "")}">${help}`;
+    };
+    return `<h3 style="margin-top:1em">SETTINGS</h3>${Object.entries(n.edit_schema).map(field).join("")}
+      <div class="actions"><button class="btn primary" data-nv="core-save" data-node="${esc(n.id)}">Save</button></div>`;
+  }
+
+  async _saveCore(id) {
+    const box = this.querySelector(".nv-info"), n = this._data.nodes.find((x) => x.id === id);
+    if (!n?.edit_schema) return;
+    const values = {};
+    for (const [key, f] of Object.entries(n.edit_schema)) {
+      const els = [...box.querySelectorAll(`[data-core-key="${key}"]`)];
+      if (!els.length) continue;
+      values[key] = f.type === "multiselect" ? els.filter((el) => el.checked).map((el) => el.dataset.val)
+        : f.type === "bool" ? els[0].checked : f.type === "number" ? Number(els[0].value) : els[0].value;
+    }
+    try { await this.ws("aac/nodes/settings", { node: id, values }); this._msg.textContent = "Saved."; }
+    catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
+    await this.refresh();
+  }
+
   _settingsForm(n) {
     const field = ([key, f]) => {
       const v = n.settings?.[key] ?? f.default ?? "";
@@ -975,6 +1017,7 @@ class AacNodes extends HTMLElement {
   }
 
   _info() {
+    this._editing = null;
     const box = this.querySelector(".nv-info"), n = this._data?.nodes.find((x) => x.id === this._sel);
     const fr = this._frames.find((f) => f.id === this._selFrame);
     const wire = this._selWire && this._wires().find((w) => `${w.a.id}.${w.ap}|${w.b.id}.${w.bp}` === this._selWire);
@@ -1015,6 +1058,7 @@ class AacNodes extends HTMLElement {
       </div>
       ${n.type ? `<h3 style="margin-top:1em">THIS NODE</h3>${this._settingsForm(n)}`
         : n.addable ? '<p class="hint">The standard one. "Add node" makes another with its own settings.</p>' : ""}
+      ${n.edit_schema ? this._coreForm(n) : ""}
       ${n.module && !n.type ? this._moduleForm(n.module) : ""}`;
   }
 }

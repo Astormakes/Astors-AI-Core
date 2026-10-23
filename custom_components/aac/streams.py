@@ -84,6 +84,8 @@ class Node:
     # What it does, in plain words: shown on the card and in Add node, and what AAC reads when it builds a graph
     # itself; every node brings one (spec/module.md)
     description: str = ""
+    # A core card's own settings, edited in the node view: (schema, get(domain_id) → values, async set(domain_id, values))
+    edit: tuple[dict[str, Any], Callable[[str], dict[str, Any]], Callable[[str, dict[str, Any]], Awaitable[None]]] | None = None
     # A tool card: provide(message) adds its tool set (and maybe context) when the model it is attached to answers
     provide: Callable[[Any], Awaitable[None]] | None = None
     template: bool = False  # a type that exists only as added instances (not as a node of its own)
@@ -284,6 +286,7 @@ class Bus:
             "nodes": [{"id": n.id, "title": n.title, "module": n.module, "inputs": n.inputs, "outputs": n.outputs,
                        "adds": n.adds, "order": n.order if n.annotating else None, "on": self._on(n, domain_id),
                        "role": n.role, "description": n.description,
+                       **({"edit_schema": n.edit[0], "edit_values": n.edit[1](domain_id)} if n.edit else {}),
                        "kind": "annotating" if n.annotating else "source" if not n.inputs else "sink" if not n.outputs
                        else "transform",
                        # how many records each output carried in the last minutes (the view shows the flow)

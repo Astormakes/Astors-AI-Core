@@ -15,6 +15,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT
+from homeassistant.helpers import llm
+import voluptuous as vol
+
+from .const import (
+    CONF_MAX_TOKENS,
+    CONF_TEMPERATURE,
+    CONF_THINKING,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_THINKING,
+)
 
 from .flow import DECIDE_SETTINGS, MODEL, MODEL_SETTINGS, REPLY
 from .home_api import API_ID as HOME_API_ID
@@ -48,6 +59,12 @@ def model_node(inst_id: str = MODEL, title: str = "Model", settings: dict[str, A
                 settings_schema=MODEL_SETTINGS)
 
 
+def replace_edit(node: Node, edit) -> Node:
+    """The standard model with its settings editable (temperature, answer length, thinking)."""
+    node.edit = edit
+    return node
+
+
 def decide_node(inst_id: str, title: str, settings: dict[str, Any]) -> Node:
     """A Decide card: its outputs are the ones the owner named."""
     names = [o["name"] for o in settings.get("outputs") or [] if isinstance(o, dict) and o.get("name")] or ["yes", "no"]
@@ -62,6 +79,35 @@ DECIDE_HELP = ("Sends the message on through one of its named outputs. A model r
 
 def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
     """The core's cards."""
+
+    def master(domain_id: str) -> dict[str, Any]:
+        return entry.runtime_data.domain(domain_id).settings.master
+
+    def editing(schema: dict[str, Any], keys: dict[str, tuple[str, Any, Any]]):
+        """A core card's settings in the node view, kept in the domain's agent settings (was SETTINGS → Master
+        agent). keys: setting → (stored key, default, validator); a wrong value raises vol.Invalid."""
+        def get(domain_id: str) -> dict[str, Any]:
+            return {k: master(domain_id).get(conf, default) for k, (conf, default, _) in keys.items()}
+
+        async def put(domain_id: str, values: dict[str, Any]) -> None:
+            await entry.runtime_data.domain(domain_id).settings.async_update_master(
+                {keys[k][0]: keys[k][2](v) for k, v in values.items() if k in keys})
+        return schema, get, put
+
+    agent_edit = editing({"prompt": {"type": "longtext", "title": "Prompt", "rows": 8,
+                                     "help": "The assistant's role and manner, e.g. \"You are AAC, a calm home companion.\""}},
+                         {"prompt": (CONF_PROMPT, "", vol.Coerce(str))})
+    model_edit = editing({
+        "temperature": {"type": "number", "title": "Temperature", "help": "0 = always the same answer, higher = more varied (0–2)."},
+        "max_tokens": {"type": "number", "title": "Longest answer (tokens)", "help": "16–131072."},
+        "thinking": {"type": "bool", "title": "Let the model think first (slower; llama.cpp / vLLM)"},
+    }, {"temperature": (CONF_TEMPERATURE, DEFAULT_TEMPERATURE, vol.All(vol.Coerce(float), vol.Range(0, 2))),
+        "max_tokens": (CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS, vol.All(vol.Coerce(int), vol.Range(16, 131072))),
+        "thinking": (CONF_THINKING, DEFAULT_THINKING, vol.Boolean())})
+    ha_apis = [[api.id, api.name] for api in llm.async_get_apis(hass) if not api.id.startswith("aac_")]
+    ha_edit = editing({"apis": {"type": "multiselect", "title": "Home Assistant's tool sets", "options": ha_apis,
+                                "help": "Assist gives live states, timers and HA's to-do lists. None ticked: the card adds nothing."}},
+                      {"apis": (CONF_LLM_HASS_API, [], vol.All([vol.In([a for a, _ in ha_apis])]))})
 
     async def agent(message: ModelRequest) -> None:
         if prompt := (message.domain.settings.master.get(CONF_PROMPT) or "").strip():
@@ -78,10 +124,11 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
         for api_id in message.domain.settings.master.get(CONF_LLM_HASS_API) or []:  # if the owner chose them
             message.add_tools(api_id)
 
-    def card(card_id: str, title: str, provide, help_text: str) -> Node:
+    def card(card_id: str, title: str, provide, help_text: str, edit=None) -> Node:
         def make(inst_id: str, inst_title: str, settings: dict) -> Node:  # the same card on another model
             return Node(id=inst_id, title=inst_title, outputs=CARD, role="tool", provide=provide, settings=settings)
-        return Node(id=card_id, title=title, outputs=CARD, role="tool", provide=provide, make=make, description=help_text)
+        return Node(id=card_id, title=title, outputs=CARD, role="tool", provide=provide, make=make, description=help_text,
+                    edit=edit)
 
     def agent_make(inst_id: str, title: str, settings: dict) -> Node:
         async def annotate(message: ModelRequest) -> None:  # its own prompt instead of the domain's
@@ -105,11 +152,11 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
         *(Node(id=sid, title=title, outputs=OUT, role="source", description=SOURCE_HELP[sid]) for sid, title in SOURCES.items()),
         # In the line: they add to the message
         Node(id="agent", title="Agent", inputs=IN, outputs=OUT, adds=["system"], order=10, annotate=agent, role="transform",
-             description="Adds the assistant's role and manner to the system prompt: the domain's agent prompt (SETTINGS → "
-                         "Master agent → Prompt, e.g. \"You are AAC, a calm home companion …\"). An added Agent card has a "
-                         "prompt of its own, e.g. for a second model with another job.",
+             description="Adds the assistant's role and manner to the system prompt: the domain's agent prompt (in this card's settings, "
+                         "e.g. \"You are AAC, a calm home companion …\"). An added Agent card has a "
+                         "prompt of its own, e.g. for a second model with another job.", edit=agent_edit,
              make=agent_make, settings_schema={"prompt": {**text, "title": "Prompt",
-                                                          "help": "This agent's own prompt (the domain's is on SETTINGS → Master agent)."}}),
+                                                          "help": "This agent's own prompt (the domain's is on the standard Agent card)."}}),
         Node(id="instructions", title="Instructions", inputs=IN, outputs=OUT, adds=["system"], template=True, role="transform",
              description="Adds your own text to the system prompt, e.g. \"Answer in one sentence\" or what a second model "
                          "should check. Stable text, good for the server's prompt cache.",
@@ -124,9 +171,9 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
         card("setup", "Setup (owner present)", setup, "Attach to a model to let it help set AAC itself up (models, memory, "
              "audio, modules, availability rules). Only offered while you are in the chat, never by voice or in automatic runs."),
         card("ha_tools", "Home Assistant tools", ha_tools, "Attach to a model to give it Home Assistant's own Assist tools "
-             "(live states, timers, HA's to-do lists), if you chose them under SETTINGS → Master agent."),
+             "(live states, timers, HA's to-do lists): tick which ones in this card's settings.", ha_edit),
         # The model, Decide, Reply
-        model_node(),
+        replace_edit(model_node(), model_edit),
         Node(id="decide", title="Decide", inputs=IN, outputs={"yes": MESSAGE, "no": MESSAGE}, role="decide", template=True,
              description=DECIDE_HELP,
              make=decide_node, settings_schema=DECIDE_SETTINGS),

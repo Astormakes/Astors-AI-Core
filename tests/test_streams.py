@@ -87,6 +87,32 @@ async def test_node_view_containers(hass, hass_ws_client, mock_entry, configured
     assert [c["name"] for c in (await ws.receive_json())["result"]["containers"]] == ["Ears", "Wakeups"]
 
 
+async def test_core_card_settings_and_positions(hass, hass_ws_client, mock_entry, configured):
+    """The Agent's prompt and the standard model's settings are edited on their cards (no Master agent page);
+    card positions are kept on the server."""
+    from .conftest import setup_aac
+
+    await setup_aac(hass, mock_entry)
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/nodes/settings", "node": "agent", "values": {"prompt": "Be calm."}})
+    assert (await ws.receive_json())["result"]["values"] == {"prompt": "Be calm."}
+    await ws.send_json_auto_id({"type": "aac/nodes/settings", "node": "model", "values": {"temperature": 5}})
+    assert (await ws.receive_json())["error"]["code"] == "invalid"  # 0–2
+    await ws.send_json_auto_id({"type": "aac/nodes/settings", "node": "model", "values": {"temperature": "0.3", "thinking": True}})
+    assert (await ws.receive_json())["result"]["values"]["temperature"] == 0.3
+    await ws.send_json_auto_id({"type": "aac/nodes/settings", "node": "reply", "values": {}})
+    assert (await ws.receive_json())["error"]["code"] == "invalid"
+    master = mock_entry.runtime_data.domain().settings.master
+    assert master["prompt"] == "Be calm." and master["thinking"] is True
+    await ws.send_json_auto_id({"type": "aac/nodes/positions", "positions": {"chat": {"x": 10.4, "y": 20, "pinned": True}}})
+    assert (await ws.receive_json())["success"]
+    await ws.send_json_auto_id({"type": "aac/nodes"})
+    result = (await ws.receive_json())["result"]
+    assert result["positions"] == {"chat": {"x": 10, "y": 20, "pinned": True}}
+    agent = next(n for n in result["nodes"] if n["id"] == "agent")
+    assert agent["edit_values"] == {"prompt": "Be calm."} and "prompt" in agent["edit_schema"]
+
+
 async def test_old_places_move_into_the_graph(hass, hass_storage, mock_entry, configured):
     """Up to 1.0.0-dev.12 a domain's graph was spread over module_settings, module_access and node_view; on load
     it is one record per domain (and the old keys are gone)."""

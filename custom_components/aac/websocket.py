@@ -80,6 +80,8 @@ def async_register(hass: HomeAssistant) -> None:
         ws_modules,
         ws_nodes,
         ws_node_containers,
+        ws_node_settings,
+        ws_node_positions,
         ws_node_wires,
         ws_node_instances,
         ws_node_try,
@@ -667,6 +669,7 @@ def ws_nodes(hass: HomeAssistant, connection, msg) -> None:
         node["module_name"] = names.get(node["module"], "Core") if node["module"] else "Core"
     summary["stream_types"] = STREAM_TYPES
     summary["containers"] = entry.runtime_data.store.graph(dom.id)["containers"]
+    summary["positions"] = entry.runtime_data.store.graph(dom.id).get("positions")  # None: never saved here yet
     summary["by_hand"] = entry.runtime_data.bus.wired_by_hand(dom.id)
     # The modules behind the nodes, with their settings form and values: editable right in the node view
     used = {n["module"] for n in summary["nodes"] if n["module"]}
@@ -767,6 +770,46 @@ async def ws_node_instances(hass: HomeAssistant, connection, msg) -> None:
     await entry.runtime_data.store.async_save()
     async_notify(hass, "modules", domain=dom.id)
     connection.send_result(msg["id"], {"instances": instances})
+
+
+@aac_command({vol.Required("type"): "aac/nodes/settings", vol.Required("node"): str, vol.Required("values"): dict})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_node_settings(hass: HomeAssistant, connection, msg) -> None:
+    """A core card's own settings (the Agent's prompt, the standard model's temperature, …: what SETTINGS →
+    Master agent had), changed in the node view."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    dom = _d(entry, msg)
+    node = entry.runtime_data.bus.nodes_in(dom.id).get(msg["node"])
+    if node is None or node.edit is None:
+        connection.send_error(msg["id"], "invalid", f"{msg['node']} has no settings of its own")
+        return
+    try:
+        await node.edit[2](dom.id, msg["values"])
+    except vol.Invalid as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    async_notify(hass, "modules", domain=dom.id)
+    connection.send_result(msg["id"], {"values": node.edit[1](dom.id)})
+
+
+_POSITION = vol.Schema({vol.Required("x"): vol.Coerce(float), vol.Required("y"): vol.Coerce(float),
+                        vol.Optional("pinned", default=False): bool})
+
+
+@aac_command({vol.Required("type"): "aac/nodes/positions", vol.Required("positions"): {vol.Match(r"^[\w-]{1,60}$"): _POSITION}})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_node_positions(hass: HomeAssistant, connection, msg) -> None:
+    """Where the cards stand in the node view (all of them; kept on the server so every browser sees the same)."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    store = entry.runtime_data.store
+    store.graph(_d(entry, msg).id)["positions"] = {k: {"x": round(p["x"]), "y": round(p["y"]), "pinned": p["pinned"]}
+                                                   for k, p in msg["positions"].items()}
+    await store.async_save()
+    connection.send_result(msg["id"], {})
 
 
 @aac_command({vol.Required("type"): "aac/nodes/containers", vol.Required("containers"): [_CONTAINER]})

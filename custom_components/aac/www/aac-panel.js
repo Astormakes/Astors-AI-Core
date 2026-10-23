@@ -660,7 +660,7 @@ class AacPanel extends HTMLElement {
       </div>
       ${(this._state?.master?.llm_hass_api || []).length ? `<div class="card"><h2>HOME ASSISTANT'S OWN TOOLS ARE ALSO ON</h2>
         <p>The master agent of "${esc(this._state?.domain?.name || "")}" also has Home Assistant's tools (${esc(this._state.master.llm_hass_api.join(", "))}). Those follow HA's own "expose to Assist" setting, not these lists. They also bring things like timers and HA's to-do lists.</p>
-        <div class="actions"><button class="btn primary" id="ent-only-aac">Use only AAC's lists</button><button class="btn" data-go="settings/master">Master agent settings</button></div></div>` : ""}
+        <div class="actions"><button class="btn primary" id="ent-only-aac">Use only AAC's lists</button><button class="btn" data-go="nodes">Home Assistant tools card (Nodes)</button></div></div>` : ""}
       ${Object.entries(groups).map(([area, list]) => `<div class="card"><h2>${esc(area.toUpperCase())} <span class="tag">${list.length}</span>
           <span class="actions" style="margin:0 0 0 auto"><button class="btn" data-acc-area="${esc(area)}" data-acc-to="read">all read</button><button class="btn" data-acc-area="${esc(area)}" data-acc-to="write">all write</button><button class="btn" data-acc-area="${esc(area)}" data-acc-to="none">none</button></span></h2>
         <table class="ent-table"><tbody>${list.map((e) => `<tr><td>${esc(e.name)}<div class="hint" style="margin:0">${esc(e.entity_id)}</div></td><td class="hint">${esc(e.device_class || e.domain)}</td><td class="lits">${tog(e, "read")}${tog(e, "write")}</td></tr>`).join("")}</tbody></table>
@@ -1001,7 +1001,6 @@ class AacPanel extends HTMLElement {
           <div class="seg-title">${icon("settings")}SETTINGS</div><div class="seg-line"></div>
           ${this._tab("settings/appearance", "Appearance")}
           ${this._tab("settings/languages", "Languages", this._stepOpen("languages") ? '<span class="dot open"></span>' : "")}
-          ${this._tab("settings/master", "Master agent")}
           ${this._tab("settings/entities", "Entities", this._stepOpen("entities") ? '<span class="dot open"></span>' : "")}
           ${this._tab("models", "Compute", ["models", "master"].some((x) => this._stepOpen(x)) ? '<span class="dot open"></span>' : "")}
           ${this._tab("settings/audio", "Audio pipeline")}
@@ -1035,7 +1034,7 @@ class AacPanel extends HTMLElement {
     if (v.startsWith("machine/")) return this._renderMachine(v.slice(8));
     if (v === "models/new" || v.startsWith("model/edit/")) return this._renderModelForm();
     if (v.startsWith("model/")) return this._renderModel(v.slice(6));
-    if (v === "settings/master") return this._renderMaster();
+    if (v === "settings/master") { this._view = "nodes"; return this._renderMain(); } // old links: the agent's settings are on its cards now
     if (v === "settings/pools") return this._renderModels();  // old links: the thinking pool lives in Compute now
     if (v === "settings/video") return this._renderVideo();
     if (v === "settings/appearance") return this._renderAppearance();
@@ -1744,28 +1743,6 @@ class AacPanel extends HTMLElement {
       <div class="card"><h2>CAMERAS <span class="tag plan">PLANNED</span></h2><p>Camera sources and detectors, like the audio pipeline: light per source, the heavy models shared from the vision pool.</p></div>`);
   }
 
-  // ---------------------------------------------------------------- settings: master
-  _renderMaster() {
-    const st = this._state;
-    if (!st) return this._page("MASTER AGENT", "", "");
-    const m = st.master;
-    return this._page("MASTER AGENT", st.agent_entity_id ? esc(st.agent_entity_id) : "", `<div class="card" data-autosave="master" data-label="Master agent"><h2>MASTER AGENT ${tip(`The persistent agent that answers, decides and acts. Which model thinks for it is the master role in the thinking pool (SETTINGS → Compute).`)}</h2>
-        <div class="form-grid">
-          <div>
-            <label>Model</label>${this._roleSummary("master")}
-            <label>Tools from Home Assistant</label>
-            ${st.llm_apis.map((a) => `<label class="check"><input type="checkbox" class="m-api" value="${esc(a.id)}" ${(m.llm_hass_api || []).includes(a.id) ? "checked" : ""}>${esc(a.name)}</label>`).join("")}
-            <div class="row">
-              <div><label for="m-temp">Temperature</label><input id="m-temp" type="number" min="0" max="2" step="0.05" value="${esc(m.temperature)}" inputmode="decimal"></div>
-              <div><label for="m-max">Max tokens</label><input id="m-max" type="number" min="16" max="131072" step="1" value="${esc(m.max_tokens)}" inputmode="numeric"></div>
-            </div>
-            <label class="check"><input type="checkbox" id="m-think" ${m.thinking ? "checked" : ""}>Let the model think (slower, llama.cpp / vLLM)</label>
-          </div>
-          <div><label for="m-prompt">Instructions</label><textarea id="m-prompt" class="thin-scroll">${esc(m.prompt)}</textarea></div>
-        </div>
-      </div>`);
-  }
-
   // ---------------------------------------------------------------- settings: audio
   _renderAudio() {
     const a = this._audio;
@@ -1956,7 +1933,6 @@ class AacPanel extends HTMLElement {
     const sr = this.shadowRoot;
     if (key === "toolmode") { this._state.pools = await this._ws("aac/pool/tool_mode", { resource: arg, mode: sr.querySelector("#tm-mode").value }); return; }
     if (key === "audio") return this._saveAudio();
-    if (key === "master") return this._saveMaster();
     if (key === "module") return this._saveModule(arg);
     if (key === "access") return this._saveModuleAccess(arg);
     if (key === "queue") {
@@ -2499,17 +2475,6 @@ class AacPanel extends HTMLElement {
       f.msg = { ok: false, text: e.message || String(e) };
       this._render();
     }
-  }
-
-  async _saveMaster() {
-    const sr = this.shadowRoot;
-    this._state = await this._ws("aac/master/update", {
-      prompt: sr.querySelector("#m-prompt").value,
-      llm_hass_api: [...sr.querySelectorAll(".m-api:checked")].map((el) => el.value),
-      temperature: parseFloat(sr.querySelector("#m-temp").value),
-      max_tokens: parseInt(sr.querySelector("#m-max").value, 10),
-      thinking: sr.querySelector("#m-think").checked,
-    });
   }
 }
 
