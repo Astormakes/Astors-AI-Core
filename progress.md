@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`, its progress file `docs/progress-v1.md` (private).
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-23) – 2.0.0-alpha.6, live on the owner's HA
+## Current state (2026-10-23) – 2.0.0-alpha.7, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -36,6 +36,8 @@ the owner wires them (no automatic wiring), the message is a document of entries
   kept per browser); cards snap into columns (a column per step); Arrange puts them in v1's slots (tools stacked
   under their card, separate chains below each other; undoable, only positions change); wires use v1's routes
   (curves forward, side lanes for tool loops, lanes below the cards for replies and far wires).
+- **Rules editor (alpha.7):** Conditional rules are edited as forms (IF which entries + test, THEN actions with the
+  fields each needs: card and function pickers for calls, output picker; reorder, remove); JSON stays under "As JSON".
 - **One-time steps on the owner's HA:** v1's 05:25 trigger → Schedule card; v1's voice settings; the voice chain
   (Wake word = a Conditional: "computer" or a follow-up; Voice rules = a Relay after the turn); an HA Assist card.
 - **First start** (`defaults.py`): the default domain (Chat → Charter → Time → Model → Chat; Pool "Models"; Lists and
@@ -63,6 +65,6 @@ the owner wires them (no automatic wiring), the message is a document of entries
 ## Next
 
 - Card values in templates (`{{ <card>.<value> }}`); monitor windows on wires in the grid;
-  Save/Load as files; a proper rules editor for Conditional (JSON now); the owner's own tags in the panel.
+  Save/Load as files; the owner's own tags in the panel.
 - Live entries through the flow (today the model streams only to the panel), stop as a message along the wires.
 - Presets; docs/v2 page 2 details for the remaining cards.

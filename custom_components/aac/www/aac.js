@@ -7,6 +7,16 @@ const tip = (html) => `<span class="qm" tabindex="0">?<span class="tip">${html}<
 const W = 180, HEAD = 34, ROW = 20;
 const COL = W + 110; // one slot column (v1: a column per step in the flow)
 const KIND_COLOR = { text: "#f5a623", audio: "#4caf50", pool: "#03a9f4", piece: "#9c27b0" };
+// the Conditional's rules editor: tests and actions with the fields each needs ([field, label, kind])
+const TESTS = { contains: "contains", is: "is exactly", starts: "starts with", ends: "ends with", matches: "matches (regex)",
+  has_tag: "has the tag", count_more: "more entries than", empty: "is empty", always: "always" };
+const ACTIONS = {
+  replace: ["Replace text", [["a", "find", "text"], ["b", "with", "text"]]], insert: ["Insert text", [["a", "text", "text"], ["b", "at", ["end", "start"]]]],
+  remove: ["Remove text", [["a", "text", "text"]]], remove_entries: ["Remove the entries", []], cut: ["Keep only the part", [["a", "after", "text"], ["b", "before", "text"]]],
+  split: ["Split into entries", [["a", "at", "text"]]], join: ["Join into one entry", [["b", "with", "text"]]], case: ["Change case", [["a", "to", ["lower", "upper", "title"]]]],
+  trim: ["Trim spaces", []], tag: ["Add a tag", [["a", "tag", "tag"]]], call: ["Call a wired card", [["card", "card", "card"], ["function", "function", "function"], ["args", "with ({text} = the entry)", "json"]]],
+  stop: ["Send stop", []], signal: ["Send a signal", [["a", "signal", "text"]]], output: ["Send to output", [["a", "output", "output"]]] };
+const KINDS = ["said", "answer", "note", "trailer", "system", "call", "result"];
 const DAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
 const STYLE = `
@@ -85,6 +95,11 @@ textarea { resize: vertical; }
 @keyframes flow { to { stroke-dashoffset: -24; } }
 .grip { flex: none; width: 7px; margin: 0 -4px 0 -3px; cursor: col-resize; position: relative; z-index: 5; touch-action: none; }
 .grip:hover, .grip.drag { background: var(--divider-color); }
+.rule { padding: 8px; margin: 6px 0; font-size: 13px; } .rule .row { display: flex; gap: 4px; align-items: center; }
+.rule .rh { font-size: 11px; font-weight: 600; color: var(--secondary-text-color); margin: 8px 0 2px; letter-spacing: .05em; }
+.rule .rf { display: flex; gap: 4px; align-items: center; margin: 3px 0; } .rule .rf > span { font-size: 12px; color: var(--secondary-text-color); white-space: nowrap; }
+.rule input, .rule select { padding: 4px 6px; font-size: 13px; min-width: 0; }
+.ract { border-left: 3px solid var(--divider-color); padding: 2px 0 4px 8px; margin: 4px 0; }
 .hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
 @media (max-width: 800px) { nav { position: absolute; z-index: 20; height: 100%; transform: translateX(-100%); } .root.navopen nav { transform: none; }
   .palette, .side { width: 170px; } .grip { display: none; } }
@@ -396,8 +411,9 @@ class AacPanel extends HTMLElement {
           <textarea rows="2" data-w="text" placeholder="What to do" style="margin-top:4px">${esc(w.text)}</textarea>
           <button class="small danger" data-delwatch="${i}">Remove</button></div>`).join("")}
         <button class="small" id="addwatch">Add a watch</button>`;
-      if (f.type === "rules") return `<label>${esc(f.title)}${h}${tip(`One rule: {"name": "for me", "select": {"by": "kind" | "tag" | "card" | "any", "value": "said", "which": "newest" | "all"}, "test": "contains" (is, starts, ends, matches, has_tag, count_more, empty, always), "value": "computer", "actions": [{"do": "replace", "a": "x", "b": "y"}, {"do": "tag", "a": "addressed"}, {"do": "call", "card": "lists", "function": "add_items", "args": {"list": "Shopping", "items": ["{text}"]}}, {"do": "output", "a": "yes"}, {"do": "stop"}], "go_on": false}`)}</label>
-        <textarea rows="10" data-set="${esc(key)}" data-json style="font-family:monospace;font-size:12px">${esc(JSON.stringify(v || [], null, 1))}</textarea>`;
+      if (f.type === "rules") return `<label>${esc(f.title)}${h}</label>${this._rulesEditor(c, v || [])}
+        <details style="margin-top:8px"><summary class="hint">As JSON</summary><label>${tip(`One rule: {"name": "for me", "select": {"by": "kind" | "tag" | "card" | "any", "value": "said", "which": "newest" | "all"}, "test": "contains" (is, starts, ends, matches, has_tag, count_more, empty, always), "value": "computer", "actions": [{"do": "replace", "a": "x", "b": "y"}, {"do": "tag", "a": "addressed"}, {"do": "call", "card": "lists", "function": "add_items", "args": {"list": "Shopping", "items": ["{text}"]}}, {"do": "output", "a": "yes"}, {"do": "stop"}], "go_on": false}`)}</label>
+        <textarea rows="10" data-set="${esc(key)}" data-json style="font-family:monospace;font-size:12px">${esc(JSON.stringify(v || [], null, 1))}</textarea></details>`;
       return `<label>${esc(f.title)}${h}</label><input data-set="${esc(key)}" value="${esc(v)}">`;
     };
     return `<label>Name</label><input id="title" value="${esc(c.title)}">
@@ -407,6 +423,56 @@ class AacPanel extends HTMLElement {
       ${Object.keys(c.tags).length ? `<div class="hint" style="margin-top:8px">TAGS ${Object.keys(c.tags).map((x) => `<code>${esc(x)}</code>`).join(" ")}</div>` : ""}
       <div style="margin-top:14px;display:flex;gap:8px"><button class="danger" id="remove">Remove card</button></div>
       <p class="hint">Fields save when you leave them.</p>`;
+  }
+
+  _rulesEditor(c, rules) {
+    const d = this.state.domain, opt = (v, cur, label = v) => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(label)}</option>`;
+    const outputs = Object.keys(c.outputs), cards = d.cards.filter((x) => x.id !== c.id && Object.keys(this._type(x.type)?.functions || {}).length);
+    const field = (act, [k, label, kind]) => {
+      const v = act[k] ?? "";
+      let input;
+      if (Array.isArray(kind)) input = `<select data-a="${k}">${kind.map((o) => opt(o, v || kind[0])).join("")}</select>`;
+      else if (kind === "output") input = `<select data-a="${k}">${outputs.map((o) => opt(o, v)).join("")}</select>`;
+      else if (kind === "card") input = `<select data-a="${k}" data-rerender><option value="">—</option>${cards.map((x) => opt(x.id, v, x.title)).join("")}</select>`;
+      else if (kind === "function") input = `<select data-a="${k}">${Object.keys(this._type(this._card(act.card)?.type)?.functions || {}).map((f) => opt(f, v)).join("")}</select>`;
+      else if (kind === "json") input = `<input data-a="${k}" data-jsonarg value="${esc(typeof v === "string" ? v : JSON.stringify(v || {}))}" placeholder='{"list": "Shopping", "items": ["{text}"]}'>`;
+      else input = `<input data-a="${k}" value="${esc(v)}" ${kind === "tag" ? 'list="aac-tags"' : ""}>`;
+      return `<div class="rf"><span>${esc(label)}</span>${input}</div>`;
+    };
+    const action = (act, j) => `<div class="ract" data-act="${j}"><div class="row"><select data-a="do" data-rerender>${Object.entries(ACTIONS).map(([k, [l]]) => opt(k, act.do, l)).join("")}</select>
+        <button class="small" data-delact="${j}" title="Remove this action">×</button></div>${(ACTIONS[act.do]?.[1] || []).map((f) => field(act, f)).join("")}</div>`;
+    const sel = (r) => r.select || {};
+    const valueList = { kind: KINDS, tag: d.tags.map((t) => t.tag), card: d.cards.map((x) => x.id), any: [] };
+    return `<datalist id="aac-tags">${d.tags.map((t) => `<option value="${esc(t.tag)}">`).join("")}</datalist>
+      ${rules.map((r, i) => `<div class="rule card" data-rule="${i}">
+        <div class="row"><b class="hint">${i + 1}</b><input data-r="name" value="${esc(r.name || "")}" placeholder="Name of the rule">
+          <button class="small" data-moverule="${i}" data-dir="-1" ${i ? "" : "disabled"} title="Up">↑</button><button class="small" data-moverule="${i}" data-dir="1" ${i < rules.length - 1 ? "" : "disabled"} title="Down">↓</button><button class="small danger" data-delrule="${i}" title="Remove the rule">×</button></div>
+        <div class="rh">IF</div>
+        <div class="rf"><span>look at the</span><select data-r="which">${opt("newest", sel(r).which || "newest", "newest")}${opt("all", sel(r).which, "all")}</select>
+          <span>entry by</span><select data-r="by" data-rerender>${["kind", "tag", "card", "any"].map((b) => opt(b, sel(r).by || "kind", b === "any" ? "any entry" : b)).join("")}</select></div>
+        ${(sel(r).by || "kind") !== "any" ? `<div class="rf"><span>=</span><input data-r="svalue" list="aac-sv-${i}" value="${esc(sel(r).value ?? "said")}"><datalist id="aac-sv-${i}">${(valueList[sel(r).by || "kind"] || []).map((x) => `<option value="${esc(x)}">`).join("")}</datalist></div>` : ""}
+        <div class="rf"><select data-r="test" data-rerender>${Object.entries(TESTS).map(([k, l]) => opt(k, r.test || "always", l)).join("")}</select>
+          ${["always", "empty"].includes(r.test || "always") ? "" : `<input data-r="value" value="${esc(r.value ?? "")}" ${r.test === "has_tag" ? 'list="aac-tags"' : ""}>`}</div>
+        <div class="rh">THEN</div>
+        ${(r.actions || []).map(action).join("")}
+        <button class="small" data-addact="${i}">Add an action</button>
+        <label class="check" style="margin-top:6px"><input type="checkbox" data-r="go_on" ${r.go_on ? "checked" : ""}>then go on checking the next rules</label></div>`).join("")}
+      <button class="small" id="addrule">Add a rule</button>`;
+  }
+
+  _collectRules() {
+    return [...this.shadowRoot.querySelectorAll("[data-rule]")].map((box) => {
+      const get = (k) => box.querySelector(`[data-r="${k}"]`);
+      const rule = { name: get("name").value, select: { by: get("by").value, value: get("svalue")?.value ?? "", which: get("which").value },
+        test: get("test").value, value: get("value")?.value ?? "", go_on: get("go_on").checked, actions: [] };
+      for (const a of box.querySelectorAll("[data-act]")) {
+        const act = {};
+        a.querySelectorAll("[data-a]").forEach((el) => { act[el.dataset.a] = el.value; });
+        if (act.args !== undefined) { try { act.args = JSON.parse(act.args || "{}"); } catch (err) { act.args = {}; } }
+        rule.actions.push(act);
+      }
+      return rule;
+    });
   }
 
   _drawGrid() {
@@ -798,6 +864,13 @@ class AacPanel extends HTMLElement {
     const saveList = async (key, list) => { await this.ws("aac/card/update", { card: this.sel, settings: { [key]: list } }); await this._load(); this.render(); };
     $$("[data-entry] input, [data-entry] textarea").forEach((el) => el.addEventListener("change", () => saveList("entries", collect("[data-entry]", "data-e"))));
     $$("[data-watch] input, [data-watch] textarea").forEach((el) => el.addEventListener("change", () => saveList("watches", collect("[data-watch]", "data-w"))));
+    // Conditional rules: the whole list is saved on any change
+    $$("[data-rule] input, [data-rule] select").forEach((el) => el.addEventListener("change", () => saveList("rules", this._collectRules())));
+    $("#addrule")?.addEventListener("click", () => saveList("rules", [...this._collectRules(), { name: "", select: { by: "kind", value: "said", which: "newest" }, test: "contains", value: "", actions: [{ do: "output", a: "out" }] }]));
+    $$("[data-delrule]").forEach((el) => el.addEventListener("click", () => { if (confirm("Remove this rule?")) saveList("rules", this._collectRules().filter((_, i) => i !== Number(el.dataset.delrule))); }));
+    $$("[data-moverule]").forEach((el) => el.addEventListener("click", () => { const r = this._collectRules(), i = Number(el.dataset.moverule), j = i + Number(el.dataset.dir); [r[i], r[j]] = [r[j], r[i]]; saveList("rules", r); }));
+    $$("[data-addact]").forEach((el) => el.addEventListener("click", () => { const r = this._collectRules(); r[Number(el.dataset.addact)].actions.push({ do: "tag", a: "" }); saveList("rules", r); }));
+    $$("[data-delact]").forEach((el) => el.addEventListener("click", () => { const r = this._collectRules(), i = Number(el.closest("[data-rule]").dataset.rule); r[i].actions.splice(Number(el.dataset.delact), 1); saveList("rules", r); }));
     $("#addentry")?.addEventListener("click", () => saveList("entries", [...collect("[data-entry]", "data-e"), { name: "New", at: "08:00", weekdays: [], text: "", enabled: true }]));
     $("#addwatch")?.addEventListener("click", () => saveList("watches", [...collect("[data-watch]", "data-w"), { name: "New", entity_id: "", to: "", text: "", cooldown: 300 }]));
     $$("[data-delentry]").forEach((el) => el.addEventListener("click", () => saveList("entries", collect("[data-entry]", "data-e").filter((_, i) => i !== Number(el.dataset.delentry)))));
