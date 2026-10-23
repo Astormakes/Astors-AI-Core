@@ -2,7 +2,7 @@
 
 Running log for AAC. Read this first in a new session. Newest state on top. The long v0 history is in `docs/history-v0.md` (private).
 
-## Current state (2026-10-23) – 1.0.0-dev.66
+## Current state (2026-10-23) – 1.0.0-dev.67
 
 - **v1 on `main`**, live on the owner's HA (owner: "I'm not really using it, work on the real HA"; only the lists matter, exported to `docs/aac-lists-2026-10-23.md`). The last v0 is the tag `v0.50.1-last-v0`. `scripts/deploy_ha.sh` needs `AAC_ALLOW_V1=1`.
 - **The graph** (`spec/graph.md`, owner's design of 2026-10-23): a message is a document of tagged entries (`request.py`); every node writes into it; a model card (`model_node.py`) reads it all as an ordinary chat with tools; **its wired nodes are its tools** (calling one sends the document there and waits until it comes back: a loop, `flow.Step.call`); round outputs copy to every wire, square ones (model, Decide) choose; endpoints (`chat`, `voice`, `assist`) take answers home; the chat keeps its document (edits change it; expert view in the chat: every entry and the way, e.g. Panel chat › Model › Home › Model).
@@ -20,6 +20,7 @@ Running log for AAC. Read this first in a new session. Newest state on top. The 
 - **Wire monitor:** click a wire → Monitor: a window above it shows what passes, live (`flow` events from `bus.on_record`); click it → the newest whole message (pointers, way, variables, entries) and the last records on the right (`aac/nodes/monitor`).
 - **Mirrored cards:** a card whose every wire goes to cards above it in its own column (tool cards under the model) has its input on the right and output on the left; both loop wires run straight down the sides.
 - **Card panel saves on its own:** every field saves when you leave it (name, settings, module settings, tool names); the separate Save/Rename buttons are hidden.
+- **Undo covers the setup:** before every change (cards, wires, names, tool names, hidden, single, built-in and module settings) a snapshot is kept in the browser; Undo restores the last one (with Tidy layouts, up to 10 steps).
 - **HA templates in the text cards** (Header, Trailer, Context) and **card values** (`message.vars`, `{{ <card id>.<name> }}`; Heard lines and Buffer set some): spec/graph.md "Templates and values". Next: more cards hand on values.
 - **Nodes page fills the window** (no page scroll; the graph scrolls). Drag handles: left sidebar edge and between graph and info panel (widths per browser, double-click resets). **Hidden cards:** unwired cards of modules that are off, and unwired pool cards, stay out of the grid; unwired built-in cards have "Hide from the grid" (`aac/nodes/hidden`); the sidebar marks them, a click or drag brings one back.
 - **What the model got, part by part:** each recorded request has `sources` (where: system/chat/end/tools, from: card or built-in part, chars, text, `outside`: no card wrote it). The chat's ⚡ view is the one place: a chat view of the document as the model reads it, every bubble folds; dashed bubbles are from outside the document (tools' instructions, the tools field, the time). The 🔍 view opens with "Where it comes from".

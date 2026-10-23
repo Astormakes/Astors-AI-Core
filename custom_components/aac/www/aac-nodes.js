@@ -169,7 +169,7 @@ class AacNodes extends HTMLElement {
             <span class="nv-addmenu" style="display:none;position:absolute;top:100%;left:0;z-index:5;min-width:16em;max-width:min(24em, 70vw);background:var(--bg2, #111);border:1px solid var(--line);border-radius:.4em;padding:.3em 0"></span></span>
           <button class="btn" data-nv="group" title="Put the nodes selected with Shift/Ctrl-click into a named container">Group</button>
           <button class="btn" data-nv="tidy" title="Lay every card out again in its slot (column = its place in the flow)">Tidy</button>
-          <button class="btn" data-nv="undo" title="Back to the layout before Tidy">Undo</button>
+          <button class="btn" data-nv="undo" title="Undo the last change: wires, cards, names, settings, or the layout before Tidy (up to 10 steps)">Undo</button>
           <button class="btn" data-nv="fit">Fit</button>
           <button class="btn" data-nv="vars" title="Every variable the cards' texts can use, and where it comes from">Variables</button>
           <button class="btn" data-go="settings/modules" title="Every module: switch on or off, hide, open its page">Modules</button>
@@ -431,7 +431,52 @@ class AacNodes extends HTMLElement {
     }
   }
 
+  // Undo for the setup too (owner, 2026-10-23: "hook up the undo button to these sorts of things"): before every
+  // change the domain's whole setup is kept; Undo puts the last one back, sending only what differs
+  _graphSnap() {
+    const d = this._data || {}, nodes = this._all || d.nodes || [];
+    return JSON.parse(JSON.stringify({
+      instances: this._instances(), wires: d.by_hand ? this._current() : null, names: d.names || {}, single: d.single || [],
+      hidden: d.hidden || [], titles: d.titles || {},
+      core: Object.fromEntries(nodes.filter((n) => n.edit_values && !n.type).map((n) => [n.id, n.edit_values])),
+      modules: Object.fromEntries(Object.entries(d.modules || {}).map(([id, m]) => [id, { values: m.values || {}, enabled: m.enabled }])),
+    }));
+  }
+
+  _remember() {
+    if (this._restoring || !this._data) return;
+    this._undo.push({ graph: this._graphSnap() });
+    this._undo = this._undo.slice(-UNDO_STEPS);
+    this._save(); this._mode();
+  }
+
+  async _restoreGraph(want) {
+    const now = this._graphSnap(), same = (a, b) => JSON.stringify(a) === JSON.stringify(b), ws = (t, d) => this.ws(t, d);
+    this._restoring = true;
+    try {
+      if (!same(want.instances, now.instances)) await ws("aac/nodes/instances", { instances: want.instances });
+      if (!same(want.wires, now.wires) || want.instances !== now.instances) await ws("aac/nodes/wires", { wires: want.wires });
+      if (!same(want.names, now.names)) await ws("aac/nodes/names", { names: want.names });
+      if (!same(want.single, now.single)) await ws("aac/nodes/single", { single: want.single });
+      if (!same(want.hidden, now.hidden)) await ws("aac/nodes/hidden", { hidden: want.hidden });
+      for (const id of new Set([...Object.keys(want.titles), ...Object.keys(now.titles)]))
+        if ((want.titles[id] || "") !== (now.titles[id] || "")) await ws("aac/nodes/title", { node: id, title: want.titles[id] || "" });
+      for (const [id, values] of Object.entries(want.core))
+        if (now.core[id] && !same(values, now.core[id])) await ws("aac/nodes/settings", { node: id, values });
+      for (const [id, m] of Object.entries(want.modules)) {
+        const cur = now.modules[id];
+        if (!cur) continue;
+        if (!same(m.values, cur.values)) await ws("aac/module/settings", { module: id, values: m.values });
+        if (m.enabled !== cur.enabled) await ws("aac/module/access", { module: id, values: { enabled: m.enabled } });
+      }
+      this._msg.textContent = "Undone.";
+    } catch (err) { this._msg.textContent = `Undo failed: ${err.message || err}`; }
+    finally { this._restoring = false; }
+    await this.refresh();
+  }
+
   _undoLayout() {
+    if (this._undo.at(-1)?.graph) { this._restoreGraph(this._undo.pop().graph).then(() => { this._save(); this._mode(); }); return; }
     const last = this._undo.pop();
     if (!last) return;
     this._physics = false; // the restored layout stays as it was
@@ -819,6 +864,7 @@ class AacNodes extends HTMLElement {
       if (!key) return;
       const single = new Set(this._data.single || []);
       if (e.target.checked) single.add(key); else single.delete(key);
+      this._remember();
       try { await this.ws("aac/nodes/single", { single: [...single] }); } catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
       await this.refresh();
     });
@@ -1067,6 +1113,7 @@ class AacNodes extends HTMLElement {
   }
 
   async _setWires(wires) {
+    this._remember();
     try { await this.ws("aac/nodes/wires", { wires }); this._msg.textContent = ""; }
     catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
     await this.refresh();
@@ -1099,6 +1146,7 @@ class AacNodes extends HTMLElement {
   }
 
   async _setInstances(instances) {
+    this._remember();
     try { await this.ws("aac/nodes/instances", { instances }); this._msg.textContent = ""; }
     catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
     await this.refresh();
@@ -1212,6 +1260,7 @@ class AacNodes extends HTMLElement {
 
   async _retitle(id) {
     const title = this.querySelector(".nv-info [data-core-title]")?.value ?? "";
+    this._remember();
     try { await this.ws("aac/nodes/title", { node: id, title }); this._msg.textContent = "Renamed."; }
     catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
     await this.refresh(true);
@@ -1221,6 +1270,7 @@ class AacNodes extends HTMLElement {
   async _hide(id, hide) {
     const hidden = new Set(this._data.hidden || []);
     if (hide) { hidden.add(id); this._reveal?.delete(id); if (this._sel === id) this._sel = null; } else hidden.delete(id);
+    this._remember();
     try { await this.ws("aac/nodes/hidden", { hidden: [...hidden] }); } catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
     await this.refresh(true);
     this._info();
@@ -1331,6 +1381,7 @@ class AacNodes extends HTMLElement {
     }
     const on = box.querySelector("[data-mod-on]")?.checked;
     try {
+      this._remember();
       if (Object.keys(values).length) await this.ws("aac/module/settings", { module: id, values });
       if (on !== undefined && on !== m.enabled) await this.ws("aac/module/access", { module: id, values: { enabled: on } });
       this._msg.textContent = "Saved.";
@@ -1390,6 +1441,7 @@ class AacNodes extends HTMLElement {
       const key = `${id}.${el.dataset.namePort}`;
       names[key] = { ...(names[key] || {}), [el.dataset.nameKey]: el.value.trim() };
     }
+    this._remember();
     try { await this.ws("aac/nodes/names", { names }); this._msg.textContent = "Saved."; }
     catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
     await this.refresh();
@@ -1405,6 +1457,7 @@ class AacNodes extends HTMLElement {
       values[key] = f.type === "multiselect" ? els.filter((el) => el.checked).map((el) => el.dataset.val)
         : f.type === "bool" ? els[0].checked : f.type === "number" ? Number(els[0].value) : els[0].value;
     }
+    this._remember();
     try { await this.ws("aac/nodes/settings", { node: id, values }); this._msg.textContent = "Saved."; }
     catch (err) { this._msg.textContent = `Not saved: ${err.message || err}`; }
     await this.refresh();

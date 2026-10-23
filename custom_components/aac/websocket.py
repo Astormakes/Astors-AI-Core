@@ -693,6 +693,7 @@ def ws_nodes(hass: HomeAssistant, connection, msg) -> None:
     summary["names"] = entry.runtime_data.store.graph(dom.id).get("names") or {}  # inputs named for the models
     summary["single"] = entry.runtime_data.store.graph(dom.id).get("single") or []  # round outputs with one wire
     summary["hidden"] = entry.runtime_data.store.graph(dom.id).get("hidden") or []  # cards kept out of the grid
+    summary["titles"] = entry.runtime_data.store.graph(dom.id).get("titles") or {}  # own names of built-in cards
     summary["variables"] = {"builtin": BUILTIN_VARS, "ha": HA_TEMPLATE_HELP}  # for templates (Variables overview)
     summary["categories"] = CATEGORIES
     summary["by_hand"] = entry.runtime_data.bus.wired_by_hand(dom.id)
