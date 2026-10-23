@@ -68,6 +68,7 @@ async def test_what_reaches_the_model(hass: HomeAssistant, aioclient_mock, mock_
     assert froms[0] == ("system", "Charter") and ("system", "Agent") in froms
     assert ("chat", "Panel chat") in froms and froms.count(("end", "Model card (built in): the local time")) == 1
     assert any(w == "tools" for w, _ in froms) and all(x["chars"] > 0 for x in sources)
+    assert all(x.get("outside") for x in sources if x["where"] == "tools") and not any(x.get("outside") for x in sources if x["from"] == "Charter")
 
     await async_set_access(mock_entry, "lists", "assistant", {"enabled": False})
     await async_run_request(hass, mock_entry, "hi", kind="chat", trigger="chat", title="t")

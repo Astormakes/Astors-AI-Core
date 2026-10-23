@@ -158,7 +158,8 @@ SOURCE_TEXT = 20000  # characters per recorded part
 def _sources(message: Message, me: str, titles: dict[str, str], system: list[dict[str, Any]], time_note: str | None,
              offered: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Everything one model call got, in order, each part with the card it came from: the system prompt's parts,
-    the document's entries as this model reads them, what goes at the end, the tool definitions."""
+    the document's entries as this model reads them, what goes at the end, the tool definitions. `outside`: no
+    card wrote it into the document (tools' instructions and definitions, built-in parts)."""
     mine = {e["data"].get("call_id") for e in message.entries if e["kind"] == "call" and e["data"].get("model") == me}
     to_me = {e["data"].get("call_id") for e in message.entries if e["kind"] == "call" and e["data"].get("node") == me}
     found = [{**s, "kind": "system"} for s in system]
@@ -175,11 +176,12 @@ def _sources(message: Message, me: str, titles: dict[str, str], system: list[dic
         (trailers if e["kind"] == "trailer" else found).append(part)
     found += trailers
     if time_note:
-        found.append({"where": "end", "from": "Model card (built in): the local time", "kind": "note", "text": time_note})
+        found.append({"where": "end", "from": "Model card (built in): the local time", "kind": "note", "text": time_note,
+                      "outside": True})
     for t in offered or []:
         spec = json_dumps(t.get("function") or {})
         found.append({"where": "tools", "from": t.get("function", {}).get("name", "?"), "kind": "tool",
-                      "text": (t.get("function", {}).get("description") or "")[:600], "chars": len(spec)})
+                      "text": (t.get("function", {}).get("description") or "")[:600], "chars": len(spec), "outside": True})
     for part in found:
         part.setdefault("chars", len(part["text"]))
         part["text"] = part["text"][:SOURCE_TEXT]
@@ -297,8 +299,9 @@ class ModelNode:
         else:
             texts = [render(llm.DEFAULT_INSTRUCTIONS_PROMPT)]
             sources = [{"where": "system", "from": "Home Assistant's default instructions (no card writes a system prompt)",
-                        "text": texts[0]}]
-        sources += [{"where": "system", "from": f"{title}: its tools' instructions", "text": t} for title, t in tool_prompts]
+                        "text": texts[0], "outside": True}]
+        sources += [{"where": "system", "from": f"{title}: its tools' instructions", "text": t, "outside": True}
+                    for title, t in tool_prompts]
         return "\n\n".join([*texts, *(t for _, t in tool_prompts)]), sources
 
     async def _tools(self, message: Message, targets: list, menu: bool) -> tuple[list[dict[str, Any]], list[tuple[str, str]], dict[str, Any]]:

@@ -1277,19 +1277,23 @@ class AacPanel extends HTMLElement {
     }).join("");
   }
 
+  // A recorded request, loaded after this render (no render inside a render)
+  _loadWhy(runId) {  // its own cache: this._why says which 🔍 panels are open
+    const c = (this._reqCache ||= {});
+    if (c[runId]) return c[runId];
+    c[runId] = "loading";
+    this._ws("aac/run/request", { run_id: runId }).then((r) => { c[runId] = r; }, (e) => { c[runId] = { error: e.message || String(e) }; })
+      .then(() => this._render());
+    return "loading";
+  }
+
   // The chat's answers, one at a time: what each model call got, part by part
   _sourcesPageHtml(chat) {
     const answers = (chat?.messages || []).map((m, i) => ({ m, i })).filter(({ m }) => m.role === "aac" && m.run_id).reverse();
     if (!answers.length) return '<div class="welcome">No answer in this chat yet.</div>';
     const sel = answers.some(({ m }) => m.run_id === this._srcRun) ? this._srcRun : answers[0].m.run_id;
-    this._why ||= {};
-    if (!this._why[sel]) {  // loaded after this render (no render inside a render)
-      this._why[sel] = "loading";
-      this._ws("aac/run/request", { run_id: sel }).then((r) => { this._why[sel] = r; }, (e) => { this._why[sel] = { error: e.message || String(e) }; })
-        .then(() => this._render());
-    }
+    const w = this._loadWhy(sel);
     const short = (t) => (t = String(t || "(no text)").replace(/\s+/g, " ").trim()).length > 70 ? `${t.slice(0, 70)}…` : t;
-    const w = this._why[sel];
     const pick = `<select id="src-run" aria-label="Which answer">${answers.map(({ m }, n) => `<option value="${esc(m.run_id)}" ${m.run_id === sel ? "selected" : ""}>${n ? "" : "Newest · "}${esc(short(m.text))}</option>`).join("")}</select>`;
     return `<div class="card why" style="border-top:1px solid var(--line);margin-top:0"><h2>WHAT THE MODEL GOT</h2>
       <p class="hint">Everything that went to the model for one answer, in order, with the card or built-in part it came from. The ⚡ view shows what the cards wrote; this shows what the model really read (tool instructions and definitions included).</p>
@@ -1335,7 +1339,7 @@ class AacPanel extends HTMLElement {
     const msgs = chat?.messages || [];
     const isAac = chat?.id === "aac";
     const log = this._srcView && chat ? this._sourcesPageHtml(chat)
-      : this._expert && chat?.entries?.length ? this._expertHtml(chat.entries)
+      : this._expert && chat?.entries?.length ? this._expertHtml(chat.entries, msgs)
       : msgs.length
       ? msgs.map((m, i) => this._bubbleHtml(m, i, msgs, { editable: !isAac, details: isAac, key: "m" })).join("")
       : `<div class="welcome"><div class="big">AAC</div>${this._chatGone ? "That chat no longer exists (it was deleted). This is a new chat."
@@ -1361,11 +1365,23 @@ class AacPanel extends HTMLElement {
   }
 
   // The chat's document (spec/graph.md): every entry with the card that wrote it; per turn the way it took
-  _expertHtml(entries) {
+  _expertHtml(entries, msgs = []) {
     const KIND = { system: "system prompt", note: "note", trailer: "trailer", user: "said", answer: "answered", call: "called", result: "result" };
     const titles = Object.fromEntries((this._nodeTitles || []).map((n) => [n.id, n.title]));
     const name = (id) => titles[id] || id;
-    const out = [];
+    // Extended (owner: "an extended view for the flash view"): under each answer, what that model call got on top
+    // of the document: its tools' instructions and definitions, built-in parts
+    const runOf = Object.fromEntries(msgs.filter((m) => m.entry && m.run_id).map((m) => [m.entry, m.run_id]));
+    const out = [`<label class="check" style="margin:0 0 .8em"><input type="checkbox" id="expert-plus" ${this._expertPlus ? "checked" : ""}>
+      Also show what each model got outside this document (tool instructions and definitions, built-in parts)</label>`];
+    const plus = (runId) => {
+      const w = this._loadWhy(runId);
+      if (w === "loading") return '<div class="why"><span class="hint">Loading…</span></div>';
+      if (w.error || !w.sources) return `<div class="why"><span class="hint">${esc(w.error || "Recorded before the parts got their sources.")}</span></div>`;
+      const outside = w.sources.filter((x) => x.outside), sum = outside.reduce((a, x) => a + x.chars, 0);
+      return `<details class="why"><summary>+ OUTSIDE THE DOCUMENT · ~${Math.round(sum / 4).toLocaleString()} tok of ~${Math.round(w.sources.reduce((a, x) => a + x.chars, 0) / 4).toLocaleString()}</summary>
+        ${this._sourcesHtml({ ...w, sources: outside })}</details>`;
+    };
     let way = null;
     const flush = () => { if (way?.length > 1) out.push(`<div class="hint" style="margin:.2em 0 .8em">${way.map((id) => esc(name(id))).join(" › ")}</div>`); };
     for (const e of entries) {
@@ -1374,7 +1390,8 @@ class AacPanel extends HTMLElement {
       const tags = (e.tags || []).filter((t) => t !== e.by);
       out.push(`<div class="bubble ${e.kind === "user" ? "user" : "aac"}" style="${e.kind === "system" || e.kind === "note" || e.kind === "trailer" ? "opacity:.75" : ""}">
         <div class="who">${esc(name(e.by).toUpperCase())} · ${esc(KIND[e.kind] || e.kind)}${tags.length ? ` <span class="hint">#${tags.map(esc).join(" #")}</span>` : ""}</div>
-        <div class="txt" style="white-space:pre-wrap">${esc(e.text.length > 1500 ? `${e.text.slice(0, 1500)} …` : e.text)}</div></div>`);
+        <div class="txt" style="white-space:pre-wrap">${esc(e.text.length > 1500 ? `${e.text.slice(0, 1500)} …` : e.text)}</div>
+        ${this._expertPlus && e.kind === "answer" && runOf[e.id] ? plus(runOf[e.id]) : ""}</div>`);
     }
     flush();
     return out.join("");
@@ -2469,6 +2486,7 @@ class AacPanel extends HTMLElement {
     });
     sr.querySelectorAll("[data-why]").forEach((el) => el.addEventListener("click", () => this._toggleWhy(el.dataset.why)));
     sr.querySelector("#chat-prefs")?.addEventListener("click", () => { this._prefsOpen = !this._prefsOpen; this._render(); });
+    sr.querySelector("#expert-plus")?.addEventListener("change", (e) => { this._expertPlus = e.target.checked; this._render(); });
     sr.querySelector("#chat-sources")?.addEventListener("click", () => { this._srcView = !this._srcView; if (this._srcView) this._expert = false; this._render(); });
     sr.querySelector("#src-run")?.addEventListener("change", (e) => { this._srcRun = e.target.value; this._render(); });
     sr.querySelector("#chat-expert")?.addEventListener("click", async () => {
