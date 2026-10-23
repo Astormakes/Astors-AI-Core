@@ -99,8 +99,16 @@ it with an end marker ("ends the paragraph"). This is meant for audio (where and
 but is the same for every node, so people can try their own experiments: cut speech with a pause rule, with a
 small model, with anything else.
 
-- **Live or whole, per input.** A node's input says whether it gets every piece as it comes (`live`) or only
-  closed entries (`whole`, the default). Every node that exists today stays `whole` and works unchanged.
+- **What a node does with pieces is the node's own business** (no wire setting). Every node sees the pieces;
+  only the stop signal (`close`) matters to some of them:
+  - nodes that do not care let the pieces through: the charter, the agent prompt, instructions, context keep
+    one standing entry at the start and replace it in place, so a growing "I", "I want", "I want to …" still
+    has the charter once;
+  - nodes that need a finished thought wait for the stop: the model card (today's models cannot react to half
+    a sentence), Buffer, Decide, files, tools;
+  - nodes that work live act on every piece: speech to text, Voice, a cut. A module may bring a node that
+    reacts live in its own way (owner: "maybe someone will build a module card that is able to react live with
+    some crazy magic and model constellation"); the graph does not need to know how.
 - **One writer per live entry.** Only the node that opened an entry adds to it, replaces its text (a live
   transcript rewrites its last words) or closes it. Nobody else closes it: a node that wants to decide where
   something ends reads it live and writes **its own** entries.
@@ -111,7 +119,7 @@ small model, with anything else.
     finished. A `Cut` node with a pause rule is built in; a model card can do the same job (owner: "in this
     particular installation I wanted to try using a model for it"). Whether that is fast enough is the
     installation's question, not the graph's;
-  - whole → whole: everything else (Buffer, Decide, tools, files, a model's tool calls).
+  - whole → whole: everything that waits for the stop (Buffer, Decide, tools, files, a model's tool calls).
   A model card can write its answer live (the panel chat and Voice read it as it comes).
 - **Pieces:** `open` (a new entry, its pointers: source/satellite id, speaker …), `add` (append), `replace`
   (new text for the open entry), `close`, `cancel` (stop an open entry, e.g. someone talks while AAC is still
