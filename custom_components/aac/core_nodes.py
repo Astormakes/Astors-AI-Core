@@ -149,7 +149,8 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                 step.deliver(message)
             return []
 
-        return Node(id=sid, title=title or SOURCES[sid], inputs=IN, outputs=OUT, role="endpoint",
+        # Voice only speaks (owner, 2026-10-23: spoken lines start at a Speech to text card now, not here)
+        return Node(id=sid, title=title or SOURCES[sid], inputs=IN, outputs={} if kind == "voice" else OUT, role="endpoint",
                     description=SOURCE_HELP[kind], handle=handle, settings=settings or {})
 
     def render(text: str, message: Message) -> str:

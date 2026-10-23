@@ -184,8 +184,8 @@ listed under **Audio** in "Add node", each removable and addable:
    window (e.g. 1.5 s after the first) into one message, each candidate an entry with its satellite, start time
    and level. A model (or a simple rule card: longest, most confident) then picks the transcript that makes the
    most sense, and the answer goes to that candidate's satellite. Costs the window plus one short model call.
-5. **Voice out**: the answer goes back to the satellite whose id travels with the message (later: speaking while
-   the model still writes).
+5. **Voice out**: the Voice card (input only since 1.0.0-dev.63: nothing starts there any more) speaks an answer
+   at the satellite whose id travels with the message (later: speaking while the model still writes).
 6. Removed (1.0.0-dev.60, owner: "remove everything that isn't going to be used in the new system"): Hearing and
    its types (`audio.pcm`, `audio.segment`, `text.line`, `sound.event`), the modules Wake word, Companion, STT,
    Sounds, Voices, the Heard lines card, the transcript. Speech to text keeps a voice chat per satellite (setting

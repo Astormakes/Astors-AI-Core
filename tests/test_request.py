@@ -37,7 +37,7 @@ async def test_automatic_wiring(hass: HomeAssistant, mock_entry, configured):
     assert ("chat.out", "charter.in") in wires and not any("agent" in a + b for a, b in wires)  # no Agent card (owner)
     assert ("charter.out", "time.in") in wires and ("time.out", "model.in") in wires  # the default Time trailer
     assert ("charter.out", "memory.in") not in wires and ("time.out", "memory.in") not in wires  # memory hangs under the model
-    assert ("voice.out", "charter.in") in wires and ("triggers.out", "charter.in") in wires
+    assert not any(a.startswith("voice.") for a, _ in wires) and ("triggers.out", "charter.in") in wires  # Voice only speaks
     assert not any(a.startswith("heartbeat.") for a, _ in wires)  # its module is off by default
     assert {("model.out", "chat.in"), ("model.out", "voice.in"), ("model.out", "assist.in")} <= wires
     for tool in ("home", "memory", "lists_tools"):

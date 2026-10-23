@@ -249,13 +249,13 @@ async def test_try_it_shows_the_way(hass, hass_ws_client, aioclient_mock, mock_e
     await setup_aac(hass, mock_entry)
     _model_answers(aioclient_mock, "Hi there.")
     ws = await hass_ws_client(hass)
-    await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "hello", "source": "voice"})
+    await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "hello", "source": "assist"})
     result = (await ws.receive_json())["result"]
-    assert result["answer"] == "Hi there." and result["source"] == "voice" and result["model_node"] == "model"
+    assert result["answer"] == "Hi there." and result["source"] == "assist" and result["model_node"] == "model"
     steps = {s["node"]: s for s in result["trace"]}
     assert steps["charter"]["added"][0]["kind"] == "system" and steps["charter"]["added"][0]["text"].startswith("Charter")
     assert steps["model"]["role"] == "model"
-    assert [s["node"] for s in result["trace"]][:3] == ["voice", "charter", "time"]
+    assert [s["node"] for s in result["trace"]][:3] == ["assist", "charter", "time"]
 
 
 async def test_build_a_voice_way(hass, hass_ws_client, aioclient_mock, mock_entry, configured):
@@ -276,19 +276,19 @@ async def test_build_a_voice_way(hass, hass_ws_client, aioclient_mock, mock_entr
         "room": {"type": "context", "title": "Room", "settings": {"text": "The user is in the bedroom."}},
         "vmodel": {"type": "model", "title": "Voice model"}}})
     assert (await ws.receive_json())["success"]
-    line = ["voice", "calm", "short", "room", "vmodel"]
-    wires = [w for w in view["wires"] if not w["from"].startswith("voice.")]
+    line = ["assist", "calm", "short", "room", "vmodel"]
+    wires = [w for w in view["wires"] if not w["from"].startswith("assist.")]
     wires += [{"from": f"{a}.out", "to": f"{b}.in"} for a, b in zip(line, line[1:])]
-    wires += [{"from": "vmodel.out", "to": "voice.in"}, {"from": "vmodel.out", "to": "home.in"}, {"from": "home.out", "to": "vmodel.in"}]
+    wires += [{"from": "vmodel.out", "to": "assist.in"}, {"from": "vmodel.out", "to": "home.in"}, {"from": "home.out", "to": "vmodel.in"}]
     await ws.send_json_auto_id({"type": "aac/nodes/wires", "wires": wires})
     assert (await ws.receive_json())["success"]
 
     runs_before = len(mock_entry.runtime_data.runs.runs)
-    await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "Are the lights on?", "source": "voice"})
+    await ws.send_json_auto_id({"type": "aac/nodes/try", "text": "Are the lights on?", "source": "assist"})
     result = (await ws.receive_json())["result"]
     assert result["answer"] == "Lights are off."
     assert len(mock_entry.runtime_data.runs.runs) == runs_before + 1  # the standard model was not woken by the home
-    assert [t["node"] for t in result["trace"]][:5] == ["voice", "calm", "short", "room", "vmodel"]
+    assert [t["node"] for t in result["trace"]][:5] == ["assist", "calm", "short", "room", "vmodel"]
     system, user = calls[-1]["messages"][0]["content"], calls[-1]["messages"][1]["content"]
     assert system.startswith("Be calm.") and "Answer in one sentence." in system and "Charter (the owner" not in system
     assert "The user is in the bedroom." in user
