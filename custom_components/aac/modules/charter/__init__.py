@@ -20,8 +20,10 @@ async def async_setup_module(ctx: ModuleContext) -> None:
 
     # Added charters (another chain, e.g. for voice or a work assistant) have their own text
     # Renamed Header (owner, 2026-10-23: "remove the header and rename the charter since they are basically the same")
-    ctx.add_prompt(charter, order=0, instance_part=lambda settings: (settings.get("text") or "").strip() or builtin,
+    # an added Header with no text adds nothing: a relay (owner, 2026-10-23); only the first one falls back to the draft
+    ctx.add_prompt(charter, order=0, instance_part=lambda settings: (settings.get("text") or "").strip(),
                    replace=lambda domain_id: ctx.setting(domain_id, "replace") is not False,
                    description="Text at the very start of the system prompt: by default your values (honest, sparing, your "
                                "decisions stay yours). Only you can change it, never an agent. An added Header has its own "
-                               "text, e.g. a calmer one for voice.")
+                               "text, e.g. a calmer one for voice; with no text it adds nothing and only passes the message "
+                               "on: a relay (its round output gives every wire a copy).")

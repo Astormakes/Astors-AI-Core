@@ -72,7 +72,8 @@ their own text), the Trailer a template. Both have a **Replace** tick: Header ti
 start, replaced: the start stays cached), Trailer unticked by default (each turn gets its own line where it was
 written; the conversation only grows at the end). The setting against the cache shows a warning. A trailer goes
 with the user turn it followed; a ticked one moves to the newest. Wired from a model and back, a text card is a
-tool that gives its text. The local time is a default Trailer card **Time** (`Local time: {{ local_time }}`), in
+tool that gives its text. With no text a Header (an added one) or a Trailer adds nothing: a **relay** whose round
+output copies the message to every wire (e.g. a model's answer to Voice and to a chat). The local time is a default Trailer card **Time** (`Local time: {{ local_time }}`), in
 the automatic line (`auto` on the stored card); the model card adds nothing unseen.
 
 Text that changes on every message (the time) belongs in a Trailer: at the start it makes the model server
@@ -197,6 +198,11 @@ cut (`pause` ms, `longest` s; out: `audio.piece` records with the PCM, not kept)
 messages: `reply_to: voice`, the user entry's `data.mic`, values text/mic/mic_name/area/start/seconds). Raw audio
 runs on `audio` wires as a stream (`Node.stream`, `Bus.stream`; no records); added cards are kept between lookups
 (their state lives in them). 
+
+Open (owner, 2026-10-23): the conversation. Follow-up answers and natural conversation were the goal; audio is
+different from everything else because it is in and out at once. Idea: a **Conversation** card (what the
+Companion did, but visible): text in from the model, text in from audio, text out. Until it is designed, Speech to
+text keeps its voice chat setting. Voice out's picker (what to speak, where) waits too.
 
 Later: a **Speaker** card for HA media players (Music Assistant, Spotify, cast) as an audio source or target.
 Guiding rule (owner): stay lightweight; every card removable, new ones addable.

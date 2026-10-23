@@ -197,7 +197,8 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
         Node(id="trailer", title="Trailer", inputs=IN, outputs=OUT, adds=["trailer"], template=True, role="transform",
              description="Writes your own text after what was just said, e.g. the time, \"Answer in German\" or \"Reply "
                          "with yes or no\": the model reads it close to the question. Wired from a model and back it is "
-                         "a tool that gives its text.",
+                         "a tool that gives its text. With no text it adds nothing and only passes the message on: a "
+                         "relay (its round output gives every wire a copy, e.g. a model's answer to Voice and a chat).",
              make=text_make("trailer", replace=False), settings_schema={
                  "text": {**text, "help": "After the turn it follows."},
                  "replace": {"type": "bool", "title": "Replace", "default": False,

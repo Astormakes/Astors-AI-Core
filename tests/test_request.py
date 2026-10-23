@@ -303,3 +303,19 @@ async def test_a_text_card_as_a_tool(hass: HomeAssistant, mock_entry, configured
     message.entries.append(make_entry("model", "call", "", call_id="c1", node="time", tool="send", model="model"))
     await time.handle(message, None)
     assert message.last("result", "time")["text"].startswith("Local time: ") and message.last("trailer") is None
+
+
+async def test_an_empty_text_card_is_a_relay(hass: HomeAssistant, mock_entry, configured):
+    """Header and Trailer with no text add nothing (no entry, no tag): they only pass the message on."""
+    await setup_aac(hass, mock_entry)
+    data = mock_entry.runtime_data
+    data.store.graph("assistant")["nodes"].update({
+        "relay_h": {"type": "charter", "title": "Relay", "settings": {"text": ""}},
+        "relay_t": {"type": "trailer", "title": "Voice", "settings": {"text": "", "replace": False}}})
+    nodes = data.bus.nodes_in("assistant")
+    message = Message(domain=data.domain())
+    message.add("chat", "user", "hi")
+    before = [dict(e) for e in message.entries]
+    await nodes["relay_h"].handle(message, None)
+    await nodes["relay_t"].handle(message, None)
+    assert message.entries == before
