@@ -67,7 +67,7 @@ Running log for AAC. Read this first in a new session. Newest state on top. The 
 
 
 ## Next steps
-- **Audio rework, next** (spec/graph.md "Audio cards"): Microphone per satellite (own chain each, option a) → Noise gate → Break cut → Speech to text → Voice out; then Hearing's outputs, Wake word module and Companion go. "Add node" has categories now (In and out, Text, Models, Tools, Keep and write, Audio, Other).
+- **Audio rework, next** (spec/graph.md "Audio cards"): Microphone per satellite (own chain each, option a) → Noise gate → Pause cut → Speech to text (Gather card for picking among satellites' transcripts) → Voice out; then Hearing's outputs, Wake word module and Companion go. "Add node" has categories now (In and out, Text, Models, Tools, Keep and write, Audio, Other).
 - After audio: check for leftovers that are hidden or don't fit the cards (owner). Later: a Speaker card (HA media players). Rule: lightweight, every card removable and addable.
 - Open design question (owner, 2026-10-23): Hearing has three outputs (audio.pcm, audio.segment, text.line) and hidden VAD/STT/addressing; owner leans to one audio source per satellite, a stream picker node (by volume), audio in the message document so Voices can add the voice id before STT. Also (owner): everything sent live with an end marker set by a node ("ends the paragraph"); today audio is cut by a hidden 800 ms pause rule in Hearing and model text streams only to the panel. Proposal written: spec/graph.md "Live wires" (owner to read). Decide before Phase 4.
 

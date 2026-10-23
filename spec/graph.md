@@ -168,10 +168,14 @@ listed under **Audio** in "Add node", each removable and addable:
    chain; a sentence heard by two is dropped once later (a **Picker** card that compares the streams by volume can
    come later, it is only wiring).
 2. **Noise gate**: drops audio below a level (fan hum, a TV far away) before speech detection.
-3. **Break cut**: speech detection with the pause rule as a setting; audio in, speech pieces out (live entries
+3. **Pause cut**: speech detection with the pause rule as a setting; audio in, speech pieces out (live entries
    that close at the cut). A model can do the same job on live text (the owner's experiment).
 4. **Speech to text**: pieces in, text out (a live entry that grows, then closes). Heard lines, Buffer, Decide
    work on it as now.
+   **Gather** (for the owner's experiment without a Picker): collects the messages that arrive within a time
+   window (e.g. 1.5 s after the first) into one message, each candidate an entry with its satellite, start time
+   and level. A model (or a simple rule card: longest, most confident) then picks the transcript that makes the
+   most sense, and the answer goes to that candidate's satellite. Costs the window plus one short model call.
 5. **Voice out**: the answer goes back to the satellite whose id travels with the message (later: speaking while
    the model still writes).
 6. Then removed: Hearing's three outputs, the Wake word module (its decision is Heard lines → Buffer → Decide), the
