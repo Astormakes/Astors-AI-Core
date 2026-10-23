@@ -199,6 +199,9 @@ class AacNodes extends HTMLElement {
         .nv-dot.ok { stroke: var(--text); stroke-width: 2; }
         /* a bigger, invisible area to grab a port (owner: "areas of effect bigger than they look"); one row tall */
         .nv-dot.nv-dothit { fill: transparent; stroke: none !important; }
+        /* fields save when you leave them: no Save buttons that save only their own part */
+        .nv-info [data-nv="inst-save"], .nv-info [data-nv="mod-save"], .nv-info [data-nv="core-save"],
+        .nv-info [data-nv="names-save"], .nv-info [data-nv="title-save"] { display: none; }
         .nv-wire.flow { stroke-dasharray: 6 5; animation: nvflow 1.2s linear infinite; opacity: .95; stroke-width: 2.2; }
         @keyframes nvflow { to { stroke-dashoffset: -22; } }
         .nv-node rect.box { fill: var(--bg2, #111); stroke: var(--line); stroke-width: 1.2; }
@@ -821,6 +824,23 @@ class AacNodes extends HTMLElement {
     });
     // Typing in the info box: the 10 s refresh leaves it alone until it is saved or another card is chosen
     this.querySelector(".nv-info").addEventListener("input", () => { this._editing = this._sel || this._selFrame; });
+    // Every field saves when you leave it (owner, 2026-10-23: one of three Save buttons saved, the others not; the
+    // rest of the panel saves on its own too). The cursor stays where you clicked next while the panel refreshes.
+    this.querySelector(".nv-info").addEventListener("change", async (e) => {
+      const el = e.target, id = this._sel, n = this._data?.nodes.find((x) => x.id === id);
+      if (!n || el.dataset.single !== undefined) return;
+      const keyOf = (x) => x && ["data-core-title", "data-inst-title", "data-inst-key", "data-mod-key", "data-mod-on", "data-core-key", "data-name-port", "data-name-key"]
+        .filter((a) => x.hasAttribute?.(a)).map((a) => `[${a}="${CSS.escape(x.getAttribute(a))}"]`).join("");
+      const next = keyOf(document.activeElement !== el ? document.activeElement : null);
+      if (el.matches("[data-core-title]")) await this._retitle(id);
+      else if (el.matches("[data-inst-key], [data-inst-title]")) await this._saveInstance(id);
+      else if (el.matches("[data-mod-key], [data-mod-on]")) await this._saveModule(n.module);
+      else if (el.matches("[data-core-key]")) await this._saveCore(id);
+      else if (el.matches("[data-name-port]")) await this._saveNames(id);
+      else return;
+      this._msg.textContent = "Saved.";
+      if (next) this.querySelector(`.nv-info ${next}`)?.focus();
+    });
     this.addEventListener("click", (e) => {
       const b = e.target.closest("[data-nv]");
       if (b?.dataset.nv === "fit") this._fit();
@@ -1262,7 +1282,7 @@ class AacNodes extends HTMLElement {
         }).filter((o) => o.name)
         : el.type === "checkbox" ? el.checked : el.value;
     }
-    this._setInstances(all);
+    return this._setInstances(all);
   }
 
   async _removeInstance(id) {
