@@ -240,7 +240,8 @@ class AacNodes extends HTMLElement {
     const f = this._folded(n.id);
     if (f) return { x: f.x + (side === "out" ? FOLD_W : 0), y: f.y + FOLD_H / 2 + 6 };
     const p = this._pos[n.id], names = Object.keys(side === "out" ? n.outputs : n.inputs);
-    return { x: p.x + (side === "out" ? W / 2 : -W / 2), y: p.y - this._height(n) / 2 + HEAD + ROW * names.indexOf(port) + ROW / 2 };
+    const right = (side === "out") !== !!this._mirror?.has(n.id); // a mirrored card: in on the right, out on the left
+    return { x: p.x + (right ? W / 2 : -W / 2), y: p.y - this._height(n) / 2 + HEAD + ROW * names.indexOf(port) + ROW / 2 };
   }
 
   _read() {
@@ -617,7 +618,13 @@ class AacNodes extends HTMLElement {
 
   // ------------------------------------------------------------------ drawing
   _draw() {
+    this._drawing = true;
+    try { this._drawNow(); } finally { this._drawing = false; }
+  }
+
+  _drawNow() {
     const nodesG = this._svg.querySelector(".nv-nodes"), wiresG = this._svg.querySelector(".nv-wires");
+    this._mirror = this._mirrorSet(this._wires()); this._mirrorKey = [...this._mirror].sort().join(",");
     this._svg.querySelector(".nv-frames").innerHTML = this._frames.map((f) => `<g class="nv-frame ${f.collapsed ? "folded" : ""} ${this._selFrame === f.id ? "sel" : ""}" data-frame="${esc(f.id)}">
         <rect class="fbox" rx="10"></rect><rect class="fbar" rx="10" height="${BAR}"></rect>
         <text class="fname">${esc(f.name || "Unnamed")}</text><rect class="fgrip" width="${GRIP}" height="${GRIP}" rx="3"></rect>
@@ -626,17 +633,18 @@ class AacNodes extends HTMLElement {
     nodesG.innerHTML = this._data.nodes.map((n) => {
       const h = this._height(n), ins = Object.entries(n.inputs), outs = Object.entries(n.outputs);
       const row = (i) => -h / 2 + HEAD + ROW * i + ROW / 2;
+      const m = this._mirror.has(n.id) ? -1 : 1, inX = -m * W / 2, outX = m * W / 2; // mirrored: in right, out left
       const flow = Object.values(n.recent || {}).reduce((s, v) => s + v, 0);
       return `<g class="nv-node ${this._folded(n.id) ? "hidden" : ""} ${n.on ? "" : "off"} ${this._lit?.has(n.id) ? "lit" : ""} ${this._sel === n.id ? "sel" : ""} ${this._multi.has(n.id) && this._multi.size > 1 ? "multi" : ""} ${this._pos[n.id]?.pinned ? "pinned" : ""}" data-node="${esc(n.id)}">
         <rect class="box" x="${-W / 2}" y="${-h / 2}" width="${W}" height="${h}" rx="7"><title>${esc(n.title)}: ${esc(n.description || "")}</title></rect>
         <text x="${-W / 2 + 10}" y="${-h / 2 + 17}">${esc(n.title)}<tspan class="pin" dx="4">📌</tspan></text>
         <text class="sub" x="${-W / 2 + 10}" y="${-h / 2 + 31}">${esc(short(`${n.module_name}${n.kind === "annotating" ? ` · adds ${n.adds.join(", ")}` : ""}${flow ? ` · ${flow} recent` : ""}`, 30))}</text>
-        ${ins.map(([p, t], i) => `<circle class="nv-dot" data-dot="in" data-port="${esc(p)}" data-type="${esc(t)}" cx="${-W / 2}" cy="${row(i)}" r="5.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)}</title></circle>
-          <text class="port" x="${-W / 2 + 9}" y="${row(i) + 3.5}">${esc(p)}</text>`).join("")}
+        ${ins.map(([p, t], i) => `<circle class="nv-dot" data-dot="in" data-port="${esc(p)}" data-type="${esc(t)}" cx="${inX}" cy="${row(i)}" r="5.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)}</title></circle>
+          <text class="port" x="${inX + m * 9}" y="${row(i) + 3.5}" ${m < 0 ? 'text-anchor="end"' : ""}>${esc(p)}</text>`).join("")}
         ${outs.map(([p, t], i) => `${(n.square || []).includes(p)
-          ? `<rect class="nv-dot" data-dot="out" data-port="${esc(p)}" data-type="${esc(t)}" x="${W / 2 - 5.5}" y="${row(i) - 5.5}" width="11" height="11" rx="1.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)} · square: the card decides which wire (drag to an input to wire)</title></rect>`
-          : `<circle class="nv-dot" data-dot="out" data-port="${esc(p)}" data-type="${esc(t)}" cx="${W / 2}" cy="${row(i)}" r="5.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)} · round: every wire gets it (drag to an input to wire)</title></circle>`}
-          <text class="port" x="${W / 2 - 9}" y="${row(i) + 3.5}" text-anchor="end">${esc(p)}</text>`).join("")}
+          ? `<rect class="nv-dot" data-dot="out" data-port="${esc(p)}" data-type="${esc(t)}" x="${outX - 5.5}" y="${row(i) - 5.5}" width="11" height="11" rx="1.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)} · square: the card decides which wire (drag to an input to wire)</title></rect>`
+          : `<circle class="nv-dot" data-dot="out" data-port="${esc(p)}" data-type="${esc(t)}" cx="${outX}" cy="${row(i)}" r="5.5" fill="${this._color(t)}"><title>${esc(p)}: ${esc(t)} · round: every wire gets it (drag to an input to wire)</title></circle>`}
+          <text class="port" x="${outX - m * 9}" y="${row(i) + 3.5}" ${m > 0 ? 'text-anchor="end"' : ""}>${esc(p)}</text>`).join("")}
       </g>`;
     }).join("");
     wiresG.innerHTML = this._wires().map((w, i) => {
@@ -677,8 +685,29 @@ class AacNodes extends HTMLElement {
       fold.setAttribute("x", fw - 20); fold.setAttribute("y", BAR / 2 + 5);
       count.setAttribute("x", 12); count.setAttribute("y", BAR + 18);
     }
-    const wires = this._wires(), d = this._routes(wires);
+    const wires = this._wires(), mirror = this._mirrorSet(wires), key = [...mirror].sort().join(",");
+    if (key !== this._mirrorKey) { // a card came into or left its partner's column: its ports change sides
+      this._mirror = mirror; this._mirrorKey = key;
+      if (!this._drawing) { this._draw(); return; }
+    }
+    const d = this._routes(wires);
     for (const path of this._svg.querySelectorAll(".nv-wire, .nv-hit")) if (d[path.dataset.wire]) path.setAttribute("d", d[path.dataset.wire]);
+  }
+
+  // Mirrored cards (owner, 2026-10-23: "when a node is only connected in its row its in and outputs should reverse
+  // compared to its partner, if it's not the upper one"): every wire of the card goes to cards in its own column
+  // above it (a tool card under its model): input on the right, output on the left, so both wires of the loop run
+  // straight down the sides instead of around the cards
+  _mirrorSet(wires) {
+    const partners = {};
+    for (const w of wires) { (partners[w.a.id] ||= []).push(w.b.id); (partners[w.b.id] ||= []).push(w.a.id); }
+    const found = new Set();
+    for (const [id, list] of Object.entries(partners)) {
+      const p = this._pos[id];
+      if (!p || this._folded(id)) continue;
+      if (list.every((o) => o !== id && this._pos[o] && !this._folded(o) && Math.abs(this._pos[o].x - p.x) < 4 && this._pos[o].y < p.y)) found.add(id);
+    }
+    return found;
   }
 
   _routes(wires) {
@@ -704,6 +733,13 @@ class AacNodes extends HTMLElement {
     wires.forEach((w, idx) => {
       if (!this._pos[w.a.id] || !this._pos[w.b.id]) return;
       const o = this._port(w.a, w.ap, "out"), i = this._port(w.b, w.bp, "in");
+      const mirA = this._mirror?.has(w.a.id), mirB = this._mirror?.has(w.b.id);
+      if (mirA || mirB) { // a mirrored card: both ends on the same side, a lane straight down that side
+        const k = w.loop ? (order[w.model] || []).indexOf(w.tool) : 0, rightSide = !mirA; // normal out = right
+        const lane = rightSide ? Math.max(o.x, i.x) + 18 + Math.max(0, k) * 7 : Math.min(o.x, i.x) - 18 - Math.max(0, k) * 7;
+        out[idx] = path([[o.x, o.y], [lane, o.y], [lane, i.y], [i.x, i.y]]);
+        return;
+      }
       const stacked = w.loop && Math.abs(this._pos[w.a.id].x - this._pos[w.b.id].x) < 4;
       if (stacked) {
         const k = order[w.model].indexOf(w.tool), t = box(w.loop && w.a.id === w.tool ? w.a : w.b);
