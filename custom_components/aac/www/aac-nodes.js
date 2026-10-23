@@ -138,6 +138,16 @@ class AacNodes extends HTMLElement {
         .nv-grip { flex: none; width: 1em; cursor: col-resize; position: relative; touch-action: none; }
         .nv-grip::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(50% - 1px); width: 2px; }
         .nv-grip:hover::after, .nv-grip.drag::after { background: var(--line); }
+        /* wire monitors (owner: "tap a wire, hit monitor, a window above it with the text") */
+        .nv-mons { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
+        .nv-mon { position: absolute; transform: translate(-50%, calc(-100% - 8px)); pointer-events: auto; cursor: pointer;
+          max-width: 20em; min-width: 8em; padding: .35em .6em; font-size: .78em; line-height: 1.35; border: 1px solid var(--cyan);
+          background: var(--bg2, #111); box-shadow: 0 0 .6em rgba(0, 240, 255, .35); border-radius: .3em; }
+        .nv-mon .t { color: var(--dim); font-size: .85em; display: flex; gap: .5em; }
+        .nv-mon .t b { color: var(--cyan); font-weight: normal; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .nv-mon .x { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; white-space: pre-wrap; }
+        .nv-mon.flash { animation: nvflash .8s; }
+        @keyframes nvflash { from { box-shadow: 0 0 1.4em var(--cyan); } }
         @media (max-width: 1100px) {
           .nv-host { height: auto; }
           .nv-main { flex-direction: column; } .nv-main > .nv-info { width: auto; } .nv-grip { display: none; }
@@ -162,7 +172,7 @@ class AacNodes extends HTMLElement {
           <button class="btn" data-go="settings/modules" title="Every module: switch on or off, hide, open its page">Modules</button>
 
         </div>
-        <div class="nv-stage" style="position:relative;touch-action:none"></div>
+        <div class="nv-stage" style="position:relative;touch-action:none"><div class="nv-mons"></div></div>
         <div class="nv-legend" style="display:flex;gap:.9em;flex-wrap:wrap;padding:.5em .9em;border-top:1px solid var(--line);font-size:.8em"></div>
         <p class="hint nv-msg" style="margin:.5em .9em"></p>
       </div>
@@ -648,6 +658,7 @@ class AacNodes extends HTMLElement {
 
   _layout() {
     if (!this._stage) return;
+    this._layoutMonitors();
     const v = this._view;
     this._world.setAttribute("transform", `translate(${v.x + this._stage.clientWidth / 2},${v.y + this._stage.clientHeight / 2}) scale(${v.k})`);
     for (const g of this._svg.querySelectorAll(".nv-node")) {
@@ -781,6 +792,7 @@ class AacNodes extends HTMLElement {
       if (b?.dataset.nv === "inst-remove") this._removeInstance(b.dataset.node);
       if (b?.dataset.nv === "hide") this._hide(b.dataset.node, true);
       if (b?.dataset.nv === "title-save") this._retitle(b.dataset.node);
+      if (b?.dataset.nv === "monitor" || b?.dataset.nv === "mon-off") this._toggleMonitor(b.dataset.mon);
       if (b?.dataset.nv === "vars") { this._sel = null; this._selWire = null; this._selFrame = null; this._showVars = true; this._draw(); this._info(); }
       if (b?.dataset.nv === "mod-save") this._saveModule(b.dataset.module);
       if (b?.dataset.nv === "core-save") this._saveCore(b.dataset.node);
@@ -1037,6 +1049,87 @@ class AacNodes extends HTMLElement {
     }).join("");
     menu.style.maxHeight = "60vh"; menu.style.overflow = "auto"; menu.style.width = "22em";
     menu.style.display = "";
+  }
+
+  // ------------------------------------------------------------------ wire monitors
+  // A window above a wire with what passes it, live; a click shows everything in the newest message on the right
+  _monKey(w) { return `${w.a.id}.${w.ap}|${w.b.id}.${w.bp}`; }
+
+  _layoutMonitors() {
+    const box = this.querySelector(".nv-mons");
+    if (!box) return;
+    this._monitors ||= new Map();
+    const wires = Object.fromEntries(this._wires().map((w) => [this._monKey(w), w])), v = this._view;
+    const W2 = this._stage.clientWidth / 2, H2 = this._stage.clientHeight / 2;
+    for (const [key, m] of this._monitors) {
+      const w = wires[key];
+      if (!w) { this._monitors.delete(key); continue; }
+      const a = this._port(w.a, w.ap, "out"), b = this._port(w.b, w.bp, "in");
+      const x = (a.x + b.x) / 2 * v.k + v.x + W2, y = (a.y + b.y) / 2 * v.k + v.y + H2;
+      let el = box.querySelector(`[data-mon="${CSS.escape(key)}"]`);
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "nv-mon";
+        el.dataset.mon = key;
+        el.addEventListener("click", () => { this._monSel = key; this._sel = null; this._selWire = null; this._selFrame = null; this._draw(); this._info(); });
+        box.appendChild(el);
+      }
+      const last = (m.records || []).at(-1);
+      el.innerHTML = `<div class="t"><b>${esc(w.a.title)} › ${esc(w.b.title)}</b><span>${(m.records || []).length}</span></div>
+        <div class="x">${last ? esc(String(last.text ?? last.name ?? JSON.stringify(last)).slice(0, 300)) : '<span class="hint">waiting for something to pass…</span>'}</div>`;
+      el.style.left = `${x}px`;
+      el.style.top = `${y}px`;
+    }
+    for (const el of box.querySelectorAll("[data-mon]")) if (!this._monitors.has(el.dataset.mon)) el.remove();
+  }
+
+  async _loadMonitor(key, flash = false) {
+    const m = this._monitors?.get(key);
+    if (!m) return;
+    try { Object.assign(m, await this.ws("aac/nodes/monitor", { wire: key.split("|")[0] })); } catch (e) { m.error = e.message || String(e); }
+    this._layoutMonitors();
+    if (flash) {
+      const el = this.querySelector(`.nv-mons [data-mon="${CSS.escape(key)}"]`);
+      el?.classList.remove("flash"); void el?.offsetWidth; el?.classList.add("flash");
+    }
+    if (this._monSel === key && !this._editingNow()) this._info();
+  }
+
+  _editingNow() { return this.querySelector(".nv-info")?.contains(document.activeElement) && document.activeElement.matches("input, textarea, select"); }
+
+  onFlow(ev) {  // the panel: something passed an output
+    if (!this._monitors?.size || ev.domain !== this.panel?._state?.domain?.id) return;
+    for (const key of this._monitors.keys()) {
+      if (key.split("|")[0] !== ev.wire) continue;
+      clearTimeout(this._monTimers?.[key]);
+      (this._monTimers ||= {})[key] = setTimeout(() => this._loadMonitor(key, true), 250);
+    }
+  }
+
+  _toggleMonitor(key) {
+    this._monitors ||= new Map();
+    if (this._monitors.has(key)) { this._monitors.delete(key); if (this._monSel === key) this._monSel = null; }
+    else { this._monitors.set(key, {}); this._loadMonitor(key); }
+    this._layoutMonitors();
+    this._info();
+  }
+
+  _monitorHtml(key) {
+    const m = this._monitors.get(key) || {}, msg = m.message, [from, to] = key.split("|");
+    const name = (id) => (this._all || this._data.nodes).find((n) => n.id === id.split(".")[0])?.title || id;
+    const recs = (m.records || []).slice().reverse().map((r) => `<div style="padding:.3em 0;border-bottom:1px solid var(--line)">
+        <span class="hint">${esc(new Date(r.time).toLocaleTimeString())}</span> ${esc(String(r.text ?? r.name ?? JSON.stringify(r)).slice(0, 400))}</div>`).join("");
+    const entries = (msg?.entries || []).map((e) => `<details style="margin:.2em 0"><summary><b>${esc(name(e.by))}</b> · ${esc(e.kind)} <span class="hint">${esc(e.text.replace(/\s+/g, " ").slice(0, 70))}</span></summary>
+        <pre style="white-space:pre-wrap;font-size:.85em;margin:.3em 0">${esc(e.text)}${Object.keys(e.data || {}).length ? `\n\n${esc(JSON.stringify(e.data, null, 1))}` : ""}</pre></details>`).join("");
+    return `<h2>MONITOR</h2><p class="hint">${esc(name(from))} › ${esc(name(to))} · live while this view is open</p>
+      <div class="actions"><button class="btn" data-nv="mon-off" data-mon="${esc(key)}">Stop monitoring</button></div>
+      ${msg ? `<h3 style="margin-top:1em">NEWEST MESSAGE</h3>
+        <div class="kv"><span class="k">Time</span><span class="v">${esc(new Date(msg.time).toLocaleTimeString())}</span>
+          <span class="k">Started at</span><span class="v">${esc(name(msg.origin))}</span><span class="k">Answer to</span><span class="v">${esc(msg.reply_to ? name(msg.reply_to) : "where it started")}</span>
+          <span class="k">Kind</span><span class="v">${esc(msg.kind)} · ${esc(msg.trigger)}</span><span class="k">Way</span><span class="v">${esc(msg.way.map(name).join(" › "))}</span></div>
+        ${Object.keys(msg.vars || {}).length ? `<h3 style="margin-top:1em">VARIABLES</h3><pre style="white-space:pre-wrap;font-size:.85em">${esc(JSON.stringify(msg.vars, null, 1))}</pre>` : ""}
+        <h3 style="margin-top:1em">ENTRIES <span class="hint">${msg.entries.length}</span></h3>${entries}` : ""}
+      <h3 style="margin-top:1em">PASSED LATELY</h3>${recs || '<p class="hint">Nothing yet (kept 10 minutes).</p>'}`;
   }
 
   _shown(n) {
@@ -1340,7 +1433,12 @@ class AacNodes extends HTMLElement {
   _info() {
     this._editing = null;
     const box = this.querySelector(".nv-info"), n = this._data?.nodes.find((x) => x.id === this._sel);
-    if (this._sel || this._selWire || this._selFrame) this._showVars = false;
+    if (this._sel || this._selWire || this._selFrame) { this._showVars = false; this._monSel = null; }
+    if (this._monSel && this._monitors?.has(this._monSel)) {
+      box.style.display = "";
+      box.innerHTML = this._monitorHtml(this._monSel);
+      return;
+    }
     if (this._showVars) {
       box.style.display = "";
       box.innerHTML = this._varsHtml();
@@ -1356,7 +1454,9 @@ class AacNodes extends HTMLElement {
       box.innerHTML = `<h2>WIRE <span class="tag" style="border-color:${this._color(wire.type)}">${esc(wire.type)}</span></h2>
         <div class="kv"><span class="k">From</span><span class="v">${esc(wire.a.title)} · ${esc(wire.ap)}</span>
           <span class="k">To</span><span class="v">${esc(wire.b.title)} · ${esc(wire.bp)}</span></div>
-        <div class="actions"><button class="btn danger" data-nv="unwire">Remove wire</button></div>`;
+        <div class="actions"><button class="btn" data-nv="monitor" data-mon="${esc(this._monKey(wire))}">${this._monitors?.has(this._monKey(wire)) ? "Stop monitoring" : "Monitor"}</button>
+          <button class="btn danger" data-nv="unwire">Remove wire</button></div>
+        <p class="hint">Monitor: a window above the wire shows what passes it, live; click the window for everything inside.</p>`;
       return;
     }
     if (fr) {

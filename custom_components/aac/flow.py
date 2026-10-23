@@ -188,7 +188,7 @@ class Flow:
         for item in ports if ports is not None else [p for p, k in node.outputs.items() if k == TEXT and p not in node.square]:
             port, only = item if isinstance(item, tuple) else (item, None)
             self.bus.record(domain_id, node.id, port, {"id": message.id, "trigger": message.trigger,
-                                                       "source": message.origin, "text": message.text[:200]})
+                                                       "source": message.origin, "text": message.text[:200]}, message)
             found = [(n, p) for n, p in self.targets(domain_id, node, port) if only is None or n.id == only]
             if only is None and f"{node.id}.{port}" in self._single(domain_id):
                 found = found[:1]  # the owner set this output to one wire (no copies)

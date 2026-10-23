@@ -53,7 +53,7 @@ from .modules import MODULES_DIR, MODULES_URL, LoadedModule, async_load_modules
 from .pools import TIERS, Pool
 from .skins import USER_URL as USER_SKINS_URL, user_dir
 from .setup_api import AACSetupAPI
-from .runs import RunRegistry
+from .runs import RunRegistry, async_notify
 from .store import AACStore
 from .slots import Slots
 from .streams import Bus
@@ -165,6 +165,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
 
     # Modules after the domains (they keep data per domain), before the agents (they bring tools)
     entry.runtime_data.modules = await async_load_modules(hass, entry)
+    # what passes a wire, to open panels (the node view's monitors)
+    entry.runtime_data.bus.on_record = lambda domain_id, node_id, port: async_notify(
+        hass, "flow", domain=domain_id, wire=f"{node_id}.{port}")
 
     await panel_custom.async_register_panel(
         hass,

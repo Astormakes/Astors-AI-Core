@@ -375,3 +375,22 @@ async def test_built_in_cards_can_be_renamed(hass, hass_ws_client, mock_entry, c
     assert (await ws.receive_json())["error"]["code"] == "invalid"  # an added card has its Name field
     await ws.send_json_auto_id({"type": "aac/nodes/title", "node": "charter", "title": ""})
     assert (await ws.receive_json())["result"]["titles"] == {}
+
+
+async def test_a_wire_can_be_monitored(hass, hass_ws_client, aioclient_mock, mock_entry, configured):
+    """What passed an output: its last records and the newest whole message (entries, variables, the way)."""
+    from .conftest import setup_aac
+
+    await setup_aac(hass, mock_entry)
+    _model_answers(aioclient_mock, "Hello.")
+    seen = []
+    mock_entry.runtime_data.bus.on_record = lambda d, n, p: seen.append(f"{n}.{p}")
+    ws = await hass_ws_client(hass)
+    await ws.send_json_auto_id({"type": "aac/chat", "text": "hi"})
+    await ws.receive_json()
+    assert "charter.out" in seen and "model.out" in seen
+    await ws.send_json_auto_id({"type": "aac/nodes/monitor", "wire": "charter.out"})
+    result = (await ws.receive_json())["result"]
+    assert result["records"][-1]["text"].startswith("hi")
+    message = result["message"]
+    assert message["way"][:2] == ["chat", "charter"] and any(e["kind"] == "user" for e in message["entries"])

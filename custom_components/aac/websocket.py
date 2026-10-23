@@ -35,7 +35,7 @@ from .satellite_app import async_prepare as async_prepare_satellite
 from .skins import list_skins, user_dir
 from .domains import Domain, async_remove_domain_data
 from .store import AACStore
-from .streams import CATEGORIES, STREAM_TYPES, TYPE_ALIASES
+from .streams import CATEGORIES, STREAM_TYPES, TYPE_ALIASES, json_safe
 from .models import async_list_models, async_overview
 
 
@@ -87,6 +87,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_node_single,
         ws_node_hidden,
         ws_node_title,
+        ws_node_monitor,
         ws_notes_get,
         ws_notes_save,
         ws_node_positions,
@@ -855,6 +856,21 @@ async def ws_notes_save(hass: HomeAssistant, connection, msg) -> None:
         return
     await hass.async_add_executor_job(node.write_file, msg["text"], False)
     connection.send_result(msg["id"], {})
+
+
+@aac_command({vol.Required("type"): "aac/nodes/monitor", vol.Required("wire"): vol.Match(r"^[\w-]+\.[\w-]+$")})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_node_monitor(hass: HomeAssistant, connection, msg) -> None:
+    """What passed an output lately (owner, 2026-10-23: a live view on a wire): its last records and the newest
+    whole message with everything inside."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    bus, dom = entry.runtime_data.bus, _d(entry, msg)
+    node_id, port = msg["wire"].split(".")
+    records = [json_safe({k: v for k, v in r.items() if not isinstance(v, (bytes, bytearray))})
+               for r in bus.recent(dom.id, node_id, port)[-15:]]
+    connection.send_result(msg["id"], {"records": records, "message": bus.last_message(dom.id, node_id, port)})
 
 
 @aac_command({vol.Required("type"): "aac/nodes/title", vol.Required("node"): str, vol.Required("title"): str})

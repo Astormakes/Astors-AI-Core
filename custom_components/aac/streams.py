@@ -120,6 +120,15 @@ class Node:
         return bool(self.adds) and any(k in self.outputs.values() for k in self.inputs.values())
 
 
+def json_safe(value: Any) -> Any:
+    """A copy that a websocket can send (anything odd as text)."""
+    if isinstance(value, dict):
+        return {str(k): json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v) for v in value]
+    return value if value is None or isinstance(value, (str, int, float, bool)) else str(value)
+
+
 class Bus:
     """Nodes, wires and the recent records of every output."""
 
@@ -133,6 +142,10 @@ class Bus:
         self._stored: Callable[[str], list[dict[str, str]] | None] = lambda domain_id: None
         # Added node instances per domain: fn(domain_id) → {instance id: {"type", "title", "settings"}}
         self._instances: Callable[[str], dict[str, dict[str, Any]]] = lambda domain_id: {}
+        # The newest whole message per output (the node view's wire monitor shows everything inside it)
+        self._last: dict[tuple[str, str, str], dict[str, Any]] = {}
+        # Told whenever an output carries something: fn(domain_id, node_id, port) (open panels' monitors)
+        self.on_record: Callable[[str, str, str], None] | None = None
 
     def set_titles(self, titles: Callable[[str], dict[str, str]]) -> None:
         """The owner's own names for built-in cards per domain (owner, 2026-10-23: "rename the first header charter")."""
@@ -296,6 +309,8 @@ class Bus:
         record = item if "time" in item else {"time": dt_util.utcnow().isoformat(), **item}
         recent = self._recent.setdefault((domain_id, node_id, port), deque(maxlen=KEEP_RECORDS))
         recent.append(record)
+        if self.on_record and STREAM_TYPES.get(node.outputs[port]) != "continuous":
+            self.on_record(domain_id, node_id, port)
         # Its readers: wired to this output, or (through annotating nodes) to the end of its chain;
         # whoever writes such a type has run the chain already (the audio hub with each segment)
         readers = self.wired_from(domain_id, *self.chain(domain_id, node_id, port)[1])
@@ -310,10 +325,24 @@ class Bus:
         # Readers work at the same time (the wake word answering must not hold up the companion)
         return list(await asyncio.gather(*(deliver(r, p) for r, p in readers)))
 
-    def record(self, domain_id: str, node_id: str, port: str, record: dict[str, Any]) -> None:
-        """Keep a record of what left an output (the flow's messages; the node view shows the counts)."""
+    def record(self, domain_id: str, node_id: str, port: str, record: dict[str, Any], message: Any = None) -> None:
+        """Keep a record of what left an output (the flow's messages; the node view shows the counts), and the
+        newest whole message there."""
         self._recent.setdefault((domain_id, node_id, port), deque(maxlen=KEEP_RECORDS)).append(
             {"time": dt_util.utcnow().isoformat(), **record})
+        if message is not None:
+            self._last[(domain_id, node_id, port)] = {
+                "time": dt_util.utcnow().isoformat(), "id": message.id, "kind": message.kind, "trigger": message.trigger,
+                "origin": message.origin, "reply_to": message.reply_to, "language": message.language,
+                "way": [s["node"] for s in message.trace], "vars": json_safe(message.vars),
+                "entries": [{"by": e["by"], "kind": e["kind"], "text": e["text"][:4000], "tags": e["tags"],
+                             "data": json_safe({k: v for k, v in e["data"].items() if k != "fargs"})} for e in message.entries[-60:]]}
+        if self.on_record:
+            self.on_record(domain_id, node_id, port)
+
+    def last_message(self, domain_id: str, node_id: str, port: str) -> dict[str, Any] | None:
+        """The newest whole message that left an output (None for stream types)."""
+        return self._last.get((domain_id, node_id, port))
 
     def recent(self, domain_id: str, node_id: str, port: str) -> list[dict[str, Any]]:
         """The output's last records (newest last, at most KEEP_RECORDS and KEEP_FOR old)."""
