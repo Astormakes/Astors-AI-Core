@@ -60,6 +60,7 @@ Running log for AAC. Read this first in a new session. Newest state on top. The 
 
 ## Next steps
 
+- Bench 2026-10-23 (35B on the PC, Decide's grammar): "addressed to AAC?" 12/12 right in 0.26 s each (English, German, a video, a follow-up that only counts with the Buffer's line before it). Script: session scratchpad `bench/addressed.py`.
 - Try the owner's audio chain with the real models: Heard lines → Buffer → Decide ("addressed to AAC?") → yes: an Instructions card → Model → Voice (all cards exist now).
 - Sidebar drag into the grid: built, not yet tried in a real browser.
 - Phase 3: pool nodes; the settings pages fold into nodes (Compute → pools, Entities → the Home node, Audio, Modules); settings left: Appearance, Languages, Nodes.
