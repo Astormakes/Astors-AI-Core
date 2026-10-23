@@ -499,22 +499,25 @@ class AacPanel extends HTMLElement {
 
   _drawGrid() {
     const d = this.state.domain, pos = (id) => d.positions[id] || { x: 0, y: 0 };
+    const wires = this._wireList(), mirror = this._mirror = this._mirrorSet(wires);
     const port = (c, name, side) => {
       const p = pos(c.id), names = Object.keys(side === "out" ? c.outputs : c.inputs);
-      return { x: p.x + (side === "out" ? W : 0), y: p.y + HEAD + ROW * names.indexOf(name) + ROW / 2 };
+      const right = (side === "out") !== mirror.has(c.id); // a mirrored card: in on the right, out on the left
+      return { x: p.x + (right ? W : 0), y: p.y + HEAD + ROW * names.indexOf(name) + ROW / 2 };
     };
     const height = (c) => this._height(c);
     this.shadowRoot.querySelector("#cards").innerHTML = d.cards.map((c) => {
-      const p = pos(c.id), ins = Object.entries(c.inputs), outs = Object.entries(c.outputs);
+      const p = pos(c.id), ins = Object.entries(c.inputs), outs = Object.entries(c.outputs), m = mirror.has(c.id);
+      const inX = m ? W : 0, outX = m ? 0 : W, inT = m ? `x="${W - 10}" text-anchor="end"` : 'x="10"', outT = m ? 'x="10"' : `x="${W - 10}" text-anchor="end"`;
       return `<g class="node ${this.sel === c.id ? "sel" : ""}" data-node="${esc(c.id)}" transform="translate(${p.x},${p.y})">
         <rect class="box" width="${W}" height="${height(c)}" rx="8"></rect>
         <text x="10" y="18">${esc(c.title)}</text><text class="sub" x="10" y="30">${esc(this._type(c.type)?.title || c.type)}</text>
-        ${ins.map(([n, k], i) => `<circle class="dot" data-in="${esc(n)}" data-kind="${k}" cx="0" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle><text class="port" x="10" y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
-        ${outs.map(([n, k], i) => `${c.square.includes(n) ? `<rect class="dot" data-out="${esc(n)}" data-kind="${k}" x="${W - 6}" y="${HEAD + ROW * i + ROW / 2 - 6}" width="12" height="12" fill="${KIND_COLOR[k] || "#999"}"></rect>`
-          : `<circle class="dot" data-out="${esc(n)}" data-kind="${k}" cx="${W}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" x="${W - 10}" y="${HEAD + ROW * i + ROW / 2 + 3}" text-anchor="end">${esc(n)}</text>`).join("")}
+        ${ins.map(([n, k], i) => `<circle class="dot" data-in="${esc(n)}" data-kind="${k}" cx="${inX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle><text class="port" ${inT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
+        ${outs.map(([n, k], i) => `${c.square.includes(n) ? `<rect class="dot" data-out="${esc(n)}" data-kind="${k}" x="${outX - 6}" y="${HEAD + ROW * i + ROW / 2 - 6}" width="12" height="12" fill="${KIND_COLOR[k] || "#999"}"></rect>`
+          : `<circle class="dot" data-out="${esc(n)}" data-kind="${k}" cx="${outX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${outT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
       </g>`;
     }).join("");
-    const wires = this._wireList(), routes = this._routes(wires, port);
+    const routes = this._routes(wires, port);
     this.shadowRoot.querySelector("#wires").innerHTML = wires.map((w) => {
       const path = routes[w.key], sel = this.selWire && `${this.selWire.from}|${this.selWire.to}` === w.key;
       return `<path class="wire ${w.kind === "pool" ? "pool" : ""} ${w.loop ? "loop" : ""} ${sel ? "sel" : ""}" data-from="${esc(`${w.a.id}.${w.ap}`)}" d="${path}" stroke="${KIND_COLOR[w.kind] || "#999"}"></path>
@@ -617,6 +620,19 @@ class AacPanel extends HTMLElement {
     return at;
   }
 
+  // Mirrored cards (v1, owner: "when a node is only connected in its row its in and outputs should reverse compared
+  // to its partner, if it's not the upper one"): every wire of the card goes to cards in its own column above it (a
+  // tool under its model): input on the right, output on the left, so the loop runs straight down the sides
+  _mirrorSet(wires) {
+    const d = this.state.domain, partners = {}, found = new Set();
+    for (const w of wires) { (partners[w.a.id] ||= []).push(w.b.id); (partners[w.b.id] ||= []).push(w.a.id); }
+    for (const [id, list] of Object.entries(partners)) {
+      const p = d.positions[id];
+      if (p && list.every((o) => o !== id && d.positions[o] && Math.abs(d.positions[o].x - p.x) < 4 && d.positions[o].y < p.y)) found.add(id);
+    }
+    return found;
+  }
+
   _snap(id) {
     // a dropped card goes into the nearest column, on the 20 px grid, below any card it would cover there
     const d = this.state.domain, p = d.positions[id], c = this._card(id);
@@ -652,6 +668,13 @@ class AacPanel extends HTMLElement {
     const out = {}, below = [];
     for (const w of wires) {
       const o = port(w.a, w.ap, "out"), i = port(w.b, w.bp, "in");
+      const mirA = this._mirror?.has(w.a.id), mirB = this._mirror?.has(w.b.id);
+      if (mirA || mirB) { // a mirrored card: both ends on the same side, a lane straight down that side
+        const k = w.loop ? (order[w.host] || []).indexOf(w.tool) : 0, rightSide = !mirA; // normal out = right
+        const lane = rightSide ? Math.max(o.x, i.x) + 18 + Math.max(0, k) * 7 : Math.min(o.x, i.x) - 18 - Math.max(0, k) * 7;
+        out[w.key] = path([[o.x, o.y], [lane, o.y], [lane, i.y], [i.x, i.y]]);
+        continue;
+      }
       if (w.loop && Math.abs(pos(w.a.id).x - pos(w.b.id).x) < 4) { // stacked under its host
         const k = order[w.host].indexOf(w.tool), t = box(w.a.id === w.tool ? w.a : w.b);
         if (w.b.id === w.tool) { // host → tool: down the right side, in above the tool
@@ -833,7 +856,7 @@ class AacPanel extends HTMLElement {
         const oy = p.y + HEAD + ROW * Object.keys(c.outputs).indexOf(ap) + ROW / 2;
         let line = this.shadowRoot.querySelector("#tmpwire");
         if (!line) { line = document.createElementNS("http://www.w3.org/2000/svg", "path"); line.id = "tmpwire"; line.setAttribute("class", "wire"); line.setAttribute("stroke", KIND_COLOR[drag.type] || "#999"); this.shadowRoot.querySelector("#wires").appendChild(line); }
-        line.setAttribute("d", `M${p.x + W},${oy} L${w.x},${w.y}`);
+        line.setAttribute("d", `M${p.x + (this._mirror?.has(a) ? 0 : W)},${oy} L${w.x},${w.y}`);
       }
     });
     svg.addEventListener("pointerup", async (e) => {

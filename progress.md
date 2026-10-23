@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`, its progress file `docs/progress-v1.md` (private).
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-23) – 2.0.0-alpha.11, live on the owner's HA
+## Current state (2026-10-23) – 2.0.0-alpha.12, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -35,7 +35,8 @@ the owner wires them (no automatic wiring), the message is a document of entries
 - **Grid like v1 (alpha.6):** sidebar, card list and settings resize by dragging their edge (double-click resets;
   kept per browser); cards snap into columns (a column per step); Arrange puts them in v1's slots (tools stacked
   under their card, separate chains below each other; undoable, only positions change); wires use v1's routes
-  (curves forward, side lanes for tool loops, lanes below the cards for replies and far wires).
+  (curves forward, side lanes for tool loops, lanes below the cards for replies and far wires). alpha.12: a card
+  wired only to cards above it in its column (a tool under its model) is mirrored (in right, out left; v1).
 - **Rules editor (alpha.7):** Conditional rules are edited as forms (IF which entries + test, THEN actions with the
   fields each needs: card and function pickers for calls, output picker; reorder, remove); JSON stays under "As JSON".
 - **Monitor windows (alpha.9):** a wire's Monitor button pins a window on the wire (live text and count, flashes);
