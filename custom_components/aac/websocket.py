@@ -35,7 +35,7 @@ from .satellite_app import async_prepare as async_prepare_satellite
 from .skins import list_skins, user_dir
 from .domains import Domain, async_remove_domain_data
 from .store import AACStore
-from .streams import STREAM_TYPES, TYPE_ALIASES
+from .streams import CATEGORIES, STREAM_TYPES, TYPE_ALIASES
 from .models import async_list_models, async_overview
 
 
@@ -696,6 +696,7 @@ def ws_nodes(hass: HomeAssistant, connection, msg) -> None:
     summary["single"] = entry.runtime_data.store.graph(dom.id).get("single") or []  # round outputs with one wire
     summary["hidden"] = entry.runtime_data.store.graph(dom.id).get("hidden") or []  # cards kept out of the grid
     summary["variables"] = {"builtin": BUILTIN_VARS, "ha": HA_TEMPLATE_HELP}  # for templates (Variables overview)
+    summary["categories"] = CATEGORIES
     summary["by_hand"] = entry.runtime_data.bus.wired_by_hand(dom.id)
     # The modules behind the nodes, with their settings form and values: editable right in the node view
     used = {n["module"] for n in summary["nodes"] if n["module"]}

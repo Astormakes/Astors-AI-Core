@@ -1000,8 +1000,12 @@ class AacPanel extends HTMLElement {
       const gear = GROUP_PAGES[name] ? `<button class="icon-btn" data-go="${GROUP_PAGES[name]}" title="${esc(name)}: settings" style="width:1.8em;height:1.8em;margin-left:auto">${icon("settings")}</button>` : "";
       return list.length ? `<div class="hint" style="display:flex;align-items:center;padding:.5em 1.2em .1em;font-size:.72em;letter-spacing:.1em"><span>${esc(name.toUpperCase())}</span>${gear}</div>${list.map(item).join("")}` : "";
     }).join("");
-    const types = (d.types || []).map((t) => `<div class="tab" data-type-pick="${esc(t.id)}" draggable="true" tabindex="0" role="button" title="${esc(t.description || "")}">
-        ${icon("plus")}<span class="grow">${esc(t.title)}</span></div>`).join("");
+    const typeItem = (t) => `<div class="tab" data-type-pick="${esc(t.id)}" draggable="true" tabindex="0" role="button" title="${esc(t.description || "")}">
+        ${icon("plus")}<span class="grow">${esc(t.title)}</span></div>`;
+    const types = (d.categories || ["Other"]).map((c) => {  // by category, like "Add node"
+      const list = (d.types || []).filter((t) => (t.category || "Other") === c);
+      return list.length ? `<div class="hint" style="padding:.5em 1.2em .1em;font-size:.72em;letter-spacing:.1em">${esc(c.toUpperCase())}</div>${list.map(typeItem).join("")}` : "";
+    }).join("");
     return `<nav aria-label="AAC">
       <div class="brand">
         <span class="name">AAC</span><span class="ver">v${esc(this._state?.version || "")}</span><span class="sp"></span>

@@ -185,9 +185,9 @@ def general_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
         return node
 
     return [
-        Node(id="md_file", title="Markdown file", inputs=IN, outputs=OUT, template=True, make=file_make,
+        Node(id="md_file", title="Markdown file", inputs=IN, outputs=OUT, template=True, make=file_make, category="Keep and write",
              settings_schema=FILE_SETTINGS, description=FILE_HELP),
-        Node(id="buffer", title="Buffer", inputs=IN, outputs=OUT, template=True, make=buffer_make,
+        Node(id="buffer", title="Buffer", inputs=IN, outputs=OUT, template=True, make=buffer_make, category="Keep and write",
              settings_schema=BUFFER_SETTINGS, description=BUFFER_HELP),
         Node(id="heard", title="Heard lines", inputs={"lines": "text.line"}, outputs=OUT, role="source", template=True,
              make=heard_make, description=HEARD_HELP),

@@ -158,6 +158,28 @@ Example (the owner's chain): microphones → stream picker (passes one stream an
 text) → a small model as the cut (whole sentences) → Buffer → Decide → main model → Chat and Voice (live) →
 audio out (plays at the id). The Companion becomes a saved group of such nodes instead of one hidden card.
 
+## Audio cards (plan, owner 2026-10-23; not built yet)
+
+Hearing (one card with three outputs and everything hidden inside: speech detection, partial transcripts,
+sound captions, voice prints, not listening while AAC speaks, the follow-up window) is split into cards, all
+listed under **Audio** in "Add node", each removable and addable:
+
+1. **Microphone**: one source card per satellite or microphone, one `audio` output. Satellites: each has its own
+   chain; a sentence heard by two is dropped once later (a **Picker** card that compares the streams by volume can
+   come later, it is only wiring).
+2. **Noise gate**: drops audio below a level (fan hum, a TV far away) before speech detection.
+3. **Break cut**: speech detection with the pause rule as a setting; audio in, speech pieces out (live entries
+   that close at the cut). A model can do the same job on live text (the owner's experiment).
+4. **Speech to text**: pieces in, text out (a live entry that grows, then closes). Heard lines, Buffer, Decide
+   work on it as now.
+5. **Voice out**: the answer goes back to the satellite whose id travels with the message (later: speaking while
+   the model still writes).
+6. Then removed: Hearing's three outputs, the Wake word module (its decision is Heard lines → Buffer → Decide), the
+   Companion (a saved group of these cards).
+
+Later: a **Speaker** card for HA media players (Music Assistant, Spotify, cast) as an audio source or target.
+Guiding rule (owner): stay lightweight; every card removable, new ones addable.
+
 ## Nodes from elsewhere
 
 A module brings node types (like an HA integration from HACS). Nodes run inside AAC for now; an external node

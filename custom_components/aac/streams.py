@@ -41,6 +41,16 @@ STREAM_TYPES: dict[str, str] = {
     "vision.detection": "record",
 }
 
+# "Add node" groups the types (a node's own category, else by its role)
+CATEGORIES = ["In and out", "Text", "Models", "Tools", "Keep and write", "Audio", "Other"]
+
+
+def category(node: Node) -> str:
+    """Where a type is listed in "Add node"."""
+    return node.category or {"transform": "Text", "model": "Models", "decide": "Models", "endpoint": "In and out",
+                             "source": "In and out", "tool": "Tools"}.get(node.role or "", "Other")
+
+
 # Types that were renamed or merged: the Header template is the charter module's card now (owner, 2026-10-23)
 TYPE_ALIASES = {"instructions": "charter"}
 
@@ -73,6 +83,7 @@ class Node:
     order: int = 50
     auto: bool = False  # an added card the automatic wiring takes into the line too (the default Time card)
     variables: dict[str, str] = field(default_factory=dict)  # values it hands on: name → what ({{ <id>.<name> }})
+    category: str = ""  # where "Add node" lists it (owner, 2026-10-23: categories like Audio: break cut, noise gate)
     annotate: Annotate | None = None
     partial: Callable[[Any, bytes], Awaitable[str | None]] | None = None  # the text so far (live view)
     # Nodes reading raw media (audio.pcm) get it in windows of `window` seconds through `listen`
@@ -327,6 +338,7 @@ class Bus:
             "wires": [{"from": f"{a}.{b}", "to": f"{c}.{d}"} for a, b, c, d in self.wires(domain_id)],
             # What "Add node" offers: node types that can be added (more than once), templates included
             "types": [{"id": n.id, "title": n.title, "kind": "annotating" if n.annotating else "node", "adds": n.adds,
-                       "module": n.module, "settings_schema": n.settings_schema, "description": n.description, "role": n.role}
+                       "module": n.module, "settings_schema": n.settings_schema, "description": n.description, "role": n.role,
+                       "category": category(n)}
                       for n in [*self.nodes.values(), *self.templates.values()] if n.make and self._on(n, domain_id)],
         }

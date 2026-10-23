@@ -2,7 +2,7 @@
 
 Running log for AAC. Read this first in a new session. Newest state on top. The long v0 history is in `docs/history-v0.md` (private).
 
-## Current state (2026-10-23) – 1.0.0-dev.50
+## Current state (2026-10-23) – 1.0.0-dev.52
 
 - **v1 on `main`**, live on the owner's HA (owner: "I'm not really using it, work on the real HA"; only the lists matter, exported to `docs/aac-lists-2026-10-23.md`). The last v0 is the tag `v0.50.1-last-v0`. `scripts/deploy_ha.sh` needs `AAC_ALLOW_V1=1`.
 - **The graph** (`spec/graph.md`, owner's design of 2026-10-23): a message is a document of tagged entries (`request.py`); every node writes into it; a model card (`model_node.py`) reads it all as an ordinary chat with tools; **its wired nodes are its tools** (calling one sends the document there and waits until it comes back: a loop, `flow.Step.call`); round outputs copy to every wire, square ones (model, Decide) choose; endpoints (`chat`, `voice`, `assist`) take answers home; the chat keeps its document (edits change it; expert view in the chat: every entry and the way, e.g. Panel chat › Model › Home › Model).
@@ -67,6 +67,8 @@ Running log for AAC. Read this first in a new session. Newest state on top. The 
 
 
 ## Next steps
+- **Audio rework, next** (spec/graph.md "Audio cards"): Microphone per satellite (own chain each, option a) → Noise gate → Break cut → Speech to text → Voice out; then Hearing's outputs, Wake word module and Companion go. "Add node" has categories now (In and out, Text, Models, Tools, Keep and write, Audio, Other).
+- After audio: check for leftovers that are hidden or don't fit the cards (owner). Later: a Speaker card (HA media players). Rule: lightweight, every card removable and addable.
 - Open design question (owner, 2026-10-23): Hearing has three outputs (audio.pcm, audio.segment, text.line) and hidden VAD/STT/addressing; owner leans to one audio source per satellite, a stream picker node (by volume), audio in the message document so Voices can add the voice id before STT. Also (owner): everything sent live with an end marker set by a node ("ends the paragraph"); today audio is cut by a hidden 800 ms pause rule in Hearing and model text streams only to the panel. Proposal written: spec/graph.md "Live wires" (owner to read). Decide before Phase 4.
 
 - Bench 2026-10-23 (35B on the PC, Decide's grammar): "addressed to AAC?" 12/12 right in 0.26 s each (English, German, a video, a follow-up that only counts with the Buffer's line before it). Script: session scratchpad `bench/addressed.py`.

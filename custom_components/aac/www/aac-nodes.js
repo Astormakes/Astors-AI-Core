@@ -153,7 +153,7 @@ class AacNodes extends HTMLElement {
           <span class="hint nv-wiring"></span>
           <button class="btn" data-nv="auto" title="Forget the wires set by hand: everything wired by type again">Automatic wiring</button>
           <span style="position:relative"><button class="btn" data-nv="add" title="Add another node of a type that can exist more than once (e.g. a second model)">Add node</button>
-            <span class="nv-addmenu" style="display:none;position:absolute;top:100%;right:0;z-index:5;min-width:12em;background:var(--bg2, #111);border:1px solid var(--line);border-radius:.4em;padding:.3em 0"></span></span>
+            <span class="nv-addmenu" style="display:none;position:absolute;top:100%;left:0;z-index:5;min-width:16em;max-width:min(24em, 70vw);background:var(--bg2, #111);border:1px solid var(--line);border-radius:.4em;padding:.3em 0"></span></span>
           <button class="btn" data-nv="group" title="Put the nodes selected with Shift/Ctrl-click into a named container">Group</button>
           <button class="btn" data-nv="tidy" title="Lay every card out again in its slot (column = its place in the flow)">Tidy</button>
           <button class="btn" data-nv="undo" title="Back to the layout before Tidy">Undo</button>
@@ -1027,12 +1027,10 @@ class AacNodes extends HTMLElement {
     if (!types.length) { this._msg.textContent = "No node type can be added yet."; return; }
     if (types.length === 1) { this._addOf(types[0].id); return; }
     if (menu.style.display !== "none") { menu.style.display = "none"; return; }
-    // grouped by what they add: text for the system prompt, context, tools; the model
-    const group = (t) => t.role === "model" ? "Model" : t.role === "decide" ? "Route" : t.role === "tool" ? "Tools (a loop)"
-      : t.adds?.includes("note") ? "In the line: note" : t.adds?.includes("trailer") ? "In the line: trailer (the end)" : "In the line: system prompt";
-    const order = ["In the line: system prompt", "In the line: note", "Model", "Tools (a loop)", "Route"];
+    // grouped by category (In and out, Text, Models, Tools, Keep and write, Audio …)
+    const order = this._data.categories || [...new Set(types.map((t) => t.category))];
     menu.innerHTML = order.map((g) => {
-      const items = types.filter((t) => group(t) === g);
+      const items = types.filter((t) => (t.category || "Other") === g);
       return items.length ? `<div class="hint" style="padding:.4em .9em .1em;font-size:.75em;letter-spacing:.08em">${esc(g.toUpperCase())}</div>
         ${items.map((t) => `<button class="ditem" data-nv="add-type" data-type="${esc(t.id)}" title="${esc(t.description || "")}" style="display:block;width:100%;white-space:normal">
           ${esc(t.title)}<span class="hint" style="display:block;font-size:.78em;line-height:1.3;margin-top:.15em">${esc(short(t.description || "", 90))}</span></button>`).join("")}` : "";
