@@ -24,6 +24,7 @@ from .const import (
 from .provider import ProviderAuthError, ProviderError, ProviderNotFoundError
 from .audio import audio_overview
 from .broker import async_run_request
+from .request import entry as new_entry
 from .runs import SIGNAL_UPDATE, async_notify
 from .status import aac_agent_entity_id, setup_steps
 from .pools import ROLES, async_set_role
@@ -81,6 +82,7 @@ def async_register(hass: HomeAssistant) -> None:
         ws_nodes,
         ws_node_containers,
         ws_node_settings,
+        ws_node_names,
         ws_node_positions,
         ws_node_wires,
         ws_node_instances,
@@ -397,7 +399,8 @@ async def ws_chat(hass: HomeAssistant, connection, msg) -> None:
         return
     chats = _d(entry, msg).chats
     chat = chats.get(msg.get("chat_id") or "") or chats.create()
-    chats.add_message(chat["id"], "user", msg["text"])
+    user = new_entry("chat", "user", msg["text"])
+    chats.add_message(chat["id"], "user", msg["text"], entry=user["id"])
     run, result = await async_run_request(
         hass,
         entry,
@@ -409,17 +412,19 @@ async def ws_chat(hass: HomeAssistant, connection, msg) -> None:
         conversation_id=chat["conversation_id"],
         user_id=connection.user.id,
         domain=_d(entry, msg),
-        history=chats.history(chat["id"]),
+        entries=chats.document(chat["id"]),
+        user_entry=user,
     )
     if result is not None:
         chats.set_conversation(chat["id"], result.conversation_id)
     message = chats.add_message(
         chat["id"],
         "aac",
-        run.result or "(no answer)",
+        (result.text if result else run.result) or "(no answer)",
         error=run.status == "failed",
         run_id=run.id,
         steps=run.steps,
+        entry=result.entry_id if result else None,
     )
     connection.send_result(msg["id"], {"chat_id": chat["id"], "message": message})
 
@@ -670,6 +675,7 @@ def ws_nodes(hass: HomeAssistant, connection, msg) -> None:
     summary["stream_types"] = STREAM_TYPES
     summary["containers"] = entry.runtime_data.store.graph(dom.id)["containers"]
     summary["positions"] = entry.runtime_data.store.graph(dom.id).get("positions")  # None: never saved here yet
+    summary["names"] = entry.runtime_data.store.graph(dom.id).get("names") or {}  # inputs named for the models
     summary["by_hand"] = entry.runtime_data.bus.wired_by_hand(dom.id)
     # The modules behind the nodes, with their settings form and values: editable right in the node view
     used = {n["module"] for n in summary["nodes"] if n["module"]}
@@ -792,6 +798,30 @@ async def ws_node_settings(hass: HomeAssistant, connection, msg) -> None:
         return
     async_notify(hass, "modules", domain=dom.id)
     connection.send_result(msg["id"], {"values": node.edit[1](dom.id)})
+
+
+@aac_command({vol.Required("type"): "aac/nodes/names", vol.Required("names"): {
+    vol.Match(r"^[\w-]+\.[\w-]+$"): {vol.Optional("name", default=""): vol.All(str, vol.Length(max=40)),
+                                     vol.Optional("description", default=""): vol.All(str, vol.Length(max=300))}}})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_node_names(hass: HomeAssistant, connection, msg) -> None:
+    """What the models call a node's input (all of them): {"node.port": {name, description}}; empty = the node's own."""
+    if not (entry := _entry(hass, connection, msg)):
+        return
+    names = {}
+    for key, item in msg["names"].items():
+        name = "_".join(item["name"].split())
+        if name and not all(c.isalnum() or c in "_-" for c in name):
+            connection.send_error(msg["id"], "invalid", f"{key}: letters, digits, _ and - only")
+            return
+        if name or item["description"].strip():
+            names[key] = {"name": name, "description": item["description"].strip()}
+    store = entry.runtime_data.store
+    store.graph(_d(entry, msg).id)["names"] = names
+    await store.async_save()
+    async_notify(hass, "modules", domain=_d(entry, msg).id)
+    connection.send_result(msg["id"], {"names": names})
 
 
 _POSITION = vol.Schema({vol.Required("x"): vol.Coerce(float), vol.Required("y"): vol.Coerce(float),

@@ -1,23 +1,25 @@
-"""The core's own cards in the message graph (spec/v1.md, flow.py).
+"""The core's own nodes (spec/graph.md).
 
-- sources: the panel chat, voice, HA Assist (the heartbeat and the triggers are sources in their modules)
-- transforms (in the line, they add to the message): the agent's prompt; Instructions and Context (added ones)
-- cards attached to a model (the dotted line, its menu): the home, setup (only with the owner in the chat),
-  Home Assistant's own Assist tools
-- the model (the standard one; more can be added, each with its own tier and instructions), Decide (named outputs),
-  Reply (brings the answer home)
-Automatic wiring: every source through the transforms (by order) into the model, the model into Reply and the
-sinks, every attached card onto the model.
+- endpoints (an output for what comes in, an input for what goes back): the panel chat, voice, HA Assist
+  (the heartbeat and the triggers are outputs only, in their modules)
+- cards with a standing text: the agent's prompt; Instructions and Context (added ones)
+- the model card (square output: its wired nodes are its tools), Decide (named outputs)
+- nodes with tools (loops): the home, setup (only with the owner in the chat), Home Assistant's Assist tools
+Automatic wiring: every source through the standing-text cards (by order) into the model; the model into the
+endpoints and into every node with tools, and those back into the model.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT
-from homeassistant.helpers import llm
 import voluptuous as vol
 
+from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT
+from homeassistant.helpers import llm
+from homeassistant.util import dt as dt_util
+
+from .api_node import api_node
 from .const import (
     CONF_MAX_TOKENS,
     CONF_TEMPERATURE,
@@ -26,16 +28,9 @@ from .const import (
     DEFAULT_TEMPERATURE,
     DEFAULT_THINKING,
 )
-
-from .flow import DECIDE_SETTINGS, MODEL, MODEL_SETTINGS, REPLY
+from .flow import DECIDE_SETTINGS, MODEL, MODEL_SETTINGS
 from .home_api import API_ID as HOME_API_ID
-from .request import MESSAGE, SOURCES, TOOL, ModelRequest
-
-SOURCE_HELP = {
-    "chat": "Where a message from the AAC panel's chat comes in. Wire it through the cards that should prepare it into a model.",
-    "voice": "Where a spoken line comes in that the wake word or the companion decided to answer; the answer is spoken back at that microphone.",
-    "assist": "Where a message comes in from Home Assistant itself: an Assist pipeline, a voice satellite or an automation that uses AAC as its conversation agent.",
-}
+from .request import SOURCES, TEXT, Message
 from .setup_api import API_ID as SETUP_API_ID, owner_present
 from .streams import Node
 
@@ -44,48 +39,52 @@ if TYPE_CHECKING:
 
     from . import AACConfigEntry
 
-IN, OUT = {"in": MESSAGE}, {"out": MESSAGE}
-CARD = {"tools": TOOL}
+IN, OUT = {"in": TEXT}, {"out": TEXT}
+
+SOURCE_HELP = {
+    "chat": "The AAC panel's chat: what you write leaves at its output; what comes back into its input is shown "
+            "(and kept: the chat is the whole conversation, editable).",
+    "voice": "A spoken line that the wake word or the companion decided to answer leaves here; what comes back "
+             "is spoken at that microphone.",
+    "assist": "A message from Home Assistant itself (an Assist pipeline, a voice satellite, an automation using AAC "
+              "as its conversation agent) leaves here; what comes back is HA's answer.",
+}
+DECIDE_HELP = ("Sends the message on through one of its named outputs. A model reads the conversation and your "
+               "description of each output and picks one; the server only allows your output names. If the "
+               "decision fails, the message takes the default output. It does not change the message.")
 
 
 def model_node(inst_id: str = MODEL, title: str = "Model", settings: dict[str, Any] | None = None) -> Node:
-    """A model card: a message in, the answered message out; cards attach to its tool input."""
-    return Node(id=inst_id, title=title, inputs={"in": MESSAGE, "tools": TOOL}, outputs=OUT, role="model",
-                description="Answers the message with a model from the pool. The cards attached to it (dotted lines) are "
-                            "what it may use: their tools form its menu. Its answer leaves as the message again, so it can "
-                            "go on into more cards, a Decide or another model. Automatic messages wait here until a model "
-                            "is free, the most important first.",
+    """A model card: reads the whole conversation; its output is square (its wired nodes are its tools)."""
+    return Node(id=inst_id, title=title, inputs={"in": TEXT}, outputs={"out": TEXT}, role="model", square={"out"},
+                description="Reads the whole conversation and answers it with a model from the pool. The nodes wired to "
+                            "its output are its tools: calling one sends the conversation there, and what that node "
+                            "writes comes back as the result (wire it back into this card). The answer goes back to "
+                            "where the message came from. Automatic messages wait here until a model is free.",
                 settings=settings or {}, make=None if settings is not None else (lambda i, t, s: model_node(i, t, s)),
                 settings_schema=MODEL_SETTINGS)
 
 
-def replace_edit(node: Node, edit) -> Node:
-    """The standard model with its settings editable (temperature, answer length, thinking)."""
-    node.edit = edit
-    return node
-
-
-def decide_node(inst_id: str, title: str, settings: dict[str, Any]) -> Node:
+def decide_node(hass_flow, inst_id: str, title: str, settings: dict[str, Any]) -> Node:
     """A Decide card: its outputs are the ones the owner named."""
     names = [o["name"] for o in settings.get("outputs") or [] if isinstance(o, dict) and o.get("name")] or ["yes", "no"]
-    return Node(id=inst_id, title=title, inputs=IN, outputs={n: MESSAGE for n in names}, role="decide", settings=settings,
-                description=DECIDE_HELP)
 
+    async def handle(message: Message, step) -> list[str]:
+        return [await hass_flow().decide(step.node, message)]
 
-DECIDE_HELP = ("Sends the message on through one of its named outputs. A model reads the message and your description of "
-               "each output and picks one; the server only allows your output names. If the decision fails, the message "
-               "takes the default output. It does not change the message.")
+    return Node(id=inst_id, title=title, inputs=IN, outputs={n: TEXT for n in names}, role="decide", settings=settings,
+                square=set(names), handle=handle, description=DECIDE_HELP)
 
 
 def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
-    """The core's cards."""
+    """The core's nodes."""
 
     def master(domain_id: str) -> dict[str, Any]:
         return entry.runtime_data.domain(domain_id).settings.master
 
     def editing(schema: dict[str, Any], keys: dict[str, tuple[str, Any, Any]]):
-        """A core card's settings in the node view, kept in the domain's agent settings (was SETTINGS → Master
-        agent). keys: setting → (stored key, default, validator); a wrong value raises vol.Invalid."""
+        """A core card's settings in the node view, kept in the domain's agent settings. keys: setting →
+        (stored key, default, validator); a wrong value raises vol.Invalid."""
         def get(domain_id: str) -> dict[str, Any]:
             return {k: master(domain_id).get(conf, default) for k, (conf, default, _) in keys.items()}
 
@@ -104,81 +103,106 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
     }, {"temperature": (CONF_TEMPERATURE, DEFAULT_TEMPERATURE, vol.All(vol.Coerce(float), vol.Range(0, 2))),
         "max_tokens": (CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS, vol.All(vol.Coerce(int), vol.Range(16, 131072))),
         "thinking": (CONF_THINKING, DEFAULT_THINKING, vol.Boolean())})
-    ha_apis = [[api.id, api.name] for api in llm.async_get_apis(hass) if not api.id.startswith("aac_")]
+    ha_apis = [[api.id, api.name] for api in llm.async_get_apis(hass) if not api.id.startswith("aac")]
     ha_edit = editing({"apis": {"type": "multiselect", "title": "Home Assistant's tool sets", "options": ha_apis,
-                                "help": "Assist gives live states, timers and HA's to-do lists. None ticked: the card adds nothing."}},
+                                "help": "Assist gives live states, timers and HA's to-do lists. None ticked: it offers nothing."}},
                       {"apis": (CONF_LLM_HASS_API, [], vol.All([vol.In([a for a, _ in ha_apis])]))})
 
-    async def agent(message: ModelRequest) -> None:
-        if prompt := (message.domain.settings.master.get(CONF_PROMPT) or "").strip():
-            message.system.append(prompt)
+    def endpoint(sid: str) -> Node:
+        async def handle(message: Message, step) -> list:
+            from .broker import is_silent, short  # noqa: PLC0415 - avoid an import cycle
+            from .chats import AAC_CHAT_ID  # noqa: PLC0415
 
-    async def home(message: ModelRequest) -> None:
-        message.add_tools(message.domain.api_id(HOME_API_ID))  # within the owner's access list
+            chats = message.domain.chats
+            if sid == "chat" and message.kind == "auto":  # a finding (heartbeat, trigger); silence stays silent
+                text = message.answer
+                if text and not is_silent(text) and message.trigger != "try":
+                    chat_id = (f"{message.chat_prefix or message.trigger}_{dt_util.utcnow().strftime('%Y%m%d%H%M%S')}"
+                               if message.chat == "own" else AAC_CHAT_ID)
+                    if not chats.get(chat_id):
+                        chats.create(f"{message.title} · {short(text)}" if chat_id != AAC_CHAT_ID else "From AAC", chat_id)
+                    run = step.run
+                    if run is not None:
+                        run.chat_id = chat_id
+                    chats.add_message(chat_id, "aac", text, proactive=True, run_id=run.id if run else None,
+                                      trigger=message.title)
+                    if message.chat == "own":
+                        chats.set_entries(chat_id, message.entries)
+                step.deliver(message)
+                return []
+            if message.chat_id and sid in ("chat", "voice") and chats.get(message.chat_id):
+                chats.set_entries(message.chat_id, message.entries)  # the conversation as it now is
+            if message.origin == sid or message.reply_to == sid:
+                step.deliver(message)
+            return []
 
-    async def setup(message: ModelRequest) -> None:
-        if await owner_present(hass, message.user_id):  # with the owner present it helps set itself up
-            message.add_tools(message.domain.api_id(SETUP_API_ID))
+        return Node(id=sid, title=SOURCES[sid], inputs=IN, outputs=OUT, role="endpoint", description=SOURCE_HELP[sid],
+                    handle=handle)
 
-    async def ha_tools(message: ModelRequest) -> None:
-        for api_id in message.domain.settings.master.get(CONF_LLM_HASS_API) or []:  # if the owner chose them
-            message.add_tools(api_id)
-
-    def card(card_id: str, title: str, provide, help_text: str, edit=None) -> Node:
-        def make(inst_id: str, inst_title: str, settings: dict) -> Node:  # the same card on another model
-            return Node(id=inst_id, title=inst_title, outputs=CARD, role="tool", provide=provide, settings=settings)
-        return Node(id=card_id, title=title, outputs=CARD, role="tool", provide=provide, make=make, description=help_text,
-                    edit=edit)
+    async def agent(message: Message, step) -> None:
+        message.put("agent", "system", (message.domain.settings.master.get(CONF_PROMPT) or "").strip())
 
     def agent_make(inst_id: str, title: str, settings: dict) -> Node:
-        async def annotate(message: ModelRequest) -> None:  # its own prompt instead of the domain's
-            if prompt := (settings.get("prompt") or "").strip():
-                message.system.append(prompt)
-        return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=["system"], order=10, annotate=annotate,
+        async def handle(message: Message, step) -> None:  # its own prompt instead of the domain's
+            message.put(inst_id, "system", (settings.get("prompt") or "").strip())
+        return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=["system"], order=10, handle=handle,
                     role="transform", settings=settings)
 
-    def text_make(field: str):
+    def text_make(kind: str):
         def make(inst_id: str, title: str, settings: dict) -> Node:
-            async def annotate(message: ModelRequest) -> None:
-                if text := (settings.get("text") or "").strip():
-                    getattr(message, field).append(text)
-            return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=[field], order=15, annotate=annotate,
+            async def handle(message: Message, step) -> None:
+                message.put(inst_id, kind, (settings.get("text") or "").strip())
+            return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=[kind], order=15, handle=handle,
                         role="transform", settings=settings)
         return make
 
+    async def home_apis(message: Message) -> list[str]:
+        return [message.domain.api_id(HOME_API_ID)]  # within the owner's access list
+
+    async def setup_apis(message: Message) -> list[str]:
+        # with the owner present it helps set itself up
+        return [message.domain.api_id(SETUP_API_ID)] if await owner_present(hass, message.user_id) else []
+
+    async def ha_apis_of(message: Message) -> list[str]:
+        return list(message.domain.settings.master.get(CONF_LLM_HASS_API) or [])
+
     text = {"type": "longtext", "title": "Text", "default": "", "rows": 5}
+    flow = lambda: entry.runtime_data.flow  # noqa: E731
     return [
-        # Sources (the heartbeat and the triggers are sources in their modules)
-        *(Node(id=sid, title=title, outputs=OUT, role="source", description=SOURCE_HELP[sid]) for sid, title in SOURCES.items()),
-        # In the line: they add to the message
-        Node(id="agent", title="Agent", inputs=IN, outputs=OUT, adds=["system"], order=10, annotate=agent, role="transform",
-             description="Adds the assistant's role and manner to the system prompt: the domain's agent prompt (in this card's settings, "
-                         "e.g. \"You are AAC, a calm home companion …\"). An added Agent card has a "
-                         "prompt of its own, e.g. for a second model with another job.", edit=agent_edit,
+        *(endpoint(sid) for sid in SOURCES),
+        # Standing text: replaced in place every time (the start of the conversation stays the same: the cache)
+        Node(id="agent", title="Agent", inputs=IN, outputs=OUT, adds=["system"], order=10, handle=agent, role="transform",
+             description="Writes the assistant's role and manner into the system prompt (its Prompt setting, e.g. \"You "
+                         "are AAC, a calm home companion …\"). An added Agent card has a prompt of its own, e.g. for a "
+                         "second model with another job.", edit=agent_edit,
              make=agent_make, settings_schema={"prompt": {**text, "title": "Prompt",
                                                           "help": "This agent's own prompt (the domain's is on the standard Agent card)."}}),
         Node(id="instructions", title="Instructions", inputs=IN, outputs=OUT, adds=["system"], template=True, role="transform",
-             description="Adds your own text to the system prompt, e.g. \"Answer in one sentence\" or what a second model "
-                         "should check. Stable text, good for the server's prompt cache.",
-             make=text_make("system"), settings_schema={"text": {**text, "help": "Added to the system prompt (stable: good for the prompt cache)."}}),
-        Node(id="context", title="Context", inputs=IN, outputs=OUT, adds=["context"], template=True, role="transform",
-             description="Hands your own text along with every message (not in the system prompt), e.g. \"The user is in "
-                         "the bedroom\" for a way that only that room's microphone uses.",
-             make=text_make("context"), settings_schema={"text": {**text, "help": "Goes along with every message (e.g. who uses this way)."}}),
-        # Attached to a model (its menu)
-        card("home", "Home", home, "Attach to a model to let it see and switch the home: find devices and sensors, "
-             "read their state, switch them, ask you for access. Only within the entities you allowed (SETTINGS → Entities)."),
-        card("setup", "Setup (owner present)", setup, "Attach to a model to let it help set AAC itself up (models, memory, "
-             "audio, modules, availability rules). Only offered while you are in the chat, never by voice or in automatic runs."),
-        card("ha_tools", "Home Assistant tools", ha_tools, "Attach to a model to give it Home Assistant's own Assist tools "
-             "(live states, timers, HA's to-do lists): tick which ones in this card's settings.", ha_edit),
-        # The model, Decide, Reply
-        replace_edit(model_node(), model_edit),
-        Node(id="decide", title="Decide", inputs=IN, outputs={"yes": MESSAGE, "no": MESSAGE}, role="decide", template=True,
-             description=DECIDE_HELP,
-             make=decide_node, settings_schema=DECIDE_SETTINGS),
-        Node(id=REPLY, title="Reply", inputs=IN, role="reply",
-             description="Brings the message home: to the chat, microphone or Home Assistant it came from, however many "
-                         "cards and models it passed. An automatic finding (heartbeat, trigger) goes to its chat; silence "
-                         "(NOTHING) stays silent."),
+             description="Writes your own text into the system prompt, e.g. \"Answer in one sentence\" or what a second "
+                         "model should check. Stable text, good for the server's prompt cache.",
+             make=text_make("system"), settings_schema={"text": {**text, "help": "Into the system prompt (stable: good for the prompt cache)."}}),
+        Node(id="context", title="Context", inputs=IN, outputs=OUT, adds=["note"], template=True, role="transform",
+             description="Writes your own text into the conversation as a note (not the system prompt), e.g. \"The user "
+                         "is in the bedroom\" for a way that only that room's microphone uses.",
+             make=text_make("note"), settings_schema={"text": {**text, "help": "A note in the conversation (e.g. who uses this way)."}}),
+        # Nodes with tools: wired out of a model and back into it, a loop each
+        api_node(hass, "home", "Home", "Lets a model see and switch the home: find devices and sensors, read their "
+                 "state, switch them, ask you for access. Only within the entities you allowed (SETTINGS → Entities).",
+                 home_apis),
+        api_node(hass, "setup", "Setup (owner present)", "Lets a model help set AAC itself up (models, memory, audio, "
+                 "modules, availability rules). Only while you are in the chat, never by voice or in automatic runs.",
+                 setup_apis),
+        api_node(hass, "ha_tools", "Home Assistant tools", "Home Assistant's own Assist tools (live states, timers, HA's "
+                 "to-do lists): tick which ones in this node's settings.", ha_apis_of, edit=ha_edit),
+        # The model, Decide
+        _with_edit(model_node(), model_edit),
+        Node(id="decide", title="Decide", inputs=IN, outputs={"yes": TEXT, "no": TEXT}, role="decide", template=True,
+             square={"yes", "no"}, description=DECIDE_HELP,
+             make=lambda i, t, s: decide_node(flow, i, t, s), settings_schema=DECIDE_SETTINGS),
     ]
+
+
+def _with_edit(node: Node, edit) -> Node:
+    """The standard model with its settings editable (temperature, answer length, thinking)."""
+    node.edit = edit
+    return node

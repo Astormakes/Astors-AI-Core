@@ -12,12 +12,6 @@
     ]
   },
   "settings": {
-    "extract": {
-      "type": "bool",
-      "title": "Keep what is worth keeping after each message",
-      "default": true,
-      "help": "A short extra call after every chat message stores lasting facts, measurements and plans (small models often forget to call remember)."
-    },
     "recall": {
       "type": "bool",
       "title": "Hand matching memories along with every message",

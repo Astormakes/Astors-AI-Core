@@ -652,20 +652,19 @@ class AudioHub:
             self.hass, self.entry, said,
             kind="chat", trigger=f"voice: {source.name}", title=chat["title"], chat_id=chat_id,
             conversation_id=chat["conversation_id"],
-            extra_system_prompt=VOICE_PROMPT.format(
-                name=source.name, area=f" in the {source.area}" if source.area else ""
-            ),
+            system=VOICE_PROMPT.format(name=source.name, area=f" in the {source.area}" if source.area else ""),
             # Anyone can talk into a microphone: voice is anonymous until there is voice ID
             user_id=None,
             domain=data,
-            history=data.chats.history(chat_id),
-            own_words=text,  # memory learns from this line only, not from the room's lines around it
+            entries=data.chats.document(chat_id),
+            own_words=text,  # the person's own line, not the room's lines around it
         )
         if result is not None:
             data.chats.set_conversation(chat_id, result.conversation_id)
-        run.result = strip_marks(run.result or "")
+        run.result = strip_marks((result.text if result else run.result) or "")
         data.chats.add_message(chat_id, "aac", run.result or "(no answer)", via="voice", mic=source.name,
-                               error=run.status == "failed", run_id=run.id, steps=run.steps)
+                               error=run.status == "failed", run_id=run.id, steps=run.steps,
+                               entry=result.entry_id if result else None)
         if run.result and self.sources.get(source.id) is source:
             # An error is not read out (long, technical, and loud in the room): one short sentence, details in the panel
             await self.async_say(source, VOICE_FAILED if run.status == "failed" else run.result)

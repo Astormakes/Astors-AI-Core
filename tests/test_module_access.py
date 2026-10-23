@@ -8,7 +8,7 @@ from .test_planning import _queue, _text
 
 
 def _list_tools(payload: dict) -> set[str]:
-    return {t["function"]["name"].split("__")[1] for t in payload.get("tools") or [] if t["function"]["name"].startswith("aac-lists")}
+    return {t["function"]["name"].split("__")[1] for t in payload.get("tools") or [] if t["function"]["name"].startswith("lists_tools__")}
 
 
 async def _set(ws, **values):

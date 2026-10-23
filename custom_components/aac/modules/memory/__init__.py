@@ -1,10 +1,9 @@
 """Memory module: AAC's long-term memory, the default provider of the core's memory slot (spec/memory.md).
 
 Moved out of the core in 0.47 (owner, 2026-10-21: "everything not core becomes a module, even memory").
-The core only asks the slot (slots.py): what to hand the model along with a message, what to keep after
-one. Everything else is here: one SQLite file per domain (`aac/memory[.<domain>].db`, unchanged), the
-tools remember / recall / lookup_facts / forget, the write path after each chat message (extractor.py),
-its plans in the open loops of every automatic run, and the page. Its embedding model is the pool role
+One node (spec/graph.md): one SQLite file per domain (`aac/memory[.<domain>].db`), the tools remember /
+recall / lookup_facts / forget, matching memories handed along in a line, its plans in the open loops of
+every automatic run, and the page. Its embedding model is the pool role
 "memory" (none = keywords only). Switched off in a domain: no memory there at all.
 """
 
@@ -20,10 +19,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from ...const import DOMAIN
 from ...provider import OpenAICompatProvider, ProviderConnectionError
-from ...streams import Node
 from .. import ModuleContext
 from .api import AACMemoryAPI
-from .extractor import async_extract
 from .store import KINDS, SOURCES, MemoryStore, memory_path, summarize
 
 if TYPE_CHECKING:
@@ -54,12 +51,6 @@ class MemoryProvider:
         if series := await memory.async_series_for(found):
             hint += "\nExact values (structured facts):\n" + "\n".join(f"- {line}" for line in series)
         return hint
-
-    async def async_after_message(self, domain_id: str, text: str, stored_now: list[str],
-                                  provider: OpenAICompatProvider, model: str) -> None:
-        """The write path: keep what was worth keeping (the owner can switch it off)."""
-        if self.ctx.setting(domain_id, "extract"):
-            await async_extract(self.store(domain_id), provider, model, text, stored_now)
 
     async def async_model_changed(self) -> None:
         """A new embedding model: every domain's memories get new vectors (from their text)."""
@@ -107,30 +98,20 @@ async def async_setup_module(ctx: ModuleContext) -> None:
 
     ctx.add_open_loops(plans)
 
-    # One card next to the model (owner, 2026-10-22: "memory is parallel to the model"): its tools for when the
-    # model wants them, and (setting "recall", on by default) matching memories handed along with every message,
-    # because small models rarely ask on their own. The keeper reads the answers (the write path).
-    async def provide(message) -> None:
-        message.add_tools(ctx.module.api_ids.get(message.domain.id))
+    # One node (owner, 2026-10-23: "the memory can literally be only a node"): wired out of a model and back in,
+    # its tools (remember, recall, look up facts, forget); in a line (setting "recall", on by default) it writes
+    # matching memories into the conversation. Nothing is kept on its own: only what a model asks it to remember.
+    async def recall(message) -> None:
         if ctx.setting(message.domain.id, "recall") and message.words \
                 and (hint := await memory.async_context(message.domain.id, message.words)):
-            message.context.append(hint)
-
-    async def keep(domain_id: str, port: str, item: dict) -> None:
-        message = item["message"]
-        if message.kind == "chat" and message.answered and item.get("provider"):  # heartbeats, triggers: nobody spoke
-            await memory.async_after_message(domain_id, item.get("question") or message.words,
-                                             item.get("stored_now") or [], item["provider"], item["model"])
+            if not any(e["by"] == "memory" and e["text"] == hint for e in message.entries):
+                message.add("memory", "note", hint, ["recall"])
 
     ctx.add_llm_api(lambda dom, api_id, name: AACMemoryAPI(hass=hass, id=api_id, name=name, memory=memory.stores[dom.id]),
-                    card=False)
-    ctx.add_card("memory", "Memory", provide,
-                 "Attach to a model to give it a long-term memory: its tools (remember, recall, look up facts, forget) "
-                 "for when the model wants them, and, with the setting on, matching memories handed along with every "
-                 "message (small models rarely ask on their own).")
-    ctx.add_node(Node(id="memory_keeper", title="Memory keeper", inputs={"in": "message"}, role="sink", run=keep,
-                      description="Reads the answers of a chat and keeps what is worth keeping (lasting facts, measurements, "
-                                  "plans), with a short extra call. Wire a model's output to it."))
+                    node_id="memory", inline=recall,
+                    description="A long-term memory. Wired out of a model and back into it: the model can remember, "
+                                "recall, look up facts and forget. Wired in a line before a model: it writes matching "
+                                "memories into the conversation (setting Recall).")
     ctx.add_ws_commands(ws_memory_list, ws_memory_save, ws_memory_delete, ws_memory_reembed, ws_facts)
     ctx.add_panel_page("browse", "Memory", "aac-memory-page", "page.js")
 

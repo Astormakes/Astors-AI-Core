@@ -58,8 +58,8 @@ async def test_request_access_and_control(hass: HomeAssistant, hass_ws_client, a
     await store.async_set_entity_access({})
     _queue(
         aioclient_mock,
-        _call("aac-home__control", {"entity_id": "input_boolean.fan", "action": "turn_on"}),
-        _call("aac-home__request_access", {"entity_ids": ["input_boolean.fan", "input_boolean.heater", "input_boolean.safe"],
+        _call("home__control", {"entity_id": "input_boolean.fan", "action": "turn_on"}),
+        _call("home__request_access", {"entity_ids": ["input_boolean.fan", "input_boolean.heater", "input_boolean.safe"],
                                            "level": "control", "reason": "To switch the fan when it is hot."}),
         _text("I asked you for access."),
     )
@@ -76,7 +76,7 @@ async def test_request_access_and_control(hass: HomeAssistant, hass_ws_client, a
     assert "approved part of" in mock_entry.runtime_data.chats.get("aac")["messages"][-1]["text"]
 
     aioclient_mock.clear_requests()  # the first mock would still answer
-    _queue(aioclient_mock, _call("aac-home__control", {"entity_id": "input_boolean.fan", "action": "turn_on"}), _text("On."))
+    _queue(aioclient_mock, _call("home__control", {"entity_id": "input_boolean.fan", "action": "turn_on"}), _text("On."))
     await _chat(ws, "Now turn on the fan.")
     assert hass.states.get("input_boolean.fan").state == "on"
 
@@ -118,8 +118,8 @@ async def test_overview_and_visibility_request(hass: HomeAssistant, hass_ws_clie
     await mock_entry.runtime_data.store.default_domain.async_set_visible([])
     _queue(
         aioclient_mock,
-        _call("aac-home__home_overview", {}),
-        _call("aac-home__request_visibility", {"integrations": ["steam_online"], "reason": "To see when you play.", "with_read": True}),
+        _call("home__home_overview", {}),
+        _call("home__request_visibility", {"integrations": ["steam_online"], "reason": "To see when you play.", "with_read": True}),
         _text("There is a Steam integration with 2 entities I cannot see yet; I asked you."),
     )
     ws = await hass_ws_client(hass)

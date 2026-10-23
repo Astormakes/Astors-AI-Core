@@ -1,15 +1,13 @@
-"""Messages through the graph (spec/v1.md; owner, 2026-10-22).
+"""Messages through the graph (spec/graph.md; owner, 2026-10-23).
 
-A message starts at a source node and follows the wires:
-- a transform (charter, instructions, context, the agent's prompt) adds its part and passes it on,
-- a model answers it: the cards attached to it (the dotted lines: tool sets, memory) give their tools and maybe
-  context, the answer becomes the message's text, and it goes on (into more cards, another model, a Decide),
-- Decide picks one of its named outputs (the choice is forced by the server's grammar, a default if anything fails),
-- Reply brings it home: to the chat, the microphone or HA it came from (the message carries its origin, so the
-  wires only ever point forward), an automatic finding to its chat,
-- a sink reads along (the memory keeper).
-Several wires out of one port = several branches. Automatic messages wait for a model in the job queue
-(priority, due, critical, coalesce, keep); everything else is answered at once.
+A message (a document, request.py) starts at a node's output and follows the wires. Every node it reaches
+does its part (`Node.handle`: writes into the document) and passes it on:
+- a round output: every wire gets it (a copy each when there are several),
+- a square output: the node picks one wire. A model card's output is square: the nodes wired to it are its
+  tools; calling one sends the document there and the model waits until it comes back (a loop). Its plain
+  answer goes to whoever called it, else `reply_to`, else where the message started, else on.
+- an endpoint (chat, voice, Assist) delivers what comes back to whoever waits.
+Automatic messages wait for a model in the job queue (priority, due, critical, coalesce, keep).
 """
 
 from __future__ import annotations
@@ -29,7 +27,7 @@ from homeassistant.util import dt as dt_util
 from .const import LOGGER
 from .jobs import Job
 from .provider import OpenAICompatProvider, ProviderError
-from .request import MESSAGE, TOOL, ModelRequest
+from .request import TEXT, Message
 from .runs import Run, current_run
 from .streams import Node
 
@@ -37,15 +35,14 @@ if TYPE_CHECKING:
     from . import AACConfigEntry
     from .domains import Domain
 
-MAX_STEPS = 60  # nodes one message may visit (a loop in the wiring must not run forever)
+MAX_STEPS = 80  # nodes one message may visit (a loop in the wiring must not run forever)
 MODEL = "model"  # the standard model node
-REPLY = "reply"
 
-# The settings of a model node (the standard one's are the domain's; an added one has its own)
+# The settings of an added model card (the standard one's are the domain's)
 MODEL_SETTINGS = {
     "tier": {"type": "select", "title": "Model (pool request)", "default": "master", "options_from": "tiers",
              "help": "Which kind of model it asks the pool for."},
-    "prompt": {"type": "longtext", "title": "Extra instructions", "default": "",
+    "prompt": {"type": "longtext", "title": "Its own instructions", "default": "",
                "help": "Added to the system prompt (e.g. how this model should work)."},
 }
 DECIDE_SETTINGS = {
@@ -62,25 +59,63 @@ DECIDE_SETTINGS = {
 
 @dataclass
 class FlowResult:
-    """What came home: the message (its text = the answer), the last model run, and whether a Reply delivered it."""
+    """What came home: the message, the last model run, and whether an endpoint delivered it."""
 
-    message: ModelRequest | None = None
+    message: Message | None = None
     run: Run | None = None
     replied: bool = False
 
 
 @dataclass
 class _Walk:
-    """One message's way: the result future, the last model answer (for a flow without Reply), steps visited."""
+    """One message's way: the result future, the last model answer, steps visited, models waiting for loops."""
 
     future: asyncio.Future = field(default_factory=lambda: asyncio.get_running_loop().create_future())
     last: FlowResult = field(default_factory=FlowResult)
     steps: int = 0
+    waiting: dict[tuple[str, str], asyncio.Future] = field(default_factory=dict)  # (message id, model) → future
 
 
-def message_dict(message: ModelRequest) -> dict[str, Any]:
+class Step:
+    """What a node gets with a message: where it can send it, how to wait for a loop, how to deliver."""
+
+    def __init__(self, flow: Flow, walk: _Walk, node: Node, port: str) -> None:
+        """Initialize."""
+        self.flow, self.walk, self.node, self.port = flow, walk, node, port
+
+    def targets(self, message: Message, port: str | None = None) -> list[tuple[Node, str]]:
+        """The nodes (and their input) wired to one of this node's text outputs (all of them: None)."""
+        return self.flow.targets(message.domain.id, self.node, port)
+
+    def leads_back(self, message: Message, start: Node) -> bool:
+        """Does a message sent into `start` come back into this node by the wires?"""
+        return self.flow.leads_back(message.domain.id, start.id, self.node.id)
+
+    async def call(self, target: Node, port: str, message: Message) -> Message | None:
+        """Send the message into a node and wait until it comes back into this one (None: it did not)."""
+        key = (message.id, self.node.id)
+        future = asyncio.get_running_loop().create_future()
+        self.walk.waiting[key] = future
+        task = asyncio.ensure_future(self.flow._enter(self.walk, target, port, message))  # noqa: SLF001
+        try:
+            await asyncio.wait({future, task}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            self.walk.waiting.pop(key, None)
+        return future.result() if future.done() else None
+
+    def deliver(self, message: Message) -> None:
+        """An endpoint: whoever waits for this message gets it."""
+        self.flow._deliver(self.walk, FlowResult(message, self.walk.last.run, replied=True))  # noqa: SLF001
+
+    @property
+    def run(self) -> Run | None:
+        """The last model run on this way."""
+        return self.walk.last.run
+
+
+def message_dict(message: Message) -> dict[str, Any]:
     """A message as plain JSON (to wait across a restart)."""
-    data = {f.name: deepcopy(getattr(message, f.name)) for f in fields(message) if f.name not in ("domain", "meta")}
+    data = {f.name: deepcopy(getattr(message, f.name)) for f in fields(message) if f.name != "domain"}
     data["domain"] = message.domain.id
     return data
 
@@ -97,98 +132,125 @@ class Flow:
     def bus(self):
         return self.entry.runtime_data.bus
 
+    # ------------------------------------------------------------------ the wires
+    def targets(self, domain_id: str, node: Node, port: str | None = None) -> list[tuple[Node, str]]:
+        """The nodes (and their text input) wired to a node's text output (any: None)."""
+        nodes = self.bus.nodes_in(domain_id)
+        found = {(b, bp): (nodes[b], bp) for a, ap, b, bp in self.bus.wires(domain_id)
+                 if a == node.id and (port is None or ap == port) and node.outputs.get(ap) == TEXT
+                 and nodes[b].inputs.get(bp) == TEXT}
+        return list(found.values())
+
+    def leads_back(self, domain_id: str, start: str, home: str) -> bool:
+        """Is there a way by text wires from node `start` into node `home`? (Not through an endpoint: what
+        comes into the chat does not leave at its output.)"""
+        nodes = self.bus.nodes_in(domain_id)
+        wires = [(a, b) for a, ap, b, bp in self.bus.wires(domain_id) if nodes[a].outputs.get(ap) == TEXT]
+        seen, todo = set(), [start]
+        while todo:
+            at = todo.pop()
+            if at == home:
+                return True
+            if at in seen or nodes[at].role == "endpoint":
+                continue
+            seen.add(at)
+            todo += [b for a, b in wires if a == at]
+        return False
+
     # ------------------------------------------------------------------ walking
-    async def async_send(self, message: ModelRequest, start: str | None = None, port: str = "out",
+    async def async_send(self, message: Message, start: str | None = None, port: str = "out",
                          wait: bool = True) -> FlowResult:
-        """Send a message from its source node (or from `start`); with wait, until it comes home."""
+        """Send a message from its origin's output (or from `start`); with wait, until it comes home."""
         walk = _Walk()
-        start = start or message.source
+        start = start or message.origin
         if not any(a == start and ap == port for a, ap, *_ in self.bus.wires(message.domain.id)):
-            # a source without wires (its module off, wired by hand before it existed): the panel chat's way
+            # an origin without wires (its module off, wired by hand before it existed): the panel chat's way
             start, port = "chat", "out"
-        task = self.hass.async_create_task(self._from(walk, message, start, port))
+        node = self.bus.nodes_in(message.domain.id).get(start)
+        message.trace.append({"node": node.id, "title": node.title, "role": node.role})  # where it starts
+        task = self.hass.async_create_task(self._out(walk, node, message, [port]))
         if not wait:  # automatic: until it waits in the queue (or has gone its whole way)
             await task
             return walk.last
-        done, _ = await asyncio.wait({walk.future, task}, return_when=asyncio.FIRST_COMPLETED)
+        await asyncio.wait({walk.future, task}, return_when=asyncio.FIRST_COMPLETED)
         if walk.future.done():
             return walk.future.result()
-        await task  # every branch ended without a Reply: the last answer counts
-        return walk.future.result() if walk.future.done() else walk.last
+        return walk.last  # every way ended without an endpoint: the last answer counts
 
-    async def _from(self, walk: _Walk, message: ModelRequest, node_id: str, port: str) -> None:
-        nodes, wires = self.bus.nodes_in(message.domain.id), self.bus.wires(message.domain.id)
-        self.bus.record(message.domain.id, node_id, port, {"id": message.id, "trigger": message.trigger,
-                                                           "source": message.source, "text": message.text[:200]})
-        targets = [(nodes[b], bp) for a, ap, b, bp in wires if (a, ap) == (node_id, port) and nodes[b].inputs.get(bp) == MESSAGE]
-        if not targets:
+    async def _out(self, walk: _Walk, node: Node, message: Message, ports: list | None) -> None:
+        """On from a node: its round outputs (None: all of them) or the wire it picked ((port, node id))."""
+        domain_id = message.domain.id
+        sends: list[tuple[Node, str]] = []
+        for item in ports if ports is not None else [p for p, k in node.outputs.items() if k == TEXT and p not in node.square]:
+            port, only = item if isinstance(item, tuple) else (item, None)
+            self.bus.record(domain_id, node.id, port, {"id": message.id, "trigger": message.trigger,
+                                                       "source": message.origin, "text": message.text[:200]})
+            sends += [(n, p) for n, p in self.targets(domain_id, node, port) if only is None or n.id == only]
+        sends = list({(n.id, p): (n, p) for n, p in sends}.values())
+        if message.calls and ports is None and node.role != "model":
+            # an open call: back toward the model that asked (a node wired into several models answers only that one)
+            caller = message.calls[-1]["model"]
+            if back := [(n, p) for n, p in sends if n.id == caller] \
+                    or [(n, p) for n, p in sends if n.role != "model" and self.leads_back(domain_id, n.id, caller)]:
+                sends = back
+        if sends:
+            await asyncio.gather(*(self._enter(walk, n, p, message if len(sends) == 1 else message.branch())
+                                   for n, p in sends))
+
+    async def _enter(self, walk: _Walk, node: Node, port: str, message: Message) -> None:
+        if (future := walk.waiting.get((message.id, node.id))) is not None and not future.done():
+            future.set_result(message)  # back from a loop: the model that sent it goes on
             return
-        await asyncio.gather(*(self._enter(walk, node, bp, message if len(targets) == 1 else message.branch())
-                               for node, bp in targets))
-
-    async def _enter(self, walk: _Walk, node: Node, port: str, message: ModelRequest) -> None:
         walk.steps += 1
         if walk.steps > MAX_STEPS:
             LOGGER.warning("AAC: a message visited %s nodes; the wiring may loop (stopped at %s)", MAX_STEPS, node.id)
             return
+        before = {e["id"] for e in message.entries}
+        step = {"node": node.id, "title": node.title, "role": node.role}
+        message.trace.append(step)
+        ctx = Step(self, walk, node, port)
         try:
             if node.role == "model":
-                if (answered := await self._model(walk, node, message)) is not None:
-                    await self._from(walk, answered, node.id, _port(node, "out"))
-            elif node.role == "decide":
-                out = await self._decide(node, message)
-                await self._from(walk, message, node.id, out)
-            elif node.role == "reply":
-                await self._reply(walk, node, message)
-            elif node.role == "sink":
-                if node.run:
-                    await node.run(message.domain.id, port, {"message": message, "run": walk.last.run, **_meta(message)})
-            elif node.annotate is not None:  # a transform
-                await self._transform(node, message)
-                await self._from(walk, message, node.id, _port(node, "out"))
+                go = await self._model(walk, node, message, ctx)
+            elif node.handle is not None:
+                go = await node.handle(message, ctx)
+            else:
+                go = None  # a node without a part of its own passes it on
         except Exception as err:  # noqa: BLE001 - one broken node must not lose the message silently
             LOGGER.exception("AAC: node %s failed on a message", node.id)
-            message.trace.append({"node": node.id, "title": node.title, "error": str(err)})
-
-    async def _transform(self, node: Node, message: ModelRequest) -> None:
-        before = (len(message.system), len(message.context), len(message.tools))
-        step: dict[str, Any] = {"node": node.id, "title": node.title}
-        try:
-            await node.annotate(message)
-        except Exception as err:  # noqa: BLE001
-            LOGGER.exception("AAC: node %s failed on a message", node.id)
             step["error"] = str(err)
-        _added(message, before, step)
-        message.trace.append(step)
+            go = []
+            if pending_call(message, node.id) is not None:  # asked by a model: it gets the error and goes on
+                message.add(node.id, "result", f"{node.title} failed: {err}", error=True)
+                go = None
+        if added := [_short(e) for e in message.entries if e["id"] not in before]:
+            step["added"] = added
+        if go != []:
+            await self._out(walk, node, message, None if go is None else go if isinstance(go, list) else [go])
+
+    def _deliver(self, walk: _Walk, result: FlowResult) -> None:
+        if not walk.future.done():
+            walk.future.set_result(result)
 
     # ------------------------------------------------------------------ model
-    def attached(self, domain_id: str, node: Node) -> list[Node]:
-        """The cards attached to a model (wired into its tool input)."""
-        nodes = self.bus.nodes_in(domain_id)
-        return [nodes[a] for a, ap, b, bp in self.bus.wires(domain_id)
-                if b == node.id and node.inputs.get(bp) == TOOL and nodes[a].provide]
+    async def _model(self, walk: _Walk, node: Node, message: Message, ctx: Step) -> list | None:
+        """Answer now, or (automatic) through the job queue."""
+        if message.kind == "auto" and not message.now and message.due_minutes is not None and not message.calls:
+            if not (message.coalesce and self._busy(message)):  # one waiting or running is enough (a heartbeat)
+                await self.entry.runtime_data.jobs.async_submit(self._job(walk, node, message))
+            return []
+        return await self._answer(walk, node, message, ctx)
 
-    async def _model(self, walk: _Walk, node: Node, message: ModelRequest) -> ModelRequest | None:
-        """Answer now, or (automatic) through the job queue; returns the answered message, or None (it waits)."""
-        if message.kind == "auto" and not message.now and message.due_minutes is not None:
-            return await self._queue(walk, node, message)
-        return await self._answer(walk, node, message)
-
-    async def _queue(self, walk: _Walk, node: Node, message: ModelRequest) -> None:
-        if message.coalesce and self._busy(message):
-            return None  # one waiting or running is enough (a heartbeat)
-        await self.entry.runtime_data.jobs.async_submit(self._job(walk, node, message))
-        return None
-
-    def _job(self, walk: _Walk, node: Node, message: ModelRequest, saved: dict | None = None) -> Job:
-        """The job of an automatic message waiting at a model node (also rebuilt after a restart: `saved`)."""
+    def _job(self, walk: _Walk, node: Node, message: Message, saved: dict | None = None) -> Job:
+        """The job of an automatic message waiting at a model card (also rebuilt after a restart: `saved`)."""
 
         async def start(note: str = "") -> Run | None:
             if note:
-                message.instructions = f"{message.instructions}\n\n{note}".strip()
-            answered = await self._answer(walk, node, message)
-            if answered is not None:
-                await self._from(walk, answered, node.id, _port(node, "out"))
+                message.add("queue", "note", note)
+            ctx = Step(self, walk, node, "in")
+            go = await self._answer(walk, node, message, ctx)
+            if go != []:
+                await self._out(walk, node, message, go)
             return walk.last.run
 
         job = Job(message.domain, message.title or message.trigger, message.tier, message.priority, start,
@@ -201,85 +263,97 @@ class Flow:
             job.reason = "waited before Home Assistant restarted"
         return job
 
-    def _busy(self, message: ModelRequest) -> bool:
+    def _busy(self, message: Message) -> bool:
         data = self.entry.runtime_data
         if any(j.domain is message.domain and message.trigger in j.tags for j in data.jobs.waiting):
             return True
         return any(r.trigger == message.trigger for r in message.domain.runs.running("auto"))
 
     def restore(self, domain: Domain, item: dict[str, Any]) -> Job | None:
-        """A message that waited before a restart, queued again at its model node."""
+        """A message that waited before a restart, queued again at its model card."""
         node = self.bus.nodes_in(domain.id).get(item.get("node") or MODEL)
         if node is None or node.role != "model":
             return None
-        known = ModelRequest.__dataclass_fields__
-        message = ModelRequest(domain=domain, **{k: v for k, v in (item.get("message") or {}).items()
-                                                 if k in known and k not in ("domain", "meta")})
+        known = Message.__dataclass_fields__
+        message = Message(domain=domain, **{k: v for k, v in (item.get("message") or {}).items()
+                                            if k in known and k != "domain"})
         return self._job(_Walk(), node, message, saved=item)
 
-    async def _answer(self, walk: _Walk, node: Node, message: ModelRequest) -> ModelRequest | None:
-        """One model call, recorded as a run."""
+    def answer_to(self, message: Message, node: Node, ctx: Step) -> list[tuple[Node, str]]:
+        """Where a model's plain answer goes: the model that called it, else reply_to, else the origin, else
+        every wired node that does not lead back into it (no other endpoint)."""
+        targets = ctx.targets(message)
+        for want in ([message.calls[-1]["model"]] if message.calls else []) + [message.reply_to, message.origin]:
+            if want and (found := [(n, p) for n, p in targets if n.id == want]):
+                return found
+        # endpoints only take what is theirs (found above)
+        return [(n, p) for n, p in targets if n.role != "endpoint" and not ctx.leads_back(message, n)]
+
+    async def _answer(self, walk: _Walk, node: Node, message: Message, ctx: Step) -> list | None:
+        """One model turn (with its loops), recorded as a run; on to where the answer goes."""
         from .broker import async_context, is_silent  # noqa: PLC0415 - avoid an import cycle
 
         domain, data = message.domain, self.entry.runtime_data
-        if node.type:  # an added model node: its own tier and instructions
-            message.tier = node.settings.get("tier") or message.tier
-            if prompt := (node.settings.get("prompt") or "").strip():
-                message.system.append(prompt)
-        run = domain.runs.start(message.kind, message.trigger, message.title, input=message.text, chat_id=message.chat_id,
-                                context=message.instructions, allow_tools=message.allow_tools, tier=message.tier,
-                                history=message.history, own_words=message.own_words, source=message.source)
+        if not message.trace or message.trace[-1].get("node") != node.id:  # started by the queue
+            message.trace.append({"node": node.id, "title": node.title, "role": node.role})
+        tier = (node.settings.get("tier") if node.type else None) or message.tier
+        if node.type and (prompt := (node.settings.get("prompt") or "").strip()):
+            message.put(node.id, "system", prompt)
+        home = self.answer_to(message, node, ctx)
+        going = {(n.id, p) for n, p in home}
+        # its tools: every other wired node (endpoints only take answers)
+        tools = [(n, p) for n, p in ctx.targets(message) if (n.id, p) not in going and n.role != "endpoint"] \
+            if message.allow_tools else []
+        user = message.last("user")
+        run = domain.runs.start(message.kind, message.trigger, message.title, input=user["text"] if user else "",
+                                chat_id=message.chat_id, allow_tools=message.allow_tools, tier=tier,
+                                own_words=message.words, source=message.origin)
         run.model_node = node.id
         walk.last = FlowResult(message, run)
         token = current_run.set(run)
         try:
             if message.context_parts:  # built now, when the model really starts (a message that waited sees today's home)
                 built = await async_context(self.hass, self.entry, domain, message.context_parts)
-                intro, _, rest = message.instructions.partition("\n\n")  # the situation first, then what it sees
-                message.instructions = "\n\n".join(filter(None, [intro, built.strip(), rest]))
                 message.context_parts = []
-            # The attached cards: their tools, and what they hand along (memory)
-            for card in self.attached(domain.id, node):
-                before = (len(message.system), len(message.context), len(message.tools))
-                step: dict[str, Any] = {"node": card.id, "title": card.title, "attached": node.id}
-                try:
-                    await card.provide(message)
-                except Exception as err:  # noqa: BLE001
-                    LOGGER.exception("AAC: card %s failed", card.id)
-                    step["error"] = str(err)
-                _added(message, before, step)
-                message.trace.append(step)
-            if message.context:
-                run.context = "\n\n".join(filter(None, [run.context, *message.context]))
+                if built.strip():
+                    user = message.last("user")
+                    note = message.add("context", "note", built.strip())
+                    if user:  # before the question it belongs to
+                        message.entries.remove(note)
+                        message.entries.insert(message.entries.index(user), note)
+            run.context = "\n\n".join(e["text"] for e in message.entries if e["kind"] == "note" and not e["data"].get("call_id"))
             run.trace = list(message.trace)
-            text, extra = await data.model_node.async_answer(message, run)
+            message = await data.model_node.async_answer(message, run, node, tier, tools, ctx)
+            ctx.walk.last = FlowResult(message, run)
         except Exception as err:  # noqa: BLE001 - a failed run must not kill the caller
             if not isinstance(err, HomeAssistantError):
                 LOGGER.exception("AAC: run %s failed", run.id)
             domain.runs.finish(run, "failed", str(err))
-            message.trace.append({"node": node.id, "title": node.title, "role": "model", "error": str(err), "run": run.id})
+            message.trace[-1].update({"error": str(err), "run": run.id})
             run.trace = list(message.trace)
             walk.last = FlowResult(message, run)
             if message.kind != "auto":
                 self._deliver(walk, FlowResult(message, run, replied=False))
-            return None
+            return []
         finally:
             current_run.reset(token)
+        text = message.answer or ""
         domain.runs.finish(run, "silent" if message.kind == "auto" and is_silent(text) else "done", text)
-        message.trace.append({"node": node.id, "title": node.title, "role": "model", "run": run.id, "model": run.model})
+        message.trace[-1].update({"run": run.id, "model": run.model})
         run.trace = list(message.trace)
-        message.meta = {"question": message.words, **extra}  # for the sinks (memory keeper: the person's own words)
-        message.text, message.answered = text, True
         walk.last = FlowResult(message, run)
-        return message
+        if not home:
+            return []
+        # one wire for the answer (the model chose by answering); several: a copy each
+        return [(port_of(node, "out"), n.id) for n, _ in home]
 
     # ------------------------------------------------------------------ decide
-    async def _decide(self, node: Node, message: ModelRequest) -> str:
-        """Pick one of the node's outputs: a short call whose answer the server's grammar limits to their names."""
+    async def decide(self, node: Node, message: Message) -> str:
+        """Pick one of a Decide card's outputs: a short call whose answer the server's grammar limits to their names."""
         outputs = [o for o in (node.settings.get("outputs") or []) if o.get("name") in node.outputs]
         names = [o["name"] for o in outputs] or list(node.outputs)
         default = node.settings.get("default") if node.settings.get("default") in names else names[-1]
-        step: dict[str, Any] = {"node": node.id, "title": node.title, "role": "decide"}
+        step = message.trace[-1] if message.trace else {}
         picked = default
         pool = self.entry.runtime_data.pool
         if (found := pool.endpoint_for(node.settings.get("tier") or "fast", message.kind == "auto")) is not None:
@@ -309,48 +383,27 @@ class Flow:
         else:
             step["note"] = "no model free: the default"
         step["output"] = picked
-        message.trace.append(step)
         return picked
 
-    # ------------------------------------------------------------------ reply
-    async def _reply(self, walk: _Walk, node: Node, message: ModelRequest) -> None:
-        """Home: an automatic finding to its chat (silence stays silent); everything else to whoever waits."""
-        from .broker import is_silent, short  # noqa: PLC0415
-        from .chats import AAC_CHAT_ID  # noqa: PLC0415
 
-        message.trace.append({"node": node.id, "title": node.title, "role": "reply"})
-        run = walk.last.run
-        if run is not None:
-            run.trace = list(message.trace)
-        if message.kind == "auto" and message.answered and message.text and not is_silent(message.text):
-            domain = message.domain
-            # A finding with a chat of its own (owner, 2026-10-20, heartbeat): a reply is about that one thing
-            chat_id = (f"{message.chat_prefix or message.trigger}_{dt_util.utcnow().strftime('%Y%m%d%H%M%S')}"
-                       if message.chat == "own" else AAC_CHAT_ID)
-            if chat_id != AAC_CHAT_ID:
-                domain.chats.create(f"{message.title} · {short(message.text)}", chat_id)
-            if run is not None:
-                run.chat_id = chat_id
-            domain.chats.add_message(chat_id, "aac", message.text, proactive=True, run_id=run.id if run else None,
-                                     trigger=message.title)
-        self._deliver(walk, FlowResult(message, run, replied=True))
-
-    def _deliver(self, walk: _Walk, result: FlowResult) -> None:
-        if not walk.future.done():
-            walk.future.set_result(result)
+def port_of(node: Node, side: str) -> str:
+    """A node's text port on one side."""
+    return next((p for p, k in (node.outputs if side == "out" else node.inputs).items() if k == TEXT), side)
 
 
-def _port(node: Node, side: str) -> str:
-    """A node's message port on one side."""
-    return next((p for p, k in (node.outputs if side == "out" else node.inputs).items() if k == MESSAGE), side)
+def pending_call(message: Message, node_id: str) -> dict[str, Any] | None:
+    """The open call this node is asked to answer (the newest call, if it is for this node)."""
+    if not message.calls or message.calls[-1]["node"] != node_id:
+        return None
+    call_id = message.calls[-1]["call_id"]
+    found = next((e for e in reversed(message.entries) if e["kind"] == "call" and e["data"].get("call_id") == call_id), None)
+    if found is None or any(e["kind"] == "result" and e["by"] == node_id and e["data"].get("call_id") == call_id
+                            for e in message.entries):
+        return None  # already answered by this node (it passes it on)
+    return found
 
 
-def _added(message: ModelRequest, before: tuple[int, int, int], step: dict[str, Any]) -> None:
-    """What a node added to the message, for the trace (the node view shows the way and each node's part)."""
-    for key, n in zip(("system", "context", "tools"), before):
-        if added := getattr(message, key)[n:]:
-            step[key] = [a if key == "tools" else (a if len(a) <= 600 else a[:600] + "…") for a in added]
-
-
-def _meta(message: ModelRequest) -> dict[str, Any]:
-    return dict(message.meta)
+def _short(item: dict[str, Any]) -> dict[str, Any]:
+    """An entry for the trace (the node view shows each node's part)."""
+    text = item["text"]
+    return {"kind": item["kind"], "text": text if len(text) <= 600 else text[:600] + "…", "tags": item["tags"]}

@@ -1,7 +1,7 @@
 """Slots (spec/streams.md): interfaces with exactly one provider, asked on demand.
 
 Owner design (2026-10-21): "everything not core becomes a module, even memory". The core asks a slot,
-never a module: what to hand the model along with a message (memory recalls), what to keep after one.
+never a module (the memory's embedding model, removing a domain's memory).
 Without a provider (or with its module switched off in a domain) a slot answers empty and AAC works
 without it. The first slot is `memory`; its default provider is the memory module (modules/memory).
 """
@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from .domains import Domain
-    from .provider import OpenAICompatProvider
 
 
 class MemorySlot(Protocol):
@@ -21,11 +20,6 @@ class MemorySlot(Protocol):
 
     async def async_context(self, domain_id: str, text: str) -> str | None:
         """Text to hand the model along with a message ("Memories that may help: …"), or None."""
-
-    async def async_after_message(self, domain_id: str, text: str, stored_now: list[str],
-                                  provider: OpenAICompatProvider, model: str) -> None:
-        """The person said `text` in a chat (the model already stored `stored_now`): keep what is worth it.
-        `provider`/`model` = the model that answered, for a short extraction call."""
 
     async def async_model_changed(self) -> None:
         """The embedding model (pool role "memory") changed."""

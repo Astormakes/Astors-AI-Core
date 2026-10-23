@@ -6,7 +6,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .conftest import BASE_URL, heartbeat_now, setup_aac, triggers_of, memory_of
+from .conftest import BASE_URL, heartbeat_now, setup_aac, triggers_of, memory_of, everything
 
 URL = f"{BASE_URL}/chat/completions"
 
@@ -41,7 +41,7 @@ async def test_master_schedules_itself(hass: HomeAssistant, hass_ws_client, aioc
     await setup_aac(hass, mock_entry)
     _queue(
         aioclient_mock,
-        _tool_reply("aac-triggers__schedule",
+        _tool_reply("triggers_tools__schedule",
                     '{"name": "Walk check", "instruction": "Ask how the walk went.", "at": "18:30", "weekdays": [0, 2, 4]}'),
         _text("I'll check in on Monday, Wednesday and Friday evening."),
     )
@@ -60,7 +60,7 @@ async def test_ask_mode_needs_approval(hass: HomeAssistant, hass_ws_client, aioc
     ws = await hass_ws_client(hass)
     await ws.send_json_auto_id({"type": "aac/module/settings", "module": "triggers", "values": {"own_plans": "ask"}})
     assert (await ws.receive_json())["success"]
-    _queue(aioclient_mock, _tool_reply("aac-triggers__schedule", '{"name": "Pills", "instruction": "Remind.", "in_minutes": 30}'), _text("ok"))
+    _queue(aioclient_mock, _tool_reply("triggers_tools__schedule", '{"name": "Pills", "instruction": "Remind.", "in_minutes": 30}'), _text("ok"))
     await _chat(ws, "Remind me in half an hour.")
     trig = triggers_of(hass).triggers[0]
     assert trig["proposed"] and not trig["enabled"]
@@ -89,7 +89,7 @@ async def test_cannot_touch_owner_triggers(hass: HomeAssistant, hass_ws_client, 
          "when": {"type": "state", "entity_id": "binary_sensor.door", "to": "on"},
          "do": {"template": "event-reaction", "instruction": "Tell me."}}
     )
-    _queue(aioclient_mock, _tool_reply("aac-triggers__cancel_schedule", f'{{"id": "{owner["id"]}"}}'), _text("I can't."))
+    _queue(aioclient_mock, _tool_reply("triggers_tools__cancel_schedule", f'{{"id": "{owner["id"]}"}}'), _text("I can't."))
     ws = await hass_ws_client(hass)
     message = await _chat(ws, "Delete the door trigger.")
     result = next(s for s in message["steps"] if s["type"] == "tool_result")
@@ -112,7 +112,7 @@ async def test_one_off_fires_once_and_goes(hass: HomeAssistant, aioclient_mock, 
     async_fire_time_changed(hass, dt_util.utcnow())
     await hass.async_block_till_done(wait_background_tasks=True)
     assert len(payloads) == 2
-    assert "your own earlier instruction" in payloads[0]["messages"][0]["content"]
+    assert "your own earlier instruction" in everything(payloads[0])
     assert triggers_of(hass).triggers == []
 
 
@@ -123,7 +123,7 @@ async def test_plans_are_open_loops(hass: HomeAssistant, aioclient_mock, mock_en
     await memory_of(hass).async_remember("Weight 82.4 kg", "event")
     payloads = _queue(aioclient_mock, _text('{"speak": false, "message": ""}'))
     await heartbeat_now(hass)
-    system = payloads[0]["messages"][0]["content"]
+    system = everything(payloads[0])
     assert "Open loops" in system and "lose 4 kg" in system
     assert "Weight 82.4" not in system  # events are recalled when needed, not listed
 
@@ -154,10 +154,10 @@ async def test_attribute_and_event_triggers(hass: HomeAssistant, hass_ws_client,
     async_expose_entity(hass, "conversation", "sensor.astor", True)
     _queue(
         aioclient_mock,
-        _tool_reply("aac-triggers__watch", json.dumps({"name": "Gaming", "instruction": "Free the PC.", "entity_id": "sensor.astor", "attribute": "game"})),
-        _tool_reply("aac-triggers__watch", json.dumps({"name": "Bad", "instruction": "x", "event_type": "state_changed"})),
-        _tool_reply("aac-triggers__watch", json.dumps({"name": "Hidden", "instruction": "x", "entity_id": "sensor.hidden"})),
-        _tool_reply("aac-triggers__watch", json.dumps({"name": "Button", "instruction": "Toggle the lamp.", "event_type": "zha_event", "event_data": {"command": "on"}})),
+        _tool_reply("triggers_tools__watch", json.dumps({"name": "Gaming", "instruction": "Free the PC.", "entity_id": "sensor.astor", "attribute": "game"})),
+        _tool_reply("triggers_tools__watch", json.dumps({"name": "Bad", "instruction": "x", "event_type": "state_changed"})),
+        _tool_reply("triggers_tools__watch", json.dumps({"name": "Hidden", "instruction": "x", "entity_id": "sensor.hidden"})),
+        _tool_reply("triggers_tools__watch", json.dumps({"name": "Button", "instruction": "Toggle the lamp.", "event_type": "zha_event", "event_data": {"command": "on"}})),
         _text("Done."),
     )
     ws = await hass_ws_client(hass)

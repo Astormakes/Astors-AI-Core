@@ -1,11 +1,15 @@
 """The user's chats with AAC (several, kept across restarts).
 
+A chat is a document (spec/graph.md): `entries` is the whole conversation as the graph wrote it (calls and
+results included), `messages` what the panel shows (each pointing at its entry). Editing a message edits
+the document; the next message sends the edited document.
 One special chat, "From AAC" (id `aac`), holds what AAC says on its own
 (heartbeat, event triggers), so proactive messages have a home.
 """
 
 from __future__ import annotations
 
+from copy import deepcopy
 import re
 from typing import Any
 import uuid
@@ -46,7 +50,7 @@ class ChatStore:
     @staticmethod
     def summary(chat: dict[str, Any]) -> dict[str, Any]:
         """A chat without its messages (for the list)."""
-        return {k: v for k, v in chat.items() if k != "messages"}
+        return {k: v for k, v in chat.items() if k not in ("messages", "entries")}
 
     def list(self) -> list[dict[str, Any]]:
         """All chats, newest activity first. 'From AAC' only once it has messages."""
@@ -102,29 +106,43 @@ class ChatStore:
             self._save()
             async_notify(self.hass, "chats", domain=self.domain_id)
 
-    @callback
-    def history(self, chat_id: str, limit: int = 30) -> list[dict[str, Any]]:
-        """The chat so far without the newest message (the one being answered), errors left out."""
+    def document(self, chat_id: str) -> list[dict[str, Any]]:
+        """The chat's conversation as a document (a copy, to send through the graph)."""
         chat = self.chats.get(chat_id)
-        if not chat:
-            return []
-        return [{"role": m["role"], "text": spoken(m)} for m in chat["messages"][:-1]
-                if not m.get("error") and m.get("text")][-limit:]
+        return deepcopy(chat.get("entries") or []) if chat else []
+
+    @callback
+    def set_entries(self, chat_id: str, entries: list[dict[str, Any]]) -> None:
+        """The conversation as the graph left it."""
+        if chat := self.chats.get(chat_id):
+            chat["entries"] = deepcopy(entries)
+            self._save()
 
     @callback
     def rewind(self, chat_id: str, index: int) -> None:
-        """Cut the chat off before message `index` (edit or rerun); HA's conversation starts over."""
+        """Cut the chat off before message `index` (edit or rerun), the document before that message's entry."""
         if chat := self.chats.get(chat_id):
+            cut = chat["messages"][index] if 0 <= index < len(chat["messages"]) else None
             chat["messages"] = chat["messages"][:max(0, index)]
+            entries = chat.get("entries") or []
+            at = next((i for i, e in enumerate(entries) if cut and e["id"] == cut.get("entry")), None)
+            if at is not None:
+                chat["entries"] = entries[:at]
+            elif not chat["messages"]:
+                chat["entries"] = []
             chat["conversation_id"] = None
             self._save()
             async_notify(self.hass, "chat", chat_id=chat_id, domain=self.domain_id)
 
     @callback
     def edit(self, chat_id: str, index: int, text: str) -> None:
-        """Change a message in place (also AAC's answers); later messages stay, HA's conversation starts over."""
+        """Change a message in place (also AAC's answers) and its entry in the document; later ones stay."""
         if (chat := self.chats.get(chat_id)) and 0 <= index < len(chat["messages"]):
-            chat["messages"][index] = {**chat["messages"][index], "text": text, "edited": True}
+            message = chat["messages"][index] = {**chat["messages"][index], "text": text, "edited": True}
+            for item in chat.get("entries") or []:
+                if item["id"] == message.get("entry"):
+                    item["text"] = text
+                    item["data"].pop("own_words", None)
             chat["conversation_id"] = None
             self._save()
             async_notify(self.hass, "chat", chat_id=chat_id, domain=self.domain_id)

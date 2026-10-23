@@ -294,7 +294,7 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         found[dom.id] = Triggers(ctx, dom)
         await found[dom.id].async_load()
         ctx.entry.async_on_unload(found[dom.id].async_stop)
-    ctx.add_node(Node(id=NODE, title="Triggers", outputs={"out": "message"}, role="source",
+    ctx.add_node(Node(id=NODE, title="Triggers", outputs={"out": "text"}, role="source",
                       description="Your triggers and AAC's own plans: when an entity changes, an HA event happens or a time "
                                   "comes, a message with the trigger's instruction starts here (reminders are time-critical)."))
 

@@ -10,7 +10,7 @@ from homeassistant.exceptions import HomeAssistantError
 from custom_components.aac.audio_hub import EnergyVad, Segmenter
 from custom_components.aac.modules import async_set_access
 
-from .conftest import setup_aac
+from .conftest import setup_aac, untimed
 from .test_planning import _queue, _text
 
 SILENCE = array("h", [0] * 160).tobytes()  # 10 ms
@@ -76,7 +76,7 @@ async def test_satellite_round_trip(hass: HomeAssistant, hass_client, aioclient_
     assert len(payloads) == 3  # attention check, the answer, attention check (no second answer)
     assert "hello there" in payloads[0]["messages"][0]["content"]  # the check sees what came before
     assert "by voice" in payloads[1]["messages"][0]["content"]
-    asked = payloads[1]["messages"][-1]["content"]  # look back: what was said just before the name goes with it
+    asked = untimed(payloads[1]["messages"][-1]["content"])  # look back: what was said just before the name goes with it
     assert "hello there" in asked and asked.endswith("spoken aloud there): Computer, what time is it?")
     assert not any(t["function"]["name"].startswith("aac-setup") for t in payloads[1]["tools"])  # voice is anonymous
     chat = mock_entry.runtime_data.chats.get("voice_pc")
@@ -510,7 +510,7 @@ async def test_split_utterance_is_answered_once(hass: HomeAssistant, hass_client
         await ws.close()
     await hass.async_block_till_done(wait_background_tasks=True)
     assert len(payloads) == 2  # one attention check, one answer
-    assert payloads[1]["messages"][-1]["content"].endswith("Computer, are you there? Please say hello.")
+    assert untimed(payloads[1]["messages"][-1]["content"]).endswith("Computer, are you there? Please say hello.")
     assert [x["addressed"] for x in hub.transcript if x["kind"] != "aac"] == [True, True]
 
 
@@ -579,7 +579,7 @@ async def test_companion_follows_the_conversation(hass: HomeAssistant, hass_clie
     second = payloads[1]["messages"][1]["content"]  # the decision sees the conversation so far
     assert "Anna, how was your day?" in second and second.endswith("Could you tell me what time it is?")
     assert any(x["kind"] == "aac" and x["text"] == "It is five." for x in hub.transcript)
-    asked = payloads[2]["messages"][-1]["content"]  # the master gets the room with percentages
+    asked = untimed(payloads[2]["messages"][-1]["content"])  # the master gets the room with percentages
     assert "(10 %) someone: Anna, how was your day?" in asked and "use only what fits" in asked
 
 

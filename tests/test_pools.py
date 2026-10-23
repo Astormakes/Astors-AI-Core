@@ -54,9 +54,9 @@ async def test_setup_tool_orders_the_pool(hass: HomeAssistant, hass_ws_client, h
     await setup_aac(hass, mock_entry)
     _queue(
         aioclient_mock,
-        _tool_reply("aac-setup__use_model", f'{{"role": "master", "model_id": "{PC["id"]}", "position": "first"}}'),
+        _tool_reply("setup__use_model", f'{{"role": "master", "model_id": "{PC["id"]}", "position": "first"}}'),
         _text("done"),
-        _tool_reply("aac-setup__use_model", '{"role": "speech", "model_id": "tts.nope"}'),
+        _tool_reply("setup__use_model", '{"role": "speech", "model_id": "tts.nope"}'),
         _text("no"),
     )
     ws = await hass_ws_client(hass)
@@ -174,8 +174,8 @@ async def test_setup_tool_writes_the_rule(hass: HomeAssistant, hass_ws_client, h
             '{"type": "state", "entity_id": "device_tracker.phone", "state": "not_home"},'
             '{"type": "time", "after": "08:00", "before": "17:00", "weekdays": ["weekdays"]}]}')
     _queue(aioclient_mock,
-           _tool_reply("aac-setup__set_availability", rule.replace("device_tracker.phone", "person.nobody")), _text("?"),
-           _tool_reply("aac-setup__set_availability", rule), _text("Set."))
+           _tool_reply("setup__set_availability", rule.replace("device_tracker.phone", "person.nobody")), _text("?"),
+           _tool_reply("setup__set_availability", rule), _text("Set."))
     ws = await hass_ws_client(hass)
     first = await _chat(ws, "Use my PC for heavy stuff only while I am at work.")
     assert next(s for s in first["steps"] if s["type"] == "tool_result")["error"]

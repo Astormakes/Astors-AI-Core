@@ -43,16 +43,6 @@ def isolated_memory_db(tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def no_memory_extractor(request):
-    """The extractor adds a model call per message; tests opt in with @pytest.mark.extractor."""
-    if request.node.get_closest_marker("extractor"):
-        yield
-        return
-    with patch("custom_components.aac.modules.memory.async_extract", new=AsyncMock(return_value=[])):
-        yield
-
-
-@pytest.fixture(autouse=True)
 def mock_panel(hass: HomeAssistant) -> Generator[dict[str, MagicMock]]:
     """The real frontend needs half of HA; pretend it is loaded."""
     hass.config.components.update({"frontend", "panel_custom"})
@@ -140,3 +130,13 @@ async def heartbeat_now(hass: HomeAssistant):
     from custom_components.aac.modules.heartbeat import async_run_now
 
     return await async_run_now(hass)
+
+
+def everything(payload: dict) -> str:
+    """All the text a model request carried (system prompt, notes, turns)."""
+    return "\n".join(str(m.get("content") or "") for m in payload["messages"])
+
+
+def untimed(text: str) -> str:
+    """A user turn without the local time the model card adds to the newest one."""
+    return str(text).split("\n\n[Local time:")[0]

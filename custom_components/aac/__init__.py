@@ -52,7 +52,6 @@ from .model_node import ModelNode
 from .modules import MODULES_DIR, MODULES_URL, LoadedModule, async_load_modules
 from .pools import TIERS, Pool
 from .skins import USER_URL as USER_SKINS_URL, user_dir
-from .menu_api import MENU_API_ID, AACMenuAPI
 from .setup_api import AACSetupAPI
 from .runs import RunRegistry
 from .store import AACStore
@@ -151,12 +150,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         for api in (
             AACSetupAPI(hass=hass, id=dom.api_id("aac_setup"), name=f"AAC setup{label}", entry=entry, domain=dom),
             AACHomeAPI(hass=hass, id=dom.api_id("aac_home"), name=f"AAC home{label}", entry=entry, domain=dom),
-            AACMenuAPI(hass=hass, id=dom.api_id(MENU_API_ID), name=f"AAC menu{label}"),
         ):
             entry.async_on_unload(llm.async_register_api(hass, api))
 
-    # v1: messages move through the graph (flow.py); the core's cards (sources, agent, attached cards, the model,
-    # Reply) are nodes; the model node answers with AAC's own tool loop
+    # Messages move through the graph (spec/graph.md, flow.py); the core's nodes (endpoints, the agent, the model,
+    # Decide, the nodes with tools) are cards like the modules'; a model card calls its wired nodes as tools
     entry.runtime_data.model_node = ModelNode(hass, entry)
     for node in core_nodes(hass, entry):
         entry.async_on_unload(entry.runtime_data.bus.add_node(node))

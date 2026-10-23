@@ -10,7 +10,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.jobs import Job
 
-from .conftest import MODEL_CFG, set_heartbeat, setup_aac, triggers_of
+from .conftest import MODEL_CFG, set_heartbeat, setup_aac, triggers_of, everything
 from .test_planning import _queue, _text
 
 
@@ -35,7 +35,7 @@ async def test_heartbeat_waits_and_is_told_it_was_late(hass: HomeAssistant, aioc
     await data.jobs._tick()  # noqa: SLF001
     await hass.async_block_till_done(wait_background_tasks=True)
     assert data.jobs.waiting == [] and data.jobs.history[0].status == "done"
-    assert "postponed" in payloads[0]["messages"][0]["content"]
+    assert "postponed" in everything(payloads[0])
 
 
 async def test_time_critical_job_reaches_the_owner_without_a_model(hass: HomeAssistant, mock_entry, configured):
@@ -67,9 +67,12 @@ async def test_queue_ws(hass: HomeAssistant, hass_ws_client, mock_entry, configu
 
 def _saved(**message):
     """A waiting message as the queue saves it (kind "message": its model node and the message as JSON)."""
-    base = {"text": "It is 08:00.", "kind": "auto", "trigger": "event: t_pills", "title": "Pills", "source": "triggers",
+    from custom_components.aac.request import entry
+
+    base = {"entries": [entry("triggers", "note", "Remind me."), entry("triggers", "user", "It is 08:00.")],
+            "kind": "auto", "trigger": "event: t_pills", "title": "Pills", "origin": "triggers", "reply_to": "chat",
             "priority": "high", "critical": True, "fallback": "Pills: Remind me to take my pills.", "due_minutes": 30,
-            "keep": True, "tags": ["reminder"], "context_parts": ["time"], "instructions": "Remind me."}
+            "keep": True, "tags": ["reminder"], "context_parts": ["time"]}
     return {"kind": "message", "node": "model", "title": "Pills", "message": {**base, **message}}
 
 
@@ -100,7 +103,7 @@ async def test_a_waiting_message_comes_back(hass: HomeAssistant, hass_storage, a
     data = mock_entry.runtime_data
     job = next(j for j in data.jobs.waiting + data.jobs.history if j.id == "j2")
     assert job.created == created and job.reason == "waited before Home Assistant restarted"
-    assert data.chats.get("aac")["messages"][-1]["text"] == "Pills now."  # it ran and came home (Reply)
+    assert data.chats.get("aac")["messages"][-1]["text"] == "Pills now."  # it ran and came home
 
 
 async def test_waiting_jobs_are_saved(hass: HomeAssistant, hass_storage, mock_entry, configured, freezer):

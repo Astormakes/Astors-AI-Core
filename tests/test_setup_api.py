@@ -7,8 +7,8 @@ from .conftest import MODEL_CFG, set_heartbeat, setup_aac
 from .test_planning import _chat, _queue, _text, _tool_reply
 
 SETUP_TOOLS = {
-    "aac-setup__setup_status", "aac-setup__list_models", "aac-setup__add_model",
-    "aac-setup__use_model", "aac-setup__module_setting", "aac-setup__skip_setup_step",
+    "setup__setup_status", "setup__list_models", "setup__add_model",
+    "setup__use_model", "setup__module_setting", "setup__skip_setup_step",
 }
 
 
@@ -21,8 +21,8 @@ async def test_owner_chat_sets_up_heartbeat(hass: HomeAssistant, hass_ws_client,
     await setup_aac(hass, mock_entry)
     payloads = _queue(
         aioclient_mock,
-        _tool_reply("aac-setup__setup_status", "{}"),
-        _tool_reply("aac-setup__module_setting", '{"module": "heartbeat", "on": true, "settings": {"interval": 15, "quiet_start": "23:00"}}'),
+        _tool_reply("setup__setup_status", "{}"),
+        _tool_reply("setup__module_setting", '{"module": "heartbeat", "on": true, "settings": {"interval": 15, "quiet_start": "23:00"}}'),
         _text("The heartbeat is on, every 15 minutes."),
     )
     ws = await hass_ws_client(hass)
@@ -68,9 +68,9 @@ async def test_add_and_use_models(hass: HomeAssistant, hass_ws_client, aioclient
     aioclient_mock.get("http://embed.test/v1/models", json={"data": [{"id": "bge-m3"}]})
     _queue(
         aioclient_mock,
-        _tool_reply("aac-setup__add_model", '{"base_url": "http://embed.test/v1", "model": "nope"}'),
-        _tool_reply("aac-setup__add_model", '{"base_url": "http://embed.test/v1/", "model": "bge-m3", "name": "Embeddings"}'),
-        _tool_reply("aac-setup__use_model", '{"role": "memory", "model_id": "m_unknown"}'),
+        _tool_reply("setup__add_model", '{"base_url": "http://embed.test/v1", "model": "nope"}'),
+        _tool_reply("setup__add_model", '{"base_url": "http://embed.test/v1/", "model": "bge-m3", "name": "Embeddings"}'),
+        _tool_reply("setup__use_model", '{"role": "memory", "model_id": "m_unknown"}'),
         _text("Which one?"),
     )
     ws = await hass_ws_client(hass)
@@ -84,7 +84,7 @@ async def test_add_and_use_models(hass: HomeAssistant, hass_ws_client, aioclient
     assert added["base_url"] == "http://embed.test/v1" and added["model"] == "bge-m3"
 
     aioclient_mock.clear_requests()  # the first mock would still answer
-    _queue(aioclient_mock, _tool_reply("aac-setup__use_model", f'{{"role": "memory", "model_id": "{added["id"]}"}}'), _text("Done."))
+    _queue(aioclient_mock, _tool_reply("setup__use_model", f'{{"role": "memory", "model_id": "{added["id"]}"}}'), _text("Done."))
     await _chat(ws, "Yes, use it for memory.")
     assert store.pools["memory"] == [added["id"]]
     assert store.pools["master"] == [MODEL_CFG["id"]]

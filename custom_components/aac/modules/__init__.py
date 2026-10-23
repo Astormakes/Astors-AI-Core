@@ -49,8 +49,7 @@ _DEFAULT_OFF: set[str] = set()
 MODULES_DIR = Path(__file__).parent
 MODULES_URL = "/aac_modules"
 _WS_DONE = f"{DOMAIN}_module_ws"
-IN, OUT = {"in": "message"}, {"out": "message"}  # a transform: a message in, the same message (added to) out
-CARD = {"tools": "tool"}  # a card attached to a model (the dotted line; its menu)
+IN, OUT = {"in": "text"}, {"out": "text"}  # a message in, the same message (written into) out
 
 
 @dataclass
@@ -110,24 +109,24 @@ class ModuleContext:
         self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_open_loops(self.module.id, provider, self.module.id))
 
     def add_prompt(self, part, order: int = 50, instance_part=None, description: str = "") -> None:
-        """Stable text at the start of every agent's system prompt: part(domain_id) → text (lowest order first;
-        keep it stable, the server's prompt cache depends on it). Not where the module is off.
-        instance_part(settings) → text: the node can also be added more than once (each instance with its own
-        settings, the manifest's settings as the form), e.g. a second charter for another chain."""
-        async def annotate(request) -> None:
-            if text := (part(request.domain.id) or "").strip():
-                request.system.append(text)
+        """A card with standing text for the system prompt: part(domain_id) → text (lowest order first in the
+        automatic wiring; it replaces its entry each time, so the start of the conversation stays the same for
+        the server's prompt cache). instance_part(settings) → text: the node can also be added more than once
+        (each with its own settings, the manifest's settings as the form), e.g. a second charter."""
+        node_id = self.module.id
+
+        async def handle(message, step) -> None:
+            message.put(node_id, "system", (part(message.domain.id) or "").strip())
 
         def make(inst_id: str, title: str, settings: dict) -> Node:
-            async def annotate_instance(request) -> None:
-                if text := (instance_part(settings) or "").strip():
-                    request.system.append(text)
+            async def handle_instance(message, step) -> None:
+                message.put(inst_id, "system", (instance_part(settings) or "").strip())
 
             return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=["system"], role="transform",
-                        order=order, annotate=annotate_instance, settings=settings)
+                        order=order, handle=handle_instance, settings=settings)
 
-        self.add_node(Node(id=self.module.id, title=self.module.manifest.get("name", self.module.id),
-                           inputs=IN, outputs=OUT, adds=["system"], order=order, annotate=annotate, role="transform",
+        self.add_node(Node(id=node_id, title=self.module.manifest.get("name", self.module.id),
+                           inputs=IN, outputs=OUT, adds=["system"], order=order, handle=handle, role="transform",
                            description=description or self.module.manifest.get("description", ""),
                            make=make if instance_part else None,
                            settings_schema=self.module.manifest.get("settings", {}) if instance_part else {}))
@@ -155,8 +154,11 @@ class ModuleContext:
         """The audio hub: sources, transcript, speaking, answering through the master."""
         return self.entry.runtime_data.audio
 
-    def add_llm_api(self, factory: Callable[[Domain, str, str], llm.API], card: bool = True) -> None:
-        """Tools for the agents: factory(domain, api_id, name) → an llm.API, registered per domain."""
+    def add_llm_api(self, factory: Callable[[Domain, str, str], llm.API], card: bool = True, inline=None,
+                    node_id: str | None = None, description: str = "", order: int = 40) -> None:
+        """Tools for the models: factory(domain, api_id, name) → an llm.API, registered per domain, offered by
+        a node of the module (wired out of a model and back in: a loop). card=False: no node. inline(message):
+        what the node does when a message reaches it without a call for it (in a line)."""
         title = self.module.manifest.get("name", self.module.id)
         for dom in self.domains.values():
             api_id = dom.api_id(f"aac_{self.module.id}")
@@ -166,24 +168,18 @@ class ModuleContext:
             self.entry.async_on_unload(llm.async_register_api(self.hass, guarded))
             self.module.api_ids[dom.id] = api_id
 
-        if card:  # its tools as a card attached to a model (the model's menu); card=False: the module makes its own
-            self.add_card(f"{self.module.id}_tools", f"{title} tools")
+        if card:
+            from ..api_node import api_node  # noqa: PLC0415 - avoid an import cycle
 
-    def add_card(self, card_id: str, title: str, provide=None, description: str = "") -> None:
-        """A card that attaches to a model (the dotted line): provide(message) adds its tool set, maybe context;
-        by default the module's own tools. It can be attached to more models (added again)."""
-        async def tools(message) -> None:
-            message.add_tools(self.module.api_ids.get(message.domain.id))
+            async def api_ids(message) -> list[str]:
+                found = self.module.api_ids.get(message.domain.id)
+                return [found] if found else []
 
-        provide = provide or tools
-
-        def make(inst_id: str, inst_title: str, settings: dict) -> Node:
-            return Node(id=inst_id, title=inst_title, outputs=CARD, role="tool", provide=provide, settings=settings)
-
-        about = self.module.manifest.get("description", "").split(". ")[0].rstrip(".")
-        self.add_node(Node(id=card_id, title=title, outputs=CARD, role="tool", provide=provide, make=make,
-                           description=description or f"Attach to a model to give it the {self.module.manifest.get('name', self.module.id)} "
-                                                      f"module's tools. ({about}.)"))
+            about = self.module.manifest.get("description", "").split(". ")[0].rstrip(".")
+            self.add_node(api_node(self.hass, node_id or f"{self.module.id}_tools", title,
+                                   description or f"The {title} module's tools for a model ({about}). Wire it out of a "
+                                                  "model and back into it.", api_ids, inline,
+                                   **({"adds": ["note"], "order": order} if inline else {})))
 
     def add_ws_commands(self, *handlers) -> None:
         """WebSocket commands (registered once per HA start, they look the entry up themselves)."""

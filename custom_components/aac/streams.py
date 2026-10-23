@@ -28,11 +28,13 @@ STREAM_TYPES: dict[str, str] = {
     "sound.event": "record",
     "ha.event": "record",
     "time.tick": "record",
-    # v1 (owner, 2026-10-22): a request and an answer are the same thing, a message (request.py): sources write it,
-    # transforms add to it, a model answers it (its answer is the message's new text), Reply brings it home
-    "message": "record",
-    # A card attached to a model (the dotted line): its tools, maybe context; the model's menu is its attached cards
-    "tool": "link",
+    # The message (spec/graph.md, owner 2026-10-23): a document of tagged entries; every node writes into it, a model
+    # reads it all and picks where it goes next (its wired nodes are its tools: loops)
+    "text": "record",
+    "audio": "continuous",
+    "video": "continuous",
+    # The dotted line: a model card reserves a model from a pool node (the only two-way wire)
+    "pool": "link",
     "say": "record",
     "notify": "record",
     "video.frame": "continuous",
@@ -46,13 +48,12 @@ KEEP_FOR = timedelta(minutes=10)
 NodeRun = Callable[[str, str, dict[str, Any]], Awaitable[Any]]
 # annotate(...): what an annotating node does to a record; its arguments depend on the type:
 # audio.segment: annotate(source, pcm, line) → fields to add, {"drop": True}, {"split": [...]} or None
-# message: annotate(message) → adds to the message in place (request.py)
 Annotate = Callable[..., Awaitable[Any]]
 # listen(source, pcm) → records of its own (audio.pcm in windows, e.g. sound captions)
 Listen = Callable[[Any, bytes], Awaitable[list[dict[str, Any]]]]
 
 
-@dataclass
+@dataclass(eq=False)
 class Node:
     """A module's worker: typed inputs and outputs (ports). A node with only outputs is a source,
     one with only inputs a sink. `run` is called for every record arriving on an input."""
@@ -79,15 +80,22 @@ class Node:
     settings_schema: dict[str, Any] = field(default_factory=dict)
     settings: dict[str, Any] = field(default_factory=dict)
     type: str | None = None  # an instance: the type it was made from
-    # Its part in the message graph (flow.py): source · transform · model · decide · reply · sink · tool
+    # Its part in the message graph (flow.py), a hint for the automatic wiring and the view: source · endpoint
+    # (a source that also takes answers: chat, voice, assist) · transform · model · decide · tool (offers tools) · sink
     role: str | None = None
+    # Text outputs where the node decides which one wire the message takes (square; the others are round: every
+    # wire gets a copy). A model card's output (its wired nodes are its tools), Decide's named outputs.
+    square: set[str] = field(default_factory=set)
+    # handle(message, ctx) → the output port(s) to go on with (None: every round output, [] : stop here). ctx: Step
+    handle: Callable[[Any, Any], Awaitable[Any]] | None = None
+    # tools(message) → (OpenAI function specs, instructions or None): how a model calls this node; None = one
+    # tool "send it there"
+    tools: Callable[[Any], Awaitable[tuple[list[dict[str, Any]], str | None]]] | None = None
     # What it does, in plain words: shown on the card and in Add node, and what AAC reads when it builds a graph
     # itself; every node brings one (spec/module.md)
     description: str = ""
     # A core card's own settings, edited in the node view: (schema, get(domain_id) → values, async set(domain_id, values))
     edit: tuple[dict[str, Any], Callable[[str], dict[str, Any]], Callable[[str, dict[str, Any]], Awaitable[None]]] | None = None
-    # A tool card: provide(message) adds its tool set (and maybe context) when the model it is attached to answers
-    provide: Callable[[Any], Awaitable[None]] | None = None
     template: bool = False  # a type that exists only as added instances (not as a node of its own)
 
     @property
@@ -224,25 +232,29 @@ class Bus:
         return list(dict.fromkeys(found))
 
     def _message_wires(self, domain_id: str) -> list[tuple[str, str, str, str]]:
+        """The automatic wiring of messages (spec/graph.md): every source through the transforms (by order) into
+        the standard model; the model into the endpoints (answers go home) and into every node that offers
+        tools, and those back into the model (loops)."""
         on = [n for n in self.nodes.values() if n.role and self._on(n, domain_id)]
 
-        def port(node: Node, kind: str, side: str) -> str | None:
-            return next((p for p, k in (node.outputs if side == "out" else node.inputs).items() if k == kind), None)
+        def port(node: Node, side: str) -> str | None:
+            return next((p for p, k in (node.outputs if side == "out" else node.inputs).items() if k == "text"), None)
 
         found = []
-        models = [n for n in on if n.role == "model"]
-        transforms = sorted((n for n in on if n.role == "transform"), key=lambda n: n.order)
-        for model in models[:1]:  # the standard model (added ones are wired by hand)
-            for src in (n for n in on if n.role == "source"):
-                at = (src.id, port(src, "message", "out"))
+        # in the line: the standing-text cards, and nodes with tools that also write in a line (memory: recalls)
+        transforms = sorted((n for n in on if n.role == "transform" or (n.role == "tool" and n.adds)), key=lambda n: n.order)
+        for model in [n for n in on if n.role == "model"][:1]:  # the standard model (added ones are wired by hand)
+            for src in (n for n in on if n.role in ("source", "endpoint")):
+                at = (src.id, port(src, "out"))
                 for t in transforms:
-                    found.append((*at, t.id, port(t, "message", "in")))
-                    at = (t.id, port(t, "message", "out"))
-                found.append((*at, model.id, port(model, "message", "in")))
-            for end in (n for n in on if n.role in ("reply", "sink")):
-                found.append((model.id, port(model, "message", "out"), end.id, port(end, "message", "in")))
-            for card in (n for n in on if n.role == "tool"):
-                found.append((card.id, port(card, "tool", "out"), model.id, port(model, "tool", "in")))
+                    found.append((*at, t.id, port(t, "in")))
+                    at = (t.id, port(t, "out"))
+                found.append((*at, model.id, port(model, "in")))
+            for end in (n for n in on if n.role in ("endpoint", "sink")):
+                found.append((model.id, port(model, "out"), end.id, port(end, "in")))
+            for tool in (n for n in on if n.role == "tool"):
+                found.append((model.id, port(model, "out"), tool.id, port(tool, "in")))
+                found.append((tool.id, port(tool, "out"), model.id, port(model, "in")))
         return list(dict.fromkeys(w for w in found if None not in w))
 
     async def emit(self, domain_id: str, node_id: str, port: str, item: dict[str, Any]) -> list[Any]:
@@ -291,7 +303,7 @@ class Bus:
                        else "transform",
                        # how many records each output carried in the last minutes (the view shows the flow)
                        "recent": {p: len(self.recent(domain_id, n.id, p)) for p in n.outputs},
-                       "type": n.type, "settings": n.settings,
+                       "type": n.type, "settings": n.settings, "square": sorted(n.square),
                        "settings_schema": (self.nodes.get(n.type or n.id) or self.templates.get(n.type or "") or n).settings_schema,
                        "addable": bool(n.make)}
                       for n in self.nodes_in(domain_id).values()],

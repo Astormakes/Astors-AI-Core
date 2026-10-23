@@ -1,31 +1,29 @@
-"""The model node (spec/v1.md): a prepared request in, an answer out, with AAC's own tool loop.
+"""The model card (spec/graph.md): reads the whole document and answers it or picks a node.
 
-v1: AAC talks to the model server itself instead of going through Home Assistant's conversation chat log.
-The tools stay HA LLM APIs (the modules' tool sets, the home, setup, HA's own Assist tools): the merged
-API of the request's tool ids gives the tools, their names (`aac-home__control`) and how to call them.
-Carried over from v0's conversation agent, unchanged in behaviour: only as much of the chat as the model
-holds (context_fit, learning its size), the next machine of the pool when one is off, tools as a menu per
-model, a last round without tools, the structured speak/silent decision of automatic runs, streaming to an
-open panel, and every call recorded in the run.
+The document becomes an ordinary chat with tools (system / user / assistant / tool), so small models see
+what they were trained on. Its tools are the nodes wired to its output: calling one writes a `call` entry,
+sends the document into that node (flow.Step.call) and goes on when it comes back with the node's result.
+Carried over from v0: only as much of the chat as the model holds (context_fit, learning its size), the next
+machine of the pool when one is off, tools as a menu per model (now one function per node), a last round
+without tools, the structured speak/silent decision of automatic runs, streaming to an open panel, and every
+call recorded in the run.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
 import probatio
-import slugify as unicode_slug
 
-from homeassistant.components import conversation
-from homeassistant.const import CONF_PROMPT
-from homeassistant.core import Context, HomeAssistant
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm, template
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.json import json_dumps
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_MAX_TOKENS,
@@ -34,17 +32,15 @@ from .const import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMPERATURE,
     DEFAULT_THINKING,
-    DOMAIN,
     LOGGER,
     MAX_TOOL_ITERATIONS,
     MAX_TOOL_ITERATIONS_AUTO,
 )
 from .context_fit import estimate, fit
 from .jobs import NO_MODEL
-from .menu_api import AREA_INFO, MENU_API_ID, build_menu, current_menu
 from .models import resolve_model
 from .provider import OpenAICompatProvider, ProviderConnectionError, ProviderContextError, ProviderError
-from .request import ModelRequest
+from .request import Message, new_id
 from .runs import Run, async_notify
 
 if TYPE_CHECKING:
@@ -135,48 +131,80 @@ def _strip_tool_text(text: str | None) -> str | None:
     return text or None
 
 
-def _assistant_message(content: str | None, calls: list[llm.ToolInput] | None) -> dict[str, Any]:
-    message: dict[str, Any] = {"role": "assistant", "content": content}
-    if calls:
-        message["tool_calls"] = [{"id": c.id, "type": "function",
-                                  "function": {"name": c.tool_name, "arguments": json_dumps(c.tool_args)}} for c in calls]
-    return message
+def tool_name(*parts: str) -> str:
+    """A function name the model servers accept (letters, digits, _ and -, at most 64)."""
+    name = "__".join(re.sub(r"[^A-Za-z0-9_-]", "_", p) for p in parts if p)
+    return name[:64]
 
 
-def _steps(turn: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """What the model said and which tools it used in one turn, for the run log (menu calls unwrapped:
-    use_tool shows the tool it called, open_area a short note). turn = [{"say", "thinking", "calls"},
-    {"result": (call, ToolResult)}, …]."""
-    steps: list[dict[str, Any]] = []
-    inner: dict[str, str | None] = {}  # tool call id → the tool use_tool called (None: open_area, no result shown)
-    for item in turn:
-        if "result" in item:
-            call, result = item["result"]
-            if call.id in inner and inner[call.id] is None:
-                continue
-            steps.append({"type": "tool_result", "tool": inner.get(call.id) or call.tool_name,
-                          "error": bool(result.error), "data": json_dumps(result.data)[:500]})
+def _signature(function: dict[str, Any]) -> str:
+    """A tool for the menu: its name and arguments (* = required), e.g. get_state(entity_ids*)."""
+    params = function.get("parameters") or {}
+    required = set(params.get("required") or [])
+    args = [f"{k}{'*' if k in required else ''}" for k in (params.get("properties") or {})]
+    return f"{function['name']}({', '.join(args)})"
+
+
+def _args_text(args: dict[str, Any]) -> str:
+    """A call's arguments for a reader: its text, else the JSON."""
+    if set(args) <= {"text"}:
+        return str(args.get("text") or "")
+    return json_dumps(args)
+
+
+def build_conversation(message: Message, me: str, titles: dict[str, str]) -> tuple[list[str], list[dict[str, Any]]]:
+    """The document as one model sees it: (system parts, the chat). Its own answers and calls are the assistant's,
+    the results of its calls are tool results, a call to it is a question to it, another model's answer is
+    "… said", what belongs to other models' loops is left out; notes go with the user turn."""
+    entries = message.entries
+    mine = {e["data"].get("call_id") for e in entries if e["kind"] == "call" and e["data"].get("model") == me}
+    to_me = {e["data"].get("call_id") for e in entries if e["kind"] == "call" and e["data"].get("node") == me}
+    system = [e["text"] for e in entries if e["kind"] == "system" and e["text"].strip()]
+    conv: list[dict[str, Any]] = []
+    results: dict[str, list[str]] = {}
+    for e in entries:
+        kind, cid, by = e["kind"], e["data"].get("call_id"), e["by"]
+        if kind == "system":
             continue
-        # thinking = the model's hidden reasoning; say = what it wrote for the reader before calling tools
-        if item.get("thinking"):
-            steps.append({"type": "thinking", "text": item["thinking"]})
-        if item.get("say") and item.get("calls") and \
-                item["say"].strip() not in [s["text"].strip() for s in steps if s["type"] == "say"]:
-            steps.append({"type": "say", "text": item["say"]})  # a model stuck in a loop repeats itself
-        for call in item.get("calls") or []:
-            if call.tool_name.endswith("__use_tool"):
-                inner[call.id] = str(call.tool_args.get("tool", "?"))
-                steps.append({"type": "tool_call", "tool": inner[call.id], "args": call.tool_args.get("arguments") or {}})
-            elif call.tool_name.endswith("__open_area"):
-                inner[call.id] = None
-                steps.append({"type": "note", "text": f"opened {call.tool_args.get('area', '?')}"})
-            else:
-                steps.append({"type": "tool_call", "tool": call.tool_name, "args": call.tool_args})
-    return steps
+        if kind == "answer" and by == me:
+            conv.append({"role": "assistant", "content": e["text"]})
+            continue
+        if kind == "call":
+            if e["data"].get("model") == me:
+                conv.append({"role": "assistant", "content": e["data"].get("say") or None, "tool_calls": [
+                    {"id": cid, "type": "function", "function": {"name": e["data"]["function"],
+                                                                 "arguments": json_dumps(e["data"].get("fargs") or {})}}]})
+                conv.append({"role": "tool", "tool_call_id": cid, "content": None})
+            elif cid in to_me:
+                who = titles.get(e["data"].get("model"), e["data"].get("model"))
+                conv.append({"role": "user", "content": f"[{who} hands this to you] {_args_text(e['data'].get('args') or {})}".strip()})
+            continue
+        if cid in mine:
+            text = e["text"] if kind in ("result", "answer") else f"[{e['text']}]"
+            results.setdefault(cid, []).append(text)
+            continue
+        if cid and cid not in to_me:
+            continue  # inside another model's loop
+        if kind == "user":
+            conv.append({"role": "user", "content": e["text"]})
+        elif kind == "note":
+            conv.append({"role": "user", "content": f"[{e['text']}]"})
+        elif kind == "answer":
+            conv.append({"role": "user", "content": f"[{titles.get(by, by)} said] {e['text']}"})
+    for item in conv:
+        if item["role"] == "tool":
+            item["content"] = "\n\n".join(results.get(item["tool_call_id"], [])) or "done"
+    merged: list[dict[str, Any]] = []
+    for item in conv:  # some chat templates allow no two user turns in a row
+        if merged and item["role"] == "user" and merged[-1]["role"] == "user":
+            merged[-1] = {**merged[-1], "content": f"{merged[-1]['content']}\n\n{item['content']}"}
+        else:
+            merged.append(item)
+    return system, merged
 
 
 class ModelNode:
-    """Answers prepared requests of one AAC entry."""
+    """Answers messages of one AAC entry (one model card's turn at a time)."""
 
     def __init__(self, hass: HomeAssistant, entry: AACConfigEntry) -> None:
         """Initialize."""
@@ -205,24 +233,12 @@ class ModelNode:
                 traits = pool.traits(model_id)
         return traits["n_ctx"], traits["token_factor"]
 
-    def _describe_area(self, area: str, names: list[str]) -> str | None:
-        """One line for an area of the tool menu."""
-        for key, text in AREA_INFO.items():
-            if area == key or area.startswith(f"{key}-"):
-                return text
-        for module in self.entry.runtime_data.modules:  # a module's area: its own description
-            if area.startswith(unicode_slug.slugify(f"AAC {module.manifest.get('name', module.id).lower()}")):
-                return (module.manifest.get("description", "").split(". ")[0][:140]) or None
-        return None
-
-    async def _system_prompt(self, request: ModelRequest, llm_context: llm.LLMContext, api: llm.APIInstance | None,
-                             api_prompt: str | None) -> str:
-        """The system prompt as v0 had it from HA: the stable parts (rendered as a template, like HA's
-        prompt), the tools' instructions (or the menu), the date and time, then this request's instructions."""
+    async def _system_prompt(self, message: Message, parts: list[str], tool_prompts: list[str]) -> str:
+        """The stable parts (rendered as a template, like HA's prompt), then the tools' instructions."""
         user_name = None
-        if request.user_id and (user := await self.hass.auth.async_get_user(request.user_id)):
+        if message.user_id and (user := await self.hass.auth.async_get_user(message.user_id)):
             user_name = user.name
-        variables = {"ha_name": self.hass.config.location_name, "user_name": user_name, "llm_context": llm_context}
+        variables = {"ha_name": self.hass.config.location_name, "user_name": user_name}
 
         def render(text: str) -> str:
             try:
@@ -231,109 +247,98 @@ class ModelNode:
                 LOGGER.error("AAC: error rendering a prompt part: %s", err)
                 return text
 
-        parts = [render("\n\n".join(p for p in request.system if p.strip()) or llm.DEFAULT_INSTRUCTIONS_PROMPT)]
-        if api_prompt:
-            parts.append(api_prompt)
-        if not any(t.name.endswith("GetDateTime") for t in (api.tools if api else [])):
-            parts.append(render(llm.DATE_TIME_PROMPT))
-        if request.instructions:
-            parts.append(request.instructions)
-        return "\n".join(parts)
+        return "\n\n".join([render("\n\n".join(parts) or llm.DEFAULT_INSTRUCTIONS_PROMPT), *tool_prompts])
 
-    async def _call_tools(self, api: llm.APIInstance, calls: list[llm.ToolInput]) -> list[llm.ToolResult]:
-        """Run a turn's tool calls at the same time (as HA did), errors as results the model can read."""
+    async def _tools(self, message: Message, targets: list, menu: bool) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
+        """The functions for the wired nodes: (OpenAI tools, their instructions, name → (node, port, tool)).
+        A node with tools of its own offers them (as a menu: one function per node), any other node one
+        function that hands the message there."""
+        offered, prompts, names = [], [], {}
+        # The owner can name a node's input for the models (owner, 2026-10-23: "naming inputs so models can use
+        # them as custom tools"): a charter's input named "yes" is the tool "yes" for a deciding model
+        named = self.entry.runtime_data.store.graph(message.domain.id).get("names") or {}
+        for node, port in targets:
+            own = named.get(f"{node.id}.{port}") or {}
+            if node.tools is not None:
+                specs, prompt = await node.tools(message)
+            else:
+                specs, prompt = [{"type": "function", "function": {
+                    "name": "send", "description": own.get("description") or (f"Hand the conversation to {node.title}"
+                    + (f": {node.description.split('. ')[0]}" if node.description else "") + "."),
+                    "parameters": {"type": "object", "properties": {"text": {
+                        "type": "string", "description": "What you want from it (optional)"}}}}}], None
+            if not specs:
+                continue  # nothing to offer right now (setup without the owner)
+            if prompt:
+                prompts.append(prompt)
+            base = own.get("name") or node.id
+            if menu and len(specs) > 1:
+                fname = tool_name(base)
+                listing = "\n".join(f"- {_signature(s['function'])}: {(s['function'].get('description') or '').split(chr(10))[0][:160]}"
+                                    for s in specs)
+                offered.append({"type": "function", "function": {
+                    "name": fname, "description": f"{own.get('description') or node.title}. Its tools:\n{listing}",
+                    "parameters": {"type": "object", "properties": {
+                        "tool": {"type": "string", "enum": [s["function"]["name"] for s in specs]},
+                        "arguments": {"type": "object", "description": "The tool's arguments"}},
+                        "required": ["tool"]}}})
+                names[fname] = (node, port, None, {s["function"]["name"]: s for s in specs})
+                continue
+            for spec in specs:
+                fname = tool_name(base, spec["function"]["name"]) if node.tools else tool_name(base)
+                offered.append({"type": "function", "function": {**spec["function"], "name": fname}})
+                names[fname] = (node, port, spec["function"]["name"], None)
+        return offered, prompts, names
 
-        async def one(call: llm.ToolInput) -> llm.ToolResult:
-            try:
-                result = await api.async_call_tool(call)
-            except (HomeAssistantError, probatio.Invalid) as err:
-                data: dict[str, Any] = {"error": type(err).__name__}
-                if str(err):
-                    data["error_text"] = str(err)
-                return llm.ToolResult(data=data, error=True)
-            return result if isinstance(result, llm.ToolResult) else llm.ToolResult(data=result)
-
-        return list(await asyncio.gather(*(one(c) for c in calls)))
-
-    # ------------------------------------------------------------------ the loop
-    async def async_answer(self, request: ModelRequest, run: Run | None) -> tuple[str, dict[str, Any]]:
-        """Answer a prepared request. Returns the answer text and what the write path needs
-        (provider, model, the texts the model stored itself). Raises ModelError."""
-        domain = request.domain
+    # ------------------------------------------------------------------ one turn
+    async def async_answer(self, message: Message, run: Run | None, node, tier: str, targets: list, step) -> Message:
+        """One turn of a model card: answer the document, calling its wired nodes as tools; the answer is an
+        `answer` entry. Returns the message (a loop may hand back a copy). Raises ModelError."""
+        domain = message.domain
         options = domain.settings.master
         pool = self.entry.runtime_data.pool
-        tier = request.tier
-        background = request.kind == "auto"  # the owner's availability rules apply
+        background = message.kind == "auto"  # the owner's availability rules apply
         picked = pool.endpoint_for(tier, background)
         if picked is None:
             raise ModelError(f"{NO_MODEL}. Open the AAC panel (SETTINGS → Compute).")
         model_id, endpoint = picked
         provider = self._provider(endpoint)
-
-        llm_context = llm.LLMContext(platform=DOMAIN, context=Context(user_id=request.user_id), language=request.language,
-                                     assistant=conversation.DOMAIN, device_id=request.device_id)
-        tool_ids = list(request.tools) if request.allow_tools else []
-        # Tools as a menu (per model): areas first, an area's tools when the model opens it
-        menu_mode = bool(tool_ids) and pool.traits(model_id)["tool_mode"] == "menu"
-        if menu_mode:
-            tool_ids.append(domain.api_id(MENU_API_ID))
-        api = await llm.async_get_api(self.hass, tool_ids, llm_context) if tool_ids else None
-        tools = [format_tool(t, api.custom_serializer) for t in api.tools] if api else None
-        api_prompt = api.api_prompt if api else None
-        token = None
-        if api and menu_mode and (prefix := next((t["function"]["name"].split("__")[0] for t in tools
-                                                  if t["function"]["name"].endswith("__open_area")), None)):
-            own = [t for t in tools if t["function"]["name"].startswith(f"{prefix}__")]
-            menu, menu_text = build_menu(api, prefix, [t for t in tools if t not in own], self._describe_area)
-            api_prompt = menu_text  # the areas instead of every tool's instructions
-            tools = own  # the two menu tools instead of all tools
-            token = current_menu.set(menu)
-        try:
-            return await self._loop(request, run, model_id, endpoint, provider, api, tools, api_prompt, llm_context,
-                                    menu_mode, options, tier, background)
-        finally:
-            if token is not None:
-                current_menu.reset(token)
-
-    async def _loop(self, request, run, model_id, endpoint, provider, api, tools, api_prompt, llm_context,
-                    menu_mode, options, tier, background) -> tuple[str, dict[str, Any]]:
-        domain = request.domain
-        pool = self.entry.runtime_data.pool
-        system = await self._system_prompt(request, llm_context, api, api_prompt)
-        # AAC's own record of the chat goes in front (HA's chat log is not used any more)
-        history = [{"role": "user" if m["role"] == "user" else "assistant", "content": m["text"]}
-                   for m in request.history if m.get("text")]
-        user_text = request.text
-        if request.context:  # with the message, not in the system prompt: the server's prompt cache keeps working
-            user_text = f"{user_text}\n\n[" + "\n\n".join(request.context) + "]"
-        conv: list[dict[str, Any]] = [{"role": "system", "content": system}, *history, {"role": "user", "content": user_text}]
+        me = node.id
+        titles = {n.id: n.title for n in self.entry.runtime_data.bus.nodes_in(domain.id).values()}
+        menu = pool.traits(model_id)["tool_mode"] == "menu"
+        tools, tool_prompts, names = await self._tools(message, targets, menu)
         params = {
             "temperature": float(options.get(CONF_TEMPERATURE, DEFAULT_TEMPERATURE)),
             "max_tokens": int(options.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)),
             # Understood by llama.cpp / vLLM chat templates (e.g. Qwen3)
             "chat_template_kwargs": {"enable_thinking": bool(options.get(CONF_THINKING, DEFAULT_THINKING))},
         }
-        decide = request.kind == "auto" and not request.allow_tools
+        decide = message.kind == "auto" and not tools
         if decide:
             params["response_format"] = DECISION_FORMAT
             params["temperature"] = min(params["temperature"], DECISION_TEMPERATURE)
-        limit = MAX_TOOL_ITERATIONS_AUTO if request.kind == "auto" else MAX_TOOL_ITERATIONS
+        limit = MAX_TOOL_ITERATIONS_AUTO if message.kind == "auto" else MAX_TOOL_ITERATIONS
         stream_to = None
-        if run and request.kind == "chat" and request.chat_id and not decide:
+        if run and message.origin == "chat" and message.chat_id and not decide:
+            run.chat_id = message.chat_id
             stream_to = self._stream(run, domain.id)
-        turn: list[dict[str, Any]] = []
-        stored_now: list[str] = []
         left_out, context_retry, no_tools = 0, 0, False
         answer: str | None = None
+        now_note = f"[Local time: {dt_util.now().strftime('%A %Y-%m-%d %H:%M')}]"
         for iteration in range(limit + 1):
             final = iteration == limit  # last round: no tools, so the model has to answer instead of exploring on
             if stream_to:
                 stream_to.round = iteration
+            parts, conv = build_conversation(message, me, titles)
+            system = await self._system_prompt(message, parts, [] if final or no_tools else tool_prompts)
+            if conv and conv[-1]["role"] == "user":  # the time with the newest turn (not in the system prompt: the cache)
+                conv[-1] = {**conv[-1], "content": f"{conv[-1]['content']}\n\n{now_note}"}
+            conv = [{"role": "system", "content": system}, *conv]
             while True:
-                offered = None if final or no_tools else tools
+                offered = None if final or no_tools or not tools else tools
                 # Only as much of the chat as the model holds: the oldest turns go first
                 n_ctx, factor = await self._context_of(model_id, provider)
-                messages = list(conv)  # a copy: the conversation grows after this call (the run keeps what was sent)
+                messages = list(conv)
                 if n_ctx:
                     messages, dropped, _ = fit(conv, offered, n_ctx - params["max_tokens"] - CONTEXT_MARGIN, factor)
                     if dropped > left_out:
@@ -375,7 +380,7 @@ class ModelNode:
                     pool.mark_down(model_id, str(err))
                     if (picked := pool.endpoint_for(tier, background)) is None:
                         raise ModelError(f"{NO_MODEL}: {err}") from err
-                    LOGGER.info("Master model %s unreachable, using %s", model_id, picked[0])
+                    LOGGER.info("Model %s unreachable, using %s", model_id, picked[0])
                     if run:
                         run.steps.append({"type": "note", "text": f"{model_id} unreachable, switched to {picked[0]}"})
                     model_id, endpoint = picked
@@ -392,27 +397,27 @@ class ModelNode:
                                                tokens=estimate(messages, offered), n_ctx=n_ctx)
                 break
 
-            calls = None if final or not api else _parse_tool_calls(reply)
+            calls = None if final or not offered else _parse_tool_calls(reply)
             content = (_decision_text(reply.get("content")) if decide
                        else _strip_tool_text(reply.get("content")) if final else reply.get("content"))
-            turn.append({"say": content, "thinking": reply.get("reasoning_content"), "calls": calls})
-            conv.append(_assistant_message(content, calls))
+            if run and reply.get("reasoning_content"):
+                run.steps.append({"type": "thinking", "text": reply["reasoning_content"]})
             if not calls:
                 answer = content
                 break
-            stored_now += [str(c.tool_args.get("text", "")) for c in calls if c.tool_name.endswith("remember")]
-            for call, result in zip(calls, await self._call_tools(api, calls)):
-                turn.append({"result": (call, result)})
-                conv.append({"role": "tool", "tool_call_id": call.id,
-                             "content": json_dumps({"data": result.data, "error": result.error})})
+            if run and content and content.strip():
+                run.steps.append({"type": "say", "text": content})
+            for i, call in enumerate(calls):
+                message = await self._call(message, run, me, names, call, content if i == 0 else None, step)
 
-        if run:
-            run.steps.extend(_steps(turn))
-
-        # Automatic runs that used tools still end in a structured decision: one more
-        # short call without tools. Free-text answers ("No urgent updates. The lamp is
-        # off.") slipped past the silence check too often.
-        if request.kind == "auto" and not decide and conv[-1]["role"] == "assistant":
+        # Automatic runs that used tools still end in a structured decision: one more short call without
+        # tools. Free-text answers ("No urgent updates. The lamp is off.") slipped past the silence check too often.
+        if message.kind == "auto" and not decide and tools:
+            parts, conv = build_conversation(message, me, titles)
+            system = await self._system_prompt(message, parts, [])
+            conv = [{"role": "system", "content": system}, *conv]
+            if answer:
+                conv.append({"role": "assistant", "content": answer})
             try:
                 reply = await provider.chat(
                     endpoint.model, [*conv, {"role": "user", "content": DECIDE_NOW + DECISION_RULE}], None,
@@ -425,8 +430,47 @@ class ModelNode:
                 answer = _decision_text(reply.get("content"))
                 if run:
                     run.steps.append({"type": "note", "text": f"decision: {answer}"})
+        message.add(me, "answer", answer or "")
+        return message
 
-        return answer or "", {"provider": provider, "model": endpoint.model, "stored_now": stored_now}
+    async def _call(self, message: Message, run: Run | None, me: str, names: dict, call: llm.ToolInput,
+                    say: str | None, step) -> Message:
+        """One tool call: the document goes into that node and comes back with its result."""
+        call_id = new_id()  # our own: models reuse ids ("call_0" every turn)
+        found = names.get(call.tool_name)
+        node, port, tool, menu = found if found else (None, None, None, None)
+        args = dict(call.tool_args or {})
+        if menu is not None:  # a menu function: which of the node's tools, with which arguments
+            tool, args = str(args.get("tool") or ""), dict(args.get("arguments") or {})
+            if tool not in menu:
+                node = None
+        title = node.title if node else call.tool_name
+        message.add(me, "call", f"{title} · {tool or 'send'}" + (f": {_args_text(args)}" if args else ""),
+                    call_id=call_id, node=node.id if node else None, tool=tool, args=args, model=me,
+                    function=call.tool_name, fargs=call.tool_args, say=say)
+        if run:
+            run.steps.append({"type": "tool_call", "tool": f"{call.tool_name}.{tool}" if menu is not None else call.tool_name,
+                              "node": title, "args": args})
+        if node is None:
+            message.add(me, "result", json_dumps({"error": f"No tool {call.tool_name!r} (or {tool!r})."}),
+                        call_id=call_id, error=True)
+            if run:
+                run.steps.append({"type": "tool_result", "tool": call.tool_name, "error": True, "data": "no such tool"})
+            return message
+        message.calls.append({"call_id": call_id, "model": me, "node": node.id})
+        back = await step.call(node, port, message)
+        if back is None:  # it never came back: the model reads why
+            back = message
+            back.add(me, "result", json_dumps({"error": f"{title} did not hand the conversation back (check its wires)."}),
+                     call_id=call_id, error=True)
+        if back.calls and back.calls[-1]["call_id"] == call_id:
+            back.calls.pop()
+        if run:
+            got = [e for e in back.entries if e["data"].get("call_id") == call_id and e["kind"] != "call"]
+            run.steps.append({"type": "tool_result", "tool": call.tool_name, "node": title,
+                              "error": any(e["data"].get("error") for e in got),
+                              "data": "\n".join(e["text"] for e in got)[:500]})
+        return back
 
     def _stream(self, run: Run, domain_id: str):
         """on_delta for a panel chat: the text so far (and a tool being called) to open panels, throttled."""

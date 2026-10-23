@@ -21,11 +21,11 @@ async def test_agent_builds_a_recipe_and_a_shopping_list(hass: HomeAssistant, ha
     await setup_aac(hass, mock_entry)
     _queue(
         aioclient_mock,
-        _call("aac-lists__add_items", {"list": "Chili con carne", "items": [
+        _call("lists_tools__add_items", {"list": "Chili con carne", "items": [
             {"text": "Ingredients", "children": [{"text": "Minced beef", "fields": {"qty": "500 g"}}, "Kidney beans"]},
             {"text": "Steps", "children": ["Brown the meat"]}]}),
-        _call("aac-lists__add_items", {"list": "Shopping", "items": [{"text": "Minced beef", "fields": {"qty": "500 g"}}]}),
-        _call("aac-lists__update_item", {"list": "Shopping", "item": "minced beef", "done": True}),
+        _call("lists_tools__add_items", {"list": "Shopping", "items": [{"text": "Minced beef", "fields": {"qty": "500 g"}}]}),
+        _call("lists_tools__update_item", {"list": "Shopping", "item": "minced beef", "done": True}),
         _text("Done."),
     )
     ws = await hass_ws_client(hass)
@@ -45,9 +45,9 @@ async def test_dates_in_lists_reach_the_calendar(hass: HomeAssistant, hass_ws_cl
     soon = (dt_util.now() + timedelta(days=2)).strftime("%Y-%m-%dT10:00")
     payloads = _queue(
         aioclient_mock,
-        _call("aac-lists__add_items", {"list": "Projects", "items": [{"text": "Drone parts arrive", "fields": {"when": soon[:10]}}]}),
-        _call("aac-calendar__add_to_calendar", {"name": "Dentist", "start": soon}),
-        _call("aac-calendar__calendar", {}),
+        _call("lists_tools__add_items", {"list": "Projects", "items": [{"text": "Drone parts arrive", "fields": {"when": soon[:10]}}]}),
+        _call("calendar_tools__add_to_calendar", {"name": "Dentist", "start": soon}),
+        _call("calendar_tools__calendar", {}),
         _text("You have two things."),
     )
     ws = await hass_ws_client(hass)
@@ -139,7 +139,7 @@ async def test_ha_calendars_and_module_settings(hass: HomeAssistant, hass_ws_cli
 
         await ws.send_json_auto_id({"type": "aac/module/settings", "module": "calendar", "values": {"new_entries": "calendar.work"}})
         assert (await ws.receive_json())["result"]["values"]["new_entries"] == "calendar.work"
-        _queue(aioclient_mock, _call("aac-calendar__add_to_calendar", {"name": "Dentist", "start": day.strftime("%Y-%m-%dT14:00")}), _text("Done."))
+        _queue(aioclient_mock, _call("calendar_tools__add_to_calendar", {"name": "Dentist", "start": day.strftime("%Y-%m-%dT14:00")}), _text("Done."))
         await _chat(ws, "Put the dentist on my calendar tomorrow at 14:00.")
         assert created and created[0]["summary"] == "Dentist" and created[0]["dtstart"].hour == 14
 

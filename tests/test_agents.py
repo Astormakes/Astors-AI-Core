@@ -14,7 +14,7 @@ from custom_components.aac.capabilities import in_quiet_hours
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .conftest import BASE_URL, set_heartbeat, setup_aac, triggers_of
+from .conftest import everything, BASE_URL, set_heartbeat, setup_aac, triggers_of
 
 URL = f"{BASE_URL}/chat/completions"
 
@@ -72,12 +72,12 @@ async def test_chat_records_tool_steps(
 ):
     """Tool calls end up in the run and in the chat message."""
     await setup_aac(hass, mock_entry)
-    _replies(aioclient_mock, _reply(None, "assist__llm__GetDateTime"), _reply("It is noon."))
+    _replies(aioclient_mock, _reply(None, "ha_tools__llm__GetDateTime"), _reply("It is noon."))
     ws = await hass_ws_client(hass)
     await ws.send_json_auto_id({"type": "aac/chat", "text": "time?"})
     message = (await ws.receive_json())["result"]["message"]
     assert [s["type"] for s in message["steps"]] == ["tool_call", "tool_result"]
-    assert message["steps"][0]["tool"] == "assist__llm__GetDateTime"
+    assert message["steps"][0]["tool"] == "ha_tools__llm__GetDateTime"
     assert message["steps"][1]["error"] is False
 
     await ws.send_json_auto_id({"type": "aac/run/get", "run_id": message["run_id"]})
@@ -89,8 +89,8 @@ async def test_chat_records_tool_steps(
     req = (await ws.receive_json())["result"]
     assert run["request"] and "You are a test." in req["system"]
     assert [m["role"] for m in req["messages"]] == ["user", "assistant", "tool"]
-    assert req["messages"][1]["tool_calls"][0]["name"] == "assist__llm__GetDateTime"
-    assert "assist__llm__GetDateTime" in req["tools"]
+    assert req["messages"][1]["tool_calls"][0]["name"] == "ha_tools__llm__GetDateTime"
+    assert "ha_tools__llm__GetDateTime" in req["tools"]
 
 
 async def test_heartbeat_silent_and_speaking(
@@ -105,7 +105,7 @@ async def test_heartbeat_silent_and_speaking(
     run_id = (await ws.receive_json())["result"]["run_id"]
     run = mock_entry.runtime_data.runs.get(run_id)
     assert run.kind == "auto" and run.status == "silent"
-    assert "Heartbeat" in payloads[0]["messages"][0]["content"]
+    assert "Heartbeat" in everything(payloads[0])
     assert mock_entry.runtime_data.chats.get("aac") is None
 
     await ws.send_json_auto_id({"type": "aac/heartbeat/run"})
@@ -218,7 +218,7 @@ async def test_state_trigger_with_cooldown(
 
     assert len(payloads) == 2  # answer + decision, then the cooldown blocks the repeat
     assert "Door (binary_sensor.door) changed from off to on" in payloads[0]["messages"][-1]["content"]
-    assert "Tell me when the door opens." in payloads[0]["messages"][0]["content"]
+    assert "Tell me when the door opens." in everything(payloads[0])
     assert mock_entry.runtime_data.chats.get("aac")["messages"][-1]["text"] == "The door opened."
     run = mock_entry.runtime_data.runs.runs[-1]
     assert run.kind == "auto" and run.title == "Door"
@@ -254,7 +254,7 @@ async def test_auto_run_forced_to_answer(
         body = (
             _reply('Nothing. <tool_call>{"name": "x"}</tool_call>')
             if "tools" not in data
-            else _reply(None, "assist__llm__GetDateTime")
+            else _reply(None, "ha_tools__llm__GetDateTime")
         )
         return AiohttpClientMockResponse(method, url, json=body)
 
@@ -269,7 +269,7 @@ async def test_auto_run_forced_to_answer(
     assert payloads[5]["response_format"]["json_schema"]["name"] == "decision"
     assert run.context.startswith("Heartbeat: a scheduled check-in")
     # The heartbeat sees the home without asking
-    assert "Current state of the home" in payloads[0]["messages"][0]["content"]
+    assert "Current state of the home" in everything(payloads[0])
 
 
 async def test_heartbeat_without_tools_by_default(
@@ -345,8 +345,8 @@ async def test_time_trigger_weekdays(
     async_fire_time_changed(hass, dt_util.utcnow())
     await hass.async_block_till_done(wait_background_tasks=True)
     assert len(payloads) == 2
-    assert "Remind me to take my pills." in payloads[0]["messages"][0]["content"]
-    assert "remind or tell the user" in payloads[0]["messages"][0]["content"]
+    assert "Remind me to take my pills." in everything(payloads[0])
+    assert "remind or tell the user" in everything(payloads[0])
     assert mock_entry.runtime_data.chats.get("aac")["messages"][-1]["text"] == "Time for your pills."
 
     freezer.move_to("2026-10-20 07:30:00+00:00")  # Tuesday: not a trigger day
@@ -386,7 +386,7 @@ async def test_chat_context_survives_ha_forgetting(hass: HomeAssistant, hass_ws_
     await ws.receive_json()
     texts = [m.get("content") for m in payloads[1]["messages"]]
     assert "Can you use the Steam integration?" in texts and "Steam is not set up." in texts
-    assert texts[-1] == "Some changes were made, check again."
+    assert texts[-1].startswith("Some changes were made, check again.")
 
     # edit: cut off at the second user message and send a new one; the model sees only what came before
     await ws.send_json_auto_id({"type": "aac/chat/rewind", "chat_id": chat_id, "index": 2})
@@ -456,7 +456,7 @@ async def test_too_long_chat_is_fitted_and_retried(hass: HomeAssistant, hass_ws_
     message = (await ws.receive_json())["result"]["message"]
     assert message["text"] == "Short now."
     assert len(payloads) == 2 and len(payloads[1]["messages"]) < len(payloads[0]["messages"])
-    assert payloads[1]["messages"][-1]["content"] == "and now?"
+    assert payloads[1]["messages"][-1]["content"].startswith("and now?")
     assert any("Context full" in (s.get("text") or "") for s in message["steps"])
     assert mock_entry.runtime_data.pool.traits(mock_entry.runtime_data.store.pools["master"][0])["n_ctx"] == 4096
 
@@ -500,9 +500,8 @@ async def test_archive_a_chat(hass: HomeAssistant, hass_ws_client, aioclient_moc
 
 
 async def test_memory_reads_only_the_own_words(hass: HomeAssistant, aioclient_mock, mock_entry, configured):
-    """A voice line comes with the room's lines (a video, others): memory learns from the line only."""
+    """A voice line comes with the room's lines (a video, others): the run keeps the person's own words."""
     from custom_components.aac.broker import async_run_request
-    from custom_components.aac.modules import memory as mem
 
     await setup_aac(hass, mock_entry)
     _replies(aioclient_mock, _reply("Done."))
@@ -511,38 +510,30 @@ async def test_memory_reads_only_the_own_words(hass: HomeAssistant, aioclient_mo
     run, _ = await async_run_request(hass, mock_entry, said, kind="chat", trigger="voice: PC", title="Voice",
                                     chat_id="voice_pc", own_words="turn on the bed light")
     await hass.async_block_till_done()
-    assert run.input == said
-    assert mem.async_extract.call_args.args[3] == "turn on the bed light"
+    assert run.input == said and run.own_words == "turn on the bed light"
 
 
 async def test_tools_as_a_menu(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured_menu):
-    """A menu model gets the areas and two tools; it opens an area, calls a tool through use_tool,
-    and the run shows the real tool (the menu calls unwrapped)."""
+    """A menu model gets one function per node (its tools listed); it calls a tool through it, and a tool the
+    node does not have comes back as an error."""
     await setup_aac(hass, mock_entry)
 
     def call(name, args):
         return {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
-            {"id": f"c_{name}", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}}]}
+            {"id": f"c_{len(args)}{name}", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}}]}
 
-    payloads = _replies(aioclient_mock, call("aac-menu__open_area", {"area": "home"}),
-                        call("aac-menu__use_tool", {"tool": "aac-home__list_entities", "arguments": {}}),
-                        call("aac-menu__use_tool", {"tool": "aac-home__nonsense"}),
-                        call("aac-menu__use_tool", {"tool": "aac-home__list_entities", "arguments": {}}),
+    payloads = _replies(aioclient_mock, call("home", {"tool": "list_entities", "arguments": {}}),
+                        call("home", {"tool": "nonsense"}),
                         _reply("You have no devices I can see."))
     ws = await hass_ws_client(hass)
     await ws.send_json_auto_id({"type": "aac/chat", "text": "what devices do I have?"})
     message = (await ws.receive_json())["result"]["message"]
 
-    first = payloads[0]
-    assert [t["function"]["name"] for t in first["tools"]] == ["aac-menu__open_area", "aac-menu__use_tool"]
-    system = first["messages"][0]["content"]
-    assert "You are a test." in system and "- aac-home: The home" in system and "- assist:" in system
-    assert "Follow these instructions for tools from" not in system
-    opened = json.loads(payloads[1]["messages"][-1]["content"])["data"]
-    assert opened["area"] == "aac-home" and "list_entities" in opened["instructions"]
-    assert "aac-home__list_entities" in [t["name"] for t in opened["tools"]]
-    assert "error" in json.loads(payloads[3]["messages"][-1]["content"])["data"]  # an unknown tool: told to open first
-    assert [(s["type"], s.get("tool") or s.get("text")) for s in message["steps"]][:3] == [
-        ("note", "opened home"), ("tool_call", "aac-home__list_entities"), ("tool_result", "aac-home__list_entities")]
-    assert "already made exactly this call" in json.loads(payloads[4]["messages"][-1]["content"])["data"]["error"]
-    assert payloads[0]["tools"] == payloads[3]["tools"]  # the tool list never changes (the prompt cache holds)
+    tools = {t["function"]["name"]: t["function"] for t in payloads[0]["tools"]}
+    assert "list_entities" in tools["home"]["parameters"]["properties"]["tool"]["enum"]
+    assert "list_entities" in tools["home"]["description"]
+    assert json.loads(payloads[1]["messages"][-1]["content"]) is not None  # the node's result as the tool result
+    assert "error" in json.loads(payloads[2]["messages"][-1]["content"])
+    assert [(s["type"], s["tool"]) for s in message["steps"]][:2] == [("tool_call", "home.list_entities"),
+                                                                     ("tool_result", "home")]
+    assert payloads[0]["tools"] == payloads[2]["tools"]  # the tool list never changes (the prompt cache holds)

@@ -6,7 +6,7 @@ from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import intent
 
-from .conftest import BASE_URL, setup_aac
+from .conftest import BASE_URL, setup_aac, untimed
 
 
 def _reply(message: dict) -> dict:
@@ -51,20 +51,20 @@ async def test_simple_answer(
     assert payload["model"] == "test-model"
     assert payload["messages"][0]["role"] == "system"
     assert "You are a test." in payload["messages"][0]["content"]
-    assert payload["messages"][-1] == {"role": "user", "content": "hi"}
+    assert payload["messages"][-1]["role"] == "user" and untimed(payload["messages"][-1]["content"]) == "hi"
     # No HA tools, only AAC's own memory and planning
     assert sorted(t["function"]["name"] for t in payload["tools"]) == [
-        "aac-calendar__add_to_calendar", "aac-calendar__calendar", "aac-calendar__change_calendar_entry",
-        "aac-home__control", "aac-home__get_state", "aac-home__home_overview", "aac-home__list_entities",
-        "aac-home__request_access", "aac-home__request_visibility", "aac-home__set_voice_volume",
+        "calendar_tools__add_to_calendar", "calendar_tools__calendar", "calendar_tools__change_calendar_entry",
+        "home__control", "home__get_state", "home__home_overview", "home__list_entities",
+        "home__request_access", "home__request_visibility", "home__set_voice_volume",
         # no owner in this chat: the deleting list tools are held back
-        "aac-lists__add_items", "aac-lists__create_list", "aac-lists__lists",
-        "aac-lists__read_list", "aac-lists__update_item",
+        "lists_tools__add_items", "lists_tools__create_list", "lists_tools__lists",
+        "lists_tools__read_list", "lists_tools__update_item",
         # forget deletes: held back without the owner (memory is a module since 0.47, with the modules' rules)
-        "aac-memory__lookup_facts", "aac-memory__recall", "aac-memory__remember",
-        "aac-triggers__cancel_schedule", "aac-triggers__list_schedules", "aac-triggers__schedule", "aac-triggers__watch",
+        "memory__lookup_facts", "memory__recall", "memory__remember",
+        "triggers_tools__cancel_schedule", "triggers_tools__list_schedules", "triggers_tools__schedule", "triggers_tools__watch",
         # forget_voice deletes: held back without the owner
-        "aac-voices__list_voices", "aac-voices__name_voice",
+        "voices_tools__list_voices", "voices_tools__name_voice",
     ]
 
 
@@ -83,7 +83,7 @@ async def test_tool_call_round_trip(
                         {
                             "id": "call_1",
                             "type": "function",
-                            "function": {"name": "assist__homeassistant__GetLiveContext", "arguments": "{}"},
+                            "function": {"name": "ha_tools__homeassistant__GetLiveContext", "arguments": "{}"},
                         }
                     ],
                 }
@@ -108,11 +108,11 @@ async def test_tool_call_round_trip(
     second = aioclient_mock.mock_calls[-1][2]
     names = [t["function"]["name"] for t in second["tools"]]
     # Several APIs (Assist + AAC memory): HA prefixes tools with the API id
-    assert "assist__homeassistant__GetLiveContext" in names
-    assert "aac-memory__recall" in names
-    assert second["messages"][-2]["tool_calls"][0]["id"] == "call_1"
+    assert "ha_tools__homeassistant__GetLiveContext" in names
+    assert "memory__recall" in names
+    call_id = second["messages"][-2]["tool_calls"][0]["id"]
     assert second["messages"][-1]["role"] == "tool"
-    assert second["messages"][-1]["tool_call_id"] == "call_1"
+    assert second["messages"][-1]["tool_call_id"] == call_id
     # The tool really ran (no entities exposed in the test instance)
     assert "expose entities" in second["messages"][-1]["content"]
 
