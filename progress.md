@@ -22,7 +22,7 @@ Running log for AAC. Read this first in a new session. Newest state on top. The 
 - **Nodes page fills the window** (no page scroll; the graph scrolls). Drag handles: left sidebar edge and between graph and info panel (widths per browser, double-click resets). **Hidden cards:** unwired cards of modules that are off stay out of the grid; unwired built-in cards have "Hide from the grid" (`aac/nodes/hidden`); the sidebar marks them, a click or drag brings one back.
 - **What the model got, part by part:** each recorded request has `sources` (where: system/chat/end/tools, from: card or built-in part, chars, text, `outside`: no card wrote it). The chat's ⚡ view is the one place: a chat view of the document as the model reads it, every bubble folds; dashed bubbles are from outside the document (tools' instructions, the tools field, the time). The 🔍 view opens with "Where it comes from".
 - Memories were cleared on the owner's HA (2026-10-23, backup `/config/aac/bak-before-clean-20261023/`). Backups before deploys: `/config/aac/bak-1.0.0-dev.28-before/` and older.
-- Tests: 160 mocked (`../.venv/bin/python -m pytest -q -p no:logging`).
+- Tests: 159 mocked (`../.venv/bin/python -m pytest -q -p no:logging`).
 
 ## Working agreements
 - **The user pushes** (GitHub Desktop only). Claude commits locally whenever something is in a runnable state, never pushes
