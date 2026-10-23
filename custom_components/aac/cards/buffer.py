@@ -29,6 +29,7 @@ class Buffer(Card):
                      "options": [["note", "as a note before the turn"], ["start", "at the start"],
                                  ["after", "after the turn"], ["nothing", "nowhere (only for its functions)"]]},
     }
+    values = {"text": "its lines, one per line", "lines": "its lines (a list)", "count": "how many lines"}
     functions = {
         "read": {"help": "What the buffer holds (numbered, newest last)."},
         "add": {"help": "Put a line in.", "args": {"text": {"type": "string", "help": "The line.", "required": True}}},
@@ -37,6 +38,10 @@ class Buffer(Card):
                             "args": {"text": {"type": "string", "help": "The text.", "required": True}}},
         "clear": {"help": "Empty the buffer."},
     }
+
+    def current(self) -> dict[str, Any]:
+        lines = list(self.data.get("lines") or [])
+        return {"text": "\n".join(map(str, lines)), "lines": lines, "count": len(lines)}
 
     def default_data(self) -> dict[str, Any]:
         return {"lines": []}

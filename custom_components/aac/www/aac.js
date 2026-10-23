@@ -435,6 +435,7 @@ class AacPanel extends HTMLElement {
       <p class="hint" style="margin-top:8px">${esc(t?.help || "")}</p>
       ${Object.entries(t?.settings || {}).map(field).join("")}
       ${this._fnDocs(t?.functions)}
+      ${Object.keys(t?.values || {}).length ? `<div class="hint" style="margin-top:8px">VALUES (for templates)${Object.entries(t.values).map(([n, h]) => `<div><code>{{ ${esc(/^[A-Za-z_]\w*$/.test(c.id) ? c.id : `cards['${c.id}']`)}.${esc(n)} }}</code> ${esc(h)}</div>`).join("")}</div>` : ""}
       ${Object.keys(c.tags).length ? `<div class="hint" style="margin-top:8px">TAGS ${Object.keys(c.tags).map((x) => `<code>${esc(x)}</code>`).join(" ")}</div>` : ""}
       <div style="margin-top:14px;display:flex;gap:8px"><button class="danger" id="remove">Remove card</button></div>
       <p class="hint">Fields save when you leave them.</p>`;

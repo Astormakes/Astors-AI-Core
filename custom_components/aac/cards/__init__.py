@@ -37,6 +37,7 @@ class Card:
     settings_schema: ClassVar[dict[str, dict[str, Any]]] = {}
     tags: ClassVar[dict[str, str]] = {}  # tag (without the card) → what it marks
     functions: ClassVar[dict[str, dict[str, Any]]] = {}  # name → {"help", "args": {name: {"type", "help", "required"}}}
+    values: ClassVar[dict[str, str]] = {}  # name → what it is: read in templates as {{ <card>.<name> }}
     page: ClassVar[str | None] = None  # a page of its own in the sidebar ("chat", "lists")
     keeps_data: ClassVar[bool] = False
 
@@ -47,6 +48,10 @@ class Card:
         self.name = title or type(self).title
         self.settings = {k: f.get("default") for k, f in self.settings_schema.items()} | dict(settings or {})
         self.data: dict[str, Any] = {}
+
+    def current(self) -> dict[str, Any]:
+        """Its values now (see `values`)."""
+        return {}
 
     # ------------------------------------------------------------------ data
     def default_data(self) -> dict[str, Any]:
@@ -96,7 +101,7 @@ class Card:
         """The type: for the node view's palette and the ? helper."""
         return {"type": cls.type, "title": cls.title, "category": cls.category, "help": cls.help,
                 "inputs": cls.inputs, "outputs": cls.outputs, "square": sorted(cls.square),
-                "settings": cls.settings_schema, "tags": cls.tags, "functions": cls.functions, "page": cls.page}
+                "settings": cls.settings_schema, "tags": cls.tags, "functions": cls.functions, "values": cls.values, "page": cls.page}
 
     def summary(self) -> dict[str, Any]:
         """This card: for the node view."""

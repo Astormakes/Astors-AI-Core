@@ -27,7 +27,8 @@ class Relay(Card):
     tags = {"text": "its text"}
     settings_schema = {
         "text": {"type": "longtext", "title": "Text", "default": "",
-                 "help": "Templates work: {{ now().strftime('%H:%M') }}, {{ states('sensor.x') }}."},
+                 "help": "Templates work: {{ now().strftime('%H:%M') }}, {{ states('sensor.x') }}, and other cards' values: "
+                    "{{ lists.total }}, {{ calendar.today | join(', ') }} (each card lists its values)."},
         "position": {"type": "select", "title": "Where", "default": "nothing",
                      "options": [["nothing", "nothing (only pass on)"], ["start", "start (system prompt)"],
                                  ["note", "a note before the turn"], ["after", "after the turn (read last)"]]},
@@ -47,7 +48,7 @@ class Relay(Card):
         if "{" not in text:
             return text
         try:
-            return str(Template(text, self.hass).async_render(parse_result=False)).strip()
+            return str(Template(text, self.hass).async_render(self.domain.template_values(), parse_result=False)).strip()
         except TemplateError as err:
             return f"{text}\n[template error: {err}]"
 

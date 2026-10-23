@@ -221,6 +221,18 @@ class Domain:
         return True
 
     # ------------------------------------------------------------------ the rest
+    def template_values(self) -> dict[str, Any]:
+        """Every card's values for templates: {{ <card>.<value> }} (and {{ cards['<card>'].<value> }} for any id)."""
+        found: dict[str, Any] = {}
+        for card in self.cards.values():
+            if type(card).values:
+                try:
+                    found[card.id] = card.current()
+                except Exception:  # noqa: BLE001 - one card's values must not break a template
+                    LOGGER.exception("AAC: values of %s", card.id)
+        own = {"states", "now", "utcnow", "is_state", "state_attr", "cards"}  # HA's names win
+        return {**{k: v for k, v in found.items() if k.isidentifier() and k not in own}, "cards": found}
+
     def tag_pool(self) -> list[dict[str, str]]:
         """Every tag the cards of this domain write, plus the owner's own (`user.…`)."""
         found = [{"tag": card.tag(t), "card": card.name, "what": what} for card in self.cards.values()

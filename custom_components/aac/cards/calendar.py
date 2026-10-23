@@ -46,6 +46,7 @@ class Calendar(Card):
     keeps_data = True
     settings_schema = {"lists": {"type": "text", "title": "Show dated entries of the Lists cards", "default": "lists",
                                  "help": "Their ids, comma separated (empty: none)."}}
+    values = {"today": "today's entries (\"HH:MM what\", all-day ones without a time)", "next": "the next entry (\"what, when\")"}
     functions = {
         "calendar": {"help": "Entries between two dates (default: the next 7 days).",
                      "args": {"start": {"type": "string", "help": "YYYY-MM-DD"}, "end": {"type": "string", "help": "YYYY-MM-DD"}}},
@@ -58,6 +59,14 @@ class Calendar(Card):
                                                         "end": {"type": "string"}, "description": {"type": "string"}}},
         "remove": {"help": "Delete an entry.", "args": {"uid": {"type": "string", "help": "Its id.", "required": True}}},
     }
+
+    def current(self) -> dict[str, Any]:
+        now = dt_util.now()
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today = [f"{e['start_v'].strftime('%H:%M') + ' ' if not e['all_day'] else ''}{e['summary']}"
+                 for e in self.events(start, start + timedelta(days=1))]
+        upcoming = self.events(now, now + timedelta(days=365))
+        return {"today": today, "next": f"{upcoming[0]['summary']}, {upcoming[0]['start_v']}" if upcoming else ""}
 
     def default_data(self) -> dict[str, Any]:
         return {"events": []}

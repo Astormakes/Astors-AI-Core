@@ -74,3 +74,12 @@ async def test_home_assistant_card_access(hass: HomeAssistant, mock_entry):
     assert (await home.call("get_state", {"entity_ids": ["lock.door"]}))["lock.door"] == "unknown or not allowed"
     refused = await home.call("call_service", {"domain": "switch", "service": "turn_on", "entity_id": "sensor.t"})
     assert "may not be switched" in refused["error"]
+
+
+async def test_card_values_in_templates(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """A Relay's template reads other cards' values: {{ lists.total }}, {{ cards['lists'].lists }}."""
+    core = await setup_aac(hass, mock_entry)
+    lists = core.domain.cards["lists"]
+    await lists.call("add_items", {"list": "Shopping", "items": ["milk", "eggs"]})
+    relay = await core.domain.add_card("relay", "Counts", {"text": "{{ lists.total }} open; {{ cards['lists'].lists | join(',') }}"})
+    assert relay.render() == f"{lists.current()['total']} open; {','.join(lists.current()['lists'])}" and "Shopping" in relay.render()

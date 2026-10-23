@@ -43,6 +43,7 @@ class Memory(Card):
         "in_line": {"type": "bool", "title": "In the line: add matching memories", "default": True},
         "how_many": {"type": "number", "title": "How many at most", "default": 3},
     }
+    values = {"count": "how many memories it keeps"}
     functions = {
         "remember": {"help": "Keep something for later (a fact, a preference, a plan).",
                      "args": {"text": {"type": "string", "help": "One short sentence.", "required": True}}},
@@ -51,6 +52,9 @@ class Memory(Card):
                    "args": {"text": {"type": "string", "help": "Text or id.", "required": True}}},
         "list": {"help": "The newest memories."},
     }
+
+    def current(self) -> dict[str, Any]:
+        return {"count": len(self.data.get("memories") or [])}
 
     def default_data(self) -> dict[str, Any]:
         return {"memories": []}

@@ -39,6 +39,7 @@ class Lists(Card):
     help = "Lists of anything (shopping, projects, ideas), with a page in the sidebar; a model or a Conditional card uses its functions."
     page = "lists"
     keeps_data = True
+    values = {"lists": "the names of its lists", "open": "open entries per list (name → count)", "total": "open entries in all lists"}
     functions = {
         "lists": {"help": "The lists and how many entries each has."},
         "read_list": {"help": "A list with its entries (fields, sub-entries).", "args": {"list": ARG_LIST}},
@@ -56,6 +57,11 @@ class Lists(Card):
         "delete_list": {"help": "Delete a whole list.", "args": {"list": ARG_LIST}},
         "undo_remove": {"help": "Bring back what was removed last."},
     }
+
+    def current(self) -> dict[str, Any]:
+        def count(items): return sum((0 if i.get("done") else 1) + count(i.get("children") or []) for i in items)
+        open_ = {li["name"]: count(li["items"]) for li in self.data.get("lists") or []}
+        return {"lists": list(open_), "open": open_, "total": sum(open_.values())}
 
     def default_data(self) -> dict[str, Any]:
         return {"lists": []}
