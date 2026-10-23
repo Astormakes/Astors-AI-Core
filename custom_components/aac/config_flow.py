@@ -1,8 +1,4 @@
-"""Config flow for AAC – Astor's AI Core.
-
-Deliberately empty: adding AAC is one click, everything else happens in
-the AAC panel (see docs on the panel design).
-"""
+"""One AAC per Home Assistant: no questions, everything else happens in the panel."""
 
 from __future__ import annotations
 
@@ -10,18 +6,18 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 
-from .const import DEFAULT_NAME, DOMAIN
+from .const import DOMAIN
 
 
 class AACConfigFlow(ConfigFlow, domain=DOMAIN):
     """Add AAC."""
 
-    VERSION = 2
+    VERSION = 3
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Confirm, then create the (single) entry."""
-        if user_input is not None:
-            return self.async_create_entry(title=DEFAULT_NAME, data={})
-        return self.async_show_form(step_id="user")
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """One click."""
+        if self._async_current_entries():
+            return self.async_abort(reason="single_instance_allowed")
+        if user_input is None:
+            return self.async_show_form(step_id="user")
+        return self.async_create_entry(title="AAC", data={})

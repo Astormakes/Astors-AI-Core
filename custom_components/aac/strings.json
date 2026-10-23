@@ -1,13 +1,6 @@
 {
   "config": {
-    "step": {
-      "user": {
-        "title": "Add AAC",
-        "description": "Adds AAC – Astor's AI Core. Everything else is set up in the AAC panel in the sidebar."
-      }
-    },
-    "abort": {
-      "single_instance_allowed": "AAC is already set up. Open the AAC panel in the sidebar."
-    }
+    "step": {"user": {"title": "AAC", "description": "AAC sets itself up with a default setup; change everything in its panel."}},
+    "abort": {"single_instance_allowed": "AAC is already set up."}
   }
 }

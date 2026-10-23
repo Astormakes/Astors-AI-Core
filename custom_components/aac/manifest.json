@@ -1,26 +1,11 @@
 {
   "domain": "aac",
   "name": "AAC – Astor's AI Core",
-  "after_dependencies": [
-    "intent",
-    "stt",
-    "tts"
-  ],
-  "codeowners": [
-    "@Astormakes"
-  ],
+  "codeowners": [],
   "config_flow": true,
-  "dependencies": [
-    "conversation",
-    "http",
-    "panel_custom",
-    "websocket_api"
-  ],
-  "documentation": "https://github.com/Astormakes/Astors-AI-Core",
-  "integration_type": "service",
+  "dependencies": ["http", "frontend", "panel_custom"],
+  "documentation": "https://github.com/",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/Astormakes/Astors-AI-Core/issues",
-  "requirements": ["pymicro-vad==1.0.1", "py3langid==0.4.0"],
-  "single_config_entry": true,
-  "version": "1.0.0-dev.75"
+  "requirements": [],
+  "version": "2.0.0-alpha.2"
 }

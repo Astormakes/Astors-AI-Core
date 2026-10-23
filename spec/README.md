@@ -1,5 +1,9 @@
 # AAC contracts
 
+> **v2 rebuild (2026-10-23).** AAC is being rebuilt from scratch (2.0.0-alpha). These contracts describe v1 and are
+> history until v2's are written; v1 is git tag `v1-final`.
+
+
 The interfaces everything else in AAC plugs into. If these stay stable, any
 part behind them (models, memory store, triggers, modules) can be swapped.
 

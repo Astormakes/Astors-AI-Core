@@ -1,217 +1,124 @@
-"""Workers: the models AAC can use.
-
-- Manual models are made by the user in the panel (stored in AACStore).
-- Auto models are found: model servers already configured in HA
-  (llama.cpp, Ollama integrations) and the servers of manual models.
-  Every model such a server offers becomes an auto model.
-
-A model id resolves to (base_url, api_key, model):
-- manual: "m_xxxxxxxx"
-- auto:   "auto|<source>|<model>", source = HA entry id or "w:<manual model id>"
-"""
+"""The model pool (core, shared by every domain) and the client for OpenAI-compatible servers (llama.cpp first;
+Ollama, vLLM, LM Studio and cloud APIs speak the same)."""
 
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass
-import re
+from collections.abc import Callable
+import json
+import time
 from typing import Any
-from urllib.parse import urlparse
 
-from homeassistant.const import CONF_API_KEY, CONF_URL
+import aiohttp
+
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_BASE_URL, CONF_MODEL
-from .provider import OpenAICompatProvider, ProviderError, ProviderNotFoundError
-from .store import AACStore
+from .const import LOGGER
 
-# HA integrations whose config entries point at an OpenAI-compatible server
-_KNOWN_INTEGRATIONS = {
-    "llama_cpp": ("llama.cpp", lambda d: d.get(CONF_BASE_URL)),
-    "ollama": (
-        "Ollama",
-        lambda d: f"{d[CONF_URL].rstrip('/')}/v1" if d.get(CONF_URL) else None,
-    ),
-}
+DOWN_FOR = 60  # seconds a model that did not answer is skipped
 
 
-_EMBED_HINT = re.compile(r"embed|bge|e5|nomic|minilm|gte", re.I)
-_SPEECH_HINT = re.compile(r"whisper|large-v\d|parakeet|canary|voxtral|moonshine|speech|stt|asr", re.I)
+class ModelError(Exception):
+    """A model server failed."""
 
 
-def model_kind(model: str) -> str:
-    """Best guess from the name: "embedding", "speech" (to text), "senses" (sound tags, voice prints) or "chat"."""
-    if "senses" in model.lower():
-        return "senses"
-    if _SPEECH_HINT.search(model):
-        return "speech"
-    return "embedding" if _EMBED_HINT.search(model) else "chat"
+class ModelUnreachable(ModelError):
+    """The machine does not answer (it may simply be off)."""
 
 
-@dataclass
-class Server:
-    """A model server AAC knows about."""
+class Client:
+    """One model on one server."""
 
-    source: str
-    label: str
-    base_url: str
-    api_key: str | None
+    def __init__(self, hass: HomeAssistant, model: dict[str, Any]) -> None:
+        """Initialize from a pool entry {id, name, base_url, model, api_key}."""
+        self.session = async_get_clientsession(hass)
+        self.model = model
+        self.base = model["base_url"].rstrip("/")
 
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.model['api_key']}"} if self.model.get("api_key") else {}
 
-@dataclass
-class Endpoint:
-    """What a model id resolves to."""
+    async def list_models(self) -> list[str]:
+        """What the server offers."""
+        try:
+            async with self.session.get(f"{self.base}/models", headers=self._headers(),
+                                        timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                resp.raise_for_status()
+                return [m.get("id") for m in (await resp.json()).get("data", [])]
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise ModelUnreachable(str(err)) from err
 
-    base_url: str
-    api_key: str | None
-    model: str
-
-
-def known_servers(hass: HomeAssistant, store: AACStore) -> list[Server]:
-    servers: dict[str, Server] = {}
-    for cfg in store.models:
-        url = cfg[CONF_BASE_URL].rstrip("/")
-        servers.setdefault(
-            url,
-            Server(f"w:{cfg['id']}", cfg["name"], url, cfg.get(CONF_API_KEY)),
-        )
-    for domain, (label, get_url) in _KNOWN_INTEGRATIONS.items():
-        for entry in hass.config_entries.async_entries(domain):
-            if not (url := get_url(entry.data)):
-                continue
-            url = url.rstrip("/")
-            servers.setdefault(
-                url,
-                Server(entry.entry_id, f"{label}: {entry.title}", url,
-                       entry.data.get(CONF_API_KEY)),
-            )
-    return list(servers.values())
-
-
-def _server_for_source(hass: HomeAssistant, store: AACStore, source: str):
-    return next((s for s in known_servers(hass, store) if s.source == source), None)
-
-
-def resolve_model(
-    hass: HomeAssistant, store: AACStore, model_id: str | None
-) -> Endpoint | None:
-    """Turn a model id into something the provider can call."""
-    if not model_id:
-        return None
-    if model_id.startswith("auto|"):
-        _, source, model = model_id.split("|", 2)
-        if server := _server_for_source(hass, store, source):
-            return Endpoint(server.base_url, server.api_key, model)
-        return None
-    if cfg := store.get_model(model_id):
-        return Endpoint(cfg[CONF_BASE_URL], cfg.get(CONF_API_KEY), cfg[CONF_MODEL])
-    return None
-
-
-async def async_list_models(
-    hass: HomeAssistant, base_url: str, api_key: str | None, timeout: float = 5
-) -> list[str]:
-    """List models of a server (raises ProviderError)."""
-    provider = OpenAICompatProvider(async_get_clientsession(hass), base_url, api_key)
-    async with asyncio.timeout(timeout):
-        return await provider.list_models()
+    async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
+                   on_delta: Callable[[str], None] | None = None, **params: Any) -> dict[str, Any]:
+        """One answer, streamed (on_delta gets the text so far). Returns {"content", "tool_calls"}."""
+        body = {"model": self.model["model"], "messages": messages, "stream": True, **params}
+        if tools:
+            body["tools"] = tools
+        content, calls = "", {}
+        try:
+            async with self.session.post(f"{self.base}/chat/completions", json=body, headers=self._headers(),
+                                         timeout=aiohttp.ClientTimeout(total=600, sock_connect=4)) as resp:
+                if resp.status >= 400:
+                    raise ModelError(f"HTTP {resp.status}: {(await resp.text())[:300]}")
+                if "event-stream" not in resp.headers.get("Content-Type", ""):  # the server ignored "stream"
+                    data = await resp.json()
+                    msg = data["choices"][0]["message"]
+                    if on_delta and msg.get("content"):
+                        on_delta(msg["content"])
+                    return {"content": msg.get("content") or "", "tool_calls": msg.get("tool_calls") or []}
+                async for raw in resp.content:
+                    line = raw.decode("utf-8", "ignore").strip()
+                    if not line.startswith("data:") or line == "data: [DONE]":
+                        continue
+                    try:
+                        delta = json.loads(line[5:])["choices"][0].get("delta") or {}
+                    except (ValueError, KeyError, IndexError):
+                        continue
+                    if delta.get("content"):
+                        content += delta["content"]
+                        if on_delta:
+                            on_delta(content)
+                    for tc in delta.get("tool_calls") or []:
+                        call = calls.setdefault(tc.get("index", 0), {"id": tc.get("id"), "type": "function",
+                                                                      "function": {"name": "", "arguments": ""}})
+                        fn = tc.get("function") or {}
+                        call["id"] = call["id"] or tc.get("id")
+                        call["function"]["name"] += fn.get("name") or ""
+                        call["function"]["arguments"] += fn.get("arguments") or ""
+        except (aiohttp.ClientConnectionError, TimeoutError) as err:  # off, unreachable, dropped
+            raise ModelUnreachable(str(err) or type(err).__name__) from err
+        except aiohttp.ClientError as err:
+            raise ModelError(str(err)) from err
+        return {"content": content, "tool_calls": [calls[i] for i in sorted(calls)]}
 
 
-async def _probe(hass: HomeAssistant, server: Server) -> dict[str, Any]:
-    provider = OpenAICompatProvider(async_get_clientsession(hass), server.base_url, server.api_key)
-    try:
-        async with asyncio.timeout(5):
-            meta = await provider.models_meta()
-        models = list(meta)
-    except ProviderNotFoundError:
-        # Reachable, but cannot list its models (e.g. whisper.cpp): manual models count as online
-        return {"online": True, "models": [], "error": None, "unlisted": True}
-    except (ProviderError, TimeoutError) as err:
-        return {"online": False, "models": [], "error": str(err) or "timeout"}
-    return {"online": True, "models": models, "error": None, "meta": meta}
+class ModelPool:
+    """Every model AAC may use (core: shared by the domains); a model that does not answer is skipped a minute."""
 
+    def __init__(self, hass: HomeAssistant, models: list[dict[str, Any]]) -> None:
+        """Initialize with the stored list."""
+        self.hass = hass
+        self.models = models
+        self._down: dict[str, float] = {}
 
-async def async_overview(hass: HomeAssistant, store: AACStore) -> dict[str, Any]:
-    """Everything the Models page shows, with live state."""
-    servers = known_servers(hass, store)
-    probes = await asyncio.gather(*(_probe(hass, s) for s in servers))
-    by_url = {s.base_url: p for s, p in zip(servers, probes, strict=True)}
+    def get(self, model_id: str) -> dict[str, Any] | None:
+        """A model by id."""
+        return next((m for m in self.models if m["id"] == model_id), None)
 
-    manual = []
-    taken: set[tuple[str, str]] = set()
-    for cfg in store.models:
-        url = cfg[CONF_BASE_URL].rstrip("/")
-        probe = by_url.get(url, {"online": False, "models": [], "error": None})
-        taken.add((url, cfg[CONF_MODEL]))
-        # A server with a single model serves it whatever it is called (llama.cpp names it by its file path
-        # and ignores the name in requests); count it as this entry, not as a second model
-        single = probe["online"] and len(probe["models"]) == 1
-        if single:
-            taken.add((url, probe["models"][0]))
-        manual.append(
-            {
-                "id": cfg["id"],
-                "name": cfg["name"],
-                "base_url": cfg[CONF_BASE_URL],
-                "model": cfg[CONF_MODEL],
-                "has_key": bool(cfg.get(CONF_API_KEY)),
-                "online": probe["online"] and (cfg[CONF_MODEL] in probe["models"] or probe.get("unlisted", False) or single),
-                "n_params": (probe.get("meta") or {}).get(cfg[CONF_MODEL], {}).get("n_params"),
-                "error": probe["error"],
-            }
-        )
+    def usable(self, model_id: str) -> bool:
+        """Not marked down."""
+        return time.monotonic() >= self._down.get(model_id, 0)
 
-    auto = []
-    for server, probe in zip(servers, probes, strict=True):
-        auto.append(
-            {
-                "source": server.source,
-                "label": server.label,
-                "base_url": server.base_url,
-                "online": probe["online"],
-                "error": probe["error"],
-                "models": [
-                    {"id": f"auto|{server.source}|{model}", "model": model,
-                     "n_params": (probe.get("meta") or {}).get(model, {}).get("n_params")}
-                    for model in probe["models"]
-                    if (server.base_url, model) not in taken
-                ],
-            }
-        )
-    return {"manual": manual, "auto": auto, "machines": machines(hass, store, manual, auto)}
+    def mark_down(self, model_id: str) -> None:
+        """Skip it for a while."""
+        self._down[model_id] = time.monotonic() + DOWN_FOR
+        LOGGER.info("AAC: model %s unreachable, skipped for %s s", model_id, DOWN_FOR)
 
+    def mark_up(self, model_id: str) -> None:
+        """It answered."""
+        self._down.pop(model_id, None)
 
-def host_of(url: str) -> str:
-    """The machine part of a server URL."""
-    host = (urlparse(url).hostname or url).lower()
-    return "localhost" if host in ("127.0.0.1", "::1") else host
-
-
-def machines(hass: HomeAssistant, store: AACStore, manual: list[dict], auto: list[dict]) -> list[dict[str, Any]]:
-    """The models grouped by the machine they run on (its host); the owner can name machines."""
-    found: dict[str, dict[str, Any]] = {}
-
-    def machine(url: str, label: str | None = None) -> dict[str, Any]:
-        host = host_of(url)
-        if host not in found:
-            name = store.machines.get(host, {}).get("name")
-            found[host] = {"host": host, "name": name or ("Home Assistant" if host in ("localhost", "homeassistant") else label or host),
-                           "named": bool(name), "servers": {}, "models": []}
-        return found[host]
-
-    for server in auto:
-        m = machine(server["base_url"], server["label"] if not server["source"].startswith("w:") else None)
-        m["servers"][server["base_url"]] = {"url": server["base_url"], "online": server["online"], "error": server["error"]}
-        m["models"] += [{**a, "name": a["model"], "manual": False} for a in server["models"]]
-    for cfg in manual:
-        m = machine(cfg["base_url"])
-        url = cfg["base_url"].rstrip("/")
-        m["servers"].setdefault(url, {"url": url, "online": cfg["online"], "error": cfg["error"]})
-        m["models"].append({**cfg, "manual": True})
-    for m in found.values():
-        m["servers"] = list(m["servers"].values())
-        m["online"] = any(s["online"] for s in m["servers"])
-        for a in m["models"]:
-            a["kind"] = model_kind(a["model"])
-    return sorted(found.values(), key=lambda m: (not m["online"], m["name"].lower()))
+    def summary(self) -> list[dict[str, Any]]:
+        """For the panel (no keys)."""
+        return [{**{k: v for k, v in m.items() if k != "api_key"}, "has_key": bool(m.get("api_key")),
+                 "up": self.usable(m["id"])} for m in self.models]

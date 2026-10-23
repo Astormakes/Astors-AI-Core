@@ -1,0 +1,80 @@
+"""Buffer: keeps the last N entries of the tags you choose (e.g. the room's last heard lines) and writes them into
+each message as one entry; a model or a Conditional can read and change it through its functions."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from ..message import Message
+from . import Card, register
+
+KIND = {"start": "system", "note": "note", "after": "trailer"}
+
+
+@register
+class Buffer(Card):
+    """The last lines."""
+
+    type = "buffer"
+    title = "Buffer"
+    category = "Logic"
+    help = "Keeps the last lines of the tags you pick and adds them to each message as one entry; a model can read and edit it."
+    tags = {"lines": "the kept lines (one entry)"}
+    keeps_data = True
+    settings_schema = {
+        "tags": {"type": "tags", "title": "Keeps entries tagged", "default": [],
+                 "help": "Empty: what people said (kind 'said')."},
+        "size": {"type": "number", "title": "Slots", "default": 10},
+        "position": {"type": "select", "title": "Writes them", "default": "note",
+                     "options": [["note", "as a note before the turn"], ["start", "at the start"],
+                                 ["after", "after the turn"], ["nothing", "nowhere (only for its functions)"]]},
+    }
+    functions = {
+        "read": {"help": "What the buffer holds (numbered, newest last)."},
+        "add": {"help": "Put a line in.", "args": {"text": {"type": "string", "help": "The line.", "required": True}}},
+        "remove": {"help": "Take one line out by its number.", "args": {"number": {"type": "integer", "help": "From read.", "required": True}}},
+        "remove_matching": {"help": "Take out every line that contains a text.",
+                            "args": {"text": {"type": "string", "help": "The text.", "required": True}}},
+        "clear": {"help": "Empty the buffer."},
+    }
+
+    def default_data(self) -> dict[str, Any]:
+        return {"lines": []}
+
+    def _keep(self, text: str) -> None:
+        lines = [*self.data["lines"], text][-max(1, int(self.settings.get("size") or 10)):]
+        self.data["lines"] = lines
+
+    def block(self) -> str:
+        """The kept lines as one text."""
+        lines = self.data["lines"]
+        return (f"{self.name} (newest last):\n" + "\n".join(f"{i}. {t}" for i, t in enumerate(lines, 1))) if lines else ""
+
+    async def handle(self, message: Message, port: str, step) -> list[Any] | None:
+        tags = self.settings.get("tags") or []
+        newest = next((e for e in reversed(message.entries)
+                       if (any(t in e["tags"] for t in tags) if tags else e["kind"] == "said") and e["text"].strip()), None)
+        if newest and (not self.data["lines"] or self.data["lines"][-1] != newest["text"].strip()):
+            self._keep(newest["text"].strip())
+            await self.save()
+        if (position := self.settings.get("position") or "note") in KIND:
+            message.put(self.id, KIND[position], self.block(), "lines")
+        return None
+
+    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+        lines = self.data["lines"]
+        if function == "add" and str(args.get("text") or "").strip():
+            self._keep(str(args["text"]).strip())
+        elif function == "remove":
+            n = int(args.get("number") or 0)
+            if 1 <= n <= len(lines):
+                del lines[n - 1]
+        elif function == "remove_matching":
+            word = str(args.get("text") or "").lower()
+            self.data["lines"] = [t for t in lines if word not in t.lower()]
+        elif function == "clear":
+            self.data["lines"] = []
+        elif function != "read":
+            return await super().call(function, args, message)
+        await self.save()
+        return {"lines": self.data["lines"]}

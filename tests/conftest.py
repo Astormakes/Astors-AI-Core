@@ -1,169 +1,76 @@
 """Shared fixtures."""
 
-from collections.abc import Generator
+from __future__ import annotations
+
 import json
-from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.aac.const import DOMAIN
-from custom_components.aac.store import STORAGE_KEY
 from homeassistant.core import HomeAssistant
-from homeassistant.setup import async_setup_component
 
-BASE_URL = "http://llm.test/v1"
-MODEL = "test-model"
-MODEL_CFG = {
-    "id": "m_test0001",
-    "name": "Test server",
-    "base_url": BASE_URL,
-    "api_key": "secret",
-    "model": MODEL,
-}
+BASE_URL = "http://llm.local:8080/v1"
 
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations):
-    """Load custom_components/ in every test."""
-
-
-@pytest.fixture(autouse=True)
-async def setup_ha_core(hass: HomeAssistant) -> None:
-    """Conversation needs the core `homeassistant` component (exposed entities)."""
-    assert await async_setup_component(hass, "homeassistant", {})
-    assert await async_setup_component(hass, "http", {})
-
-
-@pytest.fixture(autouse=True)
-def isolated_memory_db(tmp_path):
-    """Each test gets its own memory database (HA's test config dir is shared)."""
-    with patch("custom_components.aac.modules.memory.memory_path", side_effect=lambda hass, suffix="": tmp_path / f"memory{suffix}.db"):
-        yield
-
-
-@pytest.fixture(autouse=True)
-def mock_panel(hass: HomeAssistant) -> Generator[dict[str, MagicMock]]:
-    """The real frontend needs half of HA; pretend it is loaded."""
-    hass.config.components.update({"frontend", "panel_custom"})
-    with (
-        patch("custom_components.aac.panel_custom.async_register_panel", new=AsyncMock()) as reg,
-        patch("custom_components.aac.frontend.async_remove_panel") as rem,
-    ):
-        yield {"register": reg, "remove": rem}
-
-
-CHARTER_DRAFT = json.loads((Path(__file__).parent.parent / "custom_components/aac/modules/charter/manifest.json").read_text())[
-    "settings"]["text"]["placeholder"]
-
-
-def store_data(tool_mode: str = "all", **master: Any) -> dict[str, Any]:
-    """Stored AAC config with one manual model as master (all tools up front, unless tool_mode="menu")."""
-    return {
-        "version": 1,
-        "key": STORAGE_KEY,
-        "data": {
-            "models": [dict(MODEL_CFG)],
-            "master": {"model": MODEL_CFG["id"], "prompt": "You are a test.",
-                       "llm_hass_api": [], **master},
-            "setup": {"skipped": []},
-            "traits": {MODEL_CFG["id"]: {"tool_mode": tool_mode}},
-            "charter": CHARTER_DRAFT,  # written in (the card's button), as an owner would
-        },
-    }
+    """Load custom integrations."""
+    return
 
 
 @pytest.fixture
 def mock_entry() -> MockConfigEntry:
-    """The (only) AAC config entry."""
-    return MockConfigEntry(domain=DOMAIN, title="AAC", data={}, version=2)
+    """The AAC entry."""
+    return MockConfigEntry(domain=DOMAIN, title="AAC", data={}, version=3)
 
 
-@pytest.fixture
-def configured(hass_storage) -> None:
-    """AAC with a master model, no HA control."""
-    hass_storage[STORAGE_KEY] = store_data()
+def v1_files(tmp_config: str, lists: list[dict[str, Any]] | None = None) -> None:
+    """What v1 left behind in .storage (models, charter, entity access, lists)."""
+    from pathlib import Path
+
+    storage = Path(tmp_config) / ".storage"
+    storage.mkdir(parents=True, exist_ok=True)
+    (storage / "aac.config").write_text(json.dumps({"version": 1, "key": "aac.config", "data": {
+        "models": [{"id": "m_big", "name": "Big", "base_url": BASE_URL, "model": "big"},
+                   {"id": "m_small", "name": "Small", "base_url": BASE_URL, "model": "small"}],
+        "pools": {"master": ["m_big", "m_small"]},
+        "graphs": {"assistant": {"modules": {"charter": {"settings": {"text": "Be kind."}}}}},
+        "domains": [{"id": "assistant", "visible": ["sensor.outside"]}],
+        "entity_access": {"switch.lamp": {"read": True, "write": True}}}}))
+    (storage / "aac.mod.lists.lists").write_text(json.dumps({"version": 1, "key": "aac.mod.lists.lists", "data": {
+        "lists": lists or [{"id": "l1", "name": "Project Portfolio", "view": "checklist", "created": "", "updated": "",
+                            "items": [{"id": "i1", "text": "Car Projects", "done": False, "fields": {}, "children": [
+                                {"id": "i2", "text": "ESP32 on the CAN bus", "done": False, "fields": {"status": "Parts there"}}]}]}]}}))
 
 
-@pytest.fixture
-def configured_menu(hass_storage) -> None:
-    """AAC with a master model that gets its tools as a menu, and the Assist API."""
-    hass_storage[STORAGE_KEY] = store_data(tool_mode="menu", llm_hass_api=["assist"])
-
-
-@pytest.fixture
-def configured_control(hass_storage) -> None:
-    """AAC with a master model and the Assist API."""
-    hass_storage[STORAGE_KEY] = store_data(llm_hass_api=["assist"])
-
-
-async def setup_aac(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    """Add and load the entry."""
+async def setup_aac(hass: HomeAssistant, entry: MockConfigEntry):
+    """Set up AAC; returns the core."""
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
+    return entry.runtime_data
 
 
-async def set_heartbeat(entry: MockConfigEntry, enabled: bool | None = None, **settings: Any) -> None:
-    """The heartbeat module's switch and settings in the first domain (a module since 0.44)."""
-    from custom_components.aac.modules import async_set_access, async_set_settings
-
-    data = entry.runtime_data
-    domain_id = data.domain().id
-    if enabled is not None:
-        await async_set_access(entry, "heartbeat", domain_id, {"enabled": enabled})
-    if settings:
-        await async_set_settings(entry, next(m for m in data.modules if m.id == "heartbeat"), domain_id, settings)
+def reply(text: str = "", calls: list[tuple[str, dict]] | None = None) -> dict[str, Any]:
+    """A model's (non-streamed) answer."""
+    message: dict[str, Any] = {"role": "assistant", "content": text}
+    if calls:
+        message["tool_calls"] = [{"id": f"c{i}", "type": "function", "function": {"name": n, "arguments": json.dumps(a)}}
+                                 for i, (n, a) in enumerate(calls)]
+    return {"choices": [{"message": message}]}
 
 
-def memory_of(hass: HomeAssistant, domain_id: str | None = None):
-    """A domain's memory store (the memory module since 0.47)."""
-    from custom_components.aac.modules.memory import memory_of as of
+def model_answers(aioclient_mock, *replies: dict[str, Any]) -> list[dict[str, Any]]:
+    """The model server answers in turn (the last one repeats); returns what was asked."""
+    from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
 
-    return of(hass, domain_id)
+    asked, queue = [], list(replies)
 
+    async def side_effect(method, url, data):
+        asked.append(data)
+        return AiohttpClientMockResponse(method, url, json=queue.pop(0) if len(queue) > 1 else queue[0])
 
-def triggers_of(hass: HomeAssistant, domain_id: str | None = None):
-    """A domain's triggers (the triggers module since 0.45): .triggers, .async_save_trigger, …"""
-    from custom_components.aac.modules.triggers import of
-
-    return of(hass, domain_id)
-
-
-async def heartbeat_now(hass: HomeAssistant):
-    """One heartbeat at once ("Run once now"): the run, or None."""
-    from custom_components.aac.modules.heartbeat import async_run_now
-
-    return await async_run_now(hass)
-
-
-def everything(payload: dict) -> str:
-    """All the text a model request carried (system prompt, notes, turns)."""
-    return "\n".join(str(m.get("content") or "") for m in payload["messages"])
-
-
-def untimed(text: str) -> str:
-    """A user turn without the local time the Clock card adds after the newest one."""
-    return str(text).split("\n\nLocal time:")[0]
-
-
-def memory_in_line(entry) -> None:
-    """Wire memory into the line before the model (it hangs under the model by default): it then writes
-    matching memories into the conversation."""
-    data = entry.runtime_data
-    wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
-    wires = [w for w in wires if w != ("time.out", "model.in")] + [("time.out", "memory.in"), ("memory.out", "model.in")]
-    data.store.graph("assistant")["wires"] = [{"from": a, "to": b} for a, b in dict.fromkeys(wires)]
-
-
-def notices(holder) -> list[str]:
-    """What AAC noted under Auto without a model (holder: runtime data or a domain)."""
-    return [r.result for r in holder.runs.runs if r.trigger == "notice"]
-
-
-def last_auto(holder) -> str:
-    """The newest message in the newest chat an automatic card made (listed under Auto)."""
-    chat = next(c for c in holder.chats.list() if c.get("auto"))
-    return holder.chats.get(chat["id"])["messages"][-1]["text"]
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=side_effect)
+    return asked
