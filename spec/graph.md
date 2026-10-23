@@ -34,6 +34,7 @@ Inputs take any number of wires; where a message came from does not matter to a 
 entry: {id, by: <node id>, kind, text, tags: [...], time, data: {...}}
 kind:  system  (stable text for the system prompt: charter, agent prompt, instructions)
        note    (goes along with the next user turn: a memory recall, context, an automatic run's situation)
+       trailer (stable text after the newest user turn, read last: the Trailer card; the Header card writes system)
        user    (what a person said)
        answer  (what a model said)
        call    (a model chose a node: data {call_id, node, tool, args})

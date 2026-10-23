@@ -1294,7 +1294,7 @@ class AacPanel extends HTMLElement {
 
   // The chat's document (spec/graph.md): every entry with the card that wrote it; per turn the way it took
   _expertHtml(entries) {
-    const KIND = { system: "system prompt", note: "note", user: "said", answer: "answered", call: "called", result: "result" };
+    const KIND = { system: "system prompt", note: "note", trailer: "trailer", user: "said", answer: "answered", call: "called", result: "result" };
     const titles = Object.fromEntries((this._nodeTitles || []).map((n) => [n.id, n.title]));
     const name = (id) => titles[id] || id;
     const out = [];
@@ -1304,7 +1304,7 @@ class AacPanel extends HTMLElement {
       if (e.kind === "user") { flush(); way = [e.by]; }
       else if (way && e.kind !== "system" && way[way.length - 1] !== e.by) way.push(e.by);
       const tags = (e.tags || []).filter((t) => t !== e.by);
-      out.push(`<div class="bubble ${e.kind === "user" ? "user" : "aac"}" style="${e.kind === "system" || e.kind === "note" ? "opacity:.75" : ""}">
+      out.push(`<div class="bubble ${e.kind === "user" ? "user" : "aac"}" style="${e.kind === "system" || e.kind === "note" || e.kind === "trailer" ? "opacity:.75" : ""}">
         <div class="who">${esc(name(e.by).toUpperCase())} · ${esc(KIND[e.kind] || e.kind)}${tags.length ? ` <span class="hint">#${tags.map(esc).join(" #")}</span>` : ""}</div>
         <div class="txt" style="white-space:pre-wrap">${esc(e.text.length > 1500 ? `${e.text.slice(0, 1500)} …` : e.text)}</div></div>`);
     }

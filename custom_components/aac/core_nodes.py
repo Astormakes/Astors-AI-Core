@@ -199,10 +199,15 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                          "second model with another job.", edit=agent_edit,
              make=agent_make, settings_schema={"prompt": {**text, "title": "Prompt",
                                                           "help": "This agent's own prompt (the domain's is on the standard Agent card)."}}),
-        Node(id="instructions", title="Instructions", inputs=IN, outputs=OUT, adds=["system"], template=True, role="transform",
-             description="Writes your own text into the system prompt, e.g. \"Answer in one sentence\" or what a second "
-                         "model should check. Stable text, good for the server's prompt cache.",
+        # Header and trailer (owner, 2026-10-23: "so we need a header ... and a trailer then"): the start and the end
+        Node(id="instructions", title="Header", inputs=IN, outputs=OUT, adds=["system"], template=True, role="transform",
+             description="Writes your own text at the start: into the system prompt, e.g. \"Answer in one sentence\" or "
+                         "what a second model should check. Stable text, good for the server's prompt cache.",
              make=text_make("system"), settings_schema={"text": {**text, "help": "Into the system prompt (stable: good for the prompt cache)."}}),
+        Node(id="trailer", title="Trailer", inputs=IN, outputs=OUT, adds=["trailer"], template=True, role="transform",
+             description="Writes your own text at the end: after the newest thing that was said, e.g. \"Answer in German\" "
+                         "or \"Reply with yes or no\". The model reads it last, which weighs most; the start stays cached.",
+             make=text_make("trailer"), settings_schema={"text": {**text, "help": "After the newest turn (read last)."}}),
         Node(id="context", title="Context", inputs=IN, outputs=OUT, adds=["note"], template=True, role="transform",
              description="Writes your own text into the conversation as a note (not the system prompt), e.g. \"The user "
                          "is in the bedroom\" for a way that only that room's microphone uses.",

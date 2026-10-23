@@ -26,7 +26,7 @@ TEXT = "text"  # the port type of messages
 SOURCES = {"chat": "Panel chat", "voice": "Voice", "assist": "HA Assist"}
 PRIORITY = {"chat": "high", "voice": "high", "assist": "high"}
 # system: the system prompt · note: with the next user turn · user · answer · call (a model chose a node) · result
-KINDS = ("system", "note", "user", "answer", "call", "result")
+KINDS = ("system", "note", "trailer", "user", "answer", "call", "result")
 
 
 def source_of(kind: str, trigger: str) -> str:

@@ -976,7 +976,7 @@ class AacNodes extends HTMLElement {
     if (menu.style.display !== "none") { menu.style.display = "none"; return; }
     // grouped by what they add: text for the system prompt, context, tools; the model
     const group = (t) => t.role === "model" ? "Model" : t.role === "decide" ? "Route" : t.role === "tool" ? "Tools (a loop)"
-      : t.adds?.includes("note") ? "In the line: note" : "In the line: system prompt";
+      : t.adds?.includes("note") ? "In the line: note" : t.adds?.includes("trailer") ? "In the line: trailer (the end)" : "In the line: system prompt";
     const order = ["In the line: system prompt", "In the line: note", "Model", "Tools (a loop)", "Route"];
     menu.innerHTML = order.map((g) => {
       const items = types.filter((t) => group(t) === g);

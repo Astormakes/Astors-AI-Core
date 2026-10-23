@@ -155,16 +155,18 @@ def _args_text(args: dict[str, Any]) -> str:
 def build_conversation(message: Message, me: str, titles: dict[str, str]) -> tuple[list[str], list[dict[str, Any]]]:
     """The document as one model sees it: (system parts, the chat). Its own answers and calls are the assistant's,
     the results of its calls are tool results, a call to it is a question to it, another model's answer is
-    "… said", what belongs to other models' loops is left out; notes go with the user turn."""
+    "… said", what belongs to other models' loops is left out; notes go with the user turn, trailers after the
+    newest one."""
     entries = message.entries
     mine = {e["data"].get("call_id") for e in entries if e["kind"] == "call" and e["data"].get("model") == me}
     to_me = {e["data"].get("call_id") for e in entries if e["kind"] == "call" and e["data"].get("node") == me}
     system = [e["text"] for e in entries if e["kind"] == "system" and e["text"].strip()]
+    trailer = [e["text"] for e in entries if e["kind"] == "trailer" and e["text"].strip()]
     conv: list[dict[str, Any]] = []
     results: dict[str, list[str]] = {}
     for e in entries:
         kind, cid, by = e["kind"], e["data"].get("call_id"), e["by"]
-        if kind == "system":
+        if kind in ("system", "trailer"):
             continue
         if kind == "answer" and by == me:
             conv.append({"role": "assistant", "content": e["text"]})
@@ -200,6 +202,10 @@ def build_conversation(message: Message, me: str, titles: dict[str, str]) -> tup
             merged[-1] = {**merged[-1], "content": f"{merged[-1]['content']}\n\n{item['content']}"}
         else:
             merged.append(item)
+    # Trailers go at the end of the newest user turn (a stable suffix: the start stays cached)
+    last_user = next((i for i in range(len(merged) - 1, -1, -1) if merged[i]["role"] == "user"), None)
+    if trailer and last_user is not None:
+        merged[last_user] = {**merged[last_user], "content": "\n\n".join([merged[last_user]["content"], *trailer])}
     return system, merged
 
 

@@ -118,6 +118,21 @@ async def test_standing_text_is_replaced_not_repeated(hass: HomeAssistant, mock_
     assert [e["by"] for e in message.entries] == ["charter", "chat"]
 
 
+async def test_header_and_trailer(hass: HomeAssistant, mock_entry, configured):
+    """A header goes into the system prompt, a trailer after the newest user turn (even while a loop runs)."""
+    from custom_components.aac.model_node import build_conversation
+
+    await setup_aac(hass, mock_entry)
+    message = Message(domain=mock_entry.runtime_data.domain())
+    message.add("chat", "user", "hi")
+    message.put("tr", "trailer", "Answer in German.")
+    message.add("model", "answer", "Hello.")
+    message.add("chat", "user", "lights?")
+    system, conv = build_conversation(message, "model", {})
+    assert system == []
+    assert [c["content"] for c in conv] == ["hi", "Hello.", "lights?\n\nAnswer in German."]
+
+
 async def test_named_inputs_are_tools(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
     """The owner names an input: a model wired to it sees that name (a charter's input "addressed" is the tool
     "addressed"); calling it sends the conversation there and on."""
