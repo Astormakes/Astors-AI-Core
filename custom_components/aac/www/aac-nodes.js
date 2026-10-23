@@ -773,7 +773,9 @@ class AacNodes extends HTMLElement {
       for (const t of taken) if (t.hi > lo && t.lo < hi && t.chain === chain[w.a.id]) floor = Math.max(floor, t.y);
       const y = floor + 22, k = taken.length % 6;
       taken.push({ lo, hi, y, chain: chain[w.a.id] });
-      const ox = o.x + 14 + k * 5, ix = i.x - 14 - k * 5;
+      // outside the side lanes of a card's loops, so a far wire never cuts through the stubs into its tool cards
+      const loopsA = (order[w.a.id] || []).length, loopsB = (order[w.b.id] || []).length;
+      const ox = o.x + 14 + k * 5 + (loopsA ? 18 + loopsA * 7 : 0), ix = i.x - 14 - k * 5 - (loopsB ? 18 + loopsB * 7 : 0);
       out[idx] = path([[o.x, o.y], [ox, o.y], [ox, y], [ix, y], [ix, i.y], [i.x, i.y]]);
     }
     return out;
