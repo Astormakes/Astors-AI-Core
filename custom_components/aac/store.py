@@ -90,7 +90,6 @@ DOMAIN_DEFAULTS: dict[str, Any] = {
 }
 
 MASTER_KEYS = set(DOMAIN_DEFAULTS["master"])
-_PER_DOMAIN = ("master",)
 
 
 def _domain_from(stored: dict[str, Any], domain_id: str, name: str) -> dict[str, Any]:
@@ -386,10 +385,6 @@ class AACStore:
         """Replace a role's list (duplicates dropped, order kept)."""
         self.pools[role] = list(dict.fromkeys(i for i in items if i))
         await self.async_save()
-
-    async def async_prefer(self, role: str, resource: str) -> None:
-        """Make a resource the first choice of a role."""
-        await self.async_set_pool(role, [resource, *self.pools.get(role, [])])
 
     @property
     def machines(self) -> dict[str, dict[str, Any]]:

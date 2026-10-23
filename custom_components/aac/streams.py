@@ -10,7 +10,6 @@ gets every output of its type (except the node's own), in domains where the read
 from __future__ import annotations
 
 from array import array
-import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
@@ -52,13 +51,8 @@ TYPE_ALIASES = {"instructions": "charter"}
 KEEP_RECORDS = 200  # per output and domain
 KEEP_FOR = timedelta(minutes=10)
 
-# run(domain_id, port, item) → anything (handed back to the writer by emit)
+# run(domain_id, port, item) → anything: a record arriving on an input (an audio piece, …)
 NodeRun = Callable[[str, str, dict[str, Any]], Awaitable[Any]]
-# annotate(...): what an annotating node does to a record; its arguments depend on the type:
-# audio.segment: annotate(source, pcm, line) → fields to add, {"drop": True}, {"split": [...]} or None
-Annotate = Callable[..., Awaitable[Any]]
-# listen(source, pcm) → records of its own (audio.pcm in windows, e.g. sound captions)
-Listen = Callable[[Any, bytes], Awaitable[list[dict[str, Any]]]]
 
 
 @dataclass(eq=False)
@@ -82,11 +76,6 @@ class Node:
     # Live audio: stream(domain_id, in_port, chunk, meta) for every chunk on an `audio` input (a stream, not records)
     stream: Callable[[str, str, bytes, dict[str, Any]], None] | None = None
     listens_to: str = ""  # a Microphone card: the source it takes ("any" or a source id)
-    annotate: Annotate | None = None
-    partial: Callable[[Any, bytes], Awaitable[str | None]] | None = None  # the text so far (live view)
-    # Nodes reading raw media (audio.pcm) get it in windows of `window` seconds through `listen`
-    listen: Listen | None = None
-    window: float = 1.0
     # Node types vs. instances (spec/v1.md): a type with `make` may be added to a domain more than once; each
     # instance has its own id, title and settings (`settings_schema` like a manifest's settings) and is wired
     # by hand (the automatic wiring leaves instances out)
@@ -218,33 +207,12 @@ class Bus:
     def _on(self, node: Node, domain_id: str) -> bool:
         return node.module is None or self._module_enabled(domain_id, node.module)
 
-    def annotators(self, domain_id: str, kind: str) -> list[Node]:
-        """The annotating nodes of a type that are on in a domain, in their order."""
-        found = [n for n in self.nodes_in(domain_id).values() if n.annotating and kind in n.inputs.values() and self._on(n, domain_id)]
-        return sorted(found, key=lambda n: n.order)
-
-    def chain(self, domain_id: str, node_id: str, port: str) -> tuple[list[Node], tuple[str, str]]:
-        """The annotating nodes a record from an output runs through, by following the wires (automatic:
-        by their order; wired by hand: as the owner wired them), and the output at the end of the chain."""
-        nodes = self.nodes_in(domain_id)
-        kind = nodes[node_id].outputs[port]
-        wires = self.wires(domain_id)
-        chain: list[Node] = []
-        at = (node_id, port)
-        while True:
-            nxt = next((nodes[b] for a, ap, b, bp in wires if (a, ap) == at and nodes[b].annotating
-                        and nodes[b].inputs.get(bp) == kind and nodes[b] not in chain), None)
-            if nxt is None:
-                return chain, at
-            chain.append(nxt)
-            at = (nxt.id, next(p for p, k in nxt.outputs.items() if k == kind))
-
-    def wired_from(self, domain_id: str, node_id: str, port: str, listening: bool = False) -> list[tuple[Node, str]]:
-        """The ordinary nodes (and their input) wired to an output; listening: those that read raw media."""
+    def wired_from(self, domain_id: str, node_id: str, port: str) -> list[tuple[Node, str]]:
+        """The nodes (and their input) wired to an output that take records (`run`)."""
         found, nodes = [], self.nodes_in(domain_id)
         for a, ap, b, bp in self.wires(domain_id):
             reader = nodes[b]
-            if (a, ap) == (node_id, port) and not reader.annotating and (reader.listen if listening else reader.run) \
+            if (a, ap) == (node_id, port) and reader.run \
                     and (reader, bp) not in found:
                 found.append((reader, bp))
         return found
@@ -265,28 +233,8 @@ class Bus:
         return list(dict.fromkeys(found))
 
     def default_wires(self, domain_id: str) -> list[tuple[str, str, str, str]]:
-        """The automatic wiring by type. A type with annotating nodes runs through them as a chain in their
-        order: writers → first → … → last → readers. Messages by role: every source through the transforms into
-        the model, the model into Reply and the sinks; every tool card onto the model."""
-        found = self._message_wires(domain_id)  # added instances are wired by hand
-        for src in self.nodes.values():
-            if not self._on(src, domain_id) or src.annotating or src.role:
-                continue
-            for out_port, kind in src.outputs.items():
-                chain = self.annotators(domain_id, kind)
-                if chain:
-                    first = chain[0]
-                    found.append((src.id, out_port, first.id, next(p for p, k in first.inputs.items() if k == kind)))
-                    for a, b in zip(chain, chain[1:]):
-                        found.append((a.id, next(p for p, k in a.outputs.items() if k == kind),
-                                      b.id, next(p for p, k in b.inputs.items() if k == kind)))
-                tail = chain[-1] if chain else src
-                tail_port = next(p for p, k in tail.outputs.items() if k == kind) if chain else out_port
-                for dst in self.nodes.values():
-                    if dst is src or dst.annotating or not self._on(dst, domain_id):
-                        continue
-                    found += [(tail.id, tail_port, dst.id, in_port) for in_port, k in dst.inputs.items() if k == kind]
-        return list(dict.fromkeys(found))
+        """The automatic wiring (messages by role; added cards are wired by hand)."""
+        return self._message_wires(domain_id)
 
     def _message_wires(self, domain_id: str) -> list[tuple[str, str, str, str]]:
         """The automatic wiring of messages (spec/graph.md): every source through the transforms (by order) into
@@ -317,33 +265,6 @@ class Bus:
             if "pool_master" in self.nodes and "pool" in model.inputs:  # its models: the owner's order
                 found.append(("pool_master", "models", model.id, "pool"))
         return list(dict.fromkeys(w for w in found if None not in w))
-
-    async def emit(self, domain_id: str, node_id: str, port: str, item: dict[str, Any]) -> list[Any]:
-        """A node writes a record to one of its outputs: kept in RAM and handed to every input wired
-        to it; returns what the readers' run gave back (e.g. the broker's run)."""
-        node = self.nodes_in(domain_id).get(node_id)
-        if node is None or port not in node.outputs:
-            raise ValueError(f"{node_id}.{port} is not an output")
-        # A record that has its time already is handed on as it is: readers may mark it (the wake word
-        # sets "addressed" on a heard line, and the transcript shows it)
-        record = item if "time" in item else {"time": dt_util.utcnow().isoformat(), **item}
-        recent = self._recent.setdefault((domain_id, node_id, port), deque(maxlen=KEEP_RECORDS))
-        recent.append(record)
-        if self.on_record and STREAM_TYPES.get(node.outputs[port]) != "continuous":
-            self.on_record(domain_id, node_id, port)
-        # Its readers: wired to this output, or (through annotating nodes) to the end of its chain;
-        # whoever writes such a type has run the chain already (the audio hub with each segment)
-        readers = self.wired_from(domain_id, *self.chain(domain_id, node_id, port)[1])
-
-        async def deliver(reader: Node, in_port: str) -> Any:
-            try:
-                return await reader.run(domain_id, in_port, record)
-            except Exception:  # noqa: BLE001
-                LOGGER.exception("Node %s failed on %s.%s", reader.id, node_id, port)
-                return None
-
-        # Readers work at the same time (a slow one must not hold up the others)
-        return list(await asyncio.gather(*(deliver(r, p) for r, p in readers)))
 
     def record(self, domain_id: str, node_id: str, port: str, record: dict[str, Any], message: Any = None) -> None:
         """Keep a record of what left an output (the flow's messages; the node view shows the counts), and the

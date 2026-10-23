@@ -35,7 +35,7 @@ module recognizes a line in a language outside the list again in the last home l
 (setting `home_languages`, line field `heard_as`). Voice runs are anonymous (no
 setup tools) until there is speaker ID.
 
-Planned: listening modes per source (off / wake word / continuous), arbitration
+Planned: arbitration (the Gather card, see graph.md "Audio cards"); what a source's audio does is up to the audio cards wired to its Microphone card
 between mics, quality values per segment, speaker ID, HA devices and the panel
 (browser) as sources.
 

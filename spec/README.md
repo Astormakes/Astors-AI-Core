@@ -21,7 +21,9 @@ some of it exists, **planned** = spec only, nothing in the code yet.
 | [Event](event.md) | everything that happens, on one bus | partial |
 | [Module manifest](module.md) | a bundle of the above, installable and shareable | partial |
 | [Requests](requests.md) | AAC asks, the owner decides outside the chat; entity access as the first kind | built |
-| [Streams](streams.md) | the core as a collection of typed streams; modules are nodes, wired like a flow chart; slots (memory) | partial |
+| [Graph](graph.md) | everything is a card; a message is a document; live wires, templates and values, audio cards | built (v1) |
+| [Streams](streams.md) | the earlier typed-streams design (superseded by Graph; slots still apply) | superseded |
+| [Hearing](hearing.md) | the earlier audio pipeline (superseded by Graph "Audio cards") | superseded |
 | [v1 plan](v1.md) | the v1 rewrite: core, node types and instances, phases | draft |
 | [Calendar](calendar.md) | one calendar over all modules: an interface, no table | built |
 | [Domain package](domain.md) | a whole AAC setup, exportable and importable | partial |

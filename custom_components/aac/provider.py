@@ -189,10 +189,6 @@ class OpenAICompatProvider:
         data = await self._request("GET", "/models", timeout=aiohttp.ClientTimeout(total=10))
         return {m["id"]: m.get("meta") or {} for m in data.get("data", []) if "id" in m}
 
-    async def audio_post(self, path: str, wav: bytes) -> dict[str, Any]:
-        """POST a WAV to an audio endpoint (AAC senses: /audio/tags, /audio/voiceprint)."""
-        return await self._request("POST", path, data=wav, timeout=aiohttp.ClientTimeout(total=30, sock_connect=3))
-
     async def context_size(self) -> int | None:
         """The context the server runs with (llama.cpp /props), None when it does not say."""
         root = self._base_url[:-3] if self._base_url.endswith("/v1") else self._base_url

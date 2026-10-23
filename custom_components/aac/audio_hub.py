@@ -39,7 +39,6 @@ if TYPE_CHECKING:
 
 SAMPLE_RATE = 16000
 FRAME_BYTES = 320  # 10 ms of 16-bit mono
-RING_SECONDS = 30
 PREROLL_FRAMES = 50  # 500 ms before speech starts (micro VAD reacts ~250 ms late)
 START_FRAMES = 3  # speech this long opens a segment
 END_SILENCE_FRAMES = 80  # 800 ms of silence closes it
@@ -127,10 +126,6 @@ class Segmenter:
         """Frames in the open segment (0 when none is open)."""
         return len(self._segment) if self._segment is not None else 0
 
-    def so_far(self) -> bytes:
-        """The open segment's audio so far (for a live, partial transcript)."""
-        return b"".join(self._segment) if self._segment is not None else b""
-
     def _measure(self, frame: bytes, speech: bool) -> None:
         samples = array("h", frame)
         peak = max(abs(min(samples)), max(samples)) if samples else 0
@@ -188,7 +183,6 @@ class Source:
     send: Callable[[Any], Awaitable[None]]
     segmenter: Segmenter
     connected: str = field(default_factory=lambda: dt_util.utcnow().isoformat())
-    ring: deque[bytes] = field(default_factory=lambda: deque(maxlen=RING_SECONDS * 100))
     playing: bool = False
     last_answer: float = 0.0
     saying: str = ""  # what AAC is speaking right now
@@ -248,7 +242,6 @@ class AudioHub:
         for node in self._mics[1]:
             if node.listens_to in ("any", source.id):
                 self._bus.stream(domain_id, node.id, "out", chunk, {"source": source.id, "name": source.name, "area": source.area})
-        source.ring.append(chunk)
         source.segmenter.feed(chunk)  # the live meter (the Pause cut cards cut on their own)
 
     @callback

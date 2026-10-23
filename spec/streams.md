@@ -1,5 +1,10 @@
 # Streams — partial
 
+> **Superseded (1.0.0-dev.60, 2026-10-23).** The Hearing card, the annotating chains, the old audio types
+> (`audio.pcm`, `audio.segment`, `text.line`, `sound.event`) and the hearing modules (Wake word, Companion, STT,
+> Sounds, Voices) are gone. Current design: [graph.md](graph.md) ("Audio cards", "Live wires"). Kept for history.
+
+
 Built (0.47): the memory slot (`slots.py`, provider: the memory module). Built (0.44): the bus (`streams.py`: types, default wiring by type, recent records), the core's broker node
 (`broker.py`) and the first node module, the heartbeat. 0.45: the triggers module (a node writing `broker.request`).
 0.46: audio on the bus (the core node `hearing`; speech to text, sounds and voices are annotating nodes on

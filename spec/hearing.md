@@ -1,5 +1,10 @@
 # Hearing (contract 2)
 
+> **Superseded (1.0.0-dev.60, 2026-10-23).** The Hearing card, the annotating chains, the old audio types
+> (`audio.pcm`, `audio.segment`, `text.line`, `sound.event`) and the hearing modules (Wake word, Companion, STT,
+> Sounds, Voices) are gone. Current design: [graph.md](graph.md) ("Audio cards", "Live wires"). Kept for history.
+
+
 What AAC's microphones hear is a shared interface, like the calendar: the core only hears,
 modules decide what to do with it. Owner decision 2026-10-19. Since 0.46 it runs on the
 [stream bus](streams.md): the stages and the hearing modules are nodes (contract 2; contract 1 had

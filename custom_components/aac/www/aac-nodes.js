@@ -24,8 +24,8 @@ const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)",
 const KIND = { source: "source", sink: "sink", transform: "transform", annotating: "adds to the record" };
 // Settings that still live on a page of their own (owner: the settings are Appearance, Languages and Nodes; the
 // rest moves into the cards): the card links there
-const PAGES = { home: ["settings/entities", "Entities: what AAC may see and switch"], hearing: ["settings/audio", "Audio pipeline"],
-  stt: ["settings/audio", "Audio pipeline"], voice: ["settings/audio/sources", "Microphones and speakers"],
+const PAGES = { home: ["settings/entities", "Entities: what AAC may see and switch"],
+  voice: ["settings/audio", "Audio pipeline: voice, volume, microphones"],
   ha_tools: ["settings/entities", "Entities"], modules: ["settings/modules", "All modules"] };
 const ROLE = { pool: "pool (dotted)", source: "source", endpoint: "in and out", transform: "in the line", model: "model", decide: "decide", sink: "reads along", tool: "tools (a loop)" };
 const UNDO_STEPS = 10;

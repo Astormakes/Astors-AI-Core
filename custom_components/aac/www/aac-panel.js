@@ -391,24 +391,6 @@ textarea { min-height: 10em; resize: vertical; }
 .flow { display: flex; flex-direction: column; }
 .role { border-top: 1px solid rgba(0, 240, 255, .2); padding-top: .7em; margin-top: .7em; }
 .role h3 { font-size: .95em; letter-spacing: .15em; color: var(--cyan); margin: 0 0 .2em; font-weight: 600; }
-.buffer { max-height: 26em; overflow-y: auto; font-family: ui-monospace, monospace; font-size: .85em; padding: .3em 0; }
-.buffer .bl { border-left: 2px solid var(--line); padding: .15em 0 .15em .7em; margin: .35em 0; }
-.buffer .bl.to-aac { border-left-color: var(--magenta); }
-.buffer .bl.live { border-left-color: var(--cyan); opacity: .85; }
-.buffer .bl.sound { border-left-color: var(--amber); }
-.buffer .bl.aac { border-left-color: var(--magenta); }
-.buffer .bl.aac .bt { color: var(--magenta); }
-.buffer .bm b.why { color: var(--dim); font-style: italic; }
-.buffer .bl.sound .bt { color: var(--amber); }
-.buffer .bl.live .bt { font-style: italic; }
-.buffer .bm { font-size: .82em; color: var(--dim); }
-.buffer .bm b { font-weight: normal; margin-left: .4em; }
-.buffer .bm b.to { color: var(--magenta); }
-.buffer .bm b.no { color: var(--amber); }
-.transcript { max-height: 22em; overflow-y: auto; display: flex; flex-direction: column; gap: .5em; }
-.tline { border-left: 1px solid var(--line, rgba(0,229,255,.3)); padding: .1em 0 .1em .7em; }
-.tline .m { font-size: .8em; opacity: .7; }
-.tline.to-aac { border-left-color: var(--magenta, #ff2bd6); }
 pre.code { white-space: pre-wrap; word-break: break-all; font-size: .85em; padding: .6em .8em; border: 1px solid rgba(0,229,255,.3); background: rgba(0,229,255,.05); }
 .stage { display: grid; grid-template-columns: 2.4em 1fr; gap: 0 .9em; }
 .stage .rail { display: flex; flex-direction: column; align-items: center; }
@@ -1853,16 +1835,7 @@ class AacPanel extends HTMLElement {
       : `${c.after || "00:00"}–${c.before || "24:00"}${c.weekdays?.length ? " " + c.weekdays.map((d) => WEEKDAYS[d]).join(" ") : ""}`).join(" and ");
   }
 
-  _tierOptions(chosen) {
-    const p = this._state?.pools;
-    const tiers = { ...(p?.tiers || { master: "", fast: "", smart: "", small: "" }) };
-    for (const it of p?.roles?.master?.items || []) for (const t of it.traits?.tags || []) tiers[t] ||= "own tag";
-    if (chosen && !(chosen in tiers)) tiers[chosen] = "";
-    return Object.keys(tiers).map((t) => {
-      const who = p?.by_tier?.[t] ? ` → now ${this._resourceLabel(p.by_tier[t])}` : "";
-      return `<option value="${esc(t)}" ${t === chosen ? "selected" : ""}>${esc(t)}${esc(who)}</option>`;
-    }).join("");
-  }
+
 
   _roleOptions(role) {
     const take = this._state?.pools?.roles?.[role]?.takes;
