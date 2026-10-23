@@ -134,6 +134,8 @@ class Segmenter:
         if acc[2] >= METER_FRAMES:
             # loudness on a log scale: 0 = digital silence, 100 = full scale (about 60 dB of range)
             level = 0 if acc[0] <= 0 else max(0, min(100, int(100 + 100 / 60 * 20 * math.log10(acc[0] / 32767))))
+            # the real peak (dBFS) without the meter's floor: digital silence (None) vs. only very quiet
+            self.peak_db = round(20 * math.log10(acc[0] / 32767), 1) if acc[0] > 0 else None
             self.meter.append((level, round(acc[1] / acc[2], 2), self._segment is not None))
             self._acc = [0, 0, 0]
 
@@ -402,7 +404,7 @@ class AudioHub:
     def live(self) -> list[dict[str, Any]]:
         """The live view per source: the last seconds of loudness and speech, and what happens now."""
         return [{"id": s.id, "name": s.name, "meter": list(s.segmenter.meter), "partial": "",
-                 "speech_seconds": round(s.segmenter.frames / 100, 1),
+                 "speech_seconds": round(s.segmenter.frames / 100, 1), "peak_db": getattr(s.segmenter, "peak_db", None),
                  "state": "speaking" if s.playing else "hearing speech" if s.segmenter.active else "listening"}
                 for s in self.sources.values()]
 
