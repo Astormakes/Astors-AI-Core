@@ -660,7 +660,7 @@ class AacNodes extends HTMLElement {
       .map((t) => `<span><span style="display:inline-block;width:.75em;height:.75em;border-radius:50%;background:${this._color(t)};vertical-align:-.05em"></span> ${esc(t)}</span>`).join("");
     const away = (this._all || []).length - this._data.nodes.length;
     this._msg.textContent = [this._data.nodes.some((n) => !n.on) ? "Faded nodes belong to modules that are off in this domain." : "",
-      away ? `${away} card${away > 1 ? "s" : ""} hidden (modules that are off, or hidden by you): the sidebar lists them, a click brings one back.` : ""].filter(Boolean).join(" ");
+      away ? `${away} card${away > 1 ? "s" : ""} not in the grid (unused pools, modules that are off, or hidden by you): the sidebar lists them, a click brings one back.` : ""].filter(Boolean).join(" ");
     this._layout();
   }
 
@@ -1172,7 +1172,8 @@ class AacNodes extends HTMLElement {
 
   _shown(n) {
     const wired = (this._data.wires || []).some((w) => w.from.split(".")[0] === n.id || w.to.split(".")[0] === n.id);
-    return wired || this._reveal?.has(n.id) || (n.on && !(this._data.hidden || []).includes(n.id));
+    // unwired pool cards are out of the grid too (owner: "pool resources don't need to be shown when not in use")
+    return wired || this._reveal?.has(n.id) || (n.on && n.role !== "pool" && !(this._data.hidden || []).includes(n.id));
   }
 
   async _retitle(id) {

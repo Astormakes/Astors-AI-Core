@@ -992,7 +992,7 @@ class AacPanel extends HTMLElement {
     const GROUP_PAGES = { Pools: "models" };
     const seen = new Set();
     const hidden = new Set(d.hidden || []);
-    const away = (n) => !wired.has(n.id) && (hidden.has(n.id) || !n.on);  // not in the grid (a click brings it back)
+    const away = (n) => !wired.has(n.id) && (hidden.has(n.id) || !n.on || n.role === "pool");  // not in the grid (a click brings it back)
     const item = (n) => `<div class="tab ${n.on ? "" : "soon"}" data-node-pick="${esc(n.id)}" draggable="true" tabindex="0" role="button" title="${esc(n.description || "")}">
         <span class="dot ${wired.has(n.id) ? "ok" : ""}"></span><span class="grow">${esc(n.title)}</span>${away(n) ? `<span title="Not in the grid: click to bring it back">${icon("eyeOff")}</span>` : ""}</div>`;
     const groups = GROUPS.map(([name, test]) => {
