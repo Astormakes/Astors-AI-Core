@@ -134,11 +134,11 @@ async def test_audio_overview(hass: HomeAssistant, hass_ws_client, mock_entry):
     assert audio["built"] is True
     assert [s["id"] for s in audio["stages"]][0] == "source"
     assert audio["stages"][-1]["id"] == "tts"
-    assert {s["id"]: s["state"] for s in audio["stages"]}["arbitration"] == "planned"
+    assert {s["id"]: s["state"] for s in audio["stages"]}["gather"] == "planned"
     candidates = {s["id"]: s for s in audio["candidates"]}
     assert candidates["assist_satellite.kitchen"]["kind"] == "voice satellite"
     assert candidates["camera.door"]["name"] == "Door"
-    assert audio["connected"] == [] and audio["settings"]["names"] == ["computer"]
+    assert audio["connected"] == [] and "transcript" not in audio
 
 
 async def test_admin_only(hass: HomeAssistant, hass_ws_client, hass_read_only_access_token, mock_entry):

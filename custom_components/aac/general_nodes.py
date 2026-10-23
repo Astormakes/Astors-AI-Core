@@ -3,12 +3,10 @@ for different things").
 
 - Buffer: keeps the last N texts that pass it and writes them into the message as one block; a model wired to
   it can read, add, remove a slot, remove what contains a word, or clear it.
-- Heard lines: the bridge from the audio pipeline: every finished spoken line becomes a message of its own
-  (an answer to it goes to the voice endpoint, which speaks it at that microphone).
 - Markdown file: a note file (`<config>/aac/notes/<name>.md`): in a line it appends what passes it, wired to a model
   it can be read, appended to and rewritten; the panel lists it like a chat (owner: "an MD file writer as a chat in
   the list for now, later a file access tool").
-Both exist only as added cards (Add node), wired by hand.
+They exist only as added cards (Add node), wired by hand.
 """
 
 from __future__ import annotations
@@ -32,8 +30,6 @@ if TYPE_CHECKING:
 
 IN, OUT = {"in": TEXT}, {"out": TEXT}
 BUFFER_VARS = {"lines": "The kept texts as a numbered block.", "count": "How many it keeps now.", "newest": "The newest text."}
-HEARD_VARS = {"text": "What was said.", "speaker": "Whose voice it was (if known).", "mic": "The microphone's id.",
-              "mic_name": "The microphone's name.", "area": "The microphone's area."}
 
 BUFFER_SETTINGS = {
     "size": {"type": "number", "title": "Slots", "default": 10, "help": "How many texts it keeps (the oldest goes first)."},
@@ -130,25 +126,6 @@ def general_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
         return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, settings=settings, tools=tools, handle=handle,
                     description=BUFFER_HELP, variables=BUFFER_VARS)
 
-    def heard_make(inst_id: str, title: str, settings: dict[str, Any]) -> Node:
-        async def run(domain_id: str, port: str, line: dict[str, Any]) -> None:
-            if line.get("kind", "speech") != "speech" or not (line.get("text") or "").strip():
-                return  # AAC's own words, sounds
-            domain = entry.runtime_data.domain(domain_id)
-            message = Message(domain=domain, kind="chat", trigger=f"heard: {line.get('name') or line.get('source')}",
-                              title=f"Heard · {line.get('name') or ''}", origin=inst_id, reply_to="voice",
-                              language=line.get("language") or hass.config.language, priority="normal")
-            who = line.get("speaker") or {}
-            message.add(inst_id, "user", line["text"].strip(), mic=line.get("source"), mic_name=line.get("name"),
-                        voice=who.get("name") if isinstance(who, dict) else None)
-            message.set_vars(inst_id, text=line["text"].strip(), mic=line.get("source"), mic_name=line.get("name"),
-                             area=line.get("area"), speaker=who.get("name") if isinstance(who, dict) else None)
-            entry.async_create_background_task(hass, entry.runtime_data.flow.async_send(message, start=inst_id),
-                                               f"aac heard {inst_id}")
-
-        return Node(id=inst_id, title=title, inputs={"lines": "text.line"}, outputs=OUT, role="source", run=run,
-                    settings=settings, description=HEARD_HELP, variables=HEARD_VARS)
-
     def file_make(inst_id: str, title: str, settings: dict[str, Any]) -> Node:
         path = note_path(hass, settings)
 
@@ -189,8 +166,6 @@ def general_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
              settings_schema=FILE_SETTINGS, description=FILE_HELP),
         Node(id="buffer", title="Buffer", inputs=IN, outputs=OUT, template=True, make=buffer_make, category="Keep and write",
              settings_schema=BUFFER_SETTINGS, description=BUFFER_HELP),
-        Node(id="heard", title="Heard lines", inputs={"lines": "text.line"}, outputs=OUT, role="source", template=True,
-             make=heard_make, description=HEARD_HELP),
     ]
 
 
@@ -201,6 +176,3 @@ BUFFER_HELP = ("Keeps the last texts that pass it (a set number of slots) and wr
 FILE_HELP = ("A Markdown note file (<config>/aac/notes/<name>.md), listed under FILES in the sidebar where you can read "
              "and edit it. In a line it appends what passes it (the newest answer, with the time); wired to a model it "
              "is a tool: read, append, write.")
-HEARD_HELP = ("Turns every finished spoken line from Hearing into a message of its own (wire Hearing's lines into it). "
-              "What comes back to the Voice card is spoken at the microphone the line came from. Values for templates: "
-              "{{ <card id>.text }}, .speaker, .mic_name, .area.")

@@ -166,9 +166,8 @@ async def test_node_view_command(hass, hass_ws_client, mock_entry, configured):
     await ws.send_json_auto_id({"type": "aac/nodes"})
     result = (await ws.receive_json())["result"]
     nodes = {n["id"]: n for n in result["nodes"]}
-    assert nodes["model"]["module_name"] == "Core" and nodes["stt"]["kind"] == "annotating" and nodes["stt"]["order"] == 10
-    assert nodes["hearing"]["recent"] == {"audio": 0, "segments": 0, "lines": 0}
-    assert {"from": "hearing.segments", "to": "stt.speech"} in result["wires"]
+    assert nodes["model"]["module_name"] == "Core" and "hearing" not in nodes  # the old Hearing is gone (audio cards)
+    assert {"microphone", "noise_gate", "pause_cut", "speech_to_text"} <= {t["id"] for t in result["types"] if t["category"] == "Audio"}
     assert {"from": "model.out", "to": "home.in"} in result["wires"] and {"from": "home.out", "to": "model.in"} in result["wires"]
     assert {"text", "audio", "video", "pool"} <= set(result["stream_types"])
     assert nodes["model"]["square"] == ["out"] and nodes["charter"]["square"] == []

@@ -25,12 +25,9 @@ from .languages import NAMES
 STAGES = [
     ("source", "Sources", "AAC satellites stream their mic (a PC, or an HA app next to a USB/Bluetooth headset).", "built"),
     ("buffer", "Ring buffer", "Last 30 s of raw audio, RAM only, never written to disk.", "built"),
-    ("vad", "Voice activity", "Cheap, always on. Cuts speech segments.", "built"),
-    ("arbitration", "Arbitration", "Same sentence on several mics: the best one wins (also tells where you are).", "planned"),
-    ("stt", "Speech to text", "Only on speech. An HA speech-to-text engine used as a tool (e.g. faster-whisper).", "built"),
-    ("speaker", "Voices and sounds", "Who said it (Voices module, voice prints) and what else is heard (Sounds module). For personalization, not security.", "built"),
-    ("transcript", "Transcript", "Rolling text with time and mic, handed to the hearing modules.", "built"),
-    ("hearing", "Hearing modules", "Decide what to do with what was heard: Wake word (answers its name), Companion (planned).", "built"),
+    ("cards", "Audio cards", "Microphone → Noise gate → Pause cut → Speech to text, wired in Nodes (Add node → Audio): each "
+     "spoken piece becomes a message that runs through your cards.", "built"),
+    ("gather", "Gather", "The same sentence from several satellites: one picked (a model or a rule).", "planned"),
     ("tts", "Voice", "The answer is spoken on the same source by an HA text-to-speech engine (own voices later).", "built"),
 ]
 
@@ -69,16 +66,13 @@ def _sources(hass: HomeAssistant) -> list[dict[str, Any]]:
 
 def audio_overview(hass: HomeAssistant, hub=None, settings: dict | None = None) -> dict[str, Any]:
     """Stages, live sources, settings and engines for the panel."""
-    live = hub.overview() if hub else {"connected": [], "transcript": [], "stt": None, "tts": None}
+    live = hub.overview() if hub else {"connected": [], "stt": None, "tts": None}
     return {
         "built": True,
         "stages": [{"id": sid, "name": name, "desc": desc, "state": state} for sid, name, desc, state in STAGES],
         "connected": live["connected"],
-        "transcript": live["transcript"],
         "settings": settings or {},
         "languages": hub.languages() if hub else [],  # the home's (global, SETTINGS → Languages)
-        # the hearing modules that are on in the voice domain (what AAC does with what it hears)
-        "hearing": live.get("hearing", []),
         "engines": {
             "stt": live["stt"],
             "tts": live["tts"],

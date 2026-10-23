@@ -22,13 +22,8 @@ from homeassistant.util import dt as dt_util
 
 from .const import LOGGER
 
-# type → class: "continuous" (raw media, RAM ring buffer, never stored) or "record" (small JSON objects). The old
-# audio types (audio.pcm, audio.segment, text.line, sound.event) go with the Hearing card (spec/graph.md "Audio cards")
+# type → class: "continuous" (raw media, never stored) or "record" (small JSON objects)
 STREAM_TYPES: dict[str, str] = {
-    "audio.pcm": "continuous",
-    "audio.segment": "record",
-    "text.line": "record",
-    "sound.event": "record",
     # The message (spec/graph.md, owner 2026-10-23): a document of tagged entries; every node writes into it, a model
     # reads it all and picks where it goes next (its wired nodes are its tools: loops)
     "text": "record",
@@ -330,7 +325,7 @@ class Bus:
                 LOGGER.exception("Node %s failed on %s.%s", reader.id, node_id, port)
                 return None
 
-        # Readers work at the same time (the wake word answering must not hold up the companion)
+        # Readers work at the same time (a slow one must not hold up the others)
         return list(await asyncio.gather(*(deliver(r, p) for r, p in readers)))
 
     def record(self, domain_id: str, node_id: str, port: str, record: dict[str, Any], message: Any = None) -> None:

@@ -16,8 +16,7 @@ document, not a log.
 
 Only these: `text` (the message document), `audio`, `video`, each in and out, plus `pool` (the dotted line:
 a model card reserves a model from a pool node; the only two-way wire).
-Until the audio pipeline is moved over, its old types (`audio.pcm`, `audio.segment`, `text.line`,
-`sound.event`) stay as they are; the unused ones (`time.tick`, `ha.event`, `say`, `notify`, `video.frame`,
+The old audio types are gone with the Hearing card; so are the unused ones (`time.tick`, `ha.event`, `say`, `notify`, `video.frame`,
 `vision.detection`) are gone. New: `audio.piece` (a Pause cut's stretch of speech).
 
 ## Outputs: round and square
@@ -159,7 +158,7 @@ Example (the owner's chain): microphones → stream picker (passes one stream an
 text) → a small model as the cut (whole sentences) → Buffer → Decide → main model → Chat and Voice (live) →
 audio out (plays at the id). The Companion becomes a saved group of such nodes instead of one hidden card.
 
-## Audio cards (owner 2026-10-23; steps 1–4 built in 1.0.0-dev.56, the rest planned)
+## Audio cards (owner 2026-10-23; built in 1.0.0-dev.56–60, Gather and Voice out planned)
 
 Hearing (one card with three outputs and everything hidden inside: speech detection, partial transcripts,
 sound captions, voice prints, not listening while AAC speaks, the follow-up window) is split into cards, all
@@ -184,14 +183,17 @@ listed under **Audio** in "Add node", each removable and addable:
    most sense, and the answer goes to that candidate's satellite. Costs the window plus one short model call.
 5. **Voice out**: the answer goes back to the satellite whose id travels with the message (later: speaking while
    the model still writes).
-6. Then removed: Hearing's three outputs, the Wake word module (its decision is Heard lines → Buffer → Decide), the
-   Companion (a saved group of these cards).
+6. Removed (1.0.0-dev.60, owner: "remove everything that isn't going to be used in the new system"): Hearing and
+   its types (`audio.pcm`, `audio.segment`, `text.line`, `sound.event`), the modules Wake word, Companion, STT,
+   Sounds, Voices, the Heard lines card, the transcript. Speech to text keeps a voice chat per satellite (setting
+   `remember` minutes) and transcribes again in the home's language when it heard another one. Voices (who speaks)
+   and Sounds come back as Audio cards later.
 
 Built (audio_nodes.py): Microphone (`source`: a satellite or any), Noise gate (`level` 0–100, `hold` ms), Pause
 cut (`pause` ms, `longest` s; out: `audio.piece` records with the PCM, not kept), Speech to text (a source of
 messages: `reply_to: voice`, the user entry's `data.mic`, values text/mic/mic_name/area/start/seconds). Raw audio
 runs on `audio` wires as a stream (`Node.stream`, `Bus.stream`; no records); added cards are kept between lookups
-(their state lives in them). The old Hearing runs alongside until the rest is done.
+(their state lives in them). 
 
 Later: a **Speaker** card for HA media players (Music Assistant, Spotify, cast) as an audio source or target.
 Guiding rule (owner): stay lightweight; every card removable, new ones addable.

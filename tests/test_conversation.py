@@ -63,8 +63,6 @@ async def test_simple_answer(
         # forget deletes: held back without the owner (memory is a module since 0.47, with the modules' rules)
         "memory__lookup_facts", "memory__recall", "memory__remember",
         "triggers_tools__cancel_schedule", "triggers_tools__list_schedules", "triggers_tools__schedule", "triggers_tools__watch",
-        # forget_voice deletes: held back without the owner
-        "voices_tools__list_voices", "voices_tools__name_voice",
     ]
 
 

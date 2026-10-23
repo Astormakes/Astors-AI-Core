@@ -1,13 +1,11 @@
-"""AAC's audio hub: sources stream in, speech becomes transcript lines, AAC answers by voice.
+"""AAC's audio hub: satellites stream in, the audio cards hear, AAC speaks back.
 
-Framework section 4a. A source (the AAC satellite program on a PC, or as an HA
-app next to a USB/Bluetooth headset) streams raw 16 kHz mono PCM over a
-WebSocket. Per source: a RAM ring buffer (never written to disk), voice
-activity detection that cuts speech segments, speech to text with an HA STT
-engine (used as a tool, HA's own pipelines stay untouched), and a rolling
-transcript. When a line addresses AAC (one of its names, or a follow-up right
-after it spoke) the master answers and the answer is spoken back through an
-HA TTS engine to the same source.
+Framework section 4a. A source (the AAC satellite program on a PC, or as an HA app next to a USB/Bluetooth
+headset) streams raw 16 kHz mono PCM over a WebSocket. The hub hands each source's audio to the Microphone cards
+(audio_nodes.py: Microphone → Noise gate → Pause cut → Speech to text, wired by the owner), offers speech to text
+and text to speech through the voice pool, and speaks answers at a source. It does not listen while AAC speaks
+there. What used to be hidden in here (speech detection for the hearing modules, the transcript, the wake word
+and companion answers) are cards now (owner, 2026-10-23: "remove everything that isn't used in the new system").
 """
 
 from __future__ import annotations
@@ -16,14 +14,10 @@ from array import array
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-import difflib
 import io
 import math
-import re
 import sys
 import time
-import unicodedata
 from typing import TYPE_CHECKING, Any
 import wave
 
@@ -35,12 +29,10 @@ from homeassistant.util import dt as dt_util
 
 from .const import LOGGER
 from .languages import code_of, detect, home_languages
-from .chats import strip_marks
 from .models import resolve_model
 from .pools import is_entity
 from .provider import OpenAICompatProvider, ProviderConnectionError, ProviderError
 from .runs import async_notify
-from .streams import Node
 
 if TYPE_CHECKING:
     from . import AACConfigEntry
@@ -55,23 +47,8 @@ MAX_SEGMENT_FRAMES = 2000  # 20 s
 MIN_SPEECH_FRAMES = 30  # shorter blips are dropped
 METER_FRAMES = 10  # one meter point = 100 ms
 METER_POINTS = 100  # the live view shows the last 10 s
-PARTIAL_EVERY = 120  # frames (1.2 s) of new speech before the open segment is transcribed again
-TRANSCRIPT_LINES = 200
 # Integrations whose speech engines run locally (preferred when nothing is chosen)
 LOCAL_ENGINES = {"wyoming", "piper", "whisper", "faster_whisper"}
-
-# A voice chat ends after this much quiet; the next spoken request starts a new one
-VOICE_SESSION_GAP = timedelta(minutes=20)
-# How many earlier lines of the same source a listener gets with each new one
-EARLIER_LINES = 20
-VOICE_FAILED = "Sorry, that did not work. The details are in the AAC panel."
-VOICE_PROMPT = (
-    "This message came in by voice from the microphone '{name}'{area}. You DO speak: your answer is "
-    "read out aloud through the speaker there, in your own voice. One or two short sentences, plain words, "
-    "no lists or markdown. Your speaking volume is set_voice_volume (not Home Assistant's media players). "
-    "When you are asked to do something you can do, call the tool NOW, in this turn, and then say what you did; "
-    "never only announce it (\"I'll turn it off\") without calling the tool."
-)
 
 
 
@@ -86,15 +63,6 @@ def pcm_to_wav(pcm: bytes) -> bytes:
     return buf.getvalue()
 
 
-def _norm(text: str) -> str:
-    return " ".join(re.sub(r"[^\w\s]", " ", text.lower()).split())
-
-
-def _fold(text: str) -> str:
-    """Letters only, accents and umlauts folded (Kompüter → komputer)."""
-    return "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if c.isalpha())
-
-
 def tts_voices(hass: HomeAssistant, engine: str | None) -> dict[str, list[dict[str, str]]]:
     """The engine's voices per language (de → every de_* locale), for choosing one in the panel."""
     found: dict[str, list[dict[str, str]]] = {}
@@ -105,25 +73,6 @@ def tts_voices(hass: HomeAssistant, engine: str | None) -> dict[str, list[dict[s
             for v in instance.async_get_supported_voices(code) or []:
                 found.setdefault(lang, []).append({"language": code, "voice": v.voice_id, "name": v.name})
     return found
-
-
-NAME_SIMILARITY = 0.8  # Komputer / Kompjuter count as computer; Kopie or Komponente do not
-
-
-def name_in(text: str, name: str) -> bool:
-    """A name in a sentence as whole words, or written a little differently (owner, 2026-10-20: the
-    recognizer writes "computer" said in a German sentence in all sorts of ways). Short names must match."""
-    said, wanted = _norm(text).split(), _norm(name).split()
-    if not wanted:
-        return False
-    n = len(wanted)
-    windows = [" ".join(said[i:i + n]) for i in range(len(said) - n + 1)]
-    if " ".join(wanted) in windows:
-        return True
-    target = _fold(name)
-    return len(target) >= 5 and any(
-        not (heard := _fold(w)).startswith(target)  # computers, computerspiel: another word
-        and difflib.SequenceMatcher(None, heard, target).ratio() >= NAME_SIMILARITY for w in windows)
 
 
 class EnergyVad:
@@ -243,17 +192,11 @@ class Source:
     playing: bool = False
     last_answer: float = 0.0
     saying: str = ""  # what AAC is speaking right now
-    heard: int = 0  # segments
-    transcribing: int = 0  # segments at speech to text right now
-    partial: str = ""  # what the open segment said so far (live transcript)
-    partial_at: int = 0  # segment frames when the last partial was started
-    partial_busy: bool = False
-    windows: dict[str, bytearray] = field(default_factory=dict)  # audio collected per window stage
 
     def summary(self) -> dict[str, Any]:
         """For the panel."""
         return {"id": self.id, "name": self.name, "area": self.area, "connected": self.connected,
-                "playing": self.playing, "heard": self.heard}
+                "playing": self.playing}
 
 
 class AudioHub:
@@ -264,19 +207,7 @@ class AudioHub:
         self.hass = hass
         self.entry = entry
         self.sources: dict[str, Source] = {}
-        self._gone: dict[str, Source] = {}  # sources that went offline (a line heard just before still gets its answer)
-        self.transcript: deque[dict[str, Any]] = deque(maxlen=TRANSCRIPT_LINES)
-        # per source id: when AAC last finished speaking there, and what it said
-        self.spoke: dict[str, dict[str, Any]] = {}
-        self.voice_chats: dict[str, str] = {}  # per source id: the voice chat of the current session
         self._mics: tuple[float, list] = (float("-inf"), [])  # the Microphone cards (audio_nodes.py), cached briefly
-        # The core's audio node on the stream bus (spec/streams.md): raw audio for media readers (sound
-        # captions), each speech segment through the annotating nodes (speech to text, sounds, voices), and
-        # every finished line to the hearing modules (wake word, companion) as text.line
-        self.node = Node(id="hearing", title="Hearing", description="AAC's microphones: the raw audio, each stretch of "
-                         "speech (through speech to text and voices) and every finished line, for the hearing modules.", outputs={
-            "audio": "audio.pcm", "segments": "audio.segment", "lines": "text.line"})
-        entry.async_on_unload(entry.runtime_data.bus.add_node(self.node))
 
     @property
     def _bus(self):
@@ -290,8 +221,7 @@ class AudioHub:
     @callback
     def connect(self, source_id: str, name: str, area: str | None, send: Callable[[Any], Awaitable[None]]) -> Source:
         """A source came online (a reconnect replaces the old one)."""
-        source = Source(source_id, name, area, send, Segmenter(make_vad()))
-        self.apply_settings(source)
+        source = Source(source_id, name, area, send, Segmenter(make_vad()))  # its segmenter: the live meter only
         self.sources[source_id] = source
         self.entry.async_create_background_task(
             self.hass, self.entry.runtime_data.store.async_add_known_source(source_id, name), "aac audio known"
@@ -299,18 +229,11 @@ class AudioHub:
         async_notify(self.hass, "audio")
         return source
 
-    def apply_settings(self, source: Source | None = None) -> None:
-        """Owner settings that live in the sources (the pause that ends a line)."""
-        frames = max(20, min(300, int(self.entry.runtime_data.store.audio.get("pause_ms", 800)) // 10))
-        for s in [source] if source else self.sources.values():
-            s.segmenter.end_silence = frames
-
     @callback
     def disconnect(self, source: Source) -> None:
         """A source went away."""
         if self.sources.get(source.id) is source:
             del self.sources[source.id]
-            self._gone[source.id] = source
             async_notify(self.hass, "audio")
 
     @callback
@@ -326,121 +249,17 @@ class AudioHub:
             if node.listens_to in ("any", source.id):
                 self._bus.stream(domain_id, node.id, "out", chunk, {"source": source.id, "name": source.name, "area": source.area})
         source.ring.append(chunk)
-        seg = source.segmenter
-        if seg.active and not source.partial_busy and seg.frames - source.partial_at >= PARTIAL_EVERY:
-            if live := next((n for n in self._bus.chain(self._domain_id, "hearing", "segments")[0] if n.partial), None):
-                source.partial_busy, source.partial_at = True, seg.frames
-                self.entry.async_create_background_task(self.hass, self._async_partial(source, live), f"aac partial {source.id}")
-        for stage, _ in self._bus.wired_from(self._domain_id, "hearing", "audio", listening=True):  # e.g. sound captions
-            buf = source.windows.setdefault(stage.id, bytearray())
-            buf += chunk
-            if len(buf) >= int(stage.window * SAMPLE_RATE * 2):
-                pcm, source.windows[stage.id] = bytes(buf), bytearray()
-                self.entry.async_create_background_task(self.hass, self._async_window(source, stage, pcm), f"aac {stage.id}")
-        for segment in seg.feed(chunk):
-            source.partial, source.partial_at = "", 0
-            source.heard += 1
-            self.entry.async_create_background_task(
-                self.hass, self._async_segment(source, segment), f"aac audio {source.id}"
-            )
+        source.segmenter.feed(chunk)  # the live meter (the Pause cut cards cut on their own)
 
     @callback
     def played(self, source: Source) -> None:
-        """The source finished playing AAC's answer: the follow-up window starts now."""
+        """The source finished playing AAC's answer."""
         source.playing = False
         source.last_answer = time.monotonic()
-        # kept by source id, so a reconnect does not lose it: the follow-up window counts from here
-        self.spoke[source.id] = {"at": dt_util.utcnow(), "text": source.saying}
         source.segmenter.reset()
         async_notify(self.hass, "audio")
 
-    # ------------------------------------------------------------ hearing
-    def mentions(self, text: str) -> bool:
-        """One of AAC's names in a sentence (whole words, case and punctuation ignored)."""
-        return any(name_in(text, name) for name in self.entry.runtime_data.store.audio["names"])
-
-    async def _async_partial(self, source: Source, stage) -> None:
-        """The open segment so far, by a stage that can (speech to text): only for the live view."""
-        try:
-            if len(pcm := source.segmenter.so_far()) >= PARTIAL_EVERY * FRAME_BYTES:
-                text = await stage.partial(source, pcm)
-                if source.segmenter.active and text:
-                    source.partial = text
-        except Exception:  # noqa: BLE001 - the live view must not break hearing
-            LOGGER.exception("AAC audio: partial of %s failed", stage.id)
-        finally:
-            source.partial_busy = False
-
-    async def _async_segment(self, source: Source, pcm: bytes) -> None:
-        """A speech segment: measured here, then each segment stage adds what it finds (text, speaker, …).
-        A stage may split it into parts (speech to text: the model's sentences); the later stages then work
-        on each part, so every sentence gets its own voice and sounds."""
-        ended = dt_util.utcnow()
-        seconds = len(pcm) / (SAMPLE_RATE * 2)
-        start = ended - timedelta(seconds=seconds)
-        stages = self._bus.chain(self._domain_id, "hearing", "segments")[0]
-        source.transcribing += 1
-        try:
-            lines = await self._async_stages(source, pcm, self._segment_line(source, pcm, start), stages)
-        finally:
-            source.transcribing -= 1
-        for line in lines:
-            self._add_line(source, line)
-
-    def _segment_line(self, source: Source, pcm: bytes, start) -> dict[str, Any]:
-        return {"time": start.isoformat(), "source": source.id, "name": source.name, "area": source.area, "kind": "speech", "text": "",
-                "addressed": False, "seconds": round(len(pcm) / (SAMPLE_RATE * 2), 1),
-                "loudness_db": loudness_db(pcm), "highs": highs(pcm)}
-
-    async def _async_stages(self, source: Source, pcm: bytes, line: dict[str, Any], stages: list) -> list[dict[str, Any]]:
-        for i, stage in enumerate(stages):
-            try:
-                found = await stage.annotate(source, pcm, line)
-            except Exception:  # noqa: BLE001 - one broken stage must not stop hearing
-                LOGGER.exception("AAC audio: stage %s failed", stage.id)
-                continue
-            if not found:
-                continue
-            if found.get("drop"):
-                return []
-            if parts := found.get("split"):
-                start = datetime.fromisoformat(line["time"])
-                lines = []
-                utterance = f"{source.id}-{line['time']}"  # the parts belong together (one breath, one request)
-                for n, part in enumerate(parts):
-                    a = max(0, int(part["start"] * SAMPLE_RATE)) * 2
-                    b = min(len(pcm), int(part["end"] * SAMPLE_RATE) * 2)
-                    if b - a < FRAME_BYTES:
-                        continue
-                    piece = pcm[a:b]
-                    sub = {**self._segment_line(source, piece, start + timedelta(seconds=part["start"])),
-                           **{k: v for k, v in found.items() if k != "split"},
-                           **{k: v for k, v in part.items() if k not in ("start", "end")},
-                           "utterance": utterance, "part": n + 1, "parts": len(parts)}
-                    lines += await self._async_stages(source, piece, sub, stages[i + 1:])
-                return lines
-            line.update(found)
-        return [line]
-
-    async def _async_window(self, source: Source, stage, pcm: bytes) -> None:
-        """A window of all audio for a window stage (sound captions): its findings become lines of their own."""
-        if source.playing:
-            return  # AAC's own voice
-        try:
-            found = await stage.listen(source, pcm) or []
-        except Exception:  # noqa: BLE001
-            LOGGER.exception("AAC audio: stage %s failed", stage.id)
-            return
-        seconds = len(pcm) / (SAMPLE_RATE * 2)
-        start = (dt_util.utcnow() - timedelta(seconds=seconds)).isoformat()
-        for item in found:
-            line = {"time": start, "source": source.id, "name": source.name, "kind": "sound", "addressed": False,
-                    "seconds": round(seconds, 1), "loudness_db": loudness_db(pcm), "stage": stage.id, **item}
-            # Its own output (e.g. sound.event for whoever wants only sounds), and a line in the buffer
-            for port in stage.outputs:
-                await self._bus.emit(self._domain_id, stage.id, port, {k: v for k, v in line.items() if k != "time"})
-            self._add_line(source, line)
-
+    # ------------------------------------------------------------ engines
     def saw_language(self, value: str | None) -> None:
         """Count a language heard or spoken (the panel proposes adding heard ones to the home's list)."""
         if not (code := code_of(value)):
@@ -450,36 +269,6 @@ class AudioHub:
         if seen[code] == 1:
             self.entry.async_create_background_task(
                 self.hass, self.entry.runtime_data.store.async_save(), "aac language seen")
-
-    def _add_line(self, source: Source, line: dict[str, Any]) -> None:
-        """Into the buffer, and onto the bus as text.line for the hearing modules (the core only hears;
-        they decide what to do)."""
-        if line.get("kind", "speech") == "speech":
-            self.saw_language(line.get("language"))
-        self.transcript.append(line)
-        async_notify(self.hass, "audio")
-        self.entry.async_create_background_task(
-            self.hass, self._bus.emit(self._domain_id, "hearing", "lines", line), f"aac hearing {source.id}")
-
-    def source_of(self, line: dict[str, Any]) -> Source | None:
-        """The source a heard line came from (also when it went offline since)."""
-        return self.sources.get(line.get("source")) or self._gone.get(line.get("source"))
-
-    def earlier(self, line: dict[str, Any]) -> list[dict[str, Any]]:
-        """What was heard on the same source before a line in the buffer, oldest first (for hearing modules)."""
-        before = []
-        for x in self.transcript:
-            if x is line:
-                break
-            if x["source"] == line["source"]:
-                before.append(x)
-        return before[-EARLIER_LINES:]
-
-    def hearing(self) -> list[str]:
-        """The hearing modules that are on (they read the heard lines)."""
-        if not self.entry.runtime_data.voice_domain:
-            return []
-        return [n.title for n, _ in self._bus.wired_from(self._domain_id, *self._bus.chain(self._domain_id, "hearing", "lines")[1])]
 
     def engine(self, kind: str) -> str | None:
         """What would serve STT/TTS now: the first usable resource of the pool role, else local first."""
@@ -579,25 +368,6 @@ class AudioHub:
         pool.mark_up(model_id)
         return heard | {"engine": model_id}
 
-    async def async_senses(self, role: str, path: str, pcm: bytes) -> dict[str, Any] | None:
-        """Ask the service of a voice-pool role (sounds / voices) about a piece of audio; None when none answers."""
-        pool = self.entry.runtime_data.pool
-        if (resource := pool.pick(role)) is None or is_entity(resource):
-            return None
-        if (endpoint := resolve_model(self.hass, self.entry.runtime_data.store, resource)) is None:
-            return None
-        provider = OpenAICompatProvider(async_get_clientsession(self.hass), endpoint.base_url, endpoint.api_key)
-        try:
-            result = await provider.audio_post(path, pcm_to_wav(pcm))
-        except ProviderConnectionError as err:
-            pool.mark_down(resource, str(err))
-            return None
-        except ProviderError as err:
-            LOGGER.info("AAC audio: %s failed: %s", role, err)
-            return None
-        pool.mark_up(resource)
-        return result
-
     # ------------------------------------------------------------ speaking
     async def async_tts(self, text: str) -> bytes | None:
         """Text to speech (WAV) with the chosen HA engine, in the owner's voice for the text's language
@@ -633,84 +403,20 @@ class AudioHub:
         async_notify(self.hass, "audio")
         await source.send({"type": "play", "format": "wav", "bytes": len(audio), "text": text})
         await source.send(audio)
-        # what AAC says belongs to the conversation too (the Companion reads both sides)
-        self._add_line(source, {"time": dt_util.utcnow().isoformat(), "source": source.id, "name": source.name,
-                                "kind": "aac", "text": text, "addressed": False, "seconds": 0})
         return True
-
-    async def async_answer(self, source: Source, text: str, before: list[str] | None = None,
-                           speaker: dict[str, Any] | None = None, before_title: str = "The same person said just before",
-                           via: str | None = None) -> None:
-        """The voice domain's master answers a spoken line; the answer goes back by voice.
-        before = what was said just before it in the room (the wake word module's look-back);
-        speaker = the line's voice (Voices module), so the model knows who talks ("that's me");
-        via = the card that decided to answer (wake word, companion): the message leaves at its output and the
-        answer comes back to the Voice card (spec/graph.md)."""
-        from .broker import async_run_request  # noqa: PLC0415 - avoid an import cycle
-
-        data = self.entry.runtime_data.voice_domain  # one domain owns the voice
-        chat_id = self._voice_chat(data, source)
-        chat = data.chats.get(chat_id) or data.chats.create(f"Voice · {source.name}", chat_id)
-        who = voice_label(speaker)
-        data.chats.add_message(chat_id, "user", text, via="voice", mic=source.name, voice=who)
-        how = f"by {who}" if who else ""
-        where = f"spoken at the microphone '{source.name}'{f' {how}' if how else ''}"
-        said = f"[{where}; your answer is spoken aloud there] {text}"
-        if before:  # the room's last lines go with it, so "…, remind me of that, computer" works
-            said = (f"{before_title}:\n" + "\n".join(f"- {b}" for b in before)
-                    + f"\n\nNow to you, {where} (your answer is spoken aloud there): {text}")
-        run, result = await async_run_request(
-            self.hass, self.entry, said,
-            kind="chat", trigger=f"voice: {source.name}", title=chat["title"], chat_id=chat_id,
-            conversation_id=chat["conversation_id"],
-            system=VOICE_PROMPT.format(name=source.name, area=f" in the {source.area}" if source.area else ""),
-            # Anyone can talk into a microphone: voice is anonymous until there is voice ID
-            user_id=None,
-            domain=data,
-            entries=data.chats.document(chat_id),
-            own_words=text,  # the person's own line, not the room's lines around it
-            source=via or "voice", reply_to="voice" if via else None,
-        )
-        if result is not None:
-            data.chats.set_conversation(chat_id, result.conversation_id)
-        run.result = strip_marks((result.text if result else run.result) or "")
-        data.chats.add_message(chat_id, "aac", run.result or "(no answer)", via="voice", mic=source.name,
-                               error=run.status == "failed", run_id=run.id, steps=run.steps,
-                               entry=result.entry_id if result else None)
-        if run.result and self.sources.get(source.id) is source:
-            # An error is not read out (long, technical, and loud in the room): one short sentence, details in the panel
-            await self.async_say(source, VOICE_FAILED if run.status == "failed" else run.result)
-
-    def _voice_chat(self, data, source: Source) -> str:
-        """The voice chat of a source: a new one after a quiet pause (a voice session), so old turns
-        and old mistakes do not pile up as examples in the model's context."""
-        current = self.voice_chats.get(source.id) or f"voice_{source.id}"
-        chat = data.chats.get(current)
-        if chat and chat["messages"] and (chat.get("archived")  # put away by the owner: a new session
-                                          or (dt_util.utcnow() - datetime.fromisoformat(chat["updated"])) > VOICE_SESSION_GAP):
-            current = f"voice_{source.id}_{dt_util.utcnow().strftime('%Y%m%d%H%M')}"
-        self.voice_chats[source.id] = current
-        return current
 
     # ------------------------------------------------------------ panel
     def live(self) -> list[dict[str, Any]]:
         """The live view per source: the last seconds of loudness and speech, and what happens now."""
-        return [{"id": s.id, "name": s.name, "meter": list(s.segmenter.meter), "partial": s.partial,
+        return [{"id": s.id, "name": s.name, "meter": list(s.segmenter.meter), "partial": "",
                  "speech_seconds": round(s.segmenter.frames / 100, 1),
-                 "state": "speaking" if s.playing else "transcribing" if s.transcribing else
-                 "hearing speech" if s.segmenter.active else "listening"} for s in self.sources.values()]
-
-    @callback
-    def changed(self) -> None:
-        """A listener marked a line (addressed, a note): the panel shows it."""
-        async_notify(self.hass, "audio")
+                 "state": "speaking" if s.playing else "hearing speech" if s.segmenter.active else "listening"}
+                for s in self.sources.values()]
 
     def overview(self) -> dict[str, Any]:
         """Live state for the panel and the setup tools."""
         return {
-            "hearing": self.hearing(),
             "connected": [s.summary() for s in self.sources.values()],
-            "transcript": list(self.transcript)[-30:],
             "stt": self.engine("stt"),
             "tts": self.engine("tts"),
         }
@@ -740,32 +446,3 @@ def scale_wav(audio: bytes, gain: float) -> bytes:
         dst.setframerate(params.framerate)
         dst.writeframes(samples.tobytes())
     return out.getvalue()
-
-
-def loudness_db(pcm: bytes) -> float | None:
-    """How loud a piece of audio is (dBFS: 0 = full scale, about -90 = silence)."""
-    samples = array("h", pcm)[::4]
-    rms = math.sqrt(sum(v * v for v in samples) / max(1, len(samples)))
-    return round(20 * math.log10(rms / 32767), 1) if rms > 0 else None
-
-
-def highs(pcm: bytes) -> float | None:
-    """Share of the energy above 4 kHz, in percent. Speech has a few percent up there; a Bluetooth
-    speaker in narrowband (phone quality, 8 kHz) has almost nothing, which makes speech to text worse."""
-    import numpy as np  # noqa: PLC0415 - HA ships numpy; only needed here
-
-    samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32)[: 4 * SAMPLE_RATE]  # 4 s are enough (~3 ms)
-    if len(samples) < SAMPLE_RATE // 4:
-        return None
-    power = np.abs(np.fft.rfft(samples * np.hanning(len(samples)))) ** 2
-    freqs = np.fft.rfftfreq(len(samples), 1 / SAMPLE_RATE)
-    total = float(power[freqs > 80].sum())
-    return round(100 * float(power[freqs > 4000].sum()) / total, 2) if total > 0 else None
-
-
-def voice_label(speaker: dict[str, Any] | None) -> str | None:
-    """A line's voice in words for the model: "voice #8", "probably voice #8", "Astor (person)"."""
-    if not speaker:
-        return None
-    label = speaker["name"] + (f" ({speaker['kind']})" if speaker.get("kind") not in (None, "unknown") else "")
-    return ("probably " if speaker.get("sure") is False else "") + label

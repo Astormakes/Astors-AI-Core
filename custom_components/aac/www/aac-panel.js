@@ -795,28 +795,11 @@ class AacPanel extends HTMLElement {
   }
   async _loadAudio() {
     try { this._audio = await this._ws("aac/audio"); } catch (e) { this._audio = { stages: [], sources: [], error: e.message }; }
-    try { this._voices = (await this._ws("aac/voices")).voices; } catch (e) { this._voices = null; }  // module off or missing
     this._render();
   }
 
-  // The Voices module's voices: the owner can see, name and forget them
-  _voicesCard() {
-    if (!this._voices) return "";
-    const kindText = { person: "person", media: "video/TV", unknown: "unknown" };
-    const rows = this._voices.slice().sort((a, b) => (b.named - a.named) || (b.heard || 0) - (a.heard || 0)).map((v) => `
-      <div class="wrow"><span>🗣 <b>${esc(v.name)}</b> <span class="tag">${esc(kindText[v.kind] || v.kind)}</span>
-        <span class="hint">heard ${esc(v.heard || 0)}× · last ${esc(new Date(v.last).toLocaleString([], { hour12: false }))}${v.note ? ` · ${esc(v.note)}` : ""}${v.merged?.length ? ` · joined: ${esc(v.merged.join(", "))}` : ""}</span></span>
-        <span class="actions"><button class="btn" data-voice-name="${esc(v.id)}">Name</button><button class="icon-btn" data-voice-forget="${esc(v.id)}" title="Forget this voice">${icon("trash")}</button></span></div>`).join("");
-    return `<div class="card"><h2>VOICES ${tip(`The voices AAC tells apart (Voices module). A voice print cannot be split again: if two people got mixed into one, forget it and AAC learns them anew. Unnamed voices are forgotten on their own after a few days.`)}</h2>
-      ${rows || '<p class="hint">No voices yet.</p>'}
-      ${this._voices.length ? '<div class="actions"><button class="btn danger" id="voices-forget-all">Forget all voices</button></div>' : ""}</div>`;
-  }
 
-  async _voiceChange(data) {
-    try { this._voices = (await this._ws("aac/voices/change", data)).voices; }
-    catch (e) { this._flash = { ok: false, text: e.message || String(e) }; }
-    this._render();
-  }
+
   async _loadChats() {
     try { this._chats = (await this._ws("aac/chats")).chats; } catch (e) { this._chats = []; }
     this._render();
@@ -1949,17 +1932,11 @@ class AacPanel extends HTMLElement {
         <div class="body"><div class="name">${esc(s.name)} ${s.state === "built" ? "" : '<span class="tag plan">PLANNED</span>'}</div><div class="desc">${esc(s.desc)}</div></div>
       </div>`).join("");
     const set = a.settings || {}, eng = a.engines || {};
-    // in the order the lines ENDED (= roughly when they appeared): a long sentence does not jump above what came in meanwhile
-    const end = (l) => new Date(l.time).getTime() + (l.seconds || 0) * 1000;
-    const lines = (a.transcript || []).slice().sort((x, y) => end(x) - end(y))
-      .map((l) => this._bufferLine(l)).join("");
     return this._page("AUDIO PIPELINE", `${(a.connected || []).length} connected · separate from HA's Assist`, `
-      ${this._liveTimer ? "" : (setTimeout(() => this._liveTimer || this._liveTick(), 0), "")}<div class="card"><h2>LIVE ${tip(`What each microphone hears right now: the last 10 seconds of loudness; the bright part is what the speech detector cut out as speech, which then goes to speech to text.`)}</h2>
+      ${this._liveTimer ? "" : (setTimeout(() => this._liveTimer || this._liveTick(), 0), "")}<div class="card"><h2>LIVE ${tip(`What each microphone hears right now: the last 10 seconds of loudness (0–100, the same scale as the Noise gate's level); the bright part is what sounds like speech. What happens with it is up to your audio cards in Nodes (Microphone → Pause cut → Speech to text); a monitor on their wires shows each piece and its text.`)}</h2>
         <div id="audio-live">${this._liveHtml2()}</div>
-        <label style="margin-top:1em">Buffer ${tip(`Everything heard (RAM only, the last lines), oldest at the top. While someone talks, the words appear live and get corrected; the finished line is handed to the hearing modules that are on. Per line: start · length · language · loudness · how sure the recognizer was · which engine and how fast.`)}</label>
-        <div class="buffer thin-scroll" id="audio-buffer">${lines || '<p class="hint">Nothing heard yet.</p>'}<div id="audio-partial">${this._partialHtml()}</div></div>
+        <div class="actions"><button class="btn" data-go="nodes">Audio cards in Nodes</button></div>
       </div>
-      ${this._voicesCard()}
       <div class="split">
         <div class="card"><h2>${icon("mic")} CONNECTED</h2>
           ${this._liveSources(a.connected || [])}
@@ -1968,10 +1945,7 @@ class AacPanel extends HTMLElement {
       </div>
       <div class="split">
         <div class="card" data-autosave="audio" data-label="Audio settings"><h2>SETTINGS</h2>
-          <label for="au-names">AAC's names (comma separated)</label><input id="au-names" value="${esc((set.names || []).join(", "))}">
-          <p class="hint">Languages: ${esc((a.languages || []).map((c) => (eng.language_names || {})[c] || c).join(", "))} · <button class="btn" data-go="settings/languages">Change</button> ${tip(`AAC always hears and transcribes; what it does with it is up to the hearing modules (SETTINGS → Modules: Wake word, …). ${(a.hearing || []).length ? `On now: ${esc(a.hearing.join(", "))}.` : "None is on: AAC only listens."}`)}</p>
-          <label for="au-pause">Pause that ends a line (ms) ${tip(`Shorter = shorter lines (snappier, but the recognizer gets less context); longer = whole thoughts. Watch the LIVE meter while you try.`)}</label>
-          <input id="au-pause" type="number" min="200" max="3000" step="100" value="${esc(set.pause_ms ?? 800)}" inputmode="numeric">
+          <p class="hint">Languages: ${esc((a.languages || []).map((c) => (eng.language_names || {})[c] || c).join(", "))} · <button class="btn" data-go="settings/languages">Change</button></p>
           <label for="au-volume">AAC's voice volume: <span id="au-volume-val">${esc(set.volume ?? 40)}</span> % ${tip(`Saved when you let go, with a short test sentence. 0 = AAC never speaks aloud (answers still appear in the Voice chat). The speaker's own buttons still work on top.`)}</label>
           <input id="au-volume" data-nosave type="range" min="0" max="100" step="5" value="${esc(set.volume ?? 40)}" style="width:100%">
           <label>Speech to text</label>${this._roleSummary("stt", eng.stt)}
@@ -2020,27 +1994,9 @@ class AacPanel extends HTMLElement {
     }).join("");
   }
 
-  _bufferLine(l) {
-    const t = new Date(l.time);
-    const hms = `${t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}.${String(Math.floor(t.getMilliseconds() / 100))}`;
-    const meta = [hms, l.seconds != null ? `${l.seconds} s` : null, l.language, l.loudness_db != null ? `${l.loudness_db} dB` : null,
-      l.highs != null ? (l.highs < 0.3 ? "phone quality (≤ 4 kHz)" : `highs ${l.highs} %`) : null,
-      l.confidence != null ? `${Math.round(l.confidence * 100)} % sure` : null,
-      l.engine ? `${this._resourceLabel(l.engine)}${l.stt_ms != null ? ` ${l.stt_ms} ms` : ""}` : null].filter(Boolean);
-    if (l.speaker) meta.push(`🗣 ${l.speaker.sure === false ? "probably " : ""}${l.speaker.name}${l.speaker.new ? " (new)" : ""}${l.speaker.kind === "media" ? " · video/TV" : ""}${l.speaker.score > 0 ? ` ${Math.round(l.speaker.score * 100)} %` : ""}`);
-    if (l.sounds?.length) meta.push(`♪ ${l.sounds.slice(0, 3).map(([n, p]) => `${n} ${Math.round(p * 100)} %`).join(", ")}`);
-    const mark = (l.addressed ? '<b class="to">→ AAC</b>' : l.gate ? `<b class="no">${esc(l.gate)}</b>` : "")
-      + (l.judged ? ` <b class="why">${esc(l.judged)}</b>` : "");
-    if (l.kind === "aac") return `<div class="bl aac"><div class="bm">${esc(meta[0])} · AAC said</div><div class="bt">${esc(l.text)}</div></div>`;
-    const text = l.kind === "sound" ? `<i>${esc(l.text)}</i>` : l.text ? esc(l.text) : '<i class="dim">[speech, not transcribed]</i>';
-    return `<div class="bl ${l.addressed ? "to-aac" : ""} ${l.kind === "sound" ? "sound" : ""}"><div class="bm">${esc(meta.join(" · "))} ${mark}</div><div class="bt">${text}</div></div>`;
-  }
 
-  _partialHtml() {
-    return (this._audioLive || []).filter((x) => x.state !== "listening" || x.partial).map((x) => `
-      <div class="bl live"><div class="bm">${esc(x.name)} · ${esc(x.state)}${x.speech_seconds ? ` · ${esc(x.speech_seconds)} s` : ""}</div>
-        <div class="bt">${esc(x.partial || "")}<span class="cursor"></span></div></div>`).join("");
-  }
+
+
 
   _liveTick() {
     clearTimeout(this._liveTimer);
@@ -2052,12 +2008,6 @@ class AacPanel extends HTMLElement {
       this._audioLive = r.sources;
       const box = this.shadowRoot.querySelector("#audio-live");
       if (box) box.innerHTML = this._liveHtml2();
-      const part = this.shadowRoot.querySelector("#audio-partial"), buf = this.shadowRoot.querySelector("#audio-buffer");
-      if (part && buf) {
-        const follow = buf.scrollHeight - buf.scrollTop - buf.clientHeight < 60;  // at the bottom: keep following
-        part.innerHTML = this._partialHtml();
-        if (follow) buf.scrollTop = buf.scrollHeight;
-      }
     }).catch(() => {});
   }
 
@@ -2285,28 +2235,6 @@ class AacPanel extends HTMLElement {
     sr.querySelector("#nav-toggle")?.addEventListener("click", () => { this._navOpen = !this._navOpen; this._render(); });
     sr.querySelector("#backdrop")?.addEventListener("click", () => { this._navOpen = false; this._render(); });
     sr.querySelector("#refresh-models")?.addEventListener("click", () => this._loadModels());
-    const buf = sr.querySelector("#audio-buffer");
-    if (buf) {  // the buffer follows new lines unless you scrolled up to read
-      buf.scrollTop = this._bufFollow === false ? this._bufScroll || 0 : buf.scrollHeight;
-      buf.addEventListener("scroll", () => {
-        this._bufFollow = buf.scrollHeight - buf.scrollTop - buf.clientHeight < 60;
-        this._bufScroll = buf.scrollTop;
-      });
-    }
-    sr.querySelectorAll("[data-voice-forget]").forEach((el) => el.addEventListener("click", async () => {
-      const v = (this._voices || []).find((x) => x.id === el.dataset.voiceForget);
-      if (await this._confirm(`Forget ${v?.name || "this voice"}? Its voice print is deleted.`, "Forget", true)) this._voiceChange({ action: "forget", voice: el.dataset.voiceForget });
-    }));
-    sr.querySelectorAll("[data-voice-name]").forEach((el) => el.addEventListener("click", async () => {
-      const v = (this._voices || []).find((x) => x.id === el.dataset.voiceName);
-      const name = await this._prompt("Who is this voice?", v?.named ? v.name : "");
-      if (!name?.trim()) return;
-      const media = await this._confirm(`Is ${name} from a video, the TV or the radio (not someone in the room)?`, "Yes, video/TV", false, "No, a person");
-      this._voiceChange({ action: "name", voice: el.dataset.voiceName, name: name.trim(), kind: media ? "media" : "person" });
-    }));
-    sr.querySelector("#voices-forget-all")?.addEventListener("click", async () => {
-      if (await this._confirm("Forget all voices? Every voice print is deleted and AAC learns voices anew.", "Forget all", true)) this._voiceChange({ action: "forget_all" });
-    });
     sr.querySelector("#au-volume")?.addEventListener("input", (e) => { sr.querySelector("#au-volume-val").textContent = e.target.value; });
     sr.querySelector("#au-volume")?.addEventListener("change", async (e) => {  // saves on release and lets you hear it
       const volume = Number(e.target.value);
@@ -2603,8 +2531,6 @@ class AacPanel extends HTMLElement {
   async _saveAudio() {
     const sr = this.shadowRoot;
     this._audio = await this._ws("aac/audio/settings", {
-      names: sr.querySelector("#au-names").value.split(",").map((n) => n.trim()).filter(Boolean),
-      pause_ms: Number(sr.querySelector("#au-pause").value) || 800,
       voices: Object.fromEntries([...sr.querySelectorAll("[data-voice-lang]")].map((el) => [el.dataset.voiceLang, el.value])
         .filter(([, v]) => v).map(([lang, v]) => { const [language, voice] = v.split("|"); return [lang, { language, voice }]; })),
     });

@@ -5,17 +5,19 @@
 - Pause cut: speech detection; a stretch of speech that ends with a pause leaves as one piece.
 - Speech to text: a piece becomes a message of its own (the text, the satellite, the time); an answer that
   reaches the Voice card is spoken at that satellite.
-All are templates under "Audio" in Add node. The old Hearing card keeps working next to them until it goes.
+All are templates under "Audio" in Add node; they replace the old Hearing card and its modules.
 """
 
 from __future__ import annotations
 
 from array import array
+from datetime import datetime, timedelta
 import math
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.util import dt as dt_util
 
+from .languages import code_of
 from .request import TEXT, Message
 from .streams import Node
 
@@ -38,6 +40,14 @@ CUT_SETTINGS = {
               "help": "Shorter: quicker answers, but a pause in the middle of a sentence cuts it. Longer: whole "
                       "sentences, a slower start."},
     "longest": {"type": "number", "title": "Longest piece (s)", "default": 30},
+}
+STT_SETTINGS = {
+    "remember": {"type": "number", "title": "Keeps a conversation (minutes)", "default": 20,
+                 "help": "What was said at a satellite stays one chat (\"Voice · <name>\" in the sidebar) until it is "
+                         "quiet this long; then a new one starts. 0: every sentence on its own."},
+    "home_languages": {"type": "bool", "title": "Only the home's languages", "default": True,
+                       "help": "When the recognizer guesses another language (German with an accent heard as Dutch), "
+                               "the piece is transcribed again in the home's language (SETTINGS → Languages)."},
 }
 STT_VARS = {"text": "What was said.", "mic": "The microphone's id.", "mic_name": "The microphone's name.",
             "area": "The microphone's area.", "start": "When the speech started (ISO time).", "seconds": "How long it was."}
@@ -107,11 +117,33 @@ def audio_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                     category="Audio", stream=stream, description=CUT_HELP)
 
     def stt_make(inst_id: str, title: str, settings: dict[str, Any]) -> Node:
+        remember = timedelta(minutes=max(0, float(settings.get("remember", 20) or 0)))
+        sessions: dict[str, str] = {}  # per source: its current voice chat
+
+        def chat_of(domain, piece: dict[str, Any]) -> str | None:
+            """The satellite's voice chat: a new one after a quiet pause (old turns do not pile up)."""
+            if not remember:
+                return None
+            source = str(piece.get("source") or "mic")
+            current = sessions.get(source) or f"voice_{inst_id}_{source}"
+            chat = domain.chats.get(current)
+            if chat and chat["messages"] and (chat.get("archived") or dt_util.utcnow() - datetime.fromisoformat(chat["updated"]) > remember):
+                current = f"voice_{inst_id}_{source}_{dt_util.utcnow().strftime('%Y%m%d%H%M')}"
+            if not domain.chats.get(current):
+                domain.chats.create(f"Voice · {piece.get('name') or source}", current)
+            sessions[source] = current
+            return current
+
         async def run(domain_id: str, port: str, piece: dict[str, Any]) -> None:
             hub = entry.runtime_data.audio
             if hub is None:
                 return
             heard = await hub.async_stt(piece["pcm"])
+            home = hub.languages()
+            if settings.get("home_languages", True) and heard and (lang := code_of(heard.get("language"))) and lang not in home:
+                again = await hub.async_stt(piece["pcm"], language=home[0])  # heard as another language: once more
+                if again and (again.get("text") or "").strip():
+                    heard = again
             text = ((heard or {}).get("text") or "").strip()
             if not text:
                 return
@@ -120,10 +152,17 @@ def audio_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
             message = Message(domain=domain, kind="chat", trigger=f"heard: {piece.get('name') or piece.get('source')}",
                               title=f"Heard · {piece.get('name') or ''}", origin=inst_id, reply_to="voice",
                               language=(heard or {}).get("language") or hass.config.language, priority="normal")
+            if chat_id := chat_of(domain, piece):  # the conversation so far, and this line in the chat
+                message.chat_id, message.entries = chat_id, domain.chats.document(chat_id)
+                domain.chats.add_message(chat_id, "user", text, via="voice", mic=piece.get("name"))
             message.add(inst_id, "user", text, mic=piece.get("source"), mic_name=piece.get("name"))
             message.set_vars(inst_id, text=text, mic=piece.get("source"), mic_name=piece.get("name"),
                              area=piece.get("area"), start=start, seconds=piece.get("seconds"))
-            await entry.runtime_data.flow.async_send(message, start=inst_id)
+            result = await entry.runtime_data.flow.async_send(message, start=inst_id)
+            if chat_id and result and result.message and result.message.answer:
+                domain.chats.add_message(chat_id, "aac", result.message.answer, via="voice", mic=piece.get("name"),
+                                         run_id=result.run.id if result.run else None)
+                domain.chats.set_entries(chat_id, result.message.entries)
 
         return Node(id=inst_id, title=title, inputs={"in": PIECE}, outputs={"out": TEXT}, role="source", run=run,
                     settings=settings, category="Audio", variables=STT_VARS, description=STT_HELP)
@@ -138,7 +177,8 @@ def audio_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
         Node(id="pause_cut", title="Pause cut", inputs={"in": AUDIO}, outputs={"out": PIECE}, template=True,
              make=cut_make, category="Audio", settings_schema=CUT_SETTINGS, description=CUT_HELP),
         Node(id="speech_to_text", title="Speech to text", inputs={"in": PIECE}, outputs={"out": TEXT}, role="source",
-             template=True, make=stt_make, category="Audio", variables=STT_VARS, description=STT_HELP),
+             template=True, make=stt_make, category="Audio", variables=STT_VARS, settings_schema=STT_SETTINGS,
+             description=STT_HELP),
     ]
 
 
@@ -148,6 +188,7 @@ GATE_HELP = ("Lets audio through only above a loudness level, so fan hum or a TV
              "pieces of speech. Below it the audio becomes silence.")
 CUT_HELP = ("Speech detection: a stretch of speech that ends with a pause leaves as one piece. Set the pause: "
             "shorter answers quicker, longer keeps whole sentences. Wire it into Speech to text.")
-STT_HELP = ("Turns each piece of speech into text, a message of its own (with the satellite and the time). Wire "
-            "it into the line (Header …) like a chat; an answer that reaches the Voice card is spoken at that "
-            "satellite. Values for templates: {{ <card id>.text }}, .mic_name, .area, .start, .seconds.")
+STT_HELP = ("Turns each piece of speech into text, a message of its own (with the satellite and the time), kept as a "
+            "voice chat. Wire it into the line (Header …) like a chat; an answer that reaches the Voice card is spoken "
+            "at that satellite. Tip: a Trailer after it like \"You are heard and answer aloud: one or two short "
+            "sentences, no lists.\" Values for templates: {{ <card id>.text }}, .mic_name, .area, .start, .seconds.")

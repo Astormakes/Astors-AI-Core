@@ -123,9 +123,8 @@ class SetupStatusTool(_SetupTool):
                     "speech_to_text_now": audio["engines"]["stt"],
                     "ha_stt_engines": audio["engines"]["stt_options"],
                     "text_to_speech_now": audio["engines"]["tts"], "ha_tts_engines": audio["engines"]["tts_options"],
-                    "your_names": store.audio["names"],
                     "volume": store.audio.get("volume", 40),
-                    "hearing_modules_on": data.audio.hearing(),
+                    "hearing": "the audio cards in the node view (Microphone → Pause cut → Speech to text)",
                     "how_to_add_a_source": "Run the AAC satellite program (satellite/ in the AAC repository) on the "
                     "machine with the microphone; see its README.",
                 },
@@ -417,13 +416,12 @@ class AudioTool(_SetupTool):
     name = "set_audio"
     title = "Set audio"
     description = (
-        "Audio settings: your names (what people call you by voice) and the volume of your voice. Engines are pools: use_model with role speech/voice. What you do with "
-        "what you hear is up to the hearing modules (Wake word, …), switched on per domain in the panel."
+        "Audio settings: the volume of your voice. Engines are pools: use_model with role speech/voice. What you "
+        "hear is up to the audio cards the owner wires in the node view."
     )
     annotations = llm.ToolAnnotations(read_only=False, destructive=False, open_world=False)
     parameters = probatio.Schema(
         {
-            probatio.Optional("names", description="e.g. ['computer', 'glados']"): [str],
             probatio.Optional("volume", description="0-100 % of AAC's voice; 0 = never speak aloud"): int,
         }
     )
@@ -431,16 +429,11 @@ class AudioTool(_SetupTool):
     async def _async_run(self, hass, args):
         data = self._entry.runtime_data
         changes: dict = {}
-        if "names" in args:
-            names = [n.strip() for n in args["names"] if n.strip()]
-            if not names:
-                return llm.ToolResult(data={"error": "Keep at least one name."}, error=True)
-            changes["names"] = names
         if "volume" in args:
             changes["volume"] = min(100, max(0, int(args["volume"])))
         await data.store.async_update_audio(changes)
         cfg = data.store.audio
-        return llm.ToolResult(data={k: cfg.get(k) for k in ("names", "volume")})
+        return llm.ToolResult(data={"volume": cfg.get("volume")})
 
 
 class LanguagesTool(_SetupTool):

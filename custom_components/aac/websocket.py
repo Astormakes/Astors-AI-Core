@@ -308,7 +308,7 @@ async def ws_setup_skip(hass: HomeAssistant, connection, msg) -> None:
 @websocket_api.require_admin
 @callback
 def ws_audio(hass: HomeAssistant, connection, msg) -> None:
-    """AAC's own audio pipeline: stages, live sources, transcript, settings."""
+    """AAC's own audio pipeline: stages, live sources, settings."""
     if entry := _entry(hass, connection, msg):
         data = entry.runtime_data
         connection.send_result(msg["id"], audio_overview(hass, data.audio, data.store.audio))
@@ -317,21 +317,18 @@ def ws_audio(hass: HomeAssistant, connection, msg) -> None:
 @aac_command(
     {
         vol.Required("type"): "aac/audio/settings",
-        vol.Optional("names"): [vol.All(str, vol.Length(min=1))],
         vol.Optional("volume"): vol.All(vol.Coerce(int), vol.Range(0, 100)),
-        vol.Optional("pause_ms"): vol.All(vol.Coerce(int), vol.Range(200, 3000)),
         vol.Optional("voices"): {str: {vol.Required("language"): str, vol.Required("voice"): str}},
     }
 )
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_audio_settings(hass: HomeAssistant, connection, msg) -> None:
-    """Speech engines, AAC's names, follow-up window."""
+    """AAC's volume and its voice per language (what it hears is up to the audio cards)."""
     if not (entry := _entry(hass, connection, msg)):
         return
     data = entry.runtime_data
     await data.store.async_update_audio({k: v for k, v in msg.items() if k not in ("id", "type", "domain")})
-    data.audio.apply_settings()
     connection.send_result(msg["id"], audio_overview(hass, data.audio, data.store.audio))
 
 

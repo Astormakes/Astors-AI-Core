@@ -203,24 +203,6 @@ async def test_buffer_keeps_lines_and_is_a_tool(hass: HomeAssistant, aioclient_m
     assert json.loads(result["text"]) == {"slots": []}
 
 
-async def test_heard_lines_become_messages(hass: HomeAssistant, aioclient_mock, mock_entry, configured):
-    """Heard lines: a spoken line from Hearing is a message of its own; the answer goes to the Voice card."""
-    await setup_aac(hass, mock_entry)
-    data = mock_entry.runtime_data
-    graph = data.store.graph("assistant")
-    graph["nodes"] = {"ears": {"type": "heard", "title": "Ears", "settings": {}}}
-    wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
-    wires += [("hearing.lines", "ears.lines"), ("ears.out", "charter.in")]
-    graph["wires"] = [{"from": a, "to": b} for a, b in dict.fromkeys(wires)]
-    calls = _answer(aioclient_mock, "Hello from AAC.")
-    await data.bus.emit("assistant", "hearing", "lines", {"time": "2026-10-23T08:00:00+00:00", "source": "pc",
-                                                          "name": "PC", "kind": "speech", "text": "Computer, hello"})
-    await hass.async_block_till_done(wait_background_tasks=True)
-    assert calls and "Computer, hello" in calls[-1]["messages"][-1]["content"]
-    run = data.runs.runs[-1]
-    assert run.source == "ears" and run.result == "Hello from AAC."
-
-
 async def test_an_output_with_one_wire(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
     """A round output set to one wire hands the message to one card only (no copies)."""
     await setup_aac(hass, mock_entry)

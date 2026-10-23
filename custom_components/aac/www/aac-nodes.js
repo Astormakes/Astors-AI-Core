@@ -1466,7 +1466,7 @@ class AacNodes extends HTMLElement {
       <h3 style="margin-top:1em">FROM CARDS</h3>
       <p class="hint">A card's values exist once the message has passed it: use them in cards after it.</p>
       ${cards.length ? cards.map((n) => Object.entries(n.variables).map(([k, a]) => row(`${n.id}.${k}`, a, n.title)).join("")).join("")
-        : '<p class="hint">No card hands on values yet. Heard lines and Buffer do: add one and it shows here.</p>'}
+        : '<p class="hint">No card hands on values yet. Speech to text and Buffer do: add one and it shows here.</p>'}
       <h3 style="margin-top:1em">FROM HOME ASSISTANT</h3>${Object.entries(v.ha || {}).map(([k, a]) => row(k.replace(/^\{\{\s*|\s*\}\}$/g, ""), a, "HA")).join("")}
       <p class="hint" style="margin-top:.6em">Everything else HA's templates offer works too (filters, area_name(), …).</p>`;
   }

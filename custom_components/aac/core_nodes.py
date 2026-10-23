@@ -45,8 +45,8 @@ IN, OUT = {"in": TEXT}, {"out": TEXT}
 SOURCE_HELP = {
     "chat": "The AAC panel's chat: what you write leaves at its output; what comes back into its input is shown "
             "(and kept: the chat is the whole conversation, editable).",
-    "voice": "A spoken line that the wake word or the companion decided to answer leaves here; what comes back "
-             "is spoken at that microphone.",
+    "voice": "Speaks answers aloud: an answer to a spoken line (a Speech to text card) is spoken at the satellite it "
+             "came from.",
     "assist": "A message from Home Assistant itself (an Assist pipeline, a voice satellite, an automation using AAC "
               "as its conversation agent) leaves here; what comes back is HA's answer.",
 }
@@ -138,7 +138,7 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                 return []
             if message.chat_id and kind in ("chat", "voice") and chats.get(message.chat_id):
                 chats.set_entries(message.chat_id, message.entries)  # the conversation as it now is
-            if kind == "voice" and message.origin != "voice":  # a line from elsewhere (Heard lines): speak at its mic
+            if kind == "voice" and message.origin != "voice":  # a spoken line (Speech to text): speak at its mic
                 user = message.last("user")
                 audio = entry.runtime_data.audio
                 text = message.answer
