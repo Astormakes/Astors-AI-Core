@@ -152,6 +152,40 @@ def _args_text(args: dict[str, Any]) -> str:
     return json_dumps(args)
 
 
+SOURCE_TEXT = 20000  # characters per recorded part
+
+
+def _sources(message: Message, me: str, titles: dict[str, str], system: list[dict[str, Any]], time_note: str | None,
+             offered: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Everything one model call got, in order, each part with the card it came from: the system prompt's parts,
+    the document's entries as this model reads them, what goes at the end, the tool definitions."""
+    mine = {e["data"].get("call_id") for e in message.entries if e["kind"] == "call" and e["data"].get("model") == me}
+    to_me = {e["data"].get("call_id") for e in message.entries if e["kind"] == "call" and e["data"].get("node") == me}
+    found = [{**s, "kind": "system"} for s in system]
+    trailers = []
+    for e in message.entries:
+        cid = e["data"].get("call_id")
+        if e["kind"] == "system" or not e["text"].strip() and e["kind"] != "call" or cid and cid not in mine | to_me:
+            continue
+        who = "Context recipe (automatic run: time, home, open loops)" if e["by"] == "context" else titles.get(e["by"], e["by"])
+        text = e["text"]
+        if e["kind"] == "call":
+            text = f"{e['data'].get('function') or e['data'].get('tool')}({json_dumps(e['data'].get('args') or {})})"
+        part = {"where": "end" if e["kind"] == "trailer" else "chat", "from": who, "kind": e["kind"], "text": text}
+        (trailers if e["kind"] == "trailer" else found).append(part)
+    found += trailers
+    if time_note:
+        found.append({"where": "end", "from": "Model card (built in): the local time", "kind": "note", "text": time_note})
+    for t in offered or []:
+        spec = json_dumps(t.get("function") or {})
+        found.append({"where": "tools", "from": t.get("function", {}).get("name", "?"), "kind": "tool",
+                      "text": (t.get("function", {}).get("description") or "")[:600], "chars": len(spec)})
+    for part in found:
+        part.setdefault("chars", len(part["text"]))
+        part["text"] = part["text"][:SOURCE_TEXT]
+    return found
+
+
 def build_conversation(message: Message, me: str, titles: dict[str, str]) -> tuple[list[str], list[dict[str, Any]]]:
     """The document as one model sees it: (system parts, the chat). Its own answers and calls are the assistant's,
     the results of its calls are tool results, a call to it is a question to it, another model's answer is
@@ -239,8 +273,10 @@ class ModelNode:
                 traits = pool.traits(model_id)
         return traits["n_ctx"], traits["token_factor"]
 
-    async def _system_prompt(self, message: Message, parts: list[str], tool_prompts: list[str]) -> str:
-        """The stable parts (rendered as a template, like HA's prompt), then the tools' instructions."""
+    async def _system_prompt(self, message: Message, parts: list[str], tool_prompts: list[tuple[str, str]],
+                             titles: dict[str, str] | None = None) -> tuple[str, list[dict[str, Any]]]:
+        """The stable parts (rendered as a template, like HA's prompt), then the tools' instructions; with each
+        part where it came from (owner: "I'm wondering where all the context comes from")."""
         user_name = None
         if message.user_id and (user := await self.hass.auth.async_get_user(message.user_id)):
             user_name = user.name
@@ -253,9 +289,19 @@ class ModelNode:
                 LOGGER.error("AAC: error rendering a prompt part: %s", err)
                 return text
 
-        return "\n\n".join([render("\n\n".join(parts) or llm.DEFAULT_INSTRUCTIONS_PROMPT), *tool_prompts])
+        titles = titles or {}
+        who = [e["by"] for e in message.entries if e["kind"] == "system" and e["text"].strip()]
+        if parts:
+            texts = [render(p) for p in parts]
+            sources = [{"where": "system", "from": titles.get(b, b), "text": t} for b, t in zip(who, texts, strict=False)]
+        else:
+            texts = [render(llm.DEFAULT_INSTRUCTIONS_PROMPT)]
+            sources = [{"where": "system", "from": "Home Assistant's default instructions (no card writes a system prompt)",
+                        "text": texts[0]}]
+        sources += [{"where": "system", "from": f"{title}: its tools' instructions", "text": t} for title, t in tool_prompts]
+        return "\n\n".join([*texts, *(t for _, t in tool_prompts)]), sources
 
-    async def _tools(self, message: Message, targets: list, menu: bool) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
+    async def _tools(self, message: Message, targets: list, menu: bool) -> tuple[list[dict[str, Any]], list[tuple[str, str]], dict[str, Any]]:
         """The functions for the wired nodes: (OpenAI tools, their instructions, name → (node, port, tool)).
         A node with tools of its own offers them (as a menu: one function per node), any other node one
         function that hands the message there."""
@@ -276,7 +322,7 @@ class ModelNode:
             if not specs:
                 continue  # nothing to offer right now (setup without the owner)
             if prompt:
-                prompts.append(prompt)
+                prompts.append((node.title, prompt))
             base = own.get("name") or node.id
             if menu and len(specs) > 1:
                 fname = tool_name(base)
@@ -336,8 +382,9 @@ class ModelNode:
             if stream_to:
                 stream_to.round = iteration
             parts, conv = build_conversation(message, me, titles)
-            system = await self._system_prompt(message, parts, [] if final or no_tools else tool_prompts)
-            if conv and conv[-1]["role"] == "user":  # the time with the newest turn (not in the system prompt: the cache)
+            system, sources = await self._system_prompt(message, parts, [] if final or no_tools else tool_prompts, titles)
+            timed = bool(conv and conv[-1]["role"] == "user")
+            if timed:  # the time with the newest turn (not in the system prompt: the cache)
                 conv[-1] = {**conv[-1], "content": f"{conv[-1]['content']}\n\n{now_note}"}
             conv = [{"role": "system", "content": system}, *conv]
             while True:
@@ -400,7 +447,8 @@ class ModelNode:
                 if run:
                     run.model = model_id
                     domain.runs.record_request(run, model_id, messages, offered, left_out=left_out,
-                                               tokens=estimate(messages, offered), n_ctx=n_ctx)
+                                               tokens=estimate(messages, offered), n_ctx=n_ctx,
+                                               sources=_sources(message, me, titles, sources, now_note if timed else None, offered))
                 break
 
             calls = None if final or not offered else _parse_tool_calls(reply)
@@ -420,7 +468,7 @@ class ModelNode:
         # tools. Free-text answers ("No urgent updates. The lamp is off.") slipped past the silence check too often.
         if message.kind == "auto" and not decide and tools:
             parts, conv = build_conversation(message, me, titles)
-            system = await self._system_prompt(message, parts, [])
+            system, _ = await self._system_prompt(message, parts, [])
             conv = [{"role": "system", "content": system}, *conv]
             if answer:
                 conv.append({"role": "assistant", "content": answer})

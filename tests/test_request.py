@@ -62,6 +62,12 @@ async def test_what_reaches_the_model(hass: HomeAssistant, aioclient_mock, mock_
     kinds = [(e["by"], e["kind"]) for e in answer.message.entries]
     assert kinds[:2] == [("charter", "system"), ("agent", "system")]  # standing text first (the cache)
     assert ("chat", "user") in kinds and kinds[-1] == ("model", "answer")
+    # what the model got, each part with its source (the 🔍 view)
+    sources = mock_entry.runtime_data.domain().runs.request(run.id)["sources"]
+    froms = [(x["where"], x["from"]) for x in sources]
+    assert froms[0] == ("system", "Charter") and ("system", "Agent") in froms
+    assert ("chat", "Panel chat") in froms and froms.count(("end", "Model card (built in): the local time")) == 1
+    assert any(w == "tools" for w, _ in froms) and all(x["chars"] > 0 for x in sources)
 
     await async_set_access(mock_entry, "lists", "assistant", {"enabled": False})
     await async_run_request(hass, mock_entry, "hi", kind="chat", trigger="chat", title="t")

@@ -73,6 +73,7 @@ const POOL_HOME = { thinking: "models", voice: "settings/audio", vision: "settin
 const POOL_HOME_NAME = { models: "Pools", "settings/audio": "Audio pipeline", "settings/video": "Video" };
 
 const ICONS = {
+  layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   eyeOff: '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
   setup: '<path d="M12 2l8.7 5v10L12 22l-8.7-5V7z"/><path d="M12 8v4l3 2"/>',
@@ -348,6 +349,16 @@ textarea { min-height: 10em; resize: vertical; }
 .why summary { cursor: pointer; color: var(--cyan); letter-spacing: .08em; }
 .why pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28em; overflow: auto; font-size: .9em; margin: .3em 0 .6em; }
 .why .wm { margin: .5em 0 0 .6em; }
+/* where each part of a request came from (owner: "where all the context comes from") */
+.src-group { margin: .9em 0 .2em; color: var(--magenta); letter-spacing: .1em; font-size: .85em; display: flex; gap: .6em; }
+.src-group .n { margin-left: auto; color: var(--dim); }
+.src-row { margin: .15em 0 !important; }
+.src-row > summary { display: flex; align-items: center; gap: .6em; color: var(--text) !important; letter-spacing: 0 !important; list-style: none; }
+.src-row > summary::-webkit-details-marker { display: none; }
+.src-row .from { flex: 0 1 22em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.src-row .bar { flex: 1; height: .55em; background: rgba(0, 240, 255, .08); min-width: 3em; }
+.src-row .bar i { display: block; height: 100%; background: var(--cyan); box-shadow: 0 0 .4em var(--cyan); }
+.src-row .n { flex: none; width: 6.5em; text-align: right; color: var(--dim); }
 .why .wm b { color: var(--magenta); font-weight: normal; letter-spacing: .1em; text-transform: uppercase; font-size: .85em; }
 .prefwrap { position: relative; display: inline-flex; }
 .chatprefs { left: auto; right: 0; top: 100%; width: 13em; padding: .3em .9em .8em; }
@@ -1241,10 +1252,49 @@ class AacPanel extends HTMLElement {
       ${m.content ? `<pre>${esc(m.content)}</pre>` : ""}</div>`).join("");
     return `<div class="why">
       <div class="hint">${esc(this._resourceLabel(w.model))} · about ${esc(w.tokens ?? "?")} tokens${w.n_ctx ? ` of ${esc(w.n_ctx)}` : ""}${w.left_out ? ` · ${esc(w.left_out)} older messages left out` : ""} · ${esc(fmtTime(w.at))}</div>
+      ${w.sources ? sec("Where it comes from", this._sourcesHtml(w), true) : ""}
       ${sec(`Instructions <span class="tag">${esc(w.system.length)} chars</span>`, `<pre>${esc(w.system)}</pre>`)}
       ${sec(`Messages <span class="tag">${w.messages.length}</span>`, msgs)}
       ${sec(`Tools offered <span class="tag">${w.tools.length}</span>`, `<div class="hint">${w.tools.length ? esc(w.tools.map((t) => t.split("__").pop()).join(", ")) : "none"}</div>`)}
     </div>`;
+  }
+
+  // Every part of one request, grouped by where it sits, with the card it came from and its size
+  _sourcesHtml(w) {
+    if (!w.sources) return '<p class="hint">This answer was recorded before the parts got their sources (1.0.0-dev.44): only the raw request is there.</p>';
+    const total = w.sources.reduce((a, x) => a + x.chars, 0) || 1, max = Math.max(...w.sources.map((x) => x.chars), 1);
+    const tok = (c) => `~${Math.max(1, Math.round(c / 4)).toLocaleString()} tok`;
+    const GROUPS = [["system", "SYSTEM PROMPT · the start, cached by the server"], ["chat", "THE CONVERSATION · as this model reads it"],
+      ["end", "AT THE END · read last"], ["tools", "TOOL DEFINITIONS · sent with every call"]];
+    return `<p class="hint">About ${tok(total)} in all (characters ÷ 4). Click a line for its text.</p>` + GROUPS.map(([where, label]) => {
+      const rows = w.sources.filter((x) => x.where === where);
+      if (!rows.length) return "";
+      const sum = rows.reduce((a, x) => a + x.chars, 0);
+      return `<div class="src-group"><span>${esc(label)}</span><span class="n">${tok(sum)} · ${Math.round(sum / total * 100)}%</span></div>` + rows.map((x) =>
+        `<details class="src-row"><summary><span class="from" title="${esc(x.from)}">${esc(x.from)}</span>${x.kind && !["system", "tool"].includes(x.kind) ? `<span class="tag">${esc(x.kind)}</span>` : ""}
+          <span class="bar"><i style="width:${Math.max(1, x.chars / max * 100).toFixed(1)}%"></i></span><span class="n">${tok(x.chars)}</span></summary>
+          <pre>${esc(x.text || "")}${x.chars > (x.text || "").length ? `\n… (${(x.chars - (x.text || "").length).toLocaleString()} more characters${where === "tools" ? ": the parameters" : ""})` : ""}</pre></details>`).join("");
+    }).join("");
+  }
+
+  // The chat's answers, one at a time: what each model call got, part by part
+  _sourcesPageHtml(chat) {
+    const answers = (chat?.messages || []).map((m, i) => ({ m, i })).filter(({ m }) => m.role === "aac" && m.run_id).reverse();
+    if (!answers.length) return '<div class="welcome">No answer in this chat yet.</div>';
+    const sel = answers.some(({ m }) => m.run_id === this._srcRun) ? this._srcRun : answers[0].m.run_id;
+    this._why ||= {};
+    if (!this._why[sel]) {  // loaded after this render (no render inside a render)
+      this._why[sel] = "loading";
+      this._ws("aac/run/request", { run_id: sel }).then((r) => { this._why[sel] = r; }, (e) => { this._why[sel] = { error: e.message || String(e) }; })
+        .then(() => this._render());
+    }
+    const short = (t) => (t = String(t || "(no text)").replace(/\s+/g, " ").trim()).length > 70 ? `${t.slice(0, 70)}…` : t;
+    const w = this._why[sel];
+    const pick = `<select id="src-run" aria-label="Which answer">${answers.map(({ m }, n) => `<option value="${esc(m.run_id)}" ${m.run_id === sel ? "selected" : ""}>${n ? "" : "Newest · "}${esc(short(m.text))}</option>`).join("")}</select>`;
+    return `<div class="card why" style="border-top:1px solid var(--line);margin-top:0"><h2>WHAT THE MODEL GOT</h2>
+      <p class="hint">Everything that went to the model for one answer, in order, with the card or built-in part it came from. The ⚡ view shows what the cards wrote; this shows what the model really read (tool instructions and definitions included).</p>
+      ${pick}${w === "loading" || !w ? '<p class="hint">Loading…</p>' : w.error ? `<p class="hint">${esc(w.error)}</p>`
+        : `<div class="hint" style="margin:.6em 0">${esc(this._resourceLabel(w.model))} · ${esc(fmtTime(w.at))}${w.n_ctx ? ` · the model holds ${esc(w.n_ctx)} tokens` : ""}${w.left_out ? ` · ${esc(w.left_out)} older messages left out` : ""}</div>${this._sourcesHtml(w)}`}</div>`;
   }
 
   async _toggleWhy(runId) {
@@ -1284,7 +1334,8 @@ class AacPanel extends HTMLElement {
     const chat = this._view === "chat/new" && !this._busy ? null : this._chat;  // a new chat shows what is being sent
     const msgs = chat?.messages || [];
     const isAac = chat?.id === "aac";
-    const log = this._expert && chat?.entries?.length ? this._expertHtml(chat.entries)
+    const log = this._srcView && chat ? this._sourcesPageHtml(chat)
+      : this._expert && chat?.entries?.length ? this._expertHtml(chat.entries)
       : msgs.length
       ? msgs.map((m, i) => this._bubbleHtml(m, i, msgs, { editable: !isAac, details: isAac, key: "m" })).join("")
       : `<div class="welcome"><div class="big">AAC</div>${this._chatGone ? "That chat no longer exists (it was deleted). This is a new chat."
@@ -1298,7 +1349,8 @@ class AacPanel extends HTMLElement {
       : `<button class="icon-btn" id="chat-archive" title="Archive">${icon("trash")}</button>`;
     const prefs = `<span class="prefwrap"><button class="icon-btn" id="chat-prefs" title="How this view shows steps and thinking" aria-expanded="${!!this._prefsOpen}">${icon("settings")}</button>${this._prefsOpen ? this._chatPrefsHtml() : ""}</span>`;
     const expert = chat?.entries?.length ? `<button class="icon-btn ${this._expert ? "on" : ""}" id="chat-expert" title="Expert view: the whole conversation as the graph wrote it (every card's entries, calls and results)" aria-pressed="${!!this._expert}">${icon("bolt")}</button>` : "";
-    return `${this._header(title, `model: ${esc(this._modelLabel(master))}`, expert + prefs + del)}
+    const sources = chat?.messages?.some((m) => m.run_id) ? `<button class="icon-btn ${this._srcView ? "on" : ""}" id="chat-sources" title="What the model got: every part of the request with the card it came from (where all the context comes from)" aria-pressed="${!!this._srcView}">${icon("layers")}</button>` : "";
+    return `${this._header(title, `model: ${esc(this._modelLabel(master))}`, sources + expert + prefs + del)}
       <div class="chat">
         <div class="log thin-scroll" aria-live="polite"><div class="log-inner">${log}${busy}</div></div>
         <div class="composer"><div class="composer-inner">
@@ -2417,8 +2469,11 @@ class AacPanel extends HTMLElement {
     });
     sr.querySelectorAll("[data-why]").forEach((el) => el.addEventListener("click", () => this._toggleWhy(el.dataset.why)));
     sr.querySelector("#chat-prefs")?.addEventListener("click", () => { this._prefsOpen = !this._prefsOpen; this._render(); });
+    sr.querySelector("#chat-sources")?.addEventListener("click", () => { this._srcView = !this._srcView; if (this._srcView) this._expert = false; this._render(); });
+    sr.querySelector("#src-run")?.addEventListener("change", (e) => { this._srcRun = e.target.value; this._render(); });
     sr.querySelector("#chat-expert")?.addEventListener("click", async () => {
       this._expert = !this._expert;
+      if (this._expert) this._srcView = false;
       if (this._expert && !this._nodeTitles) {  // the cards' names for the entries
         try { this._nodeTitles = (await this._ws("aac/nodes")).nodes.map((n) => ({ id: n.id, title: n.title })); } catch (e) { this._nodeTitles = []; }
       }
