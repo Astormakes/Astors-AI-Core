@@ -24,6 +24,7 @@ from .const import (
 from .provider import ProviderAuthError, ProviderError, ProviderNotFoundError
 from .audio import audio_overview
 from .broker import async_run_request
+from .request import BUILTIN_VARS, HA_TEMPLATE_HELP
 from .request import entry as new_entry
 from .runs import SIGNAL_UPDATE, async_notify
 from .status import aac_agent_entity_id, setup_steps
@@ -34,7 +35,7 @@ from .satellite_app import async_prepare as async_prepare_satellite
 from .skins import list_skins, user_dir
 from .domains import Domain, async_remove_domain_data
 from .store import AACStore
-from .streams import STREAM_TYPES
+from .streams import STREAM_TYPES, TYPE_ALIASES
 from .models import async_list_models, async_overview
 
 
@@ -694,6 +695,7 @@ def ws_nodes(hass: HomeAssistant, connection, msg) -> None:
     summary["names"] = entry.runtime_data.store.graph(dom.id).get("names") or {}  # inputs named for the models
     summary["single"] = entry.runtime_data.store.graph(dom.id).get("single") or []  # round outputs with one wire
     summary["hidden"] = entry.runtime_data.store.graph(dom.id).get("hidden") or []  # cards kept out of the grid
+    summary["variables"] = {"builtin": BUILTIN_VARS, "ha": HA_TEMPLATE_HELP}  # for templates (Variables overview)
     summary["by_hand"] = entry.runtime_data.bus.wired_by_hand(dom.id)
     # The modules behind the nodes, with their settings form and values: editable right in the node view
     used = {n["module"] for n in summary["nodes"] if n["module"]}
@@ -779,13 +781,17 @@ async def ws_node_instances(hass: HomeAssistant, connection, msg) -> None:
         return
     bus, dom = entry.runtime_data.bus, _d(entry, msg)
     instances = {}
+    before = entry.runtime_data.store.graph(dom.id)["nodes"]
     for inst_id, spec in msg["instances"].items():
-        kind = bus.nodes.get(spec["type"]) or bus.templates.get(spec["type"])
+        kind_id = TYPE_ALIASES.get(spec["type"], spec["type"])
+        kind = bus.nodes.get(kind_id) or bus.templates.get(kind_id)
         if kind is None or kind.make is None or inst_id in bus.nodes:
             connection.send_error(msg["id"], "invalid", f"{inst_id}: {spec['type']} cannot be added as a node")
             return
         instances[inst_id] = {"type": kind.id, "title": spec["title"].strip() or kind.title,
                               "settings": {k: v for k, v in spec["settings"].items() if k in kind.settings_schema}}
+        if (before.get(inst_id) or {}).get("auto"):  # in the automatic line (the default Time card) stays so
+            instances[inst_id]["auto"] = True
     view = entry.runtime_data.store.graph(dom.id)
     gone = set(view.get("nodes") or {}) - set(instances)
     view["nodes"] = instances

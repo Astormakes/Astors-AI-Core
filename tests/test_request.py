@@ -35,8 +35,8 @@ async def test_automatic_wiring(hass: HomeAssistant, mock_entry, configured):
     await setup_aac(hass, mock_entry)
     wires = {(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in mock_entry.runtime_data.bus.wires("assistant")}
     assert ("chat.out", "charter.in") in wires and ("charter.out", "agent.in") in wires
-    assert ("agent.out", "clock.in") in wires and ("clock.out", "model.in") in wires  # the time: the last of the line
-    assert ("agent.out", "memory.in") not in wires and ("clock.out", "memory.in") not in wires  # memory hangs under the model
+    assert ("agent.out", "time.in") in wires and ("time.out", "model.in") in wires  # the default Time trailer
+    assert ("agent.out", "memory.in") not in wires and ("time.out", "memory.in") not in wires  # memory hangs under the model
     assert ("voice.out", "charter.in") in wires and ("triggers.out", "charter.in") in wires
     assert not any(a.startswith("heartbeat.") for a, _ in wires)  # its module is off by default
     assert {("model.out", "chat.in"), ("model.out", "voice.in"), ("model.out", "assist.in")} <= wires
@@ -66,8 +66,8 @@ async def test_what_reaches_the_model(hass: HomeAssistant, aioclient_mock, mock_
     # what the model got, each part with its source (the 🔍 view)
     sources = mock_entry.runtime_data.domain().runs.request(run.id)["sources"]
     froms = [(x["where"], x["from"]) for x in sources]
-    assert froms[0] == ("system", "Charter") and ("system", "Agent") in froms
-    assert ("chat", "Panel chat") in froms and froms.count(("end", "Clock")) == 1
+    assert froms[0] == ("system", "Header") and ("system", "Agent") in froms
+    assert ("chat", "Panel chat") in froms and froms.count(("chat", "Time")) == 1
     assert any(w == "tools" for w, _ in froms) and all(x["chars"] > 0 for x in sources)
     assert all(x.get("outside") for x in sources if x["where"] == "tools") and not any(x.get("outside") for x in sources if x["from"] == "Charter")
 
@@ -85,7 +85,7 @@ async def test_a_tool_is_a_loop(hass: HomeAssistant, aioclient_mock, mock_entry,
     assert answer.text == "Made it."
     tool_msg = calls[1]["messages"][-1]
     assert tool_msg["role"] == "tool" and "Groceries" in tool_msg["content"]
-    # the Clock's time stays with the user turn in every round (before, the second round lost it)
+    # the Time trailer stays with the user turn in every round (before, the second round lost it)
     user_turns = [[m["content"] for m in c["messages"] if m["role"] == "user"][-1] for c in calls[:2]]
     assert all("Local time:" in t for t in user_turns) and user_turns[0] == user_turns[1]
     entries = answer.message.entries
@@ -131,7 +131,7 @@ async def test_standing_text_is_replaced_not_repeated(hass: HomeAssistant, mock_
 
 
 async def test_header_and_trailer(hass: HomeAssistant, mock_entry, configured):
-    """A header goes into the system prompt, a trailer after the newest user turn (even while a loop runs)."""
+    """A header goes into the system prompt; a trailer goes with the turn it followed (Replace: it moves)."""
     from custom_components.aac.model_node import build_conversation
 
     await setup_aac(hass, mock_entry)
@@ -142,7 +142,17 @@ async def test_header_and_trailer(hass: HomeAssistant, mock_entry, configured):
     message.add("chat", "user", "lights?")
     system, conv = build_conversation(message, "model", {})
     assert system == []
-    assert [c["content"] for c in conv] == ["hi", "Hello.", "lights?\n\nAnswer in German."]
+    assert [c["content"] for c in conv] == ["hi\n\nAnswer in German.", "Hello.", "lights?"]  # stays where written
+    message.put("tr", "trailer", "Answer in German.", replace=False)  # unticked: every turn its own line
+    assert [c["content"] for c in build_conversation(message, "model", {})[1]] == [
+        "hi\n\nAnswer in German.", "Hello.", "lights?\n\nAnswer in German."]
+    moving = Message(domain=message.domain)
+    moving.add("chat", "user", "hi")
+    moving.put("mv", "trailer", "Short.")
+    moving.add("model", "answer", "Hello.")
+    moving.add("chat", "user", "lights?")
+    moving.put("mv", "trailer", "Short!")  # ticked: the one line moves to the newest turn
+    assert [c["content"] for c in build_conversation(moving, "model", {})[1]] == ["hi", "Hello.", "lights?\n\nShort!"]
 
 
 async def test_named_inputs_are_tools(hass: HomeAssistant, hass_ws_client, aioclient_mock, mock_entry, configured):
@@ -154,6 +164,7 @@ async def test_named_inputs_are_tools(hass: HomeAssistant, hass_ws_client, aiocl
     await ws.send_json_auto_id({"type": "aac/nodes"})
     view = (await ws.receive_json())["result"]
     await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {
+        "time": {"type": "trailer", "title": "Time", "settings": {"text": "Local time: {{ local_time }}"}},
         "said": {"type": "instructions", "title": "Was addressed", "settings": {"text": "The user talks to AAC."}}}})
     assert (await ws.receive_json())["success"]
     wires = view["wires"] + [{"from": "model.out", "to": "said.in"}, {"from": "said.out", "to": "model.in"}]
@@ -298,24 +309,15 @@ async def test_text_cards_render_ha_templates(hass: HomeAssistant, mock_entry, c
     assert "[template error:" in message.last("trailer", "bad")["text"]
 
 
-async def test_the_clock_as_a_tool(hass: HomeAssistant, mock_entry, configured):
-    """In tool mode the Clock writes nothing in the line, offers "time" and answers a call with the time."""
+async def test_a_text_card_as_a_tool(hass: HomeAssistant, mock_entry, configured):
+    """Wired from a model and back, a Trailer answers a call with its rendered text and writes nothing else."""
     from custom_components.aac.request import entry as make_entry
 
     await setup_aac(hass, mock_entry)
-    domain = mock_entry.runtime_data.domain()
-    clock = mock_entry.runtime_data.bus.nodes["clock"]
-    message = Message(domain=domain)
+    time = mock_entry.runtime_data.bus.nodes_in("assistant")["time"]
+    message = Message(domain=mock_entry.runtime_data.domain())
     message.add("chat", "user", "hi")
-    await clock.handle(message, None)
-    assert message.last("trailer", "clock")["text"].startswith("Local time: ")
-    domain.settings.master["clock_mode"] = "tool"
-    assert (await clock.tools(message))[0][0]["function"]["name"] == "time"
-    message = Message(domain=domain)
-    message.add("chat", "user", "hi")
-    await clock.handle(message, None)
-    assert message.last("trailer") is None
-    message.calls.append({"call_id": "c1", "model": "model", "node": "clock"})
-    message.entries.append(make_entry("model", "call", "", call_id="c1", node="clock", tool="time", model="model"))
-    await clock.handle(message, None)
-    assert message.last("result", "clock")["text"].startswith("Local time: ")
+    message.calls.append({"call_id": "c1", "model": "model", "node": "time"})
+    message.entries.append(make_entry("model", "call", "", call_id="c1", node="time", tool="send", model="model"))
+    await time.handle(message, None)
+    assert message.last("result", "time")["text"].startswith("Local time: ") and message.last("trailer") is None

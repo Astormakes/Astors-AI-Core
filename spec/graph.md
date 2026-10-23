@@ -63,11 +63,17 @@ message.
 
 Cards hand on values: `message.vars` is `{card id: {name: value}}` and travels with the message (copied on
 every branch); a template reads `{{ <card id>.<name> }}`, plus `{{ message.language }}` (also `user_id`,
-`origin`, `trigger`, `title`, `kind`, `device_id`). The card id comes from the name the card got when it was
+`origin`, `trigger`, `title`, `kind`, `device_id`) and `{{ local_time }}`. The node view's **Variables** button lists them all with where they come from (cards declare theirs: `Node.variables`). The card id comes from the name the card got when it was
 added ("Kitchen buffer" → `kitchen_buffer`). So far: Heard lines (`text`, `speaker`, `mic`, `mic_name`, `area`),
 Buffer (`lines`, `count`, `newest`).
 
-The **Clock** card (core, in the line by default, last before the model) writes the local time as a trailer in every round, or, set to "as a tool", only answers a model that calls it (`time`); its text is a template. The model card adds nothing unseen any more.
+**Header and Trailer** (owner, 2026-10-23): the Header is the charter module's card (renamed; added Headers have
+their own text), the Trailer a template. Both have a **Replace** tick: Header ticked by default (one entry at the
+start, replaced: the start stays cached), Trailer unticked by default (each turn gets its own line where it was
+written; the conversation only grows at the end). The setting against the cache shows a warning. A trailer goes
+with the user turn it followed; a ticked one moves to the newest. Wired from a model and back, a text card is a
+tool that gives its text. The local time is a default Trailer card **Time** (`Local time: {{ local_time }}`), in
+the automatic line (`auto` on the stored card); the model card adds nothing unseen.
 
 Text that changes on every message (the time) belongs in a Trailer: at the start it makes the model server
 recompute the prompt.

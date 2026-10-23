@@ -41,6 +41,9 @@ STREAM_TYPES: dict[str, str] = {
     "vision.detection": "record",
 }
 
+# Types that were renamed or merged: the Header template is the charter module's card now (owner, 2026-10-23)
+TYPE_ALIASES = {"instructions": "charter"}
+
 KEEP_RECORDS = 200  # per output and domain
 KEEP_FOR = timedelta(minutes=10)
 
@@ -68,6 +71,8 @@ class Node:
     # Annotating nodes (the same type in and out, spec "Annotating"): they work on a record in turn, lowest
     # `order` first, instead of each getting a copy. On audio.segment they get the raw audio (reads_pcm).
     order: int = 50
+    auto: bool = False  # an added card the automatic wiring takes into the line too (the default Time card)
+    variables: dict[str, str] = field(default_factory=dict)  # values it hands on: name → what ({{ <id>.<name> }})
     annotate: Annotate | None = None
     partial: Callable[[Any, bytes], Awaitable[str | None]] | None = None  # the text so far (live view)
     # Nodes reading raw media (audio.pcm) get it in windows of `window` seconds through `listen`
@@ -126,10 +131,11 @@ class Bus:
         """Every node of a domain: the registered ones and the domain's added instances."""
         found = dict(self.nodes)
         for inst_id, spec in (self._instances(domain_id) or {}).items():
-            kind = self.nodes.get(spec.get("type", "")) or self.templates.get(spec.get("type", ""))
+            kind_id = TYPE_ALIASES.get(spec.get("type", ""), spec.get("type", ""))
+            kind = self.nodes.get(kind_id) or self.templates.get(kind_id)
             if kind and kind.make and inst_id not in found:
                 node = kind.make(inst_id, spec.get("title") or kind.title, dict(spec.get("settings") or {}))
-                node.type, node.module = kind.id, kind.module
+                node.type, node.module, node.auto = kind.id, kind.module, bool(spec.get("auto"))
                 node.description = node.description or kind.description
                 found[inst_id] = node
         return found
@@ -235,7 +241,8 @@ class Bus:
         """The automatic wiring of messages (spec/graph.md): every source through the transforms (by order) into
         the standard model; the model into the endpoints (answers go home) and into every node that offers
         tools, and those back into the model (loops)."""
-        on = [n for n in self.nodes.values() if n.role and self._on(n, domain_id)]
+        on = [n for n in self.nodes_in(domain_id).values() if n.role and self._on(n, domain_id)
+              and (n.id in self.nodes or n.auto)]
 
         def port(node: Node, side: str) -> str | None:
             return next((p for p, k in (node.outputs if side == "out" else node.inputs).items() if k == "text"), None)
@@ -308,7 +315,7 @@ class Bus:
                        "recent": {p: len(self.recent(domain_id, n.id, p)) for p in n.outputs},
                        "type": n.type, "settings": n.settings, "square": sorted(n.square),
                        "settings_schema": (self.nodes.get(n.type or n.id) or self.templates.get(n.type or "") or n).settings_schema,
-                       "addable": bool(n.make)}
+                       "addable": bool(n.make), "variables": n.variables}
                       for n in self.nodes_in(domain_id).values()],
             "wires": [{"from": f"{a}.{b}", "to": f"{c}.{d}"} for a, b, c, d in self.wires(domain_id)],
             # What "Add node" offers: node types that can be added (more than once), templates included

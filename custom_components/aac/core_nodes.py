@@ -16,9 +16,7 @@ from typing import TYPE_CHECKING, Any
 import voluptuous as vol
 
 from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT
-from homeassistant.exceptions import TemplateError
 from homeassistant.helpers import llm
-from homeassistant.helpers.template import Template
 from homeassistant.util import dt as dt_util
 
 from .api_node import api_node
@@ -33,7 +31,7 @@ from .const import (
 from .flow import DECIDE_SETTINGS, MODEL, MODEL_SETTINGS, pending_call
 from .home_api import API_ID as HOME_API_ID
 from .pools import TIERS
-from .request import SOURCES, TEXT, Message
+from .request import SOURCES, TEXT, Message, render as render_text
 from .setup_api import API_ID as SETUP_API_ID, owner_present
 from .streams import Node
 
@@ -57,7 +55,6 @@ DECIDE_HELP = ("Sends the message on through one of its named outputs. A model r
                "decision fails, the message takes the default output. It does not change the message.")
 
 
-CLOCK_TEXT = "Local time: {{ now().strftime('%A %Y-%m-%d %H:%M') }}"
 # Text cards render HA's own templates (owner, 2026-10-23: "can we incorporate HA's own variables")
 TEMPLATE_HINT = ("HA templates work: {{ now().strftime('%H:%M') }}, {{ states('sensor.outside_temperature') }}, "
                  "{{ <card id>.<value> }} from cards before it, {{ message.language }}. Changing text (like the time) "
@@ -160,40 +157,7 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                     description=SOURCE_HELP[kind], handle=handle, settings=settings or {})
 
     def render(text: str, message: Message) -> str:
-        """A card's text through HA's own template engine ({{ now() }}, {{ states('sensor.x') }}, the cards'
-        values); an error shows in the text instead of breaking the message."""
-        if "{" not in text:
-            return text
-        try:
-            return str(Template(text, hass).async_render(message.template_vars(), parse_result=False)).strip()
-        except TemplateError as err:
-            return f"{text}\n[template error: {err}]"
-
-    # The time (owner, 2026-10-23: "it should be its own card with in and out; the user can decide to make it a
-    # tool or have it inline with every round"); before, the model card added it unseen
-    clock_edit = editing({
-        "mode": {"type": "select", "title": "Mode", "options": [["trailer", "with every round (after the newest turn)"],
-                                                               ["tool", "as a tool (wire it from a model and back)"]],
-                 "help": "With every round the model always knows the time; as a tool it asks when it needs it."},
-        "text": {"type": "text", "title": "Text", "hint": TEMPLATE_HINT}},
-        {"mode": ("clock_mode", "trailer", vol.In(["trailer", "tool"])), "text": ("clock_text", CLOCK_TEXT, vol.Coerce(str))})
-
-    def clock_text(message: Message) -> str:
-        return render(str(master(message.domain.id).get("clock_text") or CLOCK_TEXT), message)
-
-    async def clock(message: Message, step) -> None:
-        if (call := pending_call(message, "clock")) is not None:  # a model asks
-            message.add("clock", "result", clock_text(message))
-            return None
-        if (master(message.domain.id).get("clock_mode") or "trailer") == "trailer":
-            message.put("clock", "trailer", clock_text(message))
-        return None
-
-    async def clock_tools(message: Message):
-        if (master(message.domain.id).get("clock_mode") or "trailer") != "tool":
-            return [], None
-        return [{"type": "function", "function": {"name": "time", "description": "The current local date and time.",
-                                                  "parameters": {"type": "object", "properties": {}}}}], None
+        return render_text(hass, text, message)
 
     async def agent(message: Message, step) -> None:
         message.put("agent", "system", render((message.domain.settings.master.get(CONF_PROMPT) or "").strip(), message))
@@ -204,10 +168,14 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
         return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=["system"], order=10, handle=handle,
                     role="transform", settings=settings)
 
-    def text_make(kind: str):
+    def text_make(kind: str, replace: bool = True):
         def make(inst_id: str, title: str, settings: dict) -> Node:
             async def handle(message: Message, step) -> None:
-                message.put(inst_id, kind, render((settings.get("text") or "").strip(), message))
+                text = render((settings.get("text") or "").strip(), message)
+                if pending_call(message, inst_id) is not None:  # wired from a model and back: a tool that gives its text
+                    message.add(inst_id, "result", text)
+                    return
+                message.put(inst_id, kind, text, replace=bool(settings.get("replace", replace)))
             return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=[kind], order=15, handle=handle,
                         role="transform", settings=settings)
         return make
@@ -238,26 +206,25 @@ def core_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                            "Wire its dotted output into a model card's pool input.")
           for tier, about in TIERS.items()),
         # Standing text: replaced in place every time (the start of the conversation stays the same: the cache)
-        Node(id="clock", title="Clock", inputs=IN, outputs=OUT, adds=["trailer"], order=90, handle=clock, tools=clock_tools,
-             role="transform", edit=clock_edit,
-             description="The local time for the model: with every round after the newest turn (the model always knows "
-                         "it), or as a tool the model asks (wire it from the model's output and back). Its text is an HA "
-                         "template."),
         Node(id="agent", title="Agent", inputs=IN, outputs=OUT, adds=["system"], order=10, handle=agent, role="transform",
              description="Writes the assistant's role and manner into the system prompt (its Prompt setting, e.g. \"You "
                          "are AAC, a calm home companion …\"). An added Agent card has a prompt of its own, e.g. for a "
                          "second model with another job.", edit=agent_edit,
              make=agent_make, settings_schema={"prompt": {**text, "title": "Prompt",
                                                           "help": "This agent's own prompt (the domain's is on the standard Agent card)."}}),
-        # Header and trailer (owner, 2026-10-23: "so we need a header ... and a trailer then"): the start and the end
-        Node(id="instructions", title="Header", inputs=IN, outputs=OUT, adds=["system"], template=True, role="transform",
-             description="Writes your own text at the start: into the system prompt, e.g. \"Answer in one sentence\" or "
-                         "what a second model should check. Stable text, good for the server's prompt cache.",
-             make=text_make("system"), settings_schema={"text": {**text, "help": "Into the system prompt (stable: good for the prompt cache)."}}),
+        # The trailer (owner, 2026-10-23): text after the turn; the start is the Header (the charter module)
         Node(id="trailer", title="Trailer", inputs=IN, outputs=OUT, adds=["trailer"], template=True, role="transform",
-             description="Writes your own text at the end: after the newest thing that was said, e.g. \"Answer in German\" "
-                         "or \"Reply with yes or no\". The model reads it last, which weighs most; the start stays cached.",
-             make=text_make("trailer"), settings_schema={"text": {**text, "help": "After the newest turn (read last)."}}),
+             description="Writes your own text after what was just said, e.g. the time, \"Answer in German\" or \"Reply "
+                         "with yes or no\": the model reads it close to the question. Wired from a model and back it is "
+                         "a tool that gives its text.",
+             make=text_make("trailer", replace=False), settings_schema={
+                 "text": {**text, "help": "After the turn it follows."},
+                 "replace": {"type": "bool", "title": "Replace", "default": False,
+                             "help": "Unticked: every message gets its own line, older ones stay where they were (the "
+                                     "conversation only grows at the end: the server's cache keeps working).",
+                             "warn": {"when": True, "text": "Ticked: the one line moves to the newest message, which changes "
+                                                            "the conversation further back. The server recomputes from there, "
+                                                            "so answers take longer."}}}),
         Node(id="context", title="Context", inputs=IN, outputs=OUT, adds=["note"], template=True, role="transform",
              description="Writes your own text into the conversation as a note (not the system prompt), e.g. \"The user "
                          "is in the bedroom\" for a way that only that room's microphone uses.",

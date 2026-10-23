@@ -174,7 +174,7 @@ async def test_node_view_command(hass, hass_ws_client, mock_entry, configured):
     assert {"from": "model.out", "to": "home.in"} in result["wires"] and {"from": "home.out", "to": "model.in"} in result["wires"]
     assert {"text", "audio", "video", "pool"} <= set(result["stream_types"])
     assert nodes["model"]["square"] == ["out"] and nodes["charter"]["square"] == []
-    assert {"instructions", "context", "decide", "model", "charter"} <= {t["id"] for t in result["types"]}
+    assert {"trailer", "context", "decide", "model", "charter"} <= {t["id"] for t in result["types"]}
 
 
 async def test_wiring_by_hand(hass, hass_ws_client, aioclient_mock, mock_entry, configured):
@@ -223,6 +223,7 @@ async def test_a_second_model_node(hass, hass_ws_client, aioclient_mock, mock_en
     calls = _model_answers(aioclient_mock, "Deep.")
     ws = await hass_ws_client(hass)
     await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {
+        "time": {"type": "trailer", "title": "Time", "settings": {"text": "Local time: {{ local_time }}"}},
         "research": {"type": "model", "title": "Research", "settings": {"tier": "smart", "prompt": "Dig deep.", "x": 1}}}})
     assert (await ws.receive_json())["result"]["instances"]["research"]["settings"] == {"tier": "smart", "prompt": "Dig deep."}
     await ws.send_json_auto_id({"type": "aac/nodes"})
@@ -272,6 +273,7 @@ async def test_build_a_voice_way(hass, hass_ws_client, aioclient_mock, mock_entr
     await ws.send_json_auto_id({"type": "aac/nodes"})
     view = (await ws.receive_json())["result"]
     await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {
+        "time": {"type": "trailer", "title": "Time", "settings": {"text": "Local time: {{ local_time }}"}},
         "calm": {"type": "charter", "title": "Calm", "settings": {"text": "Be calm."}},
         "short": {"type": "instructions", "title": "Short", "settings": {"text": "Answer in one sentence."}},
         "room": {"type": "context", "title": "Room", "settings": {"text": "The user is in the bedroom."}},
@@ -327,6 +329,7 @@ async def test_decide_routes_by_named_outputs(hass, hass_ws_client, aioclient_mo
     await ws.send_json_auto_id({"type": "aac/nodes"})
     view = (await ws.receive_json())["result"]
     await ws.send_json_auto_id({"type": "aac/nodes/instances", "instances": {
+        "time": {"type": "trailer", "title": "Time", "settings": {"text": "Local time: {{ local_time }}"}},
         "check": {"type": "decide", "title": "Has 69?", "settings": {
             "outputs": [{"name": "has_69", "description": "the text mentions 69"}, {"name": "other", "description": "anything else"}],
             "default": "other"}},

@@ -29,6 +29,10 @@ const PAGES = { home: ["settings/entities", "Entities: what AAC may see and swit
   ha_tools: ["settings/entities", "Entities"], modules: ["settings/modules", "All modules"] };
 const ROLE = { pool: "pool (dotted)", source: "source", endpoint: "in and out", transform: "in the line", model: "model", decide: "decide", sink: "reads along", tool: "tools (a loop)" };
 const UNDO_STEPS = 10;
+// A setting that works against the server's cache shows a warning while it is set that way (owner, 2026-10-23: the
+// "Replace" tick of Header and Trailer); its checkbox toggles it live
+const warnHtml = (key, f, v) => f.warn
+  ? `<p class="hint" data-warn-key="${esc(key)}" data-warn-when="${f.warn.when}" style="color:var(--amber);margin:.1em 0 .5em;${Boolean(v) === f.warn.when ? "" : "display:none"}">⚠ ${esc(f.warn.text)}</p>` : "";
 const BAR = 26, PAD = 26, GRIP = 16, EDGE = 50;
 const FOLD_W = W + 30, FOLD_H = BAR + 30; // a folded frame: one card // frame: name bar, room around members, resize corner, border push reach
 
@@ -114,10 +118,10 @@ class AacNodes extends HTMLElement {
       <details class="card nv-how"><summary style="cursor:pointer"><b>HOW IT WORKS</b> <span class="hint">· building your own chain, step by step</span></summary>
         <ol style="margin:.6em 0 0 1.2em;line-height:1.6">
           <li><b>A message starts at its card</b>: Panel chat, Voice, HA Assist, or automatic ones (heartbeat, triggers). The message is the whole conversation; every card writes into it.</li>
-          <li><b>It runs along the line</b>: charter, agent, instructions, context write their part (they replace their own entry, so the start of the conversation stays the same: fast answers).</li>
+          <li><b>It runs along the line</b>: header, agent, context and trailers write their part (they replace their own entry, so the start of the conversation stays the same: fast answers).</li>
           <li><b>A model reads it all</b>. The cards wired to its output (square port: it decides) are its tools: calling one sends the conversation there; what that card writes comes back (wire it back into the model: a loop, dotted).</li>
           <li><b>The answer goes home</b>: to the card it started at (wired from the model's output). Round ports always fire; several wires each get a copy.</li>
-          <li><b>Build your own:</b> Add node (e.g. Charter, Instructions, Context, another Model, Decide), then drag from an output dot to an input dot of the same colour. Name a card's input (its settings) and models see that name as the tool. Click a wire and press Delete to remove it. The first change switches to "Wired by hand"; Automatic wiring goes back.</li>
+          <li><b>Build your own:</b> Add node (e.g. Header, Trailer, Context, another Model, Decide), then drag from an output dot to an input dot of the same colour. Name a card's input (its settings) and models see that name as the tool. Click a wire and press Delete to remove it. The first change switches to "Wired by hand"; Automatic wiring goes back.</li>
           <li><b>Set a card up</b>: click it, change its settings in the panel on the right, Save.</li>
           <li><b>Look around</b>: the wheel scrolls the graph (Shift: sideways), Ctrl + wheel zooms, the middle button or the background drags it. The chat's ⚡ expert view shows the way each message took.</li>
           <li><b>Tidy up</b>: Shift-click cards, Group, name it; fold the frame (▾) into one card.</li>
@@ -154,6 +158,7 @@ class AacNodes extends HTMLElement {
           <button class="btn" data-nv="tidy" title="Lay every card out again in its slot (column = its place in the flow)">Tidy</button>
           <button class="btn" data-nv="undo" title="Back to the layout before Tidy">Undo</button>
           <button class="btn" data-nv="fit">Fit</button>
+          <button class="btn" data-nv="vars" title="Every variable the cards' texts can use, and where it comes from">Variables</button>
           <button class="btn" data-go="settings/modules" title="Every module: switch on or off, hide, open its page">Modules</button>
 
         </div>
@@ -746,6 +751,11 @@ class AacNodes extends HTMLElement {
 
   _bind() {
     this.querySelector(".nv-physics").addEventListener("change", (e) => this._setPhysics(e.target.checked));
+    this.addEventListener("change", (e) => {  // a setting's warning follows its checkbox
+      const key = e.target?.type === "checkbox" && (e.target.dataset.instKey || e.target.dataset.modKey);
+      const warn = key && this.querySelector(`.nv-info [data-warn-key="${key}"]`);
+      if (warn) warn.style.display = String(e.target.checked) === warn.dataset.warnWhen ? "" : "none";
+    });
     this.addEventListener("change", async (e) => {  // an output's "only one wire"
       const key = e.target?.dataset?.single;
       if (!key) return;
@@ -770,6 +780,7 @@ class AacNodes extends HTMLElement {
       if (b?.dataset.nv === "inst-save") this._saveInstance(b.dataset.node);
       if (b?.dataset.nv === "inst-remove") this._removeInstance(b.dataset.node);
       if (b?.dataset.nv === "hide") this._hide(b.dataset.node, true);
+      if (b?.dataset.nv === "vars") { this._sel = null; this._selWire = null; this._selFrame = null; this._showVars = true; this._draw(); this._info(); }
       if (b?.dataset.nv === "mod-save") this._saveModule(b.dataset.module);
       if (b?.dataset.nv === "core-save") this._saveCore(b.dataset.node);
       if (b?.dataset.nv === "names-save") this._saveNames(b.dataset.node);
@@ -1094,7 +1105,7 @@ class AacNodes extends HTMLElement {
           const [name, ...rest] = l.split(":");
           return { name: name.trim().replace(/[^\w-]/g, "_"), description: rest.join(":").trim() };
         }).filter((o) => o.name)
-        : el.value;
+        : el.type === "checkbox" ? el.checked : el.value;
     }
     this._setInstances(all);
   }
@@ -1118,7 +1129,7 @@ class AacNodes extends HTMLElement {
     const fields = Object.entries(m.settings || {}).map(([key, f]) => {
       const v = m.values?.[key], label = `<label>${esc(f.title || key)}</label>`;
       const help = f.help || f.hint ? `<div class="hint" style="margin:-.2em 0 .5em">${esc([f.help, f.hint].filter(Boolean).join(" "))}</div>` : "";
-      if (f.type === "bool") return `<label class="check"><input type="checkbox" data-mod-key="${esc(key)}" ${v ? "checked" : ""}>${esc(f.title || key)}</label>${help}`;
+      if (f.type === "bool") return `<label class="check"><input type="checkbox" data-mod-key="${esc(key)}" ${(v ?? f.default) ? "checked" : ""}>${esc(f.title || key)}</label>${help}${warnHtml(key, f, v ?? f.default)}`;
       if (f.type === "select" && f.options) return `${label}<select data-mod-key="${esc(key)}">${f.options.map(([val, l]) =>
         `<option value="${esc(val)}" ${String(val) === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>${help}`;
       if (f.type === "longtext") return `${label}<textarea data-mod-key="${esc(key)}" class="thin-scroll" style="min-height:${(f.rows || 4) * 1.3}em" placeholder="${esc(f.placeholder || "")}">${esc(v ?? "")}</textarea>${help}`;
@@ -1237,7 +1248,13 @@ class AacNodes extends HTMLElement {
         return `<label>${esc(f.title || key)} <span class="hint">one per line, "name: what it is for"</span></label><textarea data-inst-key="${esc(key)}" data-kind="outputs" class="thin-scroll" style="min-height:5em">${esc((v || []).map((o) => `${o.name}: ${o.description || ""}`).join("\n"))}</textarea>`;
       return `<label>${esc(f.title || key)}</label><input data-inst-key="${esc(key)}" value="${esc(v)}">`;
     };
-    return `<label>Name</label><input data-inst-title value="${esc(n.title)}">${Object.entries(n.settings_schema || {}).map(field).join("")}
+    const withHelp = ([key, f]) => {
+      const v = n.settings?.[key] ?? f.default ?? "";
+      const help = f.help || f.hint ? `<div class="hint" style="margin:.2em 0 .5em">${esc([f.help, f.hint].filter(Boolean).join(" "))}</div>` : "";
+      if (f.type === "bool") return `<label class="check"><input type="checkbox" data-inst-key="${esc(key)}" ${v ? "checked" : ""}>${esc(f.title || key)}</label>${help}${warnHtml(key, f, v)}`;
+      return field([key, f]) + help;
+    };
+    return `<label>Name</label><input data-inst-title value="${esc(n.title)}">${Object.entries(n.settings_schema || {}).map(withHelp).join("")}
       <div class="actions"><button class="btn primary" data-nv="inst-save" data-node="${esc(n.id)}">Save</button>
         <button class="btn danger" data-nv="inst-remove" data-node="${esc(n.id)}">Remove node</button></div>`;
   }
@@ -1295,9 +1312,36 @@ class AacNodes extends HTMLElement {
     this._saveFrames();
   }
 
+  // Every variable a card's text can use ({{ … }}), and where it comes from (owner, 2026-10-23: "an overview of the
+  // variables available in total and where they came from")
+  _varsHtml() {
+    const v = this._data.variables || {}, row = (name, about, from = "") =>
+      `<div class="nv-var" data-copy="{{ ${esc(name)} }}" title="Click: copy" style="cursor:pointer;padding:.35em 0;border-bottom:1px solid var(--line)">
+        <code style="color:var(--cyan)">{{ ${esc(name)} }}</code>${from ? ` <span class="tag">${esc(from)}</span>` : ""}<div class="hint" style="margin:.1em 0 0">${esc(about)}</div></div>`;
+    const cards = (this._all || this._data.nodes).filter((n) => Object.keys(n.variables || {}).length);
+    return `<h2>VARIABLES</h2>
+      <p class="hint">For the texts of Header, Trailer, Context and Agent (HA's template syntax). Click one to copy it.</p>
+      <h3 style="margin-top:1em">BUILT IN</h3>${Object.entries(v.builtin || {}).map(([k, a]) => row(k, a, "AAC")).join("")}
+      <h3 style="margin-top:1em">FROM CARDS</h3>
+      <p class="hint">A card's values exist once the message has passed it: use them in cards after it.</p>
+      ${cards.length ? cards.map((n) => Object.entries(n.variables).map(([k, a]) => row(`${n.id}.${k}`, a, n.title)).join("")).join("")
+        : '<p class="hint">No card hands on values yet. Heard lines and Buffer do: add one and it shows here.</p>'}
+      <h3 style="margin-top:1em">FROM HOME ASSISTANT</h3>${Object.entries(v.ha || {}).map(([k, a]) => row(k.replace(/^\{\{\s*|\s*\}\}$/g, ""), a, "HA")).join("")}
+      <p class="hint" style="margin-top:.6em">Everything else HA's templates offer works too (filters, area_name(), …).</p>`;
+  }
+
   _info() {
     this._editing = null;
     const box = this.querySelector(".nv-info"), n = this._data?.nodes.find((x) => x.id === this._sel);
+    if (this._sel || this._selWire || this._selFrame) this._showVars = false;
+    if (this._showVars) {
+      box.style.display = "";
+      box.innerHTML = this._varsHtml();
+      box.querySelectorAll("[data-copy]").forEach((el) => el.addEventListener("click", () => {
+        try { navigator.clipboard.writeText(el.dataset.copy); this._msg.textContent = `Copied ${el.dataset.copy}`; } catch (e) { /* no clipboard */ }
+      }));
+      return;
+    }
     const fr = this._frames.find((f) => f.id === this._selFrame);
     const wire = this._selWire && this._wires().find((w) => `${w.a.id}.${w.ap}|${w.b.id}.${w.bp}` === this._selWire);
     if (wire) {

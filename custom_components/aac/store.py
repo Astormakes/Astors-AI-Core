@@ -279,6 +279,10 @@ class AACStore:
         graph.setdefault("modules", {})
         graph.setdefault("nodes", {})
         graph.setdefault("containers", [])
+        if not graph.get("time_card"):  # the time as a Trailer card (owner, 2026-10-23); once: it may be removed
+            graph["time_card"] = True
+            graph["nodes"].setdefault("time", {"type": "trailer", "title": "Time", "auto": True, "settings": {
+                "text": "Local time: {{ local_time }}", "replace": False}})
         return graph
 
     def module_record(self, domain_id: str | None, module_id: str) -> dict[str, Any]:

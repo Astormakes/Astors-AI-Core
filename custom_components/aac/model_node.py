@@ -162,7 +162,6 @@ def _sources(message: Message, me: str, titles: dict[str, str], system: list[dic
     mine = {e["data"].get("call_id") for e in message.entries if e["kind"] == "call" and e["data"].get("model") == me}
     to_me = {e["data"].get("call_id") for e in message.entries if e["kind"] == "call" and e["data"].get("node") == me}
     found = [{**s, "kind": "system"} for s in system]
-    trailers = []
     for e in message.entries:
         cid = e["data"].get("call_id")
         if e["kind"] == "system" or not e["text"].strip() and e["kind"] != "call" or cid and cid not in mine | to_me:
@@ -171,9 +170,7 @@ def _sources(message: Message, me: str, titles: dict[str, str], system: list[dic
         text = e["text"]
         if e["kind"] == "call":
             text = f"{e['data'].get('function') or e['data'].get('tool')}({json_dumps(e['data'].get('args') or {})})"
-        part = {"where": "end" if e["kind"] == "trailer" else "chat", "from": who, "kind": e["kind"], "text": text}
-        (trailers if e["kind"] == "trailer" else found).append(part)
-    found += trailers
+        found.append({"where": "chat", "from": who, "kind": e["kind"], "text": text})
     for t in offered or []:
         spec = json_dumps(t.get("function") or {})
         found.append({"where": "tools", "from": t.get("function", {}).get("name", "?"), "kind": "tool",
@@ -187,18 +184,17 @@ def _sources(message: Message, me: str, titles: dict[str, str], system: list[dic
 def build_conversation(message: Message, me: str, titles: dict[str, str]) -> tuple[list[str], list[dict[str, Any]]]:
     """The document as one model sees it: (system parts, the chat). Its own answers and calls are the assistant's,
     the results of its calls are tool results, a call to it is a question to it, another model's answer is
-    "… said", what belongs to other models' loops is left out; notes go with the user turn, trailers after the
-    newest one."""
+    "… said", what belongs to other models' loops is left out; notes and trailers go with the user turn they
+    follow."""
     entries = message.entries
     mine = {e["data"].get("call_id") for e in entries if e["kind"] == "call" and e["data"].get("model") == me}
     to_me = {e["data"].get("call_id") for e in entries if e["kind"] == "call" and e["data"].get("node") == me}
     system = [e["text"] for e in entries if e["kind"] == "system" and e["text"].strip()]
-    trailer = [e["text"] for e in entries if e["kind"] == "trailer" and e["text"].strip()]
     conv: list[dict[str, Any]] = []
     results: dict[str, list[str]] = {}
     for e in entries:
         kind, cid, by = e["kind"], e["data"].get("call_id"), e["by"]
-        if kind in ("system", "trailer"):
+        if kind == "system":
             continue
         if kind == "answer" and by == me:
             conv.append({"role": "assistant", "content": e["text"]})
@@ -219,7 +215,7 @@ def build_conversation(message: Message, me: str, titles: dict[str, str]) -> tup
             continue
         if cid and cid not in to_me:
             continue  # inside another model's loop
-        if kind == "user":
+        if kind in ("user", "trailer"):  # a trailer goes with the turn it was written after
             conv.append({"role": "user", "content": e["text"]})
         elif kind == "note":
             conv.append({"role": "user", "content": f"[{e['text']}]"})
@@ -234,10 +230,6 @@ def build_conversation(message: Message, me: str, titles: dict[str, str]) -> tup
             merged[-1] = {**merged[-1], "content": f"{merged[-1]['content']}\n\n{item['content']}"}
         else:
             merged.append(item)
-    # Trailers go at the end of the newest user turn (a stable suffix: the start stays cached)
-    last_user = next((i for i in range(len(merged) - 1, -1, -1) if merged[i]["role"] == "user"), None)
-    if trailer and last_user is not None:
-        merged[last_user] = {**merged[last_user], "content": "\n\n".join([merged[last_user]["content"], *trailer])}
     return system, merged
 
 

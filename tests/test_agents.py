@@ -14,7 +14,7 @@ from custom_components.aac.capabilities import in_quiet_hours
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .conftest import everything, BASE_URL, set_heartbeat, setup_aac, triggers_of
+from .conftest import everything, BASE_URL, set_heartbeat, setup_aac, triggers_of, untimed
 
 URL = f"{BASE_URL}/chat/completions"
 
@@ -53,7 +53,7 @@ async def test_chats_persist_and_continue(
     chat_id = (await ws.receive_json())["result"]["chat_id"]
     await ws.send_json_auto_id({"type": "aac/chat", "text": "what did I say?", "chat_id": chat_id})
     assert (await ws.receive_json())["result"]["message"]["text"] == "You said hello."
-    assert any(m.get("content") == "hello" for m in payloads[1]["messages"])
+    assert any(untimed(m.get("content")) == "hello" for m in payloads[1]["messages"])
 
     await ws.send_json_auto_id({"type": "aac/chats"})
     chats = (await ws.receive_json())["result"]["chats"]
@@ -384,7 +384,7 @@ async def test_chat_context_survives_ha_forgetting(hass: HomeAssistant, hass_ws_
     mock_entry.runtime_data.chats.set_conversation(chat_id, "01FORGOTTENBYHA0000000000")  # as if HA timed it out
     await ws.send_json_auto_id({"type": "aac/chat", "text": "Some changes were made, check again.", "chat_id": chat_id})
     await ws.receive_json()
-    texts = [m.get("content") for m in payloads[1]["messages"]]
+    texts = [untimed(m.get("content")) for m in payloads[1]["messages"]]
     assert "Can you use the Steam integration?" in texts and "Steam is not set up." in texts
     assert texts[-1].startswith("Some changes were made, check again.")
 
@@ -393,7 +393,7 @@ async def test_chat_context_survives_ha_forgetting(hass: HomeAssistant, hass_ws_
     assert len((await ws.receive_json())["result"]["messages"]) == 2
     await ws.send_json_auto_id({"type": "aac/chat", "text": "I turned on the entities, check again.", "chat_id": chat_id})
     await ws.receive_json()
-    texts = [m.get("content") for m in payloads[2]["messages"]]
+    texts = [untimed(m.get("content")) for m in payloads[2]["messages"]]
     assert "Some changes were made, check again." not in texts and "Steam is not set up." in texts
     assert [m["text"] for m in mock_entry.runtime_data.chats.get(chat_id)["messages"]][-2:] == [
         "I turned on the entities, check again.", "Edited answer."]

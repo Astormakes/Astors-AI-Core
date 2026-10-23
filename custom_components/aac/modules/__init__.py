@@ -27,6 +27,7 @@ from homeassistant.loader import async_get_loaded_integration
 from ..capabilities import CalendarProvider
 from ..const import DOMAIN, LOGGER
 from ..streams import Node
+from ..request import render
 
 if TYPE_CHECKING:
     from .. import AACConfigEntry
@@ -108,19 +109,22 @@ class ModuleContext:
         """Lines for the open loops of every automatic run: provider(domain_id) → ["- …"] (not where the module is off)."""
         self.entry.async_on_unload(self.entry.runtime_data.capabilities.add_open_loops(self.module.id, provider, self.module.id))
 
-    def add_prompt(self, part, order: int = 50, instance_part=None, description: str = "") -> None:
+    def add_prompt(self, part, order: int = 50, instance_part=None, description: str = "", replace=None) -> None:
         """A card with standing text for the system prompt: part(domain_id) → text (lowest order first in the
         automatic wiring; it replaces its entry each time, so the start of the conversation stays the same for
         the server's prompt cache). instance_part(settings) → text: the node can also be added more than once
-        (each with its own settings, the manifest's settings as the form), e.g. a second charter."""
+        (each with its own settings, the manifest's settings as the form), e.g. a second charter.
+        replace(domain_id) → False: a new entry with every message instead (the card's "Replace" tick)."""
         node_id = self.module.id
 
         async def handle(message, step) -> None:
-            message.put(node_id, "system", (part(message.domain.id) or "").strip())
+            message.put(node_id, "system", render(self.hass, (part(message.domain.id) or "").strip(), message),
+                        replace=replace(message.domain.id) if replace else True)
 
         def make(inst_id: str, title: str, settings: dict) -> Node:
             async def handle_instance(message, step) -> None:
-                message.put(inst_id, "system", (instance_part(settings) or "").strip())
+                message.put(inst_id, "system", render(self.hass, (instance_part(settings) or "").strip(), message),
+                            replace=settings.get("replace", True) is not False)
 
             return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, adds=["system"], role="transform",
                         order=order, handle=handle_instance, settings=settings)
@@ -302,7 +306,8 @@ async def async_load_modules(hass: HomeAssistant, entry: AACConfigEntry) -> list
     entry.runtime_data.slots.module_enabled = entry.runtime_data.capabilities.module_enabled
     graphs = entry.runtime_data.store.data["graphs"]
     entry.runtime_data.bus.set_wiring(lambda domain_id: (graphs.get(domain_id) or {}).get("wires"))
-    entry.runtime_data.bus.set_instances(lambda domain_id: (graphs.get(domain_id) or {}).get("nodes") or {})
+    store = entry.runtime_data.store  # graph(): a new domain gets its defaults (the Time card)
+    entry.runtime_data.bus.set_instances(lambda domain_id: store.graph(domain_id)["nodes"])
     loaded = []
     for manifest in await hass.async_add_executor_job(_manifests):
         module = LoadedModule(manifest)

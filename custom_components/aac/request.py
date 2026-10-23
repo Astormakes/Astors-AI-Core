@@ -16,6 +16,8 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 import uuid
 
+from homeassistant.exceptions import TemplateError
+from homeassistant.helpers.template import Template
 from homeassistant.util import dt as dt_util
 
 if TYPE_CHECKING:
@@ -38,6 +40,36 @@ def source_of(kind: str, trigger: str) -> str:
     if trigger.startswith("voice"):
         return "voice"
     return "assist" if trigger == "assist" else "chat"
+
+
+# What every template can use besides the cards' values (the node view's Variables overview)
+BUILTIN_VARS = {
+    "local_time": "The local date and time, e.g. \"Friday 2026-10-23 12:33\".",
+    "message.language": "The message's language (e.g. de, en).",
+    "message.user_id": "Who sent it (HA user id; empty for automatic runs).",
+    "message.origin": "The card it started at (chat, voice, heartbeat …).",
+    "message.trigger": "What started it (chat, heartbeat, a trigger's name …).",
+    "message.title": "Its title (an automatic run's name).",
+    "message.kind": "chat (someone waits) or auto (nobody asked).",
+    "message.device_id": "The device it came from (a satellite), if any.",
+}
+HA_TEMPLATE_HELP = {
+    "now()": "HA: the current time as a date object, e.g. {{ now().strftime('%H:%M') }}.",
+    "states('sensor.x')": "HA: any entity's state.",
+    "state_attr('light.x', 'brightness')": "HA: an entity's attribute.",
+    "is_state('person.x', 'home')": "HA: true or false, for {% if … %}.",
+}
+
+
+def render(hass, text: str, message: Message) -> str:
+    """A card's text through HA's own template engine ({{ now() }}, {{ states('sensor.x') }}, {{ local_time }}, the
+    cards' values); an error shows in the text instead of breaking the message."""
+    if "{" not in text:
+        return text
+    try:
+        return str(Template(text, hass).async_render(message.template_vars(), parse_result=False)).strip()
+    except TemplateError as err:
+        return f"{text}\n[template error: {err}]"
 
 
 def new_id() -> str:
@@ -97,20 +129,24 @@ class Message:
         self.entries.append(item)
         return item
 
-    def put(self, by: str, kind: str, text: str, tag: str | None = None) -> dict[str, Any] | None:
+    def put(self, by: str, kind: str, text: str, tag: str | None = None, replace: bool = True) -> dict[str, Any] | None:
         """A node's standing entry (its prompt, its context): replaced in place when it is there, so the start
         of the document stays the same for the model server's cache; a new system entry goes after the other
-        system entries at the start. Empty text removes it."""
+        system entries at the start. Empty text removes it. A trailer that replaces moves to the newest turn.
+        replace=False (owner, 2026-10-23: a "Replace" tick per card): a new entry every time, the old ones stay."""
         tag = tag or by
         old = next((e for e in self.entries if e["by"] == by and tag in e["tags"] and e["kind"] == kind), None)
         if not text.strip():
-            if old:
+            if old and replace:
                 self.entries.remove(old)
             return None
-        if old:
-            if old["text"] != text:
-                old["text"] = text
-            return old
+        if old and replace:
+            if kind == "trailer":  # after the newest turn, not where it was written first
+                self.entries.remove(old)
+            else:
+                if old["text"] != text:
+                    old["text"] = text
+                return old
         item = entry(by, kind, text, [tag])
         if kind == "system":
             at = next((i for i, e in enumerate(self.entries) if e["kind"] != "system"), len(self.entries))
@@ -124,8 +160,8 @@ class Message:
         self.vars.setdefault(by, {}).update(values)
 
     def template_vars(self) -> dict[str, Any]:
-        """What a template sees: every card's values, plus `message` (its own pointers)."""
-        return {**self.vars, "message": {"language": self.language, "user_id": self.user_id, "origin": self.origin,
+        """What a template sees: every card's values, `local_time`, and `message` (its own pointers)."""
+        return {**self.vars, "local_time": dt_util.now().strftime("%A %Y-%m-%d %H:%M"), "message": {"language": self.language, "user_id": self.user_id, "origin": self.origin,
                                          "trigger": self.trigger, "title": self.title, "kind": self.kind,
                                          "device_id": self.device_id}}
 

@@ -147,5 +147,5 @@ def memory_in_line(entry) -> None:
     matching memories into the conversation."""
     data = entry.runtime_data
     wires = [(f"{a}.{ap}", f"{b}.{bp}") for a, ap, b, bp in data.bus.wires("assistant")]
-    wires = [w for w in wires if w != ("clock.out", "model.in")] + [("clock.out", "memory.in"), ("memory.out", "model.in")]
+    wires = [w for w in wires if w != ("time.out", "model.in")] + [("time.out", "memory.in"), ("memory.out", "model.in")]
     data.store.graph("assistant")["wires"] = [{"from": a, "to": b} for a, b in dict.fromkeys(wires)]

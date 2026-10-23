@@ -19,7 +19,9 @@ async def async_setup_module(ctx: ModuleContext) -> None:
         return (ctx.setting(domain_id, "text") or "").strip() or builtin
 
     # Added charters (another chain, e.g. for voice or a work assistant) have their own text
+    # Renamed Header (owner, 2026-10-23: "remove the header and rename the charter since they are basically the same")
     ctx.add_prompt(charter, order=0, instance_part=lambda settings: (settings.get("text") or "").strip() or builtin,
-                   description="Puts your values first in the system prompt (honest, sparing, your decisions stay yours). "
-                               "Only you can change it, never an agent. An added Charter has its own text, e.g. a calmer "
-                               "one for voice.")
+                   replace=lambda domain_id: ctx.setting(domain_id, "replace") is not False,
+                   description="Text at the very start of the system prompt: by default your values (honest, sparing, your "
+                               "decisions stay yours). Only you can change it, never an agent. An added Header has its own "
+                               "text, e.g. a calmer one for voice.")

@@ -31,6 +31,9 @@ if TYPE_CHECKING:
     from . import AACConfigEntry
 
 IN, OUT = {"in": TEXT}, {"out": TEXT}
+BUFFER_VARS = {"lines": "The kept texts as a numbered block.", "count": "How many it keeps now.", "newest": "The newest text."}
+HEARD_VARS = {"text": "What was said.", "speaker": "Whose voice it was (if known).", "mic": "The microphone's id.",
+              "mic_name": "The microphone's name.", "area": "The microphone's area."}
 
 BUFFER_SETTINGS = {
     "size": {"type": "number", "title": "Slots", "default": 10, "help": "How many texts it keeps (the oldest goes first)."},
@@ -125,7 +128,7 @@ def general_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
             return None
 
         return Node(id=inst_id, title=title, inputs=IN, outputs=OUT, settings=settings, tools=tools, handle=handle,
-                    description=BUFFER_HELP)
+                    description=BUFFER_HELP, variables=BUFFER_VARS)
 
     def heard_make(inst_id: str, title: str, settings: dict[str, Any]) -> Node:
         async def run(domain_id: str, port: str, line: dict[str, Any]) -> None:
@@ -144,7 +147,7 @@ def general_nodes(hass: HomeAssistant, entry: AACConfigEntry) -> list[Node]:
                                                f"aac heard {inst_id}")
 
         return Node(id=inst_id, title=title, inputs={"lines": "text.line"}, outputs=OUT, role="source", run=run,
-                    settings=settings, description=HEARD_HELP)
+                    settings=settings, description=HEARD_HELP, variables=HEARD_VARS)
 
     def file_make(inst_id: str, title: str, settings: dict[str, Any]) -> Node:
         path = note_path(hass, settings)
