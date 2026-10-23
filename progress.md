@@ -76,6 +76,17 @@ Running log for AAC. Read this first in a new session. Newest state on top. The 
 ## Next steps
 - **Audio rework** (spec/graph.md "Audio cards"): built (dev.56: Microphone, Noise gate, Pause cut, Speech to text; dev.60: Hearing, Wake word, Companion, STT/Sounds/Voices modules, Heard lines, old types and the transcript removed; Speech to text keeps voice chats). Plan: Microphone per satellite (own chain each, option a) → Noise gate → Pause cut → Speech to text (Gather card for picking among satellites' transcripts) → Voice out; then Hearing's outputs, Wake word module and Companion go. "Add node" has categories now (In and out, Text, Models, Tools, Keep and write, Audio, Other).
 - **Automatic cards and Auto (dev.70):** Heartbeat/Triggers/Speech to text have "Keeps a chat" and "Its chats go under Auto"; From AAC is gone (notices are runs under Auto, `RunRegistry.note`); the old Setup page and setup steps are gone.
+- **Owner's list (2026-10-23 evening), to sort and decide together:**
+  1. The "?" at FOR THE MODELS should explain the card's actual tool functions (e.g. Lists: lists, read_list, create_list … what each does), not the general use.
+  2. A **Rules** card for static flows: "if the message contains / is / has … then replace X with Y, add …", many small functions; help texts so people can build flows without a model.
+  3. The voice decider: shortly after something was said, a small model gets AAC's last answer + the buffer and decides whether the new line (+ buffer) goes to the big model. How to wire it best is open.
+  4. Wake word and stop signals as cards (start listening on a name, stop AAC talking).
+  5. Several models, maybe on one card (two K2200s waiting for a riser cable).
+  6. Cards should own their data: several Lists cards with their own lists, Memory per card (today modules are global per domain and their cards are views on it).
+  7. Pools as cards you add when needed, not always there and only hideable.
+  8. CARDS vs ADD in the sidebar feel like two different worlds (built-in cards feel global).
+  9. The "Wired by hand / automatically" label in the header: automatic wiring is itself something hidden; maybe drop it for a default setup (preset).
+  10. The version number scheme (1.0.0-dev.75) is unclear.
 - **Next to discuss (owner):** a Conversation card for voice (follow-ups, natural conversation; text in from the model and from audio, text out), Voice out's picker. Later: presets (default setups), Setup tools that see and build cards and wires. Empty Header/Trailer = relay (dev.64).
 - After audio: check for leftovers that are hidden or don't fit the cards (owner). Later: a Speaker card (HA media players). Rule: lightweight, every card removable and addable.
 - Open design question (owner, 2026-10-23): Hearing has three outputs (audio.pcm, audio.segment, text.line) and hidden VAD/STT/addressing; owner leans to one audio source per satellite, a stream picker node (by volume), audio in the message document so Voices can add the voice id before STT. Also (owner): everything sent live with an end marker set by a node ("ends the paragraph"); today audio is cut by a hidden 800 ms pause rule in Hearing and model text streams only to the panel. Proposal written: spec/graph.md "Live wires" (owner to read). Decide before Phase 4.
