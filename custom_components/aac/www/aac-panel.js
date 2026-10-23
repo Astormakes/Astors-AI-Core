@@ -89,6 +89,14 @@ const ICONS = {
   mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/>',
 };
 // A small "?" whose text shows on hover / focus (tap on a phone): explanations stay out of the way
+// The node view's help (owner, 2026-10-23: a question mark instead of the big HOW IT WORKS block)
+const NODES_HELP = `<b>A message starts at its card</b>: Panel chat, HA Assist, Speech to text, or an automatic one (Heartbeat,
+  Triggers). It is the whole conversation; every card writes into it.<br><b>It runs along the line</b>: headers, context and
+  trailers add their part.<br><b>A model reads it all</b>; the cards wired from its square output are its tools (wire them back
+  in: a loop). The answer goes back where the message started.<br><b>Build your own</b>: drag a type from the sidebar's ADD
+  list into the grid, then drag from an output dot to an input dot of the same colour. Click a wire: Monitor, or Delete
+  to remove it. Click a card to set it up; fields save when you leave them.<br><b>Look around</b>: wheel scrolls,
+  Ctrl + wheel zooms, the middle button or the background drags.`;
 const tip = (html) => `<span class="qm" tabindex="0" role="button" aria-label="Explain">?<span class="tip" role="tooltip">${html}</span></span>`;
 
 const icon = (name, cls = "") =>
@@ -223,6 +231,9 @@ header { display: flex; align-items: center; gap: .7em; padding: 0 1.7em; border
 header h1 { margin: 0; font-size: 1.15em; letter-spacing: .22em; font-weight: 700; color: var(--cyan); text-shadow: var(--glow);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 header .meta + .icon-btn { margin-left: .3em; }
+header .meta:has(.qm) { overflow: visible; }  /* the node view's help tooltip must not be cut off */
+header .nv-acts { display: flex; gap: .4em; align-items: center; flex-wrap: wrap; justify-content: flex-end; margin-left: .8em; }
+header .nv-acts .btn { padding: .3em .7em; }
 header .meta { margin-left: auto; font-size: .85em; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .content { flex: 1; overflow-y: auto; padding: 1.7em; container-type: inline-size; }
 .content.fill { overflow: hidden; padding: 1em 1.2em; display: flex; flex-direction: column; }
@@ -1092,8 +1103,17 @@ class AacPanel extends HTMLElement {
     if (v === "settings/appearance") return this._renderAppearance();
     if (v.startsWith("mod/")) return this._renderModulePage(v);
     if (v.startsWith("notes/")) return this._renderNote();
-    if (v === "nodes") {  // fills the window: the graph scrolls, the page does not
-      return `${this._header("NODES", "how the parts are wired")}<div class="content fill"><div id="modhost"></div></div>`;
+    if (v === "nodes") {  // fills the window: the graph scrolls, the page does not; its buttons sit in the header
+      const b = (act, label, title) => `<button class="btn" data-nodes-act="${act}" title="${esc(title)}">${label}</button>`;
+      const actions = `<span class="hint" id="nv-wiring" style="white-space:nowrap"></span>
+        ${b("auto", "Automatic wiring", "Forget the wires set by hand: everything wired by type again")}
+        ${b("undo", "Undo", "Undo the last change: wires, cards, names, settings (up to 10 steps)")}
+        ${b("fit", "Fit", "Show every card")}
+        ${b("vars", "Variables", "Every variable the cards' texts can use, and where it comes from")}
+        <button class="btn" data-go="settings/modules" title="Every module: switch on or off, hide, open its page">Modules</button>
+        ${b("save", "Save", "Save this domain's whole setup as a file (cards, wires, names, settings, positions)")}
+        ${b("load", "Load", "Load a saved setup file (Undo brings the current one back)")}`;
+      return `${this._header("NODES", `how the parts are wired ${tip(NODES_HELP)}`, `<span class="nv-acts">${actions}</span>`)}<div class="content fill"><div id="modhost"></div></div>`;
     }
     if (v === "settings/modules") return this._renderModules();
     if (v === "settings/entities") return this._renderEntities();
@@ -2106,6 +2126,8 @@ class AacPanel extends HTMLElement {
     sr.querySelectorAll("[data-new-chat]").forEach((el) => onActivate(el, () => { this._go("chat/new"); this._newCard = el.dataset.newChat; this._render(); }));
     // the cards' sidebar: pick one, add a type, or drag either into the grid
     const nodesEl = () => sr.querySelector("aac-nodes");
+    sr.querySelectorAll("[data-nodes-act]").forEach((el) => el.addEventListener("click", () => nodesEl()?.act?.(el.dataset.nodesAct)));
+    nodesEl()?._mode?.();  // the header's buttons were drawn anew
     sr.querySelectorAll("[data-node-pick]").forEach((el) => onActivate(el, () => nodesEl()?.pick(el.dataset.nodePick)));
     sr.querySelectorAll("[data-type-pick]").forEach((el) => onActivate(el, () => nodesEl()?._addOf(el.dataset.typePick)));
     sr.querySelectorAll("[data-node-pick], [data-type-pick]").forEach((el) => el.addEventListener("dragstart", (e) => {

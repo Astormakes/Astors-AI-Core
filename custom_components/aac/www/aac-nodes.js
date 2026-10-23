@@ -118,21 +118,10 @@ class AacNodes extends HTMLElement {
     this.style.display = "block";
     this.classList.add("nv-host");
     this.innerHTML = `
-      <details class="card nv-how"><summary style="cursor:pointer"><b>HOW IT WORKS</b> <span class="hint">· building your own chain, step by step</span></summary>
-        <ol style="margin:.6em 0 0 1.2em;line-height:1.6">
-          <li><b>A message starts at its card</b>: Panel chat, Voice, HA Assist, or automatic ones (heartbeat, triggers). The message is the whole conversation; every card writes into it.</li>
-          <li><b>It runs along the line</b>: headers, context and trailers write their part (a header replaces its own entry, so the start of the conversation stays the same: fast answers).</li>
-          <li><b>A model reads it all</b>. The cards wired to its output (square port: it decides) are its tools: calling one sends the conversation there; what that card writes comes back (wire it back into the model: a loop, dotted).</li>
-          <li><b>The answer goes home</b>: to the card it started at (wired from the model's output). Round ports always fire; several wires each get a copy.</li>
-          <li><b>Build your own:</b> Add node (e.g. Header, Trailer, Context, another Model, Decide), then drag from an output dot to an input dot of the same colour. Name a card's input (its settings) and models see that name as the tool. Click a wire and press Delete to remove it. The first change switches to "Wired by hand"; Automatic wiring goes back.</li>
-          <li><b>Set a card up</b>: click it, change its settings in the panel on the right, Save.</li>
-          <li><b>Look around</b>: the wheel scrolls the graph (Shift: sideways), Ctrl + wheel zooms, the middle button or the background drags it. The chat's ⚡ expert view shows the way each message took.</li>
-          <li><b>Tidy up</b>: Shift-click cards, Group, name it; fold the frame (▾) into one card.</li>
-        </ol></details>
+
       <style>
         /* the page fills the window and never scrolls itself (owner: a wheel a bit off moved the page) */
         .nv-host { display: flex !important; flex-direction: column; height: 100%; gap: 1em; }
-        .nv-host > .nv-how { flex: none; margin: 0; max-height: 40%; overflow-y: auto; }
         .nv-main { display: flex; align-items: stretch; flex: 1; min-height: 0; }
         .nv-main > .nv-graph { flex: 1; min-width: 0; margin: 0; display: flex; flex-direction: column; }
         .nv-main > .nv-graph > .nv-stage { flex: 1; min-height: 240px; }
@@ -159,22 +148,6 @@ class AacNodes extends HTMLElement {
       </style>
       <div class="nv-main">
       <div class="card nv-graph" style="padding:0;overflow:hidden;position:relative">
-        <div class="nv-bar" style="display:flex;gap:.6em;align-items:center;flex-wrap:wrap;padding:.6em .9em;border-bottom:1px solid var(--line)">
-          <label class="check" style="margin:0;display:none"><input type="checkbox" class="nv-physics">Physics</label>
-          <span class="hint nv-help"></span>
-          <span style="flex:1"></span>
-          <span class="hint nv-wiring"></span>
-          <button class="btn" data-nv="auto" title="Forget the wires set by hand: everything wired by type again">Automatic wiring</button>
-          <span style="position:relative"><button class="btn" data-nv="add" title="Add another node of a type that can exist more than once (e.g. a second model)">Add node</button>
-            <span class="nv-addmenu" style="display:none;position:absolute;top:100%;left:0;z-index:5;min-width:16em;max-width:min(24em, 70vw);background:var(--bg2, #111);border:1px solid var(--line);border-radius:.4em;padding:.3em 0"></span></span>
-          <button class="btn" data-nv="group" title="Put the nodes selected with Shift/Ctrl-click into a named container">Group</button>
-          <button class="btn" data-nv="tidy" title="Lay every card out again in its slot (column = its place in the flow)">Tidy</button>
-          <button class="btn" data-nv="undo" title="Undo the last change: wires, cards, names, settings, or the layout before Tidy (up to 10 steps)">Undo</button>
-          <button class="btn" data-nv="fit">Fit</button>
-          <button class="btn" data-nv="vars" title="Every variable the cards' texts can use, and where it comes from">Variables</button>
-          <button class="btn" data-go="settings/modules" title="Every module: switch on or off, hide, open its page">Modules</button>
-
-        </div>
         <div class="nv-stage" style="position:relative;touch-action:none"><div class="nv-mons"></div></div>
         <div class="nv-legend" style="display:flex;gap:.9em;flex-wrap:wrap;padding:.5em .9em;border-top:1px solid var(--line);font-size:.8em"></div>
         <p class="hint nv-msg" style="margin:.5em .9em"></p>
@@ -382,15 +355,54 @@ class AacNodes extends HTMLElement {
   }
 
   // ------------------------------------------------------------------ physics
-  _mode() {
-    this.querySelector(".nv-physics").checked = this._physics;
-    this.querySelector(".nv-help").textContent = this._physics
-      ? ""
-      : "";
-    this.querySelector('[data-nv="undo"]').disabled = !this._undo.length;
-    const byHand = !!this._data?.by_hand;
-    this.querySelector(".nv-wiring").textContent = byHand ? "Wired by hand" : "Wired automatically";
-    this.querySelector('[data-nv="auto"]').style.display = byHand ? "" : "none";
+  _mode() {  // the panel's header holds the buttons (owner, 2026-10-23: next to "how the parts are wired")
+    const head = this.panel?.shadowRoot, byHand = !!this._data?.by_hand;
+    const undo = head?.querySelector('[data-nodes-act="undo"]'), wiring = head?.querySelector("#nv-wiring");
+    const auto = head?.querySelector('[data-nodes-act="auto"]');
+    if (undo) undo.disabled = !this._undo.length;
+    if (wiring) wiring.textContent = byHand ? "Wired by hand" : "Wired automatically";
+    if (auto) auto.style.display = byHand ? "" : "none";
+  }
+
+  // The header's buttons (aac-panel.js calls these)
+  act(name) {
+    if (name === "undo") this._undoLayout();
+    else if (name === "fit") this._fit();
+    else if (name === "auto") this._automatic();
+    else if (name === "save") this._export();
+    else if (name === "load") this._import();
+    else if (name === "vars") { this._sel = null; this._selWire = null; this._selFrame = null; this._showVars = true; this._draw(); this._info(); }
+  }
+
+  // Save and load the domain's whole setup as a file: cards, wires, names, settings, positions, frames
+  _export() {
+    const data = { format: "aac-setup", version: 1, saved: new Date().toISOString(), domain: this.panel?._state?.domain?.name,
+      setup: this._graphSnap(), positions: this._snapshot().pos, frames: this._frames };
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: "application/json" }));
+    a.download = `aac-setup-${(data.domain || "domain").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${data.saved.slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    this._msg.textContent = "Setup saved as a file.";
+  }
+
+  _import() {
+    const pick = document.createElement("input");
+    pick.type = "file"; pick.accept = "application/json,.json";
+    pick.addEventListener("change", async () => {
+      let data;
+      try { data = JSON.parse(await pick.files[0].text()); } catch (e) { this._msg.textContent = "Not a setup file."; return; }
+      if (data?.format !== "aac-setup" || !data.setup) { this._msg.textContent = "Not a setup file."; return; }
+      const ok = this.panel?._confirm ? await this.panel._confirm(`Load the setup "${data.domain || ""}" from ${String(data.saved || "").slice(0, 10)}? It replaces this domain's cards, wires and settings (Undo brings them back).`, "Load", true) : true;
+      if (!ok) return;
+      this._remember();
+      await this._restoreGraph(data.setup);
+      for (const [id, q] of Object.entries(data.positions || {})) if (this._pos[id]) Object.assign(this._pos[id], { x: q.x, y: q.y, pinned: !!q.pinned });
+      if (Array.isArray(data.frames)) { this._frames = data.frames; this._saveFrames(); }
+      this._save(); this._draw(); this._fit();
+      this._msg.textContent = "Setup loaded.";
+    });
+    pick.click();
   }
 
   _setPhysics(on) {
@@ -407,14 +419,7 @@ class AacNodes extends HTMLElement {
     this._kick();
   }
 
-  _tidy() {
-    // every card back into its slot (Undo brings the layout before back)
-    this._undo.push(this._snapshot());
-    this._undo = this._undo.slice(-UNDO_STEPS);
-    this._pos = {};
-    this._place();
-    this._save(); this._draw(); this._fit();
-  }
+
 
   _snap(id) {
     // a dropped card goes into the nearest column, on the 20 px grid, below any card it would cover there
@@ -853,7 +858,6 @@ class AacNodes extends HTMLElement {
   }
 
   _bind() {
-    this.querySelector(".nv-physics").addEventListener("change", (e) => this._setPhysics(e.target.checked));
     this.addEventListener("change", (e) => {  // a setting's warning follows its checkbox
       const key = e.target?.type === "checkbox" && (e.target.dataset.instKey || e.target.dataset.modKey);
       const warn = key && this.querySelector(`.nv-info [data-warn-key="${key}"]`);
@@ -891,11 +895,7 @@ class AacNodes extends HTMLElement {
       const b = e.target.closest("[data-nv]");
       if (b?.dataset.nv === "fit") this._fit();
       if (b?.dataset.nv === "undo") this._undoLayout();
-      if (b?.dataset.nv === "tidy") this._tidy();
-      if (b?.dataset.nv === "group") this._group();
       if (b?.dataset.nv === "auto") this._automatic();
-      if (b?.dataset.nv === "add") this._addNode();
-      if (b?.dataset.nv === "add-type") this._addOf(b.dataset.type);
       const step = e.target.closest("[data-try-node]");
       if (step) { this._sel = step.dataset.tryNode; this._selFrame = null; this._selWire = null; this._draw(); this._info(); }
       if (b?.dataset.nv === "inst-save") this._saveInstance(b.dataset.node);
@@ -1152,24 +1152,7 @@ class AacNodes extends HTMLElement {
     await this.refresh();
   }
 
-  _addNode() {
-    // A small menu of the types that can be added (one: add it at once)
-    const types = this._data.types || [];
-    const menu = this.querySelector(".nv-addmenu");
-    if (!types.length) { this._msg.textContent = "No node type can be added yet."; return; }
-    if (types.length === 1) { this._addOf(types[0].id); return; }
-    if (menu.style.display !== "none") { menu.style.display = "none"; return; }
-    // grouped by category (In and out, Text, Models, Tools, Keep and write, Audio …)
-    const order = this._data.categories || [...new Set(types.map((t) => t.category))];
-    menu.innerHTML = order.map((g) => {
-      const items = types.filter((t) => (t.category || "Other") === g);
-      return items.length ? `<div class="hint" style="padding:.4em .9em .1em;font-size:.75em;letter-spacing:.08em">${esc(g.toUpperCase())}</div>
-        ${items.map((t) => `<button class="ditem" data-nv="add-type" data-type="${esc(t.id)}" title="${esc(t.description || "")}" style="display:block;width:100%;white-space:normal">
-          ${esc(t.title)}<span class="hint" style="display:block;font-size:.78em;line-height:1.3;margin-top:.15em">${esc(short(t.description || "", 90))}</span></button>`).join("")}` : "";
-    }).join("");
-    menu.style.maxHeight = "60vh"; menu.style.overflow = "auto"; menu.style.width = "22em";
-    menu.style.display = "";
-  }
+
 
   // ------------------------------------------------------------------ wire monitors
   // A window above a wire with what passes it, live; a click shows everything in the newest message on the right
@@ -1325,7 +1308,6 @@ class AacNodes extends HTMLElement {
   }
 
   async _addOf(typeId, at = null) {
-    this.querySelector(".nv-addmenu").style.display = "none";
     // not dropped somewhere: in the middle of what the screen shows (owner: "new nodes spawn in the screen's center")
     at ||= { x: -this._view.x / this._view.k, y: -this._view.y / this._view.k };
     const type = (this._data.types || []).find((n) => n.id === typeId);
@@ -1518,21 +1500,7 @@ class AacNodes extends HTMLElement {
     return this.panel?._prompt ? this.panel._prompt(text, value) : window.prompt(text, value);
   }
 
-  async _group() {
-    const ids = [...this._multi].filter((id) => this._pos[id]);
-    if (!ids.length) { this._msg.textContent = "Select nodes first: Shift- or Ctrl-click them."; return; }
-    const name = await this._ask("Name of the container", "Group");
-    if (name === null || name === undefined) return;
-    const boxes = ids.map((id) => { const n = this._data.nodes.find((x) => x.id === id), p = this._pos[id]; return { p, hh: this._height(n) / 2 }; });
-    const x0 = Math.min(...boxes.map((b) => b.p.x - W / 2)) - PAD, x1 = Math.max(...boxes.map((b) => b.p.x + W / 2)) + PAD;
-    const y0 = Math.min(...boxes.map((b) => b.p.y - b.hh)) - PAD - BAR, y1 = Math.max(...boxes.map((b) => b.p.y + b.hh)) + PAD;
-    for (const f of this._frames) f.nodes = f.nodes.filter((id) => !ids.includes(id)); // one container per node
-    const f = { id: `f_${Date.now().toString(36)}`, name: String(name).trim().slice(0, 60) || "Group", nodes: ids,
-                x: Math.round(x0), y: Math.round(y0), w: Math.round(x1 - x0), h: Math.round(y1 - y0) };
-    this._frames.push(f);
-    this._selFrame = f.id; this._multi = new Set(); this._sel = null;
-    this._saveFrames(); this._draw(); this._info(); this._kick();
-  }
+
 
   _fold(id) {
     const f = this._frames.find((x) => x.id === id);
