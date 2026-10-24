@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.1.0, live on the owner's HA
+## Current state (2026-10-24) – 2.2.0, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -143,6 +143,8 @@ From 2.1.0 on: patch (2.1.1) = fixes, minor (2.2.0) = new features or changed be
 backups no longer load, decided by `tests/test_backups.py` (the backup of the current major version must load). Card files have their own VERSION (and `upgrade()` for their saved settings). Bump the
 manifest version with every deploy (the browser caches the panel by it).
 
+- 2.2.0: card folders, cards with a view (Scope), live wires 10×/s only while Nodes is open. Backup test passed:
+  minor.
 - 2.1.0: a kept-alive connection the server had closed is tried once more (a model was taken for off after every tool
   call that came quickly); errors ("Error: no model was available.") are their own entries: shown and spoken, never
   read by a model (it had copied the old message as its answer); Chat search ignores punctuation ("13.13" finds 13:13).
@@ -175,13 +177,10 @@ manifest version with every deploy (the browser caches the panel by it).
   (search), `continue` and `read` of any chat. `continue` (alpha.40, owner): when the turn is done, the other chat
   is the current one; the asking turn and the switch are not kept (a chat that was only that turn goes); the panel
   opens the other chat.
-2. **Cards with a view** (owner: spectrum, waveform, level bars, maybe bigger cards; all in the card's files, and a
-   card may become a folder when it has more than one or two files): a card declares a view; the
-   panel draws it inside the card (canvas); the card sends small frames (`core.notify("view", card=…, data=…)`) only
-   while a panel shows it. Python/numpy is fast enough (an FFT of 16 kHz audio at 20 frames/s is tiny); the browser
-   draws. Then Gain / Compressor cards (stream in, stream out, numpy).
-3. **Faster lights**: wire levels are sent 4×/s (`LEVEL_EVERY`); 10–20×/s is cheap (a few small websocket messages,
-   only while the Nodes page is open, which should become a condition).
+2. ~~Cards with a view~~ **done (2.2.0):** `view = {"height": …}` + `view.js` in the card's folder; `self.show(data)`
+   sends frames only while a Nodes page shows the card (`aac/view/watch`, said every 8 s). First one: Scope (Audio:
+   level bars, waveform, spectrum with numpy; passes the audio on). Next: Gain, Compressor.
+3. ~~Faster lights~~ **done (2.2.0):** wire levels 10×/s, only while a Nodes page is open.
 4. **Audio delay**: measure each stage first (clip end → text → model → speech → playing), then: the satellite
    plays a stream instead of whole WAVs; sentence-wise speech (item 1); the Audio clipper's pause. Found: the
    Microphone → Speaker loop sounded broken because AAC ignores a satellite's microphone while it plays (no talking
@@ -192,7 +191,7 @@ manifest version with every deploy (the browser caches the panel by it).
 5. **Editable instructions for models**: each card's text that a wired model gets (its functions' help) gets an
    override/extra text in the card's settings: a fold at the bottom that explains it, with a text box.
 6. **Relay and Conditional UI** (later).
-7. **Card folders**: a card with more than one or two files (Python, page, view …) becomes a folder.
+7. ~~Card folders~~ **done (2.2.0):** `chat/card.py` + `page.js` (+ `view.js`); old flat files go when AAC starts.
 8. **Card files reload while AAC runs** (owner): AAC notices a card file whose VERSION went up and loads it again, and
    remakes that type's cards when they are not busy (no restart). Changes to the core still need one.
 9. **Tool menus (v0's idea)** (owner): instead of every function at once, a model sees one entry per card and opens it

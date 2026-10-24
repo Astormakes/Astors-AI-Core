@@ -202,6 +202,8 @@ class AacPanel extends HTMLElement {
       this.ws("aac/appearance").then((look) => { this.look = look; this.render(); });
     } else if (ev.what === "audio" && this.view.kind === "audio") {
       clearTimeout(this._at); this._at = setTimeout(async () => { this.audio = await this.ws("aac/audio"); this.render(); }, 300);
+    } else if (ev.what === "view") {
+      this._viewEls?.[ev.card]?.frame?.(ev.data);
     } else if (ev.what === "level") {
       for (const p of this.shadowRoot.querySelectorAll(`.wire[data-from="${CSS.escape(ev.wire)}"]`)) {
         p.style.strokeWidth = (2 + Math.min(100, ev.level) / 100 * 8).toFixed(1);
@@ -222,6 +224,7 @@ class AacPanel extends HTMLElement {
   async go(kind, card = null, id = null) {
     this.view = { kind, card, id };
     this.navOpen = false; // on a phone the sidebar closes when a page is picked
+    if (kind === "nodes") this._watchIds = null; // say at once which views it shows
     if (kind === "card" && !this.nav.some((n) => n.card === card)) this.view.card = this.nav[0]?.card || null;
     if (kind === "audio") { this.audio = await this.ws("aac/audio"); clearInterval(this._live); this._live = setInterval(async () => { if (this.view.kind !== "audio") { clearInterval(this._live); return; } this.audio = await this.ws("aac/audio"); const b = this.shadowRoot.querySelector("#meters"); if (b) b.innerHTML = this._meters(); }, 700); }
     this.render();
@@ -637,8 +640,10 @@ class AacPanel extends HTMLElement {
         ${ins.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-in="${esc(n)}" data-kind="${k}" points="${this._tri(inX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : k.includes("|") ? this._halves(inX, HEAD + ROW * i + ROW / 2, n, k) : `<circle class="dot" data-in="${esc(n)}" data-kind="${k}" cx="${inX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${inT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
         ${outs.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-out="${esc(n)}" data-kind="${k}" points="${this._tri(outX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : c.square.includes(n) ? `<rect class="dot" data-out="${esc(n)}" data-kind="${k}" x="${outX - 6}" y="${HEAD + ROW * i + ROW / 2 - 6}" width="12" height="12" fill="${KIND_COLOR[k] || "#999"}"></rect>`
           : `<circle class="dot" data-out="${esc(n)}" data-kind="${k}" cx="${outX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${outT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
+        ${c.view ? `<foreignObject x="8" y="${this._ports(c) + 2}" width="${W - 16}" height="${c.view.height}"><div xmlns="http://www.w3.org/1999/xhtml" data-viewhost="${esc(c.id)}" style="width:100%;height:100%"></div></foreignObject>` : ""}
       </g>`;
     }).join("");
+    this._placeViews();
     const routes = this._routes(wires, port);
     this.shadowRoot.querySelector("#wires").innerHTML = wires.map((w) => {
       const path = routes[w.key], sel = this.selWire && `${this.selWire.from}|${this.selWire.to}` === w.key;
@@ -649,7 +654,35 @@ class AacPanel extends HTMLElement {
   }
 
   // ------------------------------------------------------------------ layout (v1's slots and wire lanes)
-  _height(c) { return HEAD + ROW * Math.max(Object.keys(c.inputs).length, Object.keys(c.outputs).length, 1) + 8; }
+  async _placeViews() { // each card's view inside it (spec/cards.md "A card's view"); kept, so a redraw does not reset it
+    const cards = this.state.domain.cards.filter((c) => c.view);
+    this._watchViews(cards.map((c) => c.id));
+    for (const c of cards) {
+      const host = this.shadowRoot.querySelector(`[data-viewhost="${CSS.escape(c.id)}"]`);
+      if (!host) continue;
+      try {
+        let el = (this._viewEls ||= {})[c.id];
+        if (!el || el._url !== c.view.url) {
+          if (!customElements.get(c.view.element)) await import(c.view.url);
+          el = this._viewEls[c.id] = document.createElement(c.view.element);
+          el._url = c.view.url; el.style.cssText = "display:block;width:100%;height:100%";
+        }
+        el.card = c;
+        if (host.isConnected) host.replaceChildren(el);
+      } catch (e) { host.textContent = `view: ${e.message || e}`; }
+    }
+  }
+
+  _watchViews(ids) { // AAC sends views' frames (and live wires) only while a Nodes page says it is open
+    const say = () => (this.view.kind === "nodes" && this.isConnected ? this.ws("aac/view/watch", { cards: this._watchIds || [] }).catch(() => {}) : null);
+    const changed = JSON.stringify(ids) !== JSON.stringify(this._watchIds);
+    this._watchIds = ids;
+    if (changed) say();
+    if (!this._watchTimer) this._watchTimer = setInterval(() => { if (this.view.kind === "nodes") say(); }, 8000);
+  }
+
+  _ports(c) { return HEAD + ROW * Math.max(Object.keys(c.inputs).length, Object.keys(c.outputs).length, 1); } // where its view starts
+  _height(c) { return this._ports(c) + (c.view ? c.view.height + 6 : 0) + 8; }
 
   _wireList() {
     const byId = Object.fromEntries(this.state.domain.cards.map((c) => [c.id, c]));

@@ -3,8 +3,8 @@
 A card type declares its ports, settings, the tags it writes and its functions (exactly documented: models call
 them as tools, a Conditional card calls them as actions). A card instance lives in one domain and owns its data.
 
-Every card type is a file in `<config>/aac/cards/` (spec/cards.md). AAC's own card files (next to this one) are
-copied there unless a newer version of the file is there (each file has a VERSION). Cards only use the core's
+Every card type is a file or a folder in `<config>/aac/cards/` (spec/cards.md). AAC's own cards (next to this file)
+are copied there unless a newer version is there (each has a VERSION). Cards only use the core's
 public interface (`custom_components.aac.api`), never each other's types.
 """
 
@@ -41,7 +41,11 @@ def register(cls: type[Card]) -> type[Card]:
     module = sys.modules.get(cls.__module__)
     cls.version = str(getattr(module, "VERSION", cls.version))
     file = Path(getattr(module, "__file__", "") or "")
-    cls.ui_url = f"{UI_URL}/{file.stem}.js?v={cls.version}" if cls.ui and file.with_suffix(".js").exists() else None
+    page = file.parent / "page.js" if file.name == "card.py" else file.with_suffix(".js")  # a folder's page, or <stem>.js
+    where = f"{file.parent.name}/page.js" if file.name == "card.py" else f"{file.stem}.js"
+    cls.ui_url = f"{UI_URL}/{where}?v={cls.version}" if cls.ui and page.exists() else None
+    has_view = cls.view and file.name == "card.py" and (file.parent / "view.js").exists()
+    cls.view_url = f"{UI_URL}/{file.parent.name}/view.js?v={cls.version}" if has_view else None
     if cls.functions and "offers" not in cls.settings_schema:  # every card with functions can be kept out of a loop's tools
         cls.settings_schema = {**cls.settings_schema, "offers": {**OFFERS, "default": cls.offers}}
     CARD_TYPES[cls.type] = cls
@@ -67,6 +71,8 @@ class Card:
     uses_tools: ClassVar[bool] = False  # it calls the functions of the cards in its loop (a Model): the panel lists them
     ui: ClassVar[bool] = False  # a page of its own: the element aac-card-<type> from the .js next to its file
     ui_url: ClassVar[str | None] = None  # where the panel loads it (set when the file is loaded)
+    view: ClassVar[dict[str, Any] | None] = None  # a view inside the card in the grid ({"height": px}): view.js in its folder
+    view_url: ClassVar[str | None] = None
     keeps_data: ClassVar[bool] = False
     version: ClassVar[str] = "0"  # its file's VERSION
 
@@ -159,11 +165,24 @@ class Card:
         """A request from its own page (its .js): what the page needs that is not a function for models."""
         raise ValueError(f"{self.type} has no page action {action}")
 
+    @property
+    def watched(self) -> bool:
+        """An open Nodes page shows its view now (compute frames only then)."""
+        return self.core.watched(self.id)
+
+    def show(self, data: Any) -> None:
+        """A frame for its view (only sent while a Nodes page shows it; keep it small, a few times a second)."""
+        if self.watched:
+            self.core.notify("view", domain=self.domain.id, card=self.id, data=data)
+
+    def _view(self) -> dict[str, Any] | None:
+        return {"url": self.view_url, "element": f"aac-view-{self.type.replace('_', '-')}", **self.view} if self.view_url else None
+
     def summary(self) -> dict[str, Any]:
         """This card: for the node view."""
         ins, outs, square = self.ports()
         return {"id": self.id, "type": self.type, "title": self.name, "settings": self.settings,
-                "inputs": ins, "outputs": outs, "square": sorted(square), "ui": self.ui_url,
+                "inputs": ins, "outputs": outs, "square": sorted(square), "ui": self.ui_url, "view": self._view(),
                 **({"tools": [c.id for c in self.domain.flow.tools(self.id)]} if self.uses_tools else {}),
                 "tags": {self.tag(t): what for t, what in self.tags.items()}}
 
@@ -184,30 +203,51 @@ def tool_spec(card: Card, name: str, spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_all(folder: str) -> None:
-    """Load every card type from the cards folder (`<config>/aac/cards/`). AAC's own card files are copied there first
-    unless a newer version of the file is there (a download); runs in the executor (it reads and writes files). A file
-    that fails is logged; the others load."""
+    """Load every card type from the cards folder (`<config>/aac/cards/`): a card is a file (`relay.py`) or, when it
+    has more files, a folder (`chat/card.py` with `page.js`, `view.js` …). AAC's own cards are copied there first unless
+    a newer version is there (a download); runs in the executor (it reads and writes files). One that fails is logged;
+    the others load."""
     cards = Path(folder)
     cards.mkdir(parents=True, exist_ok=True)
-    for shipped in sorted(Path(__file__).parent.glob("*.py")):
-        if shipped.name == "__init__.py":
-            continue
-        there = cards / shipped.name
-        if not there.exists() or (_version(there) <= _version(shipped) and there.read_bytes() != shipped.read_bytes()):
-            LOGGER.info("AAC: card file %s %s", shipped.name, "updated" if there.exists() else "added")
-            shutil.copyfile(shipped, there)
-        ui, ui_there = shipped.with_suffix(".js"), there.with_suffix(".js")  # its page goes with it
-        if ui.exists() and _version(there) == _version(shipped) and (not ui_there.exists() or ui_there.read_bytes() != ui.read_bytes()):
-            shutil.copyfile(ui, ui_there)
+    here = Path(__file__).parent
+    for shipped in sorted(here.iterdir()):
+        if shipped.suffix == ".py" and shipped.name != "__init__.py":
+            there = cards / shipped.name
+            if not there.exists() or (_version(there) <= _version(shipped) and there.read_bytes() != shipped.read_bytes()):
+                LOGGER.info("AAC: card file %s %s", shipped.name, "updated" if there.exists() else "added")
+                shutil.copyfile(shipped, there)
+        elif (shipped / "card.py").exists():
+            there = cards / shipped.name
+            for old in (cards / f"{shipped.name}.py", cards / f"{shipped.name}.js"):  # it was one file before: that goes
+                if old.exists() and (old.suffix == ".js" or _version(old) <= _version(shipped / "card.py")):
+                    old.unlink()
+            if not (there / "card.py").exists() or (_version(there / "card.py") <= _version(shipped / "card.py")
+                                                   and _files(there) != _files(shipped)):
+                LOGGER.info("AAC: card folder %s %s", shipped.name, "updated" if there.exists() else "added")
+                shutil.rmtree(there, ignore_errors=True)
+                shutil.copytree(shipped, there, ignore=shutil.ignore_patterns("__pycache__"))
     package = sys.modules.setdefault("aac_cards", types.ModuleType("aac_cards"))  # card files can import each other
     package.__path__ = [str(cards)]
-    for path in sorted(cards.glob("*.py")):
-        def load(path=path):
-            spec = importlib.util.spec_from_file_location(f"aac_cards.{path.stem}", path)
+    for path in sorted(cards.iterdir()):
+        if path.suffix == ".py":
+            name, file = f"aac_cards.{path.stem}", path
+        elif (path / "card.py").exists():
+            name, file = f"aac_cards.{path.name}", path / "card.py"
+        else:
+            continue
+
+        def load(name=name, file=file):
+            spec = importlib.util.spec_from_file_location(name, file, submodule_search_locations=[str(file.parent)]
+                                                          if file.name == "card.py" else None)
             module = importlib.util.module_from_spec(spec)
             sys.modules[spec.name] = module
             spec.loader.exec_module(module)
-        _load(load, str(path))
+        _load(load, str(file))
+
+
+def _files(folder: Path) -> dict[str, bytes]:
+    """A card folder's files (to see whether it changed)."""
+    return {p.name: p.read_bytes() for p in folder.iterdir() if p.is_file()}
 
 
 def _version(path: Path) -> tuple[int, ...]:

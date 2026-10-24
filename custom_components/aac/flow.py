@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from .cards import Card
     from .core import Domain
 
-LEVEL_EVERY = 0.25  # seconds between an audio wire's loudness updates
+LEVEL_EVERY = 0.1  # seconds between an audio wire's loudness updates (only while a Nodes page is open)
 KEEP_RECORDS, KEEP_SECONDS = 10, 600  # what passed an output lately (the monitor windows)
 MAX_STEPS = 80  # a context that visits more cards than this is stopped (the wiring loops)
 
@@ -142,7 +142,7 @@ class Flow:
         get its loudness a few times a second (the wire's thickness)."""
         now = time.monotonic()
         key = f"{card_id}.{port}"
-        if now - self._level_at.get(key, 0) >= LEVEL_EVERY:
+        if self.domain.core.nodes_open and now - self._level_at.get(key, 0) >= LEVEL_EVERY:
             self._level_at[key] = now
             from .audio import level  # noqa: PLC0415
             self.domain.core.notify("level", domain=self.domain.id, wire=key, level=level(chunk))

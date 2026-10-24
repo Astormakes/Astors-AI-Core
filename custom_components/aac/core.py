@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from copy import deepcopy
 import re
+import time
 from typing import Any
 
 from homeassistant.core import HomeAssistant, callback
@@ -27,6 +28,8 @@ def slug(text: str) -> str:
     """An id from a name."""
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:30] or "card"
 
+
+WATCH_SECONDS = 15  # an open Nodes page says every few seconds which views it shows
 
 class Domain:
     """One setup of cards and wires."""
@@ -278,6 +281,8 @@ class Core:
         """Initialize."""
         self.hass = hass
         self._store: Store = Store(hass, 1, "aac2.core")
+        self._watching: dict[str, float] = {}  # card → until when a Nodes page shows its view
+        self._nodes_until = 0.0  # until when a Nodes page is open
         self.data: dict[str, Any] = {}
         self._channels: dict[str, list[tuple[Card, Callable[..., Any]]]] = {}
         self.pool = ModelPool(hass, [])
@@ -309,6 +314,21 @@ class Core:
     async def save_now(self) -> None:
         """Keep the core now."""
         await self._store.async_save(self.data)
+
+    def watch(self, cards: list[str]) -> None:
+        """An open Nodes page shows these cards' views (it says so again every few seconds)."""
+        until = time.monotonic() + WATCH_SECONDS
+        self._nodes_until = until
+        self._watching = {**{k: v for k, v in self._watching.items() if v > time.monotonic()}, **dict.fromkeys(cards, until)}
+
+    def watched(self, card_id: str) -> bool:
+        """A Nodes page shows this card's view now."""
+        return self._watching.get(card_id, 0) > time.monotonic()
+
+    @property
+    def nodes_open(self) -> bool:
+        """A Nodes page is open (live wires are only sent then)."""
+        return self._nodes_until > time.monotonic()
 
     # ------------------------------------------------------------------ channels (design rule: the core never asks for a card type)
     @callback

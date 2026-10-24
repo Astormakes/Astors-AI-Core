@@ -64,10 +64,22 @@ arrived: True when it was busy and sent its own context on), `held(port)` (what 
 reads), `current()` (its values), `ui = True` (a page of its own, see below). A setting of type `modellist` with a
 `tag` gives it a list of models with queues.
 
+## A card folder
+
+A card with more than one file is a folder: `chat/card.py` (with `VERSION`), `page.js`, `view.js`. It is copied,
+versioned and loaded as a whole (`aac_cards.chat`); a single-file card stays `relay.py`. Files are served at
+`/aac_cards/<folder>/<file>.js`.
+
+## A card's view
+
+A card with `view = {"height": 90}` and a `view.js` in its folder shows something inside its card in the grid (the
+card grows by that height). The file defines `aac-view-<type>`; the panel sets `.card` and calls `frame(data)` for
+every frame. The card sends frames with `self.show(data)`, which only goes out while a Nodes page shows the card
+(`self.watched`: check it before computing anything). Keep frames small (a few dozen numbers), up to ~30 a second.
+
 ## A card's page
 
-A card with `ui = True` brings its page as a `.js` file next to its `.py` (`lists.py` → `lists.js`, copied and
-versioned with it, served at `/aac_cards/lists.js`). The file defines a custom element `aac-card-<type>` (`_` → `-`)
+A card with `ui = True` brings its page as `page.js` in its folder (served at `/aac_cards/<folder>/page.js`). The file defines a custom element `aac-card-<type>` (`_` → `-`)
 without shadow DOM, so the panel's look and skins apply. The panel hands it:
 
 - `.panel`: `ws(type, data)`, `call(function, args)` (the card's functions, like a model), `ui(action, args)` (the

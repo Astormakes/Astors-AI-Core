@@ -54,9 +54,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
 
 
 class CardUiView(HomeAssistantView):
-    """A card's page: `<config>/aac/cards/<stem>.js` (only .js files; the panel imports them as modules)."""
+    """A card's page or view: `<config>/aac/cards/<stem>.js` or `<folder>/<file>.js` (only .js files; the panel imports
+    them as modules)."""
 
-    url = f"{UI_URL}/{{name}}"
+    url = f"{UI_URL}/{{name:.+}}"
     name = "aac:card_ui"
     requires_auth = False  # a module import sends no token; card files hold no secrets
 
@@ -66,7 +67,7 @@ class CardUiView(HomeAssistantView):
 
     async def get(self, request: web.Request, name: str) -> web.StreamResponse:
         """One card page."""
-        if not re.fullmatch(r"[a-z0-9_]+\.js", name) or not (path := self.folder / name).is_file():
+        if not re.fullmatch(r"[a-z0-9_]+(/[a-z0-9_]+)?\.js", name) or not (path := self.folder / name).is_file():
             return web.Response(status=404)
         return web.FileResponse(path, headers={"Content-Type": "text/javascript", "Cache-Control": "no-cache"})
 

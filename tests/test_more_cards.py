@@ -145,7 +145,7 @@ async def test_card_pages_through_nav_and_ui(hass: HomeAssistant, mock_entry, ai
     client = await hass_ws_client(hass)
     await client.send_json_auto_id({"type": "aac/nav"})
     nav = {n["card"]: n for n in (await client.receive_json())["result"]["nav"]}
-    assert nav["chat"]["element"] == "aac-card-chat" and nav["chat"]["ui"].startswith("/aac_cards/chat.js")
+    assert nav["chat"]["element"] == "aac-card-chat" and nav["chat"]["ui"].startswith("/aac_cards/chat/page.js")
     assert chat["id"] in [e["id"] for e in nav["chat"]["nav"]["entries"]] and "lists" in nav
     await client.send_json_auto_id({"type": "aac/card/ui", "card": "chat", "action": "delete", "args": {"chat_id": chat["id"]}})
     assert (await client.receive_json())["success"]

@@ -155,3 +155,29 @@ async def test_home_languages(hass, mock_entry, hass_ws_client):
     assert core.domain.template_values()["languages"] == ["en", "de"]
     await client.send_json_auto_id({"type": "aac/languages/set", "languages": None})
     assert [x["code"] for x in (await client.receive_json())["result"]["languages"]] == ["de"]
+
+
+async def test_a_scope_shows_audio_only_while_watched(hass, mock_entry):
+    """A card's view: the Scope passes audio on and sends frames only while a Nodes page shows it; live wire levels
+    likewise only while a Nodes page is open."""
+    from homeassistant.helpers.dispatcher import async_dispatcher_connect
+
+    from custom_components.aac.const import SIGNAL
+
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    scope = await d.add_card("scope", "Scope", {"mode": "spectrum", "fps": 30})
+    gate = await d.add_card("noise_gate", "Gate")
+    d.set_wires([*d.wires, {"from": f"{scope.id}.out", "to": f"{gate.id}.in"}])
+    assert scope.summary()["view"]["element"] == "aac-view-scope" and scope.summary()["view"]["height"] == 90
+    seen, passed = [], []
+    unsub = async_dispatcher_connect(hass, SIGNAL, lambda e: seen.append(e["what"]))
+    with patch.object(type(gate), "stream", lambda self, port, chunk, meta: passed.append(len(chunk)), create=True):
+        d.flow.stream(scope.id, "in", audio((LOUD, 0.1)), {"source": "pc"})  # nobody watches
+        scope.stream("in", audio((LOUD, 0.1)), {"source": "pc"})
+        assert "view" not in seen and "level" not in seen and passed
+        core.watch([scope.id])
+        scope.stream("in", audio((LOUD, 0.1)), {"source": "pc"})
+        await hass.async_block_till_done()
+    unsub()
+    assert "view" in seen and "level" in seen

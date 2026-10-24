@@ -158,7 +158,9 @@ def _shipped_version(stem: str) -> str:
 
     import custom_components.aac.cards as cards
 
-    return re.search(r'VERSION = "([\d.]+)"', (Path(cards.__file__).parent / f"{stem}.py").read_text()).group(1)
+    here = Path(cards.__file__).parent
+    file = here / stem / "card.py" if (here / stem).is_dir() else here / f"{stem}.py"
+    return re.search(r'VERSION = "([\d.]+)"', file.read_text()).group(1)
 
 
 async def test_card_files_in_your_folder(hass: HomeAssistant, mock_entry):
