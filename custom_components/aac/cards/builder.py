@@ -3,14 +3,16 @@ every change can be undone (Nodes → Undo)."""
 
 from __future__ import annotations
 
+import json
+
 from typing import Any
 
 from custom_components.aac.api import CARD_TYPES, Card, Context, register
 
-VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.5.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
-SHORT = 12  # settings with more entries are only counted in the list of cards
+SHORT = 80  # longer settings are shortened in the list of cards (characters)
 
 @register
 class Builder(Card):
@@ -26,8 +28,8 @@ class Builder(Card):
         "may_remove": {"type": "bool", "title": "May remove cards", "default": False, "permission": True},
     }
     functions = {
-        "cards": {"help": "The cards of this domain: id, type, name, settings (long ones shortened: see card), inputs and "
-                          "outputs, and the wires."},
+        "cards": {"help": "An overview of this domain: each card's id, type, name, inputs and outputs and settings (long "
+                          "ones shortened: see card), and the wires."},
         "card": {"help": "One card with all its settings.", "args": {"card": {"type": "string", "help": "Its id.", "required": True}}},
         "types": {"help": "The card types that can be added, with what they do and their settings."},
         "add_card": {"help": "Add a card.", "args": {"type": {"type": "string", "help": "A type from types.", "required": True},
@@ -45,10 +47,14 @@ class Builder(Card):
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         domain = self.domain
-        if function == "cards":  # long settings (an access list) only counted, so every card fits
-            short = lambda v: f"({len(v)} entries: see card)" if isinstance(v, (dict, list)) and len(v) > SHORT else v  # noqa: E731
-            return {"cards": [{**c.summary(), "settings": {k: short(v) for k, v in c.settings.items()}} for c in domain.cards.values()],
-                    "wires": domain.wires}
+        if function == "cards":  # an overview that fits: long settings shortened (`card` gives one card in full)
+            def short(v: Any) -> Any:
+                if isinstance(v, (dict, list)) and len(json.dumps(v)) > SHORT:
+                    return f"({len(v)} entries: see card)"
+                return v[:SHORT] + "…" if isinstance(v, str) and len(v) > SHORT else v
+            return {"count": len(domain.cards), "cards": [{"id": c.id, "type": c.type, "name": c.name, "in": list(c.ports()[0]), "out": list(c.ports()[1]),
+                               "settings": {k: short(v) for k, v in c.settings.items()}} for c in domain.cards.values()],
+                    "wires": [f"{w['from']} -> {w['to']}" for w in domain.wires]}
         if function == "card":
             card = domain.cards.get(str(args.get("card") or ""))
             return card.summary() if card else {"error": "no such card (see cards)"}

@@ -351,5 +351,6 @@ async def test_instructions_for_models_and_short_card_lists(hass: HomeAssistant,
     editor = await d.add_card("builder", "Node editor")
     listed = await editor.call("cards", {})
     home = next(c for c in listed["cards"] if c["id"] == "home")
-    assert home["settings"]["levels"] == "(40 entries: see card)"
+    assert home["settings"]["levels"] == "(40 entries: see card)" and "chat.said -> charter.in" in listed["wires"]
+    assert listed["count"] == len(d.cards)
     assert len((await editor.call("card", {"card": "home"}))["settings"]["levels"]) == 40
