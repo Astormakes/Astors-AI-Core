@@ -37,7 +37,7 @@ class AACCalendar(CalendarEntity):
 
     def _cards(self):
         core = self.hass.data.get(DOMAIN)
-        return [c for c in core.domain.cards.values() if c.type == "calendar"] if core and core.domain else []
+        return [card for card, _ in core.subscribers("ha_calendar")] if core else []  # cards on the core's channel
 
     async def async_added_to_hass(self) -> None:
         """Follow changes."""

@@ -208,9 +208,8 @@ async def ws_tags_remove(hass, connection, msg) -> None:
 
 # ---------------------------------------------------------------------- chats
 def _chat_card(hass, card_id: str):
-    from .cards.chat import Chat  # noqa: PLC0415
     card = _core(hass).domain.cards.get(card_id)
-    if not isinstance(card, Chat):
+    if card is None or card.page != "chat":  # any card with a chat page (chats, get, send, delete, stop_chat)
         raise ValueError("no such chat card")
     return card
 

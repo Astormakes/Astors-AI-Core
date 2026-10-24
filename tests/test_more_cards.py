@@ -45,15 +45,33 @@ async def test_ha_event_and_heartbeat_fire(hass: HomeAssistant, mock_entry, aioc
     assert not beat._quiet(dt_util.now())
 
 
-async def test_ha_assist_is_a_conversation_agent(hass: HomeAssistant, mock_entry, aioclient_mock):
-    """HA's conversation API reaches the HA Assist card; a follow-up continues the same chat."""
+async def test_ha_conversations_go_to_whoever_takes_the_channel(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """HA's Assist reaches the card on the core's ha_conversation channel: the Chat (a chat "Assist · …", a follow-up
+    continues it), nobody (a clear error), or a card of your own."""
+    from custom_components.aac.cards import Card, register
+
     core = await setup_aac(hass, mock_entry)
-    await core.domain.add_card("assist", "HA Assist", card_id="assist")
-    core.domain.set_wires([*core.domain.wires, {"from": "assist.said", "to": "charter.in"}, {"from": "model.out", "to": "assist.answers"}])
     model_answers(aioclient_mock, reply("It is noon."))
     result = await conversation.async_converse(hass, "what time is it?", None, HaContext(), agent_id=mock_entry.entry_id)
     assert result.response.speech["plain"]["speech"] == "It is noon."
-    assert core.domain.cards["assist"].get(result.conversation_id)["messages"][0]["text"] == "what time is it?"
+    chat = core.domain.cards["chat"].get(result.conversation_id)
+    assert chat["title"].startswith("Assist · Home Assistant · ") and chat["messages"][0]["text"] == "what time is it?"
+    await core.domain.update_card("chat", settings={"ha_agent": False})
+    result = await conversation.async_converse(hass, "hello?", None, HaContext(), agent_id=mock_entry.entry_id)
+    assert result.response.error_code is not None
+
+    @register
+    class Echo(Card):  # a card of your own
+        type = "test_echo"
+
+        async def start(self) -> None:
+            self.core.subscribe("ha_conversation", self, self.converse)
+
+        async def converse(self, text, conversation_id, where):
+            return f"{where} said: {text}"
+    await core.domain.add_card("test_echo", "Echo")
+    result = await conversation.async_converse(hass, "ping", None, HaContext(), agent_id=mock_entry.entry_id)
+    assert result.response.speech["plain"]["speech"] == "Home Assistant said: ping"
 
 
 async def test_decide_picks_an_output(hass: HomeAssistant, mock_entry, aioclient_mock):
@@ -119,17 +137,19 @@ async def test_calendar_card_and_entity(hass: HomeAssistant, mock_entry, aioclie
 
 
 async def test_chat_commands_take_every_chat_card(hass: HomeAssistant, mock_entry, aioclient_mock, hass_ws_client):
-    """The panel lists and deletes the chats of HA Assist and Voice chat cards too."""
+    """The panel's chat commands take any card with a chat page."""
     core = await setup_aac(hass, mock_entry)
-    assist = core.domain.cards["assist"]
-    chat = assist._new("Test")
-    await assist.save()
+    card = core.domain.cards["chat"]
+    chat = card._new("Test")
+    await card.save()
     client = await hass_ws_client(hass)
-    await client.send_json_auto_id({"type": "aac/chat/list", "card": "assist"})
+    await client.send_json_auto_id({"type": "aac/chat/list", "card": "chat"})
     assert [c["id"] for c in (await client.receive_json())["result"]["chats"]] == [chat["id"]]
-    await client.send_json_auto_id({"type": "aac/chat/delete", "card": "assist", "chat_id": chat["id"]})
+    await client.send_json_auto_id({"type": "aac/chat/delete", "card": "chat", "chat_id": chat["id"]})
     assert (await client.receive_json())["success"]
-    assert assist.chats() == []
+    assert card.chats() == []
+    await client.send_json_auto_id({"type": "aac/chat/list", "card": "lists"})
+    assert not (await client.receive_json())["success"]  # no chat page
 
 
 async def test_models_have_tags_and_memory_uses_embedding_models(hass: HomeAssistant, mock_entry, aioclient_mock):

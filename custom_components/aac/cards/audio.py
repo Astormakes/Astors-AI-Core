@@ -31,9 +31,13 @@ class Microphone(Card):
     settings_schema = {"source": {"type": "source", "title": "Listens to", "default": "any",
                                   "help": "One satellite (each its own chain), or any of them."}}
 
+    async def start(self) -> None:
+        self.core.subscribe("audio", self, self.hear)
+
     def hear(self, chunk: bytes, meta: dict[str, Any]) -> None:
-        """Audio from the hub."""
-        self.domain.flow.stream(self.id, "out", chunk, meta)
+        """Audio from the core's "audio" channel (only the satellite it listens to)."""
+        if self.settings.get("source") in ("any", meta["source"], None, ""):
+            self.domain.flow.stream(self.id, "out", chunk, meta)
 
 
 @register

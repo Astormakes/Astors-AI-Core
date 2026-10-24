@@ -1,5 +1,6 @@
-"""Calendar: its own entries, plus dated entries of Lists cards (a field "when", "date" or "due"). Home Assistant shows
-them as AAC's calendar (`calendar.aac_calendar`); a model or a Conditional card uses its functions."""
+"""Calendar: its own entries, plus the dated entries of cards that offer them (`dated()`: a Lists card's entries with a
+field when/date/due). Home Assistant shows it as AAC's calendar (`calendar.aac_calendar`, through the core's
+"ha_calendar" channel); a model or a Conditional card uses its functions."""
 
 from __future__ import annotations
 
@@ -10,9 +11,6 @@ from homeassistant.util import dt as dt_util
 
 from ..context import Context, new_id
 from . import Card, register
-
-DATE_FIELDS = ("when", "date", "due")
-
 
 def parse(value: Any) -> date | datetime | None:
     """A date or a time from text (local)."""
@@ -28,12 +26,6 @@ def parse(value: Any) -> date | datetime | None:
     return dt_util.as_local(when) if when else None
 
 
-def _walk(items: list[dict[str, Any]]):
-    for it in items:
-        yield it
-        yield from _walk(it.get("children") or [])
-
-
 @register
 class Calendar(Card):
     """A calendar."""
@@ -44,8 +36,8 @@ class Calendar(Card):
     help = ("Its own entries and the dated entries of Lists cards (a field when/date/due); Home Assistant shows them as "
             "AAC's calendar. A model reads and changes it through its functions.")
     keeps_data = True
-    settings_schema = {"lists": {"type": "text", "title": "Show dated entries of the Lists cards", "default": "lists",
-                                 "help": "Their ids, comma separated (empty: none)."}}
+    settings_schema = {"lists": {"type": "text", "title": "Also show the dated entries of", "default": "lists",
+                                 "help": "Card ids, comma separated: any card that offers dated entries (a Lists card)."}}
     values = {"today": "today's entries (\"HH:MM what\", all-day ones without a time)", "next": "the next entry (\"what, when\")"}
     functions = {
         "calendar": {"help": "Entries between two dates (default: the next 7 days).",
@@ -71,6 +63,9 @@ class Calendar(Card):
     def default_data(self) -> dict[str, Any]:
         return {"events": []}
 
+    async def start(self) -> None:
+        self.core.subscribe("ha_calendar", self, self.events)  # Home Assistant's calendar entity shows it
+
     def events(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
         """Its own entries and the dated list entries between two times: {uid, summary, start, end, description, own}."""
         found = []
@@ -78,12 +73,8 @@ class Calendar(Card):
             found.append({**e, "own": True})
         for card_id in [x.strip() for x in str(self.settings.get("lists") or "").split(",") if x.strip()]:
             card = self.domain.cards.get(card_id)
-            for li in (card.data.get("lists") or []) if card is not None and card.type == "lists" else []:
-                for it in _walk(li.get("items") or []):
-                    value = next((it.get("fields", {}).get(f) for f in DATE_FIELDS if it.get("fields", {}).get(f)), None)
-                    if value and not it.get("done"):
-                        found.append({"uid": f"list:{it['id']}", "summary": f"{it['text']} ({li['name']})", "start": value,
-                                      "end": None, "description": "", "own": False})
+            if card is not None and hasattr(card, "dated"):  # any card that offers dated entries
+                found += [{**e, "description": e.get("description", ""), "end": e.get("end"), "own": False} for e in card.dated()]
         out = []
         for e in found:
             s = parse(e["start"])

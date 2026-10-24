@@ -63,6 +63,17 @@ class Lists(Card):
         open_ = {li["name"]: count(li["items"]) for li in self.data.get("lists") or []}
         return {"lists": list(open_), "open": open_, "total": sum(open_.values())}
 
+    def dated(self) -> list[dict[str, Any]]:
+        """Open entries with a date (a field when, date or due): what a Calendar card shows (any card may offer dated())."""
+        def walk(items):
+            for it in items:
+                yield it
+                yield from walk(it.get("children") or [])
+        return [{"uid": f"list:{it['id']}", "summary": f"{it['text']} ({li['name']})", "start": value}
+                for li in self.data.get("lists") or [] for it in walk(li.get("items") or [])
+                if not it.get("done") and (value := next((it.get("fields", {}).get(f) for f in ("when", "date", "due")
+                                                          if it.get("fields", {}).get(f)), None))]
+
     def default_data(self) -> dict[str, Any]:
         return {"lists": []}
 

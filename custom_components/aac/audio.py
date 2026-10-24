@@ -189,7 +189,6 @@ class AudioHub:
         """Initialize."""
         self.core, self.hass = core, core.hass
         self.sources: dict[str, Source] = {}
-        self._mics: tuple[float, list] = (float("-inf"), [])
         self._spoke: dict[str, float] = {}  # satellite → when AAC last finished speaking there (time.time())
 
     @property
@@ -226,16 +225,13 @@ class AudioHub:
 
     @callback
     def feed(self, source: Source, chunk: bytes) -> None:
-        """Raw audio: to every Microphone card that takes this source (not while AAC speaks there)."""
+        """Raw audio: to every card on the core's "audio" channel (not while AAC speaks there)."""
         source.meter.feed(chunk)
-        if source.playing or not (domain := self.core.domain):
+        if source.playing:
             return
-        now = time.monotonic()
-        if now - self._mics[0] > 1:  # looked up at most once a second (audio comes about 50 times a second)
-            self._mics = (now, [c for c in domain.cards.values() if c.type == "microphone"])
-        for card in self._mics[1]:
-            if card.settings.get("source") in ("any", source.id, None, ""):
-                card.hear(chunk, {"source": source.id, "name": source.name, "area": source.area})
+        meta = {"source": source.id, "name": source.name, "area": source.area}
+        for _, handler in self.core.subscribers("audio"):
+            handler(chunk, meta)
 
     def spoken(self) -> dict[str, Any]:
         """When AAC last spoke, for templates ({{ audio.last.seconds }}, {{ audio.satellites[id].seconds }}): seconds

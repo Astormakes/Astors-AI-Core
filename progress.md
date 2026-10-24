@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`, its progress file `docs/progress-v1.md` (private).
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-23) – 2.0.0-alpha.21, live on the owner's HA
+## Current state (2026-10-23) – 2.0.0-alpha.22, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -84,6 +84,12 @@ the owner wires them (no automatic wiring), the message is a document of entries
   ticked: a red warning, and a context is dropped when all are busy. The card shows its first model in the grid.
   Speech to text: its models, then HA's engines from the Audio page. On the HA: Model 35B → qwen3-8b, Memory card
   (bge-m3 on CT 110, a tool of the Model), Speech to text Whisper.
+- **Interchangeable cards (alpha.22, owner design rule, docs/v2 rule 10):** the core never checks a card's type.
+  Incoming: channels a card subscribes to (`core.subscribe(channel, card, handler)`: `audio` → Microphone,
+  `ha_conversation` → a Chat with "Takes Home Assistant's conversations", `ha_calendar` → Calendar); outgoing: core
+  functions. The HA Assist card is gone: `conversation.aac` hands each turn to the channel (a chat "Assist · where ·
+  time" in the Chat; tested live through HA's conversation API). Calendar reads any card offering `dated()`; the
+  panel's chat commands take any card with a chat page.
 - **Phone (alpha.21):** ☰ in the top bar opens AAC's sidebar (picking a page or tapping beside it closes it); ⌂ in
   the sidebar opens Home Assistant's menu (back to the overview).
 - **Grid (alpha.20):** a small legend lower right (context, read, sound, speech); read inputs are triangles.
@@ -109,18 +115,18 @@ the owner wires them (no automatic wiring), the message is a document of entries
 ## Cleanup waiting for the owner (2026-10-24)
 
 The permission check blocked deleting these on the HA; run it in the HA terminal (or allow it). Everything is v1 or
-superseded; `/config/aac/bak-v2-alpha18/` (v2 storage before alpha.20) stays as the one backup, `satellite.json` stays
+superseded; `/config/aac/bak-v2-alpha21/` (v2 storage before alpha.22) stays as the one backup, `satellite.json` stays
 (the add-on reads it).
 
 - `/config/.storage/aac.*`: v1's storage (chats, config + its 4 old backups, jobs, lists, triggers, voices, requests,
   runs, the `.test` copies); v2 no longer reads it.
 - `/config/.storage/aac2.card.assistant.voice`: the removed Voice chat card's data (its chats are in the Chat card).
-- `/config/aac/bak-*` except the newest (`bak-v2-alpha18`): 18 old backups (v1 0.46 … 1.0.0-dev.69, before-clean, before-v2,
+- `/config/aac/bak-*` except the newest (`bak-v2-alpha21`): 18 old backups (v1 0.46 … 1.0.0-dev.69, before-clean, before-v2,
   v2 alpha2/3/15/16, add-on 0.1.1).
 - `/config/aac/aac.config.bak-1.0.0-dev.19`, `/config/aac/memory*.db*` (v1's memory), `/config/aac/skins` (v1's skins).
 
 ```sh
-cd /config/aac && for d in bak-*; do [ "$d" = bak-v2-alpha18 ] || rm -rf "$d"; done
+cd /config/aac && for d in bak-*; do [ "$d" = bak-v2-alpha21 ] || rm -rf "$d"; done
 rm -rf /config/aac/aac.config.bak-1.0.0-dev.19 /config/aac/memory.db* /config/aac/memory_test.db* /config/aac/skins
 rm -f /config/.storage/aac.* /config/.storage/aac2.card.assistant.voice
 ```

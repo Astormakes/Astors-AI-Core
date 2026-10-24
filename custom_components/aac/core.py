@@ -5,6 +5,7 @@ positions, Undo history and three save slots, all kept on the server.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 import re
 from typing import Any
@@ -69,7 +70,12 @@ class Domain:
         """Another domain runs (or AAC stops): every card ends its timers."""
         self.running = False
         for card in list(self.cards.values()):
-            await card.unload()
+            await self._end(card)
+
+    async def _end(self, card: Card) -> None:
+        """A card stops: its timers end (its unload) and the core channels it subscribed to forget it."""
+        await card.unload()
+        self.core.unsubscribe(card)
 
     async def _make(self, card_id: str, spec: dict[str, Any]) -> Card | None:
         kind = CARD_TYPES.get(spec.get("type", ""))
@@ -79,7 +85,7 @@ class Domain:
         card = kind(self, card_id, spec.get("title", ""), spec.get("settings"))
         await card.load()
         if old := self.cards.get(card_id):
-            await old.unload()
+            await self._end(old)
         self.cards[card_id] = card
         if self.running:
             await card.start()
@@ -143,7 +149,7 @@ class Domain:
         self._remember()
         self._specs.pop(card_id)
         if card := self.cards.pop(card_id, None):
-            await card.unload()
+            await self._end(card)
         self.wires = [w for w in self.wires if w["from"].split(".")[0] != card_id and w["to"].split(".")[0] != card_id]
         self.positions.pop(card_id, None)
         self.save()
@@ -196,7 +202,7 @@ class Domain:
         self._specs = deepcopy(setup["cards"])
         self.wires = deepcopy(setup["wires"])
         for card in list(self.cards.values()):
-            await card.unload()
+            await self._end(card)
         self.cards = {}
         for card_id, spec in self._specs.items():
             await self._make(card_id, spec)
@@ -269,6 +275,7 @@ class Core:
         self.hass = hass
         self._store: Store = Store(hass, 1, "aac2.core")
         self.data: dict[str, Any] = {}
+        self._channels: dict[str, list[tuple[Card, Callable[..., Any]]]] = {}
         self.pool = ModelPool(hass, [])
         self.domain: Domain | None = None
         from .audio import AudioHub  # noqa: PLC0415
@@ -296,6 +303,23 @@ class Core:
     def save(self) -> None:
         """Keep the core."""
         self._store.async_delay_save(lambda: self.data, 1)
+
+    # ------------------------------------------------------------------ channels (design rule: the core never asks for a card type)
+    @callback
+    def subscribe(self, channel: str, card: Card, handler: Callable[..., Any]) -> None:
+        """A card takes what comes in on a core channel ("audio": satellite audio, "ha_conversation": HA's Assist,
+        "ha_calendar": HA's calendar entity). Any card may: a card of your own can replace a built-in one."""
+        self._channels.setdefault(channel, []).append((card, handler))
+
+    @callback
+    def unsubscribe(self, card: Card) -> None:
+        """A card stops taking anything (called when it unloads)."""
+        for channel, subs in self._channels.items():
+            self._channels[channel] = [(c, h) for c, h in subs if c is not card]
+
+    def subscribers(self, channel: str) -> list[tuple[Card, Callable[..., Any]]]:
+        """Who takes a channel (cards of the running domain), in the order they subscribed."""
+        return list(self._channels.get(channel, []))
 
     @callback
     def notify(self, what: str, **data: Any) -> None:

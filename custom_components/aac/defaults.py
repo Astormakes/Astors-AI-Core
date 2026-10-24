@@ -36,10 +36,9 @@ async def async_first_start(core: Core) -> None:
 
 async def build_default(domain) -> None:
     """The default setup: Chat → Charter → Time → Model → Chat; Lists, Home and Calendar as the model's tools; HA
-    Assist (AAC as HA's conversation agent) into the same line."""
+    Assist conversations land in the Chat (conversation.py)."""
     add = domain.add_card
-    await add("chat", "Chat", card_id="chat", at={"x": 0, "y": 0})
-    await add("assist", "HA Assist", card_id="assist", at={"x": 0, "y": 140})
+    await add("chat", "Chat", {"ha_agent": True}, card_id="chat", at={"x": 0, "y": 0})
     await add("relay", "Charter", {"position": "start", "text": CHARTER, "replace": True}, card_id="charter", at={"x": 290, "y": 0})
     await add("relay", "Time", {"position": "after", "text": TIME, "replace": False}, card_id="time", at={"x": 580, "y": 0})
     await add("model", "Model", card_id="model", at={"x": 870, "y": 0})
@@ -47,9 +46,9 @@ async def build_default(domain) -> None:
     await add("homeassistant", "Home", {"default": "hidden"}, card_id="home", at={"x": 870, "y": 260})
     await add("calendar", "Calendar", card_id="calendar", at={"x": 870, "y": 380})
     domain.set_wires([
-        {"from": "chat.said", "to": "charter.in"}, {"from": "assist.said", "to": "charter.in"},
+        {"from": "chat.said", "to": "charter.in"},
         {"from": "charter.out", "to": "time.in"}, {"from": "time.out", "to": "model.in"},
-        {"from": "model.out", "to": "chat.answers"}, {"from": "model.out", "to": "assist.answers"},
+        {"from": "model.out", "to": "chat.answers"},
         *[w for tool in ("lists", "home", "calendar") for w in ({"from": "model.out", "to": f"{tool}.in"}, {"from": f"{tool}.out", "to": "model.in"})],
     ])
 

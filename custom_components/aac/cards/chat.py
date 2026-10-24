@@ -41,6 +41,9 @@ class Chat(Card):
     settings_schema = {
         "turns": {"type": "number", "title": "Conversation that goes along (turns)", "default": 0,
                   "help": "0 = the whole chat; otherwise only the last turns."},
+        "ha_agent": {"type": "bool", "title": "Takes Home Assistant's conversations", "default": False,
+                     "help": "When AAC is the agent in an HA Assist pipeline (the HA app, voice devices, automations), each "
+                             "conversation becomes a chat here ('Assist · …'). It takes the core's ha_conversation channel."},
         "new_after": {"type": "number", "title": "A new chat after quiet (minutes)", "default": 20,
                       "help": "For cards that read this chat (a spoken line): after this long without a turn, the "
                               "next one starts a new chat."},
@@ -57,6 +60,16 @@ class Chat(Card):
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
         self._waiting: dict[str, asyncio.Future] = {}
+
+    async def start(self) -> None:
+        if self.settings.get("ha_agent"):  # the core's "ha_conversation" channel: AAC as HA's conversation agent
+            self.core.subscribe("ha_conversation", self, self.converse)
+
+    async def converse(self, text: str, conversation_id: str | None, where: str) -> str:
+        """One turn of an HA conversation: a chat of its own ("Assist · where · time"), a follow-up continues it."""
+        _, answer = await self.send(text, chat_id=conversation_id, create_as=conversation_id,
+                                    title=f"Assist · {where} · {dt_util.now().strftime('%H:%M')}", via="Assist", mic_name=where)
+        return answer
 
     # ------------------------------------------------------------------ chats
     def chats(self) -> list[dict[str, Any]]:
@@ -103,16 +116,18 @@ class Chat(Card):
         await self.save()
         self.core.notify("chat", domain=self.domain.id, card=self.id)
 
-    async def send(self, text: str, chat_id: str | None = None, create_as: str | None = None) -> tuple[str, str]:
-        """You wrote something: added to what the chat holds, the context leaves at `said`; returns (chat id, answer).
-        create_as: the id a new chat gets (HA Assist: its conversation id)."""
-        chat = (self.get(chat_id) if chat_id else None) or self._new(text, create_as)
+    async def send(self, text: str, chat_id: str | None = None, create_as: str | None = None, title: str | None = None,
+                   **data: Any) -> tuple[str, str]:
+        """Something was written: added to what the chat holds, the context leaves at `said`; returns (chat id, answer).
+        create_as / title: the id and title a new chat gets (HA Assist: its conversation id, "Assist · …"); data: on the
+        line (where it came from)."""
+        chat = (self.get(chat_id) if chat_id else None) or self._new(title or text, create_as)
         entries = list(chat["entries"])
         if (turns := int(self.settings.get("turns") or 0)) > 0:  # only the last turns go along
             said = [i for i, e in enumerate(entries) if e["kind"] == "said"]
             entries = entries[said[-turns]:] if len(said) >= turns else entries
         context = Context(entries=entries, origin=self.id, chat_id=chat["id"])
-        line = context.add(self.id, "said", text, ["said"])
+        line = context.add(self.id, "said", text, ["said"], **data)
         await self._hold(chat, [*chat["entries"], line])
         future = asyncio.get_running_loop().create_future()
         self._waiting[context.id] = future

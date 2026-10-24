@@ -1,4 +1,5 @@
-"""AAC as an HA conversation agent: it hands the turn to the running domain's HA Assist card."""
+"""AAC as an HA conversation agent: each turn (the HA app's Assist, voice devices, automations) goes to the card on the
+core's "ha_conversation" channel (a Chat card with its tick: a chat "Assist · where · time"; or a card of your own)."""
 
 from __future__ import annotations
 
@@ -7,7 +8,7 @@ from typing import Literal
 from homeassistant.components import conversation
 from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import intent
+from homeassistant.helpers import device_registry as dr, intent
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
@@ -21,8 +22,7 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddC
 class AACAgent(conversation.ConversationEntity, conversation.AbstractConversationAgent):
     """AAC in HA's conversation list."""
 
-    _attr_has_entity_name = True
-    _attr_name = None
+    _attr_name = "AAC"
     _attr_supported_features = conversation.ConversationEntityFeature.CONTROL
 
     def __init__(self, entry) -> None:
@@ -47,15 +47,16 @@ class AACAgent(conversation.ConversationEntity, conversation.AbstractConversatio
 
     async def _async_handle_message(self, user_input: conversation.ConversationInput,
                                     chat_log: conversation.ChatLog) -> conversation.ConversationResult:
-        """Hand the turn to the HA Assist card of the running domain."""
-        core = self.hass.data[DOMAIN]
-        card = next((c for c in core.domain.cards.values() if c.type == "assist"), None)
+        """Hand the turn to the card on the core's "ha_conversation" channel (a Chat with its tick, or any card)."""
+        takers = self.hass.data[DOMAIN].subscribers("ha_conversation")
         response = intent.IntentResponse(language=user_input.language)
-        if card is None:
+        if not takers:
             response.async_set_error(intent.IntentResponseErrorCode.UNKNOWN,
-                                     "AAC has no HA Assist card in its running domain (add one in Nodes).")
+                                     "No card in AAC takes Home Assistant's conversations (tick it on a Chat card).")
         else:
-            answer = await card.ask(user_input.text, chat_log.conversation_id)
+            device = dr.async_get(self.hass).async_get(user_input.device_id) if user_input.device_id else None
+            where = (device.name_by_user or device.name) if device else "Home Assistant"
+            answer = await takers[0][1](user_input.text, chat_log.conversation_id, where)
             chat_log.async_add_assistant_content_without_tools(
                 conversation.AssistantContent(agent_id=self.entity_id, content=answer))
             response.async_set_speech(answer)
