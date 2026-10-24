@@ -235,4 +235,8 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
 13. **Archive for chats** (owner, as in v1): a chat can be archived; the sidebar shows a trashcan next to the "⋯" menu
     of each chat (deleting there asks nothing), archiving in the "⋯" menu. A model's `chats` still lists archived
     chats (marked), but `read` and `continue` refuse them.
+14. **Switchable models on the PC** (owner, as planned in v1): llama-server's router mode (`--models-dir ~/models
+    --models-max 1` instead of `-m …$MODEL` in `aac-llm`, the unit reads `~/.config/aac/llm.env`) offers every model in
+    ~/models (now Ornith-1.5-35B and Qwen3.6-35B-A3B); AAC adds each as a model on the same address. A switch loads the
+    other one (~15–30 s). Later AAC itself decides what to load (the broker idea from v1).
 - Presets; docs/v2 page 2 details for the remaining cards.
