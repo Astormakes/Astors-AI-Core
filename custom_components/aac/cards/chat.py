@@ -56,7 +56,8 @@ class Chat(Card):
                           "chat": {"type": "string", "help": "A chat's id (from chats)."}}},
         "chats": {"help": "The chats, newest first: id, title, when, the first thing said; with a search only those that "
                           "mention it.", "args": {"search": {"type": "string", "help": "Words to look for (optional)."}}},
-        "continue": {"help": "Go on in an older chat: the next turns (spoken ones too) go into it.",
+        "continue": {"help": "Switch to an older chat: when this turn is done, that chat is the current one and this turn "
+                             "(the asking and the switch) is not kept; the next turns (spoken ones too) go on there.",
                      "args": {"chat": {"type": "string", "help": "Its id (from chats).", "required": True}}},
         "post": {"help": "Write a message into the chat as AAC (a reminder, a finding).",
                  "args": {"text": {"type": "string", "help": "What to write.", "required": True}}},
@@ -68,6 +69,8 @@ class Chat(Card):
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
         self._waiting: dict[str, asyncio.Future] = {}
+        self._switch: dict[str, str] = {}  # turn → the chat it switches to (continue: done when the turn is finished)
+        self._switched: dict[str, str] = {}  # turn → the chat it switched to (send returns that one)
 
     async def start(self) -> None:
         if self.settings.get("ha_agent"):  # the core's "ha_conversation" channel: AAC as HA's conversation agent
@@ -164,7 +167,7 @@ class Chat(Card):
         finally:
             self._waiting.pop(context.id, None)
         if future.done():
-            return chat["id"], future.result()
+            return self._switched.pop(context.id, chat["id"]), future.result()
         await self._hold(chat, [*chat["entries"], {**line, "id": new_id(), "kind": "error", "text": NO_ANSWER, "tags": [self.tag("error")]}])
         return chat["id"], NO_ANSWER
 
@@ -180,7 +183,7 @@ class Chat(Card):
     async def progress(self, context: Context, port: str) -> list[Any] | None:
         """A turn still being worked on: once it has something finished (a sentence said, a tool called), the chat
         shows it; a turn that ends in "nothing" stays out (nothing finished before it)."""
-        if context.origin != self.id or port != "answers":
+        if context.origin != self.id or port != "answers" or context.id in self._switch:  # a switching turn is not kept
             return []
         said = max((i for i, e in enumerate(context.entries) if e["kind"] == "said"), default=-1)
         if any(e["kind"] == "call" or (e["kind"] == "answer" and e.get("state") == "closed") for e in context.entries[said + 1:]):
@@ -195,8 +198,33 @@ class Chat(Card):
             chat = self._new(f"Voice · {name} · {dt_util.now().strftime('%H:%M')}" if name else said.get("text", ""), context.chat_id or context.id)
         await self._hold(chat, context.entries)
 
+    async def _do_switch(self, context: Context, target: str) -> None:
+        """A turn asked to go on in another chat: the chat it came from drops the turn (and goes if nothing is left),
+        the other chat is the current one."""
+        said = next((e["id"] for e in reversed(context.entries) if e["kind"] == "said"), None)
+        here = self.data["chats"].get(context.chat_id or context.id)
+        if here is not None and here["id"] != target:
+            ids = [e["id"] for e in here["entries"]]
+            here["entries"] = here["entries"][:ids.index(said)] if said in ids else here["entries"]
+            if not any(e["kind"] == "said" for e in here["entries"]):
+                self.data["chats"].pop(here["id"])
+        self._switched[context.id] = target
+        while len(self._switched) > 20:
+            self._switched.pop(next(iter(self._switched)))
+        await self._make_current(target)
+
+    async def _make_current(self, chat_id: str) -> None:
+        self.data["chats"][chat_id]["updated"] = dt_util.utcnow().isoformat()  # the newest: the current one
+        await self.save()
+        self.core.notify("chat", domain=self.domain.id, card=self.id, switched=chat_id)
+
     async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         """A context came in: it replaces what the chat holds (a new chat if it belongs to none yet)."""
+        if (target := self._switch.pop(context.id, None)) is not None:
+            await self._do_switch(context, target)
+            if (future := self._waiting.get(context.id)) and not future.done():
+                future.set_result(context.answer)
+            return []
         cut = (context.last("answer") or {}).get("state") == "cut"
         if context.stopped and not cut:  # a stop came through and nothing was busy: nothing to keep
             return []
@@ -221,10 +249,13 @@ class Chat(Card):
             chat = self.data["chats"].get(str(args.get("chat") or ""))
             if chat is None:
                 return {"error": "no such chat (see chats)"}
-            chat["updated"] = dt_util.utcnow().isoformat()  # the newest: the current one for the next turns
-            await self.save()
-            self.core.notify("chat", domain=self.domain.id, card=self.id)
-            return {"continuing": chat["title"]}
+            if context is None:  # not from a turn (a Conditional's action without one): it is the current chat now
+                await self._make_current(chat["id"])
+            else:
+                self._switch[context.id] = chat["id"]  # done when this turn comes back finished
+                while len(self._switch) > 20:  # turns that never came back
+                    self._switch.pop(next(iter(self._switch)))
+            return {"switching_to": chat["title"]}
         if function == "read":
             chat = (self.get(str(args["chat"])) if args.get("chat") else None) or \
                 (self.get(context.chat_id) if context and context.chat_id else (self.chats() and self.get(self.chats()[0]["id"])))

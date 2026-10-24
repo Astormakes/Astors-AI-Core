@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.0.0-alpha.39, live on the owner's HA
+## Current state (2026-10-24) – 2.0.0-alpha.40, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -162,7 +162,9 @@ the owner wires them (no automatic wiring), the message is a document of entries
 - ~~Tools in the loop~~ **done (alpha.39, owner's call):** a Model's (and a Conditional's) tools are all cards with
   functions in its wiring loop (straight back, or through Chat and Relays); each card has the tick "Offers its
   functions to models in its loop" (Relays: off by default); the Model card lists its tools. Chat got `chats`
-  (search), `continue` (an older chat becomes the current one) and `read` of any chat.
+  (search), `continue` and `read` of any chat. `continue` (alpha.40, owner): when the turn is done, the other chat
+  is the current one; the asking turn and the switch are not kept (a chat that was only that turn goes); the panel
+  opens the other chat.
 2. **Cards with a view** (owner: spectrum, waveform, level bars, maybe bigger cards; all in the card's files, and a
    card may become a folder when it has more than one or two files): a card declares a view; the
    panel draws it inside the card (canvas); the card sends small frames (`core.notify("view", card=…, data=…)`) only
