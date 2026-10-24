@@ -3,7 +3,9 @@ Ollama, vLLM, LM Studio and cloud APIs speak the same)."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 import json
 import time
 from typing import Any
@@ -92,18 +94,110 @@ class Client:
         return {"content": content, "tool_calls": [calls[i] for i in sorted(calls)]}
 
 
+MODEL_TAGS = ["text", "tools", "images", "audio in", "audio out", "video", "embeddings", "speech to text", "sound tags",
+              "voice prints"]  # what a model can do; a card offers only the models with the tag it needs
+
+
+def guess_tags(model: dict[str, Any]) -> list[str]:
+    """What a model probably does, from its name (the owner corrects it on the Models page)."""
+    name = f"{model.get('model', '')} {model.get('name', '')}".lower()
+    if any(w in name for w in ("embed", "bge", "e5-", "gte-", "nomic")):
+        return ["embeddings"]
+    if any(w in name for w in ("whisper", "transcri", "parakeet")):
+        return ["speech to text"]
+    if "senses" in name:
+        return ["sound tags", "voice prints"]
+    return ["text", "tools", *(["images"] if any(w in name for w in ("-vl", "vision", "llava", "omni")) else [])]
+
+
 class ModelPool:
-    """Every model AAC may use (core: shared by the domains); a model that does not answer is skipped a minute."""
+    """Every model AAC may use (core: shared by the domains). A model runs a set number of requests at once (its
+    "runs at once", default 1); a card goes through its list of models: a free one takes the context, a busy one
+    queues it when the entry says so, and the first that gets free takes it (it leaves the other queues). A model
+    that does not answer is skipped a minute."""
 
     def __init__(self, hass: HomeAssistant, models: list[dict[str, Any]]) -> None:
         """Initialize with the stored list."""
         self.hass = hass
         self.models = models
         self._down: dict[str, float] = {}
+        self._busy: dict[str, int] = {}  # requests running per model
+        self._queues: dict[str, list[asyncio.Future]] = {}  # contexts waiting per model (one queue, every card and domain)
 
     def get(self, model_id: str) -> dict[str, Any] | None:
         """A model by id."""
         return next((m for m in self.models if m["id"] == model_id), None)
+
+    def tags(self, model_id: str) -> list[str]:
+        """What a model can do (its tags, else a guess from its name)."""
+        model = self.get(model_id)
+        return (model.get("tags") or guess_tags(model)) if model else []
+
+    def entries(self, wanted: list[dict[str, Any]] | None, tag: str) -> list[dict[str, Any]]:
+        """A card's list of models ({model, queue}) that exist and do the job; empty: every model with the tag, queued."""
+        if not wanted:
+            return [{"model": m["id"], "queue": True} for m in self.models if tag in self.tags(m["id"])]
+        return [e for e in wanted if self.get(e.get("model", "")) and tag in self.tags(e["model"])]
+
+    def _free(self, model_id: str) -> bool:
+        model = self.get(model_id) or {}
+        return self._busy.get(model_id, 0) < max(1, int(model.get("parallel") or 1))
+
+    async def _take(self, entries: list[dict[str, Any]]) -> str | None:
+        """Down the list: a free model now, else wait in the queues it may join; None: all busy, none to queue at."""
+        joined: list[tuple[str, asyncio.Future]] = []
+        for e in entries:
+            model_id = e["model"]
+            if not self.usable(model_id):
+                continue
+            if self._free(model_id):
+                self._busy[model_id] = self._busy.get(model_id, 0) + 1
+                self._leave(joined)
+                return model_id
+            if e.get("queue"):
+                waiter = asyncio.get_running_loop().create_future()
+                self._queues.setdefault(model_id, []).append(waiter)
+                joined.append((model_id, waiter))
+        if not joined:
+            return None
+        try:
+            await asyncio.wait([w for _, w in joined], return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            self._leave(joined)
+            raise
+        won = next(m for m, w in joined if w.done() and not w.cancelled())
+        self._leave([(m, w) for m, w in joined if m != won])
+        return won
+
+    def _leave(self, joined: list[tuple[str, asyncio.Future]]) -> None:
+        """Out of these queues; a slot that came at the same time goes to the next in line."""
+        for model_id, waiter in joined:
+            if waiter.done() and not waiter.cancelled():
+                self._release(model_id)
+            else:
+                waiter.cancel()
+                if waiter in self._queues.get(model_id, []):
+                    self._queues[model_id].remove(waiter)
+
+    def _release(self, model_id: str) -> None:
+        """A request ended: the slot goes to the next one waiting, else it is free."""
+        queue = self._queues.get(model_id, [])
+        while queue:
+            waiter = queue.pop(0)
+            if not waiter.done():
+                waiter.set_result(model_id)
+                return
+        self._busy[model_id] = max(0, self._busy.get(model_id, 0) - 1)
+
+    @asynccontextmanager
+    async def slot(self, entries: list[dict[str, Any]]) -> AsyncIterator[str | None]:
+        """A model from the list for one request (None: every model busy and none to queue at, or none usable)."""
+        model_id = await self._take(entries)
+        try:
+            yield model_id
+        finally:
+            if model_id:
+                self._release(model_id)
 
     def usable(self, model_id: str) -> bool:
         """Not marked down."""
@@ -121,4 +215,27 @@ class ModelPool:
     def summary(self) -> list[dict[str, Any]]:
         """For the panel (no keys)."""
         return [{**{k: v for k, v in m.items() if k != "api_key"}, "has_key": bool(m.get("api_key")),
-                 "up": self.usable(m["id"])} for m in self.models]
+                 "up": self.usable(m["id"]), "tags": self.tags(m["id"]), "busy": self._busy.get(m["id"], 0),
+                 "waiting": len(self._queues.get(m["id"], []))} for m in self.models]
+
+
+async def run(pool: ModelPool, entries: list[dict[str, Any]], job: Callable[[dict[str, Any]], Any]) -> tuple[Any, bool]:
+    """One request down a card's list (free model, else queues); a model that does not answer or fails is skipped.
+    Returns (the job's result or None, dropped: every model was busy and none queues)."""
+    tried: set[str] = set()
+    while True:
+        left = [e for e in entries if e["model"] not in tried]
+        async with pool.slot(left) as model_id:
+            if model_id is None:
+                return None, any(pool.usable(e["model"]) for e in left)
+            try:
+                result = await job(pool.get(model_id))
+            except ModelUnreachable:
+                pool.mark_down(model_id)
+            except ModelError as err:
+                LOGGER.info("AAC: model %s failed: %s", model_id, err)
+            else:
+                pool.mark_up(model_id)
+                return result, False
+            tried.add(model_id)
+

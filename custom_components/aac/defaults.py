@@ -42,7 +42,6 @@ async def build_default(domain) -> None:
     await add("assist", "HA Assist", card_id="assist", at={"x": 0, "y": 140})
     await add("relay", "Charter", {"position": "start", "text": CHARTER, "replace": True}, card_id="charter", at={"x": 290, "y": 0})
     await add("relay", "Time", {"position": "after", "text": TIME, "replace": False}, card_id="time", at={"x": 580, "y": 0})
-    await add("pool", "Models", card_id="models", at={"x": 580, "y": -170})
     await add("model", "Model", card_id="model", at={"x": 870, "y": 0})
     await add("lists", "Lists", card_id="lists", at={"x": 870, "y": 140})
     await add("homeassistant", "Home", {"default": "hidden"}, card_id="home", at={"x": 870, "y": 260})
@@ -50,7 +49,6 @@ async def build_default(domain) -> None:
     domain.set_wires([
         {"from": "chat.said", "to": "charter.in"}, {"from": "assist.said", "to": "charter.in"},
         {"from": "charter.out", "to": "time.in"}, {"from": "time.out", "to": "model.in"},
-        {"from": "models.models", "to": "model.pool"},
         {"from": "model.out", "to": "chat.answers"}, {"from": "model.out", "to": "assist.answers"},
         *[w for tool in ("lists", "home", "calendar") for w in ({"from": "model.out", "to": f"{tool}.in"}, {"from": f"{tool}.out", "to": "model.in"})],
     ])

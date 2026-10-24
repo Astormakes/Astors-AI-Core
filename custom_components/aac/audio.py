@@ -41,6 +41,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, LOGGER
+from .models import ModelError, ModelUnreachable, run
 
 if TYPE_CHECKING:
     from .core import Core
@@ -258,16 +259,9 @@ class AudioHub:
         self.core.notify("audio")
 
     # ------------------------------------------------------------------ speech to text
-    async def stt(self, pcm: bytes, language: str | None = None) -> dict[str, Any] | None:
-        """Speech to text through the order in the audio settings; a machine that does not answer is skipped."""
-        for item in list(self.settings.get("stt") or []):
-            if item.startswith("stt."):
-                if (found := await self._stt_entity(item, pcm, language)) is not None:
-                    return found
-                continue
-            model = self.core.pool.get(item)
-            if not model or not self.core.pool.usable(item):
-                continue
+    async def stt(self, pcm: bytes, language: str | None = None, entries: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
+        """Speech to text: a card's models first (free ones, else their queues), then HA's engines from the Audio page."""
+        async def transcribe(model):
             fd = aiohttp.FormData()
             fd.add_field("file", pcm_to_wav(pcm), filename="speech.wav", content_type="audio/wav")
             fd.add_field("model", model["model"])
@@ -281,12 +275,19 @@ class AudioHub:
                         timeout=aiohttp.ClientTimeout(total=60, sock_connect=3)) as resp:
                     resp.raise_for_status()
                     data = await resp.json(content_type=None)
-                self.core.pool.mark_up(item)
-                return {"text": str(data.get("text") or "").strip(), "language": data.get("language"), "engine": item}
-            except (aiohttp.ClientConnectionError, TimeoutError):
-                self.core.pool.mark_down(item)
+            except (aiohttp.ClientConnectionError, TimeoutError) as err:
+                raise ModelUnreachable(str(err)) from err
             except (aiohttp.ClientError, ValueError) as err:
-                LOGGER.warning("AAC audio: speech to text failed: %s", err)
+                raise ModelError(str(err)) from err
+            return {"text": str(data.get("text") or "").strip(), "language": data.get("language"), "engine": model["id"]}
+        if entries is None:
+            entries = self.core.pool.entries(None, "speech to text")
+        found, _ = await run(self.core.pool, entries, transcribe)
+        if found is not None:
+            return found
+        for engine in [e for e in self.settings.get("stt") or [] if e.startswith("stt.")]:
+            if (found := await self._stt_entity(engine, pcm, language)) is not None:
+                return found
         return None
 
     async def _stt_entity(self, entity_id: str, pcm: bytes, language: str | None) -> dict[str, Any] | None:

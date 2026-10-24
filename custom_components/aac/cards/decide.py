@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..const import LOGGER
 from ..context import Context
-from ..models import Client, ModelError
+from ..models import Client, run
 from . import Card, register
-from .pool import pool_ids
 
 LOOK_BACK = 8  # entries the deciding model reads
 
@@ -21,14 +19,14 @@ class Decide(Card):
     title = "Decide"
     category = "Logic"
     help = ("A model reads the newest entries and picks one of the outputs you name (with what each is for); the context "
-            "goes on there. Wire a Pool into its dotted input (a fast small model is enough).")
-    inputs = {"in": "text", "pool": "pool"}
+            "goes on there (a fast small model is enough).")
     tags = {"choice": "what it picked"}
     settings_schema = {
         "outputs": {"type": "outputs", "title": "Outputs", "default": [{"name": "yes", "description": "it applies"},
                                                                        {"name": "no", "description": "anything else"}],
                     "help": "One per line: name: what it is for."},
         "question": {"type": "longtext", "title": "What to decide", "default": "Is the newest line meant for AAC?"},
+        "models": {"type": "modellist", "tag": "text", "title": "Models (in order)", "default": [], "help": "The list is run through from the top: a free model takes it; a busy one queues it if its Queue is ticked, then the next is tried. Empty: every model with the tag, queued."},
     }
 
     def ports(self) -> tuple[dict[str, str], dict[str, str], set[str]]:
@@ -51,18 +49,13 @@ class Decide(Card):
         options = "\n".join(f"- {o['name']}: {o.get('description', '')}" for o in outs)
         prompt = (f"{self.settings.get('question') or ''}\n\nOptions:\n{options}\n\nAnswer with exactly one option name, "
                   "nothing else.")
-        for model_id in pool_ids(self, step):
-            if not (model := self.core.pool.get(model_id)) or not self.core.pool.usable(model_id):
-                continue
-            try:
-                reply = await Client(self.hass, model).chat(
-                    [{"role": "system", "content": prompt}, {"role": "user", "content": "\n".join(lines) or "(empty)"}],
-                    temperature=0, max_tokens=16, chat_template_kwargs={"enable_thinking": False})
-            except ModelError as err:
-                LOGGER.info("AAC: Decide %s: %s failed (%s)", self.id, model_id, err)
-                self.core.pool.mark_down(model_id)
-                continue
-            said = reply["content"].strip().strip(".").lower()
-            return next((o["name"] for o in outs if o["name"].lower() == said), None) or \
-                next((o["name"] for o in outs if o["name"].lower() in said), outs[-1]["name"])
-        return outs[-1]["name"]  # no model: the last output (usually "anything else")
+        async def ask(model):
+            return await Client(self.hass, model).chat(
+                [{"role": "system", "content": prompt}, {"role": "user", "content": "\n".join(lines) or "(empty)"}],
+                temperature=0, max_tokens=16, chat_template_kwargs={"enable_thinking": False})
+        reply, _ = await run(self.core.pool, self.core.pool.entries(self.settings.get("models"), "text"), ask)
+        if reply is None:
+            return outs[-1]["name"]  # no model: the last output (usually "anything else")
+        said = reply["content"].strip().strip(".").lower()
+        return next((o["name"] for o in outs if o["name"].lower() == said), None) or \
+            next((o["name"] for o in outs if o["name"].lower() in said), outs[-1]["name"])

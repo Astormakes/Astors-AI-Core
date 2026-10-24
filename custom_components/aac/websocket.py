@@ -15,7 +15,7 @@ from homeassistant.loader import async_get_integration
 from .cards import CARD_TYPES, CATEGORIES
 from .const import DOMAIN, SIGNAL
 from .core import UNDO_STEPS
-from .models import Client, ModelError
+from .models import MODEL_TAGS, Client, ModelError
 
 COMMANDS: list = []
 
@@ -54,7 +54,7 @@ async def ws_state(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {
         "version": str((await async_get_integration(hass, DOMAIN)).version),
         "domain": core.domain.summary(), "domains": core.data["domains"], "active": core.data["active"],
-        "types": [t.describe() for t in CARD_TYPES.values()], "categories": CATEGORIES, "models": core.pool.summary()})
+        "types": [t.describe() for t in CARD_TYPES.values()], "categories": CATEGORIES, "models": core.pool.summary(), "model_tags": MODEL_TAGS})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "aac/subscribe"})
@@ -263,7 +263,7 @@ async def ws_chat_delete(hass, connection, msg) -> None:
 # ---------------------------------------------------------------------- models (core) and domains
 @command({vol.Required("type"): "aac/models/save", vol.Required("model"): {
     vol.Optional("id"): str, vol.Required("name"): str, vol.Required("base_url"): str, vol.Required("model"): str,
-    vol.Optional("api_key"): vol.Any(str, None)}})
+    vol.Optional("api_key"): vol.Any(str, None), vol.Optional("tags"): [str], vol.Optional("parallel"): vol.All(vol.Coerce(int), vol.Range(1, 64))}})
 async def ws_models_save(hass, connection, msg) -> None:
     """Add or change a model in the pool."""
     core = _core(hass)

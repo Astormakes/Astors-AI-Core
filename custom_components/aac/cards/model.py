@@ -13,7 +13,6 @@ from ..const import LOGGER
 from ..context import Context, entry, is_stop
 from ..models import Client, ModelError, ModelUnreachable
 from . import Card, register, tool_spec
-from .pool import pool_ids
 
 MAX_ROUNDS = 8  # model → tool → model … per context
 KEEP_REQUESTS = 30  # chats whose last request is kept for the panel
@@ -68,17 +67,16 @@ class Model(Card):
     type = "model"
     title = "Model"
     category = "Models"
-    help = ("Reads the whole context and answers. Cards wired from its output and back into it are its tools; "
-            "wire a Pool into its dotted input to choose the models.")
-    inputs = {"in": "text", "pool": "pool"}
+    help = ("Reads the whole context and answers, with the first free model of its list. Cards wired from its output "
+            "and back into it are its tools.")
     outputs = {"out": "text"}
     square = {"out"}
     tags = {"answer": "its answers", "call": "its tool calls", "stop": "it was stopped (its answer is cut off)"}
     ports_help = {"in": "a context arrives: the model reads all of it and answers (a stop while it writes cuts the answer)",
-                  "pool": "dotted: which models to use, in order (a Pool card)",
                   "out": "square: the answer goes back to the card the context started at if that is wired, else to "
                          "every wired card that is not one of its tools. Cards wired from here and back are its tools"}
     settings_schema = {
+        "models": {"type": "modellist", "tag": "text", "title": "Models (in order)", "default": [], "help": "The list is run through from the top: a free model takes the context; a busy one queues it if its Queue is ticked, then the next is tried; the first that gets free takes it. Empty: every model with the tag, queued."},
         "temperature": {"type": "number", "title": "Temperature", "default": 0.7, "help": "0 = always the same, higher = more varied."},
         "max_tokens": {"type": "number", "title": "Longest answer (tokens)", "default": 1024},
         "thinking": {"type": "bool", "title": "Thinking", "default": False, "help": "Let models that can, think first (slower)."},
@@ -93,10 +91,6 @@ class Model(Card):
         self._task: asyncio.Task | None = None
         self._stop: dict[str, Any] | None = None
         self.requests: dict[str, dict[str, Any]] = {}
-
-    def _models(self, step) -> list[dict[str, Any]]:
-        ids = pool_ids(self, step)
-        return [m for i in ids if (m := self.core.pool.get(i))]
 
     async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         if port != "in":
@@ -133,9 +127,10 @@ class Model(Card):
                   "max_tokens": int(self.settings.get("max_tokens") or 1024)}
         if not self.settings.get("thinking"):
             params["chat_template_kwargs"] = {"enable_thinking": False}
-        models = [m for m in self._models(step) if self.core.pool.usable(m["id"])] or self._models(step)
-        if not models:
-            context.add(self.id, "answer", "No model is set up (Settings → Models, and a Pool wired into this card).", ["answer"])
+        pool = self.core.pool
+        entries = pool.entries(self.settings.get("models"), "text")
+        if not entries:
+            context.add(self.id, "answer", "No model for text is set up (Models in the sidebar).", ["answer"])
             return
         answer = context.add(self.id, "answer", "", ["answer"])
         answer["state"] = "open"
@@ -145,21 +140,30 @@ class Model(Card):
             shown = ([{"role": "system", "content": system, "_from": sources}] if system else []) + chat
             payload = [{k: v for k, v in item.items() if not k.startswith("_")} for item in shown]
             self._keep(context, shown, specs, params)
-            reply = None
-            for model in models:
-                try:
-                    reply = await Client(self.hass, model).chat(
-                        payload, specs or None, on_delta=lambda t, a=answer: self._live(a, t, step), **params)
-                    self.core.pool.mark_up(model["id"])
-                    break
-                except ModelUnreachable:
-                    self.core.pool.mark_down(model["id"])
-                except ModelError as err:
-                    LOGGER.warning("AAC: model %s failed: %s", model["id"], err)
-                    answer["text"] = f"The model failed: {err}"
-                    break
+            reply, tried, dropped = None, set(), False
+            while True:  # down the list (a free model, else the queues); one that does not answer is skipped
+                left = [e for e in entries if e["model"] not in tried]
+                async with pool.slot(left) as model_id:
+                    if model_id is None:
+                        dropped = any(pool.usable(e["model"]) for e in left)
+                        break
+                    try:
+                        reply = await Client(self.hass, pool.get(model_id)).chat(
+                            payload, specs or None, on_delta=lambda t, a=answer: self._live(a, t, step), **params)
+                        pool.mark_up(model_id)
+                        break
+                    except ModelUnreachable:
+                        pool.mark_down(model_id)
+                        tried.add(model_id)
+                    except ModelError as err:
+                        LOGGER.warning("AAC: model %s failed: %s", model_id, err)
+                        answer["text"] = f"The model failed: {err}"
+                        break
             if reply is None:
-                answer["text"] = answer["text"] or "No model answered (are the machines on?)."
+                if dropped:
+                    LOGGER.warning("AAC: %s: every model was busy and none queues; the context was dropped", self.id)
+                answer["text"] = answer["text"] or ("Every model was busy (no Queue ticked): this was dropped." if dropped
+                                                    else "No model answered (are the machines on?).")
                 break
             if not reply["tool_calls"]:
                 answer["text"] = reply["content"].strip()

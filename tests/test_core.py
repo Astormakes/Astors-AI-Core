@@ -9,15 +9,14 @@ from .conftest import BASE_URL, model_answers, reply, setup_aac
 
 async def test_first_start_builds_the_default_domain(hass: HomeAssistant, mock_entry):
     """A fresh install: Chat and HA Assist → Charter → Time → Model → back; Lists, Home, Calendar are its tools; an
-    empty Pool means every model, in order."""
+    empty list of models means every model for the job, in order."""
     core = await setup_aac(hass, mock_entry)
     domain = core.domain
-    assert {"chat", "assist", "charter", "time", "models", "model", "lists", "home", "calendar"} <= set(domain.cards)
+    assert {"chat", "assist", "charter", "time", "model", "lists", "home", "calendar"} <= set(domain.cards)
     assert {"from": "model.out", "to": "chat.answers"} in domain.wires and {"from": "calendar.out", "to": "model.in"} in domain.wires
     assert domain.cards["home"].level("light.other") == "hidden"
-    from custom_components.aac.flow import Step
-    model = domain.cards["model"]
-    assert [m["id"] for m in model._models(Step(domain.flow, model, "in", None))] == ["m_big", "m_small"]
+    assert core.pool.entries(domain.cards["model"].settings["models"], "text") == [  # an empty list: every model for text
+        {"model": "m_big", "queue": True}, {"model": "m_small", "queue": True}]
 
 
 async def test_a_chat_round_trip(hass: HomeAssistant, mock_entry, aioclient_mock):

@@ -136,4 +136,4 @@ def tool_spec(card: Card, name: str, spec: dict[str, Any]) -> dict[str, Any]:
 def load_all() -> None:
     """Import the built-in card types (each registers itself)."""
     from . import (  # noqa: F401, PLC0415
-        assist, audio, auto, buffer, builder, calendar, chat, conditional, decide, homeassistant, lists, memory, model, pool, relay, tools)
+        assist, audio, auto, buffer, builder, calendar, chat, conditional, decide, homeassistant, lists, memory, model, relay, tools)

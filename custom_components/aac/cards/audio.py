@@ -107,10 +107,13 @@ class SpeechToText(Card):
                   "out": "round: every wire gets each heard line as a new context (data: mic = the satellite, mic_name, "
                          "language), e.g. into several Conditionals side by side"}
     tags = {"heard": "what was said (data: the satellite)"}
-    settings_schema = {"language": {"type": "text", "title": "Language (empty: detect)", "default": ""}}
+    settings_schema = {"language": {"type": "text", "title": "Language (empty: detect)", "default": ""},
+                       "models": {"type": "modellist", "tag": "speech to text", "title": "Models (in order)", "default": [],
+                                  "help": "The list is run through from the top: a free model takes it; a busy one queues it if its Queue is ticked, then the next is tried. Empty: every model with the tag, queued. HA's engines on the Audio page come after."}}
 
     async def piece(self, port: str, piece: dict[str, Any]) -> None:
-        heard = await self.core.audio.stt(piece["pcm"], self.settings.get("language") or None)
+        entries = self.core.pool.entries(self.settings.get("models"), "speech to text")
+        heard = await self.core.audio.stt(piece["pcm"], self.settings.get("language") or None, entries)
         text = ((heard or {}).get("text") or "").strip()
         if not text:
             return

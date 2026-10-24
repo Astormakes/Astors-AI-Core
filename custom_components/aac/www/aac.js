@@ -6,7 +6,7 @@ const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+
 const tip = (html) => `<span class="qm" tabindex="0">?<span class="tip">${html}</span></span>`;
 const W = 180, HEAD = 34, ROW = 20;
 const COL = W + 110; // one slot column (v1: a column per step in the flow)
-const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", pool: "#03a9f4", piece: "#9c27b0" };
+const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", piece: "#9c27b0" };
 // the Conditional's rules editor: tests and actions with the fields each needs ([field, label, kind])
 const TESTS = { contains: "contains", is: "is exactly", starts: "starts with", ends: "ends with", matches: "matches (regex)",
   has_tag: "has the tag", count_more: "more entries than", empty: "is empty", always: "always", template: "template is true" };
@@ -90,7 +90,7 @@ textarea { resize: vertical; }
 .node.sel rect.box { stroke: var(--primary-color); stroke-width: 2.4; }
 .node text { fill: var(--primary-text-color); font-size: 13px; } .node text.sub { fill: var(--secondary-text-color); font-size: 10px; } .node text.port { font-size: 10px; fill: var(--secondary-text-color); }
 .dot { cursor: crosshair; }
-.wire { fill: none; stroke-width: 2; opacity: .7; } .wire.pool { stroke-dasharray: 4 4; } .wire.sel { stroke-width: 4; opacity: 1; }
+.wire { fill: none; stroke-width: 2; opacity: .7; } .wire.read { stroke-dasharray: 4 4; } .wire.sel { stroke-width: 4; opacity: 1; }
 /* something passed (owner): the wire lights up brighter and pulses thick-thin, fading back to normal over a few seconds */
 .wire.lit { animation: lit 4s ease-out; }
 @keyframes lit { 0% { filter: brightness(1.9) saturate(1.4); stroke-width: 2; opacity: 1; } 10% { stroke-width: 6; } 20% { stroke-width: 2.5; }
@@ -113,6 +113,10 @@ textarea { resize: vertical; }
 .mon.flash { animation: monflash .8s; } @keyframes monflash { from { box-shadow: 0 0 14px var(--primary-color); } }
 .fold { margin-top: 8px; font-size: 12px; } .fold > summary { cursor: pointer; color: var(--secondary-text-color); font-weight: 500; }
 .rule details > summary { cursor: pointer; margin-top: 4px; }
+.legend { position: absolute; right: 8px; bottom: 6px; font-size: 10px; color: var(--secondary-text-color); line-height: 1.5; opacity: .8; }
+.legend div { display: flex; align-items: center; gap: 4px; } .grid .legend svg { flex: none; width: 20px; height: 8px; }
+.warn { color: var(--error-color, #db4437); font-size: 12px; margin: 4px 0; }
+.mlrow select { flex: 1; } .mlrow .check { font-size: 12px; white-space: nowrap; }
 .hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
 @media (max-width: 800px) { nav { position: absolute; z-index: 20; height: 100%; transform: translateX(-100%); } .root.navopen nav { transform: none; }
   .palette, .side { width: 170px; } .grip { display: none; } }
@@ -338,13 +342,13 @@ class AacPanel extends HTMLElement {
   }
 
   _audioView() {
-    const a = this.audio || { settings: {} }, st = a.settings || {}, models = this.state.models;
-    const sttItems = [...models.map((m) => [m.id, m.name]), ...(a.stt_entities || []).map((e) => [e, `HA: ${e}`])];
-    const order = st.stt || [];
+    const a = this.audio || { settings: {} }, st = a.settings || {};
+    const sttItems = (a.stt_entities || []).map((e) => [e, e]);
+    const order = (st.stt || []).filter((e) => e.startsWith("stt."));
     return `${this._header("Audio", tip("The satellites, how AAC hears (speech to text, in this order: the first that answers) and speaks (an HA voice engine). Shared by all domains; the audio cards in Nodes decide what happens with it."))}
       <div class="content"><h3>Satellites</h3><div id="meters">${this._meters()}</div>
       ${(st.known || []).filter((k) => !(a.sources || []).some((s) => s.id === k.id)).map((k) => `<div class="row"><span class="hint">${esc(k.name)} · offline</span><button class="small danger" data-forget="${esc(k.id)}" style="margin-left:auto" title="Remove it from AAC (and its media player in HA)">Forget</button></div>`).join("")}
-      <div class="card"><h3 style="margin-top:0">Speech to text (in order)</h3>
+      <div class="card"><h3 style="margin-top:0">HA's speech to text (in order) ${tip("Home Assistant's engines, tried after the models in a Speech to text card's list (that list is in the card's settings in Nodes).")}</h3>
         ${order.map((id, i) => `<div class="row"><span class="t">${esc((sttItems.find((x) => x[0] === id) || [id, id])[1])}</span>
           <button class="small" data-sttup="${i}">↑</button><button class="small danger" data-sttdel="${i}">✕</button></div>`).join("") || '<p class="hint">None yet.</p>'}
         <div class="row" style="margin-top:8px"><select id="sttadd"><option value="">Add …</option>${sttItems.filter((x) => !order.includes(x[0])).map(([id, l]) => `<option value="${esc(id)}">${esc(l)}</option>`).join("")}</select></div>
@@ -355,17 +359,20 @@ class AacPanel extends HTMLElement {
 
   // ------------------------------------------------------------------ models
   _models() {
-    const rows = this.state.models.map((m) => `<tr><td><b>${esc(m.name)}</b><div class="hint">${esc(m.model)} · ${esc(m.base_url)}</div></td>
-      <td>${m.up ? "✓" : '<span class="hint">skipped (did not answer)</span>'}</td>
+    const rows = this.state.models.map((m) => `<tr><td><b>${esc(m.name)}</b><div class="hint">${esc(m.model)} · ${esc(m.base_url)}</div><div class="hint">${(m.tags || []).map((t) => `<code>${esc(t)}</code>`).join(" ")}</div></td>
+      <td>${m.up ? "✓" : '<span class="hint">skipped (did not answer)</span>'}<div class="hint">${m.busy || 0}/${m.parallel || 1} running${m.waiting ? ` · ${m.waiting} waiting` : ""}</div></td>
       <td><button class="small" data-editmodel="${esc(m.id)}">Edit</button> <button class="small danger" data-delmodel="${esc(m.id)}">Delete</button></td></tr>`).join("");
     const f = this.modelForm || {};
-    return `${this._header("Models", tip("Every model AAC may use, for all domains (the core's model pool). A Pool card picks from these for a Model card. Any OpenAI-compatible server works: llama.cpp, Ollama, vLLM, LM Studio, cloud APIs."))}
+    return `${this._header("Models", tip("Every model AAC may use, for all domains. Each card that uses models has its own list, picked from these by what they can do (their tags). Any OpenAI-compatible server works: llama.cpp, Ollama, vLLM, LM Studio, cloud APIs."))}
       <div class="content"><div class="card models"><table style="width:100%;border-collapse:collapse">${rows || '<tr><td class="hint">No models yet.</td></tr>'}</table></div>
       <div class="card"><h3 style="margin-top:0">${f.id ? "Change model" : "Add a model"}</h3>
         <label class="hint">Server address</label><div class="row"><input id="m_url" value="${esc(f.base_url || "http://192.168.1.x:8080/v1")}"><button class="small" id="probe">Find models</button></div>
         <label class="hint">Model</label>${this.probed ? `<select id="m_model">${this.probed.map((x) => `<option ${x === f.model ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>` : `<input id="m_model" value="${esc(f.model || "")}">`}
         <label class="hint">Name</label><input id="m_name" value="${esc(f.name || "")}">
         <label class="hint">API key (only for servers that need one)</label><input id="m_key" type="password" placeholder="${f.has_key ? "kept" : ""}">
+        <label class="hint">Runs at once ${tip("How many requests the server works on side by side (llama-server: its slots, --parallel). More wait in the queue of cards that allow it.")}</label><input id="m_parallel" type="number" min="1" value="${esc(f.parallel || 1)}" style="width:80px">
+        <label class="hint">What it can do ${tip("Cards use only models with the tag they need: a Model text, Memory embeddings, Speech to text speech to text. None ticked: guessed from the name.")}</label>
+        <div class="row" style="flex-wrap:wrap;gap:4px 12px">${(this.state.model_tags || []).map((t) => `<label class="check" style="font-size:13px"><input type="checkbox" data-mtag="${esc(t)}" ${(f.tags || []).includes(t) ? "checked" : ""}>${esc(t)}</label>`).join("")}</div>
         <div style="margin-top:10px;display:flex;gap:8px"><button class="primary" id="savemodel">Save</button>${f.id ? '<button id="cancelmodel">Cancel</button>' : ""}</div></div></div>`;
   }
 
@@ -384,9 +391,30 @@ class AacPanel extends HTMLElement {
         <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="fit">Fit</button><button class="small" id="export" title="Save this setup as a file (cards, settings, wires, positions; the cards' own data such as lists stays here)">Save file</button><button class="small" id="import" title="Load a setup file into this domain (Undo goes back)">Load file</button><input type="file" id="importfile" accept=".json,application/json" hidden><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
       <div class="nodes"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
         <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
-        <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div></div>
+        <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}</div>
         <div class="grip" data-grip="side" data-target=".side" data-side="left" title="Drag: width (double-click: back to normal)"></div>
         <div class="side">${this._side()}</div></div></div>`;
+  }
+
+  _tri(x, y, mirrored) { // a read input: a triangle pointing into the card
+    const d = mirrored ? -1 : 1;
+    return `${x - 6 * d},${y - 6} ${x + 6 * d},${y} ${x - 6 * d},${y + 6}`;
+  }
+
+  _sub(c) { // under a card's name: its type, and the first model it uses
+    const t = this._type(c.type), f = Object.values(t?.settings || {}).find((x) => x.type === "modellist");
+    if (!f) return t?.title || c.type;
+    const first = (c.settings.models || [])[0]?.model || this.state.models.find((m) => (m.tags || []).includes(f.tag))?.id;
+    return `${t.title} · ${this.state.models.find((m) => m.id === first)?.name || "no model"}`;
+  }
+
+  _legend() { // what the lines mean (lower right of the grid)
+    const line = (color, dash, width = 2) => `<svg width="20" height="8"><line x1="1" y1="4" x2="19" y2="4" stroke="${color}" stroke-width="${width}" ${dash ? `stroke-dasharray="${dash}"` : ""}/></svg>`;
+    return `<div class="legend">
+      <div title="A context arrives and the card runs (the wire swells when one passes)">${line(KIND_COLOR.text)} context</div>
+      <div title="Read when the card runs; starts nothing (a triangle on the card)">${line(KIND_COLOR.text, "3 3")} read</div>
+      <div title="Live sound (thicker when louder)">${line(KIND_COLOR.audio, "", 3)} sound</div>
+      <div title="A piece of speech">${line(KIND_COLOR.piece)} speech</div></div>`;
   }
 
   _fnDocs(fns) {
@@ -428,7 +456,15 @@ class AacPanel extends HTMLElement {
       if (f.type === "select") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}">${f.options.map(([o, l]) => `<option value="${esc(o)}" ${o === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
       if (f.type === "longtext") return `<label>${esc(f.title)}${h}</label><textarea rows="5" data-set="${esc(key)}">${esc(v)}</textarea>`;
       if (f.type === "number") return `<label>${esc(f.title)}${h}</label><input type="number" data-set="${esc(key)}" data-num value="${esc(v)}">`;
-      if (f.type === "models") return `<label>${esc(f.title)}${h}</label>${this.state.models.map((m) => `<label class="check"><input type="checkbox" data-model="${esc(m.id)}" ${(v || []).includes(m.id) ? "checked" : ""}>${esc(m.name)}</label>`).join("") || '<p class="hint">No models yet (Models in the sidebar).</p>'}`;
+      if (f.type === "modellist") {
+        const fit = this.state.models.filter((m) => (m.tags || []).includes(f.tag)), list = v || [];
+        const rows = list.map((e, i) => `<div class="row mlrow" data-ml="${i}"><select data-mlm>${fit.map((m) => `<option value="${esc(m.id)}" ${m.id === e.model ? "selected" : ""}>${esc(m.name)}</option>`).join("")}${fit.some((m) => m.id === e.model) ? "" : `<option value="${esc(e.model)}" selected>${esc(e.model)} (not for ${esc(f.tag)})</option>`}</select>
+          <label class="check" title="When it is busy, wait in its queue (and try the next)"><input type="checkbox" data-mlq ${e.queue ? "checked" : ""}>Queue</label>
+          <button class="small" data-mlup="${i}" ${i ? "" : "disabled"}>↑</button><button class="small danger" data-mldel="${i}">×</button></div>`).join("");
+        const warn = list.length && !list.some((e) => e.queue) ? '<p class="warn">When every model is busy, a context is dropped (tick Queue on one).</p>' : "";
+        return `<label>${esc(f.title)}${h}</label>${rows || `<p class="hint">Empty: every model for ${esc(f.tag)} (${esc(fit.map((m) => m.name).join(", ") || "none yet")}), queued.</p>`}${warn}
+          ${fit.length ? `<button class="small" id="mladd" data-key="${esc(key)}">Add a model</button>` : `<p class="hint">No model for ${esc(f.tag)} yet (Models in the sidebar).</p>`}`;
+      }
       if (f.type === "tag") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">—</option>${d.tags.map((x) => `<option ${x.tag === v ? "selected" : ""}>${esc(x.tag)}</option>`).join("")}</select>`;
       if (f.type === "tags") return `<label>${esc(f.title)}${h}</label>${d.tags.map((x) => `<label class="check"><input type="checkbox" data-tag="${esc(key)}" value="${esc(x.tag)}" ${(v || []).includes(x.tag) ? "checked" : ""}>${esc(x.tag)}</label>`).join("") || '<p class="hint">No tags yet.</p>'}`;
       if (f.type === "list") return `<label>${esc(f.title)}${h}</label><input data-set="${esc(key)}" data-list value="${esc((v || []).join(", "))}">`;
@@ -537,8 +573,8 @@ class AacPanel extends HTMLElement {
       const inX = m ? W : 0, outX = m ? 0 : W, inT = m ? `x="${W - 10}" text-anchor="end"` : 'x="10"', outT = m ? 'x="10"' : `x="${W - 10}" text-anchor="end"`;
       return `<g class="node ${this.sel === c.id ? "sel" : ""}" data-node="${esc(c.id)}" transform="translate(${p.x},${p.y})">
         <rect class="box" width="${W}" height="${height(c)}" rx="8"></rect>
-        <text x="10" y="18">${esc(c.title)}</text><text class="sub" x="10" y="30">${esc(this._type(c.type)?.title || c.type)}</text>
-        ${ins.map(([n, k], i) => `<circle class="dot" data-in="${esc(n)}" data-kind="${k}" cx="${inX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle><text class="port" ${inT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
+        <text x="10" y="18">${esc(c.title)}</text><text class="sub" x="10" y="30">${esc(this._sub(c))}</text>
+        ${ins.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-in="${esc(n)}" data-kind="${k}" points="${this._tri(inX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : `<circle class="dot" data-in="${esc(n)}" data-kind="${k}" cx="${inX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${inT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
         ${outs.map(([n, k], i) => `${c.square.includes(n) ? `<rect class="dot" data-out="${esc(n)}" data-kind="${k}" x="${outX - 6}" y="${HEAD + ROW * i + ROW / 2 - 6}" width="12" height="12" fill="${KIND_COLOR[k] || "#999"}"></rect>`
           : `<circle class="dot" data-out="${esc(n)}" data-kind="${k}" cx="${outX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${outT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
       </g>`;
@@ -546,7 +582,7 @@ class AacPanel extends HTMLElement {
     const routes = this._routes(wires, port);
     this.shadowRoot.querySelector("#wires").innerHTML = wires.map((w) => {
       const path = routes[w.key], sel = this.selWire && `${this.selWire.from}|${this.selWire.to}` === w.key;
-      return `<path class="wire ${w.kind === "pool" || w.read ? "pool" : ""} ${w.loop ? "loop" : ""} ${sel ? "sel" : ""}" data-from="${esc(`${w.a.id}.${w.ap}`)}" data-to="${esc(`${w.b.id}.${w.bp}`)}" d="${path}" stroke="${KIND_COLOR[w.kind] || "#999"}"></path>
+      return `<path class="wire ${w.read ? "read" : ""} ${w.loop ? "loop" : ""} ${sel ? "sel" : ""}" data-from="${esc(`${w.a.id}.${w.ap}`)}" data-to="${esc(`${w.b.id}.${w.bp}`)}" d="${path}" stroke="${KIND_COLOR[w.kind] || "#999"}"></path>
         <path class="hit" data-wire="${esc(w.key)}" d="${path}"><title>${esc(w.a.title)}.${esc(w.ap)} → ${esc(w.b.title)}.${esc(w.bp)} (${esc(w.kind)})</title></path>`;
     }).join("");
     this._view();
@@ -954,14 +990,16 @@ class AacPanel extends HTMLElement {
       catch (e) { alert(`No answer: ${e.message || e}`); }
     });
     $("#savemodel")?.addEventListener("click", async () => {
-      const model = { name: $("#m_name").value || $("#m_model").value, base_url: $("#m_url").value, model: $("#m_model").value, api_key: $("#m_key").value || null };
+      const model = { name: $("#m_name").value || $("#m_model").value, base_url: $("#m_url").value, model: $("#m_model").value, api_key: $("#m_key").value || null,
+        tags: [...this.shadowRoot.querySelectorAll("[data-mtag]")].filter((x) => x.checked).map((x) => x.dataset.mtag),
+        parallel: Math.max(1, Number($("#m_parallel").value) || 1) };
       if (this.modelForm?.id) model.id = this.modelForm.id;
       if (!model.model) { alert("Pick or type a model"); return; }
       await this.ws("aac/models/save", { model }); this.modelForm = null; this.probed = null; await this._load(); this.render();
     });
     $("#cancelmodel")?.addEventListener("click", () => { this.modelForm = null; this.probed = null; this.render(); });
     $$("[data-editmodel]").forEach((el) => el.addEventListener("click", () => { this.modelForm = { ...this.state.models.find((m) => m.id === el.dataset.editmodel) }; this.probed = null; this.render(); }));
-    $$("[data-delmodel]").forEach((el) => el.addEventListener("click", async () => { if (confirm("Delete this model from the pool?")) { await this.ws("aac/models/delete", { model_id: el.dataset.delmodel }); await this._load(); this.render(); } }));
+    $$("[data-delmodel]").forEach((el) => el.addEventListener("click", async () => { if (confirm("Delete this model?")) { await this.ws("aac/models/delete", { model_id: el.dataset.delmodel }); await this._load(); this.render(); } }));
     // nodes
     $$("[data-pick]").forEach((el) => el.addEventListener("click", () => { this.selType = this.selType === el.dataset.pick ? null : el.dataset.pick; this.render(); }));
     $("#undo")?.addEventListener("click", async () => { await this.ws("aac/undo"); await this._load(); this.render(); });
@@ -991,10 +1029,15 @@ class AacPanel extends HTMLElement {
     }));
     $("#title")?.addEventListener("change", async (e) => { await this.ws("aac/card/update", { card: this.sel, title: e.target.value }); await this._load(); this.render(); });
     $$("[data-set]").forEach((el) => el.addEventListener("change", () => this._saveSetting(el)));
-    $$("[data-model]").forEach((el) => el.addEventListener("change", async () => {
-      const ids = [...$$("[data-model]")].filter((x) => x.checked).map((x) => x.dataset.model);
-      await this.ws("aac/card/update", { card: this.sel, settings: { models: ids } }); await this._load(); this.render();
-    }));
+    // a card's list of models: saved whole on any change
+    const mlist = () => [...$$("[data-ml]")].map((row) => ({ model: row.querySelector("[data-mlm]").value, queue: row.querySelector("[data-mlq]").checked }));
+    const mlsave = (list) => saveList("models", list);
+    $$("[data-ml] select, [data-ml] input").forEach((el) => el.addEventListener("change", () => mlsave(mlist())));
+    $("#mladd")?.addEventListener("click", () => { const c = this._card(this.sel), t = this._type(c.type), f = t.settings[$("#mladd").dataset.key];
+      const fit = this.state.models.filter((m) => (m.tags || []).includes(f.tag)), have = mlist().map((e) => e.model);
+      mlsave([...mlist(), { model: (fit.find((m) => !have.includes(m.id)) || fit[0]).id, queue: true }]); });
+    $$("[data-mlup]").forEach((el) => el.addEventListener("click", () => { const l = mlist(), i = Number(el.dataset.mlup); [l[i - 1], l[i]] = [l[i], l[i - 1]]; mlsave(l); }));
+    $$("[data-mldel]").forEach((el) => el.addEventListener("click", () => mlsave(mlist().filter((_, i) => i !== Number(el.dataset.mldel)))));
     $$("[data-tag]").forEach((el) => el.addEventListener("change", async () => {
       const key = el.dataset.tag, tags = [...$$(`[data-tag="${key}"]`)].filter((x) => x.checked).map((x) => x.value);
       await this.ws("aac/card/update", { card: this.sel, settings: { [key]: tags } }); await this._load(); this.render();
@@ -1030,9 +1073,10 @@ class AacPanel extends HTMLElement {
     $("#savefile")?.addEventListener("click", async () => { await this.ws("aac/card/call", { card: this.view.card, function: "write", args: { text: $("#filetext").value } }); });
     // audio
     const audioSet = async (data) => { this.audio = await this.ws("aac/audio/settings", data); this.render(); };
-    $("#sttadd")?.addEventListener("change", (e) => e.target.value && audioSet({ stt: [...(this.audio.settings.stt || []), e.target.value] }));
-    $$("[data-sttdel]").forEach((el) => el.addEventListener("click", () => audioSet({ stt: this.audio.settings.stt.filter((_, i) => i !== Number(el.dataset.sttdel)) })));
-    $$("[data-sttup]").forEach((el) => el.addEventListener("click", () => { const l = [...this.audio.settings.stt], i = Number(el.dataset.sttup); if (i > 0) { [l[i - 1], l[i]] = [l[i], l[i - 1]]; audioSet({ stt: l }); } }));
+    const engines = () => (this.audio.settings.stt || []).filter((e) => e.startsWith("stt."));
+    $("#sttadd")?.addEventListener("change", (e) => e.target.value && audioSet({ stt: [...engines(), e.target.value] }));
+    $$("[data-sttdel]").forEach((el) => el.addEventListener("click", () => audioSet({ stt: engines().filter((_, i) => i !== Number(el.dataset.sttdel)) })));
+    $$("[data-sttup]").forEach((el) => el.addEventListener("click", () => { const l = engines(), i = Number(el.dataset.sttup); if (i > 0) { [l[i - 1], l[i]] = [l[i], l[i - 1]]; audioSet({ stt: l }); } }));
     $("#ttsset")?.addEventListener("change", (e) => audioSet({ tts: e.target.value || null }));
     $$("[data-forget]").forEach((el) => el.addEventListener("click", async () => { if (confirm("Forget this satellite? (It comes back when it connects again.)")) { this.audio = await this.ws("aac/audio/forget", { source: el.dataset.forget }); this.render(); } }));
     $("#volume")?.addEventListener("input", (e) => { $("#volval").textContent = e.target.value; });

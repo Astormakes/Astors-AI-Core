@@ -130,3 +130,40 @@ async def test_chat_commands_take_every_chat_card(hass: HomeAssistant, mock_entr
     await client.send_json_auto_id({"type": "aac/chat/delete", "card": "assist", "chat_id": chat["id"]})
     assert (await client.receive_json())["success"]
     assert assist.chats() == []
+
+
+async def test_models_have_tags_and_memory_uses_embedding_models(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """Models carry tags (guessed from the name until set); Memory uses only embedding models from its list."""
+    from .conftest import BASE_URL
+
+    core = await setup_aac(hass, mock_entry)
+    core.save_model({"id": "m_bge", "name": "bge-m3", "base_url": BASE_URL, "model": "bge-m3"})
+    core.save_model({"id": "m_whisper", "name": "Whisper", "base_url": BASE_URL, "model": "large-v3-turbo", "tags": ["speech to text"]})
+    assert core.pool.tags("m_bge") == ["embeddings"] and core.pool.tags("m_big") == ["text", "tools"]
+    memory = await core.domain.add_card("memory", "Memory", {"models": [{"model": "m_big", "queue": True}, {"model": "m_bge", "queue": True}]})
+    assert core.pool.entries(memory.settings["models"], "embeddings") == [{"model": "m_bge", "queue": True}]  # not for text models
+    aioclient_mock.post(f"{BASE_URL}/embeddings", json={"data": [{"embedding": [1.0, 0.0]}]})
+    await memory.call("remember", {"text": "The drill is on basement shelf 2."})
+    assert memory.data["memories"][0]["vector"] == [1.0, 0.0]
+    assert [m["text"] for m in await memory.find("where is the drill?", 3)] == ["The drill is on basement shelf 2."]
+    assert aioclient_mock.mock_calls[-1][2]["model"] == "bge-m3"
+
+
+async def test_busy_models_queue_or_drop(hass: HomeAssistant, mock_entry):
+    """Down the list: a busy model queues the context when its entry says so and the next free one takes it; the first
+    to get free takes a waiting context (it leaves the other queues); with no queue ticked it is dropped."""
+    import asyncio
+
+    core = await setup_aac(hass, mock_entry)
+    pool = core.pool
+    both = [{"model": "m_big", "queue": True}, {"model": "m_small", "queue": True}]
+    assert await pool._take(both) == "m_big" and await pool._take(both) == "m_small"  # one request each: both busy
+    assert await pool._take([{"model": "m_big", "queue": False}, {"model": "m_small", "queue": False}]) is None  # dropped
+    waiting = asyncio.ensure_future(pool._take(both))
+    await asyncio.sleep(0)
+    assert [m["waiting"] for m in pool.summary()] == [1, 1]  # in both queues
+    pool._release("m_small")  # small is done first: the waiting context gets it
+    assert await waiting == "m_small" and [m["waiting"] for m in pool.summary()] == [0, 0]
+    for model_id in ("m_big", "m_small"):
+        pool._release(model_id)
+    assert [m["busy"] for m in pool.summary()] == [0, 0]

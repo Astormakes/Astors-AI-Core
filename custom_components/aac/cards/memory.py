@@ -1,5 +1,5 @@
 """Memory: its own memories. In the line it adds the ones that match what was said; a model remembers, recalls and
-forgets through its functions. Finds by meaning with an embedding model (from the pool), else by words."""
+forgets through its functions. Finds by meaning with an embedding model from its list, else by words."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ import aiohttp
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
-from ..const import LOGGER
 from ..context import Context, new_id
+from ..models import ModelError, ModelUnreachable, run
 from . import Card, register
 
 WORD = re.compile(r"\w{3,}")
@@ -37,9 +37,12 @@ class Memory(Card):
     page = "memory"
     keeps_data = True
     tags = {"recall": "memories that matched"}
+    ports_help = {"in": "in the line: it adds the memories that match what was said; as a model's tool (wired from the "
+                        "model and back) the model remembers, recalls and forgets",
+                  "out": "the context with the matching memories, or back to the model"}
     settings_schema = {
-        "embedding": {"type": "model", "title": "Embedding model", "default": "",
-                      "help": "From Settings → Models (e.g. bge-m3). Empty: memories are found by their words."},
+        "models": {"type": "modellist", "tag": "embeddings", "title": "Embedding models (in order)", "default": [],
+                   "help": "Find memories by meaning (e.g. bge-m3). The list is run through from the top: a free model takes it; a busy one queues it if its Queue is ticked, then the next is tried. Empty: every model with the tag, queued. No embedding model at all: by their words."},
         "in_line": {"type": "bool", "title": "In the line: add matching memories", "default": True},
         "how_many": {"type": "number", "title": "How many at most", "default": 3},
     }
@@ -60,19 +63,21 @@ class Memory(Card):
         return {"memories": []}
 
     async def _embed(self, text: str) -> list[float] | None:
-        model = self.core.pool.get(self.settings.get("embedding") or "")
-        if not model:
-            return None
-        headers = {"Authorization": f"Bearer {model['api_key']}"} if model.get("api_key") else {}
-        try:
-            async with async_get_clientsession(self.hass).post(
-                    f"{model['base_url'].rstrip('/')}/embeddings", json={"model": model["model"], "input": text}, headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=20)) as resp:
-                resp.raise_for_status()
-                return (await resp.json())["data"][0]["embedding"]
-        except (aiohttp.ClientError, TimeoutError, KeyError, IndexError) as err:
-            LOGGER.info("AAC: embedding failed (%s); finding by words", err)
-            return None
+        """The text's vector from its list of embedding models (none answers: None, found by words)."""
+        async def embed(model):
+            headers = {"Authorization": f"Bearer {model['api_key']}"} if model.get("api_key") else {}
+            try:
+                async with async_get_clientsession(self.hass).post(
+                        f"{model['base_url'].rstrip('/')}/embeddings", json={"model": model["model"], "input": text}, headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=20, sock_connect=3)) as resp:
+                    resp.raise_for_status()
+                    return (await resp.json())["data"][0]["embedding"]
+            except (aiohttp.ClientConnectionError, TimeoutError) as err:
+                raise ModelUnreachable(str(err)) from err
+            except (aiohttp.ClientError, KeyError, IndexError) as err:
+                raise ModelError(str(err)) from err
+        vector, _ = await run(self.core.pool, self.core.pool.entries(self.settings.get("models"), "embeddings"), embed)
+        return vector
 
     async def find(self, query: str, limit: int) -> list[dict[str, Any]]:
         """The best matches."""
