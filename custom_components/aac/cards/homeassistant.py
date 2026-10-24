@@ -10,7 +10,7 @@ from homeassistant.helpers import area_registry as ar, device_registry as dr, en
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 LEVELS = ["hidden", "read", "full"]
 MAX_FOUND = 60
@@ -35,9 +35,9 @@ class HomeAssistantCard(Card):
     help = ("Home Assistant for a model or a Conditional card: find entities, read their state, switch them; only what "
             "its access list allows (hidden, read-only, full).")
     settings_schema = {
-        "default": {"type": "select", "title": "Everything else is", "default": "hidden",
+        "default": {"type": "select", "title": "Everything else is", "default": "hidden", "permission": True,
                     "options": [["hidden", "hidden"], ["read", "read-only"], ["full", "full (may switch)"]]},
-        "levels": {"type": "access", "title": "Access per entity", "default": {},
+        "levels": {"type": "access", "title": "Access per entity", "default": {}, "permission": True,
                    "help": "hidden: not there for AAC · read-only: it sees the state · full: it may switch it."},
     }
     functions = {

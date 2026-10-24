@@ -41,6 +41,10 @@ h4 button { margin-left: auto; }
 nav .bottom { border-top: 1px solid var(--divider-color); padding: 6px 0; }
 main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 #cardhost, #cardhost > * { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.dom { position: relative; } .dbtn { width: 100%; text-align: left; font-weight: 600; padding: 6px 10px; }
+.dmenu { position: absolute; left: 0; right: 0; top: 100%; z-index: 50; background: var(--card-background-color); border: 1px solid var(--divider-color);
+  border-radius: 8px; padding: 4px 0; box-shadow: 0 4px 16px rgba(0,0,0,.25); } .dmenu hr { border: 0; border-top: 1px solid var(--divider-color); margin: 4px 0; }
+.dmenu .item.danger { color: var(--error-color, #db4437); }
 h4.fold { cursor: pointer; user-select: none; border-radius: 6px; } h4.fold:hover { background: rgba(127,127,127,.1); }
 h4.fold.lit { color: var(--primary-color); background: rgba(3,169,244,.12); } h4.fold .arrow { display: inline-block; width: 12px; }
 header { display: flex; align-items: center; gap: 8px; padding: 0 16px; min-height: 56px; border-bottom: 1px solid var(--divider-color); flex-wrap: wrap; }
@@ -89,7 +93,7 @@ textarea { resize: vertical; }
 .grid svg { width: 100%; height: 100%; display: block; user-select: none; }
 .side { width: var(--side-w, 300px); flex: none; border-left: 1px solid var(--divider-color); overflow-y: auto; padding: 12px; }
 .side label { display: block; font-size: 12px; color: var(--secondary-text-color); margin: 10px 0 3px; }
-.side .check { display: flex; gap: 6px; align-items: center; color: var(--primary-text-color); font-size: 14px; }
+.side .check, .content .check { display: flex; gap: 6px; align-items: center; color: var(--primary-text-color); font-size: 14px; } .content .check input { width: auto; flex: 0 0 auto; }
 .side .check input { width: auto; }
 .fn { font-size: 12px; margin: 6px 0; } .fn code { font-size: 12px; }
 .node rect.box { fill: var(--card-background-color); stroke: var(--divider-color); stroke-width: 1.2; }
@@ -151,12 +155,16 @@ class AacPanel extends HTMLElement {
     this.shadowRoot.addEventListener("focusin", place);
     this.shadowRoot.addEventListener("mouseout", hide);
     this.shadowRoot.addEventListener("focusout", hide);
+    this.shadowRoot.addEventListener("change", (e) => { if (e.target.id === "importfile") { this._loadFile(e.target.files[0]); e.target.value = ""; } });
     // one listener for what is drawn by others or redrawn often: the sidebar, a card page's ☰, the Audio page's meters
     this.shadowRoot.addEventListener("click", (e) => {
-      const t = e.target.closest?.("[data-say],[data-fold],[data-navadd],[data-go],#navbtn");
+      const t = e.target.closest?.("[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],#dombtn,#navbtn");
       if (!t) return;
       const d = t.dataset;
       if (d.say) this.ws("aac/audio/say", { source: d.say, text: "This is how I sound." });
+      else if (t.id === "dombtn") { this.domOpen = !this.domOpen; this.render(); }
+      else if (d.domact) this._domainAction(d.domact);
+      else if (d.domgo) { this.domOpen = false; this.ws("aac/domain/switch", { domain_id: d.domgo }).then(async () => { this._els = {}; await this._load(); this.go("card", null, null); }); }
       else if (d.navadd) { e.stopPropagation(); const el = this._els[d.navadd]; if (el?.add) { this.go("card", d.navadd, this.view.card === d.navadd ? this.view.id : null).then(() => el.add()); } else this.go("card", d.navadd, null); }
       else if (d.fold) { e.stopPropagation(); const f = this._folds(); f[d.fold] = !f[d.fold]; this._setFolds(f); const n = this.shadowRoot.querySelector("nav"); if (n) n.outerHTML = this._nav(); }
       else if (d.go) this.go(d.go, d.card || null, d.id || null);
@@ -272,7 +280,7 @@ class AacPanel extends HTMLElement {
     if (!this.state) { this.shadowRoot.innerHTML = `<style>${STYLE}</style><p style="padding:20px">Loading…</p>`; return; }
     const v = this.view;
     const main = v.kind === "nodes" ? this._nodes() : v.kind === "models" ? this._models() : v.kind === "audio" ? this._audioView()
-      : v.kind === "appearance" ? this._appearanceView() : v.card ? '<div id="cardhost"></div>'
+      : v.kind === "appearance" ? this._appearanceView() : v.kind === "permissions" ? this._permissionsView() : v.card ? '<div id="cardhost"></div>'
       : `${this._header("AAC")}<div class="content"><p>No card with a page in this domain (a Chat, Lists …). Add one in Nodes.</p></div>`;
     const skin = this.look?.skins.find((k) => k.id && k.id === this.look.skin);
     this.shadowRoot.innerHTML = `<style>${STYLE}</style>${skin ? `<link rel="stylesheet" href="${esc(skin.url)}?v=${esc(this.state.version)}">` : ""}<div class="root ${this.navOpen ? "navopen" : ""}">${this._nav()}<div class="scrim" id="scrim"></div><div class="grip" data-grip="nav" data-target="nav" title="Drag: width of the sidebar (double-click: back to normal)"></div><main>${main}</main></div>`;
@@ -280,6 +288,64 @@ class AacPanel extends HTMLElement {
     if (v.kind === "nodes") this._drawGrid();
     const el = v.kind === "card" && this._els[v.card];
     if (el) this.shadowRoot.querySelector("#cardhost")?.replaceChildren(el); // a redraw keeps the page as it is
+  }
+
+  _domainMenu() { // the domain: switch, new, copy, rename, permissions, save and load a file, delete
+    const s = this.state, name = esc(s.domain.name);
+    const item = (act, label, cls = "") => `<div class="item ${cls}" data-domact="${act}">${label}</div>`;
+    const menu = !this.domOpen ? "" : `<div class="dmenu">
+      ${s.domains.map((d) => `<div class="item ${d.id === s.active ? "on" : ""}" data-domgo="${esc(d.id)}">${esc(d.name)}</div>`).join("")}
+      <hr>${item("new", "New domain…")}${item("copy", `Copy of "${name}"…`)}${item("rename", `Rename "${name}"…`)}
+      ${item("permissions", `Permissions of "${name}"…`)}${item("save", `Save "${name}" to a file`)}${item("load", `Load a file into "${name}"…`)}
+      ${s.domains.length > 1 ? item("delete", `Delete "${name}"…`, "danger") : ""}</div>`;
+    return `<button class="dbtn" id="dombtn" title="Domain: a whole AAC setup (cards, wires, their data); one runs at a time">${name} ▾</button>${menu}
+      <input type="file" id="importfile" accept=".json,application/json" hidden>`;
+  }
+
+  async _domainAction(act) {
+    const s = this.state, name = s.domain.name;
+    this.domOpen = false;
+    try {
+      if (act === "new" || act === "copy") {
+        const n = prompt(act === "new" ? "Name of the new domain (it starts empty)" : "Name of the copy (cards, wires and their data)", act === "copy" ? `${name} (copy)` : "");
+        if (!n?.trim()) return this.render();
+        const { id } = await this.ws(act === "new" ? "aac/domain/create" : "aac/domain/clone", { name: n.trim() });
+        await this.ws("aac/domain/switch", { domain_id: id });
+        this._els = {}; await this._load(); return this.go(act === "new" ? "nodes" : "card", null, null);
+      }
+      if (act === "rename") {
+        const n = prompt("New name", name);
+        if (n?.trim() && n.trim() !== name) await this.ws("aac/domain/rename", { domain_id: s.domain.id, name: n.trim() });
+        await this._load(); return this.render();
+      }
+      if (act === "delete") {
+        if (!confirm(`Delete "${name}" with all its cards and their data (chats, lists, memories)? This cannot be undone.`)) return this.render();
+        await this.ws("aac/domain/delete", { domain_id: s.domain.id });
+        this._els = {}; await this._load(); return this.go("card", null, null);
+      }
+      if (act === "permissions") return this.go("permissions");
+      if (act === "save") {
+        const { setup } = await this.ws("aac/setup/export"), a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([JSON.stringify(setup, null, 1)], { type: "application/json" }));
+        a.download = `aac-${setup.domain.replace(/\W+/g, "-").toLowerCase()}-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        return this.render();
+      }
+      if (act === "load") { this.render(); this.shadowRoot.querySelector("#importfile")?.click(); }
+    } catch (e) { alert(e.message || e); this.render(); }
+  }
+
+  async _loadFile(file) {
+    if (!file || !confirm(`Load "${file.name}" into this domain? Its cards and wires replace the current ones (Undo goes back).`)) return;
+    try { await this.ws("aac/setup/import", { setup: JSON.parse(await file.text()) }); } catch (err) { alert(`Could not load it: ${err.message || err}`); return; }
+    this.sel = null; this._els = {}; await this._load(); this.go("nodes");
+  }
+
+  _permissionsView() { // every setting a card marks as a permission, all cards of this domain on one page
+    const cards = this.state.domain.cards.map((c) => [c, Object.entries(this._type(c.type)?.settings || {}).filter(([, f]) => f.permission)]).filter(([, fs]) => fs.length);
+    return `${this._header(`Permissions of "${this.state.domain.name}"`, tip("What this domain's cards may do, gathered from their settings (the same fields as in Nodes): which entities AAC may see or switch, what the Node editor may change, which cards models may use as tools."))}
+      <div class="content">${cards.map(([c, fs]) => `<div class="card"><h3 style="margin-top:0">${esc(c.title)} <span class="hint">${esc(this._type(c.type)?.title || c.type)}</span></h3>${fs.map((e) => this._field(c, e)).join("")}</div>`).join("") || '<p class="hint">No card here has permissions.</p>'}
+      <p class="hint">Fields save when you leave them.</p></div>`;
   }
 
   _foldMode(key) { return this.look?.folds?.[key] || (key === "chat" ? "arrow" : "auto"); } // how a sidebar group folds
@@ -303,8 +369,7 @@ class AacPanel extends HTMLElement {
     const settings = group("settings", "Settings", ["audio", "models", "appearance"].includes(v.kind),
       `${item("Audio", "audio")}${item("Models", "models")}${item("Appearance", "appearance")}`, "", `data-go="${["audio", "models", "appearance"].includes(v.kind) ? v.kind : "audio"}"`);
     return `<nav><div class="top"><button class="menu" id="habtn" title="Home Assistant's menu">⌂</button><b>AAC</b><span>v${esc(s.version)}</span></div>
-      <div class="dom"><select id="domain">${s.domains.map((d) => `<option value="${esc(d.id)}" ${d.id === s.active ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select>
-        <button class="small" id="clone" title="A copy of this setup to try things out">Clone</button></div>
+      <div class="dom">${this._domainMenu()}</div>
       <div class="scroll">${groups}${single ? `<h4>MORE</h4>${single}` : ""}</div>
       <div class="bottom">${item("Nodes", "nodes")}${settings}</div></nav>`;
   }
@@ -419,7 +484,7 @@ class AacPanel extends HTMLElement {
       : '<span class="hint">Pick a card type above, then click in the grid to place it.</span>';
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
     return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it.")}
-        <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="fit">Fit</button><button class="small" id="export" title="Save this setup as a file (cards, settings, wires, positions; the cards' own data such as lists stays here)">Save file</button><button class="small" id="import" title="Load a setup file into this domain (Undo goes back)">Load file</button><input type="file" id="importfile" accept=".json,application/json" hidden><button class="small ${this.showValues ? "on" : ""}" id="values" title="The value pool: what templates can use now ({{ card.value }}), live">Values</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
+        <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="fit">Fit</button><button class="small ${this.showValues ? "on" : ""}" id="values" title="The value pool: what templates can use now ({{ card.value }}), live">Values</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
       <div class="nodes"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
         <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
         <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}</div>
@@ -493,6 +558,63 @@ class AacPanel extends HTMLElement {
     if (this.showValues) this.render();
   }
 
+  _field(c, entry) { // one setting of a card, as its schema says; its inputs say which card (a page may show several)
+    return this._fieldHtml(c, entry).replace(/data-set="/g, `data-card="${esc(c.id)}" data-set="`);
+  }
+
+  _fieldHtml(c, [key, f]) {
+    const d = this.state.domain, t = this._type(c.type);
+    const v = c.settings[key] ?? f.default, h = f.help ? tip(esc(f.help)) : "";
+    if (f.type === "bool") return `<label class="check"><input type="checkbox" data-set="${esc(key)}" ${v ? "checked" : ""}>${esc(f.title)}${h}</label>`;
+    if (f.type === "select") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}">${f.options.map(([o, l]) => `<option value="${esc(o)}" ${o === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+    if (f.type === "longtext") return `<label>${esc(f.title)}${h}</label><textarea rows="5" data-set="${esc(key)}">${esc(v)}</textarea>`;
+    if (f.type === "number") return `<label>${esc(f.title)}${h}</label><input type="number" data-set="${esc(key)}" data-num value="${esc(v)}">`;
+    if (f.type === "modellist") {
+      const fit = this.state.models.filter((m) => (m.tags || []).includes(f.tag)), list = v || [];
+      const rows = list.map((e, i) => `<div class="row mlrow" data-ml="${i}"><select data-mlm>${fit.map((m) => `<option value="${esc(m.id)}" ${m.id === e.model ? "selected" : ""}>${esc(m.name)}</option>`).join("")}${fit.some((m) => m.id === e.model) ? "" : `<option value="${esc(e.model)}" selected>${esc(e.model)} (not for ${esc(f.tag)})</option>`}</select>
+        <label class="check" title="When it is busy, wait in its queue (and try the next)"><input type="checkbox" data-mlq ${e.queue ? "checked" : ""}>Queue</label>
+        <button class="small" data-mlup="${i}" ${i ? "" : "disabled"}>↑</button><button class="small danger" data-mldel="${i}">×</button></div>`).join("");
+      const warn = list.length && !list.some((e) => e.queue) ? '<p class="warn">When every model is busy, a context is dropped (tick Queue on one).</p>' : "";
+      return `<label>${esc(f.title)}${h}</label>${rows || `<p class="hint">Empty: every model for ${esc(f.tag)} (${esc(fit.map((m) => m.name).join(", ") || "none yet")}), queued.</p>`}${warn}
+        ${fit.length ? `<button class="small" id="mladd" data-key="${esc(key)}">Add a model</button>` : `<p class="hint">No model for ${esc(f.tag)} yet (Models in the sidebar).</p>`}`;
+    }
+    if (f.type === "tag") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">—</option>${d.tags.map((x) => `<option ${x.tag === v ? "selected" : ""}>${esc(x.tag)}</option>`).join("")}</select>`;
+    if (f.type === "tags") return `<label>${esc(f.title)}${h}</label>${d.tags.map((x) => `<label class="check"><input type="checkbox" data-tag="${esc(key)}" value="${esc(x.tag)}" ${(v || []).includes(x.tag) ? "checked" : ""}>${esc(x.tag)}</label>`).join("") || '<p class="hint">No tags yet.</p>'}`;
+    if (f.type === "list") return `<label>${esc(f.title)}${h}</label><input data-set="${esc(key)}" data-list value="${esc((v || []).join(", "))}">`;
+    if (f.type === "access") return `<label>${esc(f.title)}${h}</label><textarea rows="6" data-set="${esc(key)}" data-access placeholder="switch.lamp: full">${esc(Object.entries(v || {}).map(([e, l]) => `${e}: ${l}`).join("\n"))}</textarea>`;
+    if (f.type === "model") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">—</option>${this.state.models.map((m) => `<option value="${esc(m.id)}" ${m.id === v ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>`;
+    if (f.type === "tts_engine") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">the Audio page's default${this.audio?.settings?.tts ? ` (${esc(this.audio.settings.tts)})` : ""}</option>${(this.audio?.tts_entities || []).map((e) => `<option ${e === v ? "selected" : ""}>${esc(e)}</option>`).join("")}</select>`;
+    if (f.type === "voices") { // a voice per home language, from the card's engine
+      const engine = c.settings.engine || this.audio?.settings?.tts, got = engine && this._vc?.[engine];
+      if (engine && !got) this._voicesOf(engine);
+      const rows = !engine ? '<p class="hint">Pick a voice engine first.</p>' : !got || got.loading ? '<p class="hint">Loading voices…</p>' : got.error ? `<p class="hint">${esc(got.error)}</p>`
+        : (this.audio?.languages || []).map(({ code, name }) => `<div class="row"><span style="flex:0 0 90px">${esc(name)}</span>${got[code]?.locale
+          ? `<select data-voicefor="${esc(code)}" data-key="${esc(key)}"><option value="">the engine's default</option>${got[code].voices.map((x) => `<option value="${esc(x.voice_id)}" data-locale="${esc(x.locale)}" ${x.voice_id === (v || {})[code]?.voice ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select>`
+          : '<span class="hint">the engine has no voice for it</span>'}</div>`).join("");
+      return `<label>${esc(f.title)}${h}</label>${rows}`;
+    }
+    if (f.type === "player") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">the satellite the line came from</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)} (satellite)</option>`).join("")}${Object.keys(this._hass.states).filter((e) => e.startsWith("media_player.") && !e.startsWith("media_player.aac_satellite_")).sort().map((e) => `<option value="${esc(e)}" ${e === v ? "selected" : ""}>${esc(this._hass.states[e].attributes.friendly_name || e)}</option>`).join("")}</select>`;
+    if (f.type === "source") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="${key === "source" && c.type === "microphone" ? "any" : ""}">${c.type === "microphone" ? "any satellite" : "where the line came from"}</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)}</option>`).join("")}</select>`;
+    if (f.type === "outputs") return `<label>${esc(f.title)}${h}</label><textarea rows="4" data-set="${esc(key)}" data-outputs>${esc((v || []).map((o) => `${o.name}: ${o.description || ""}`).join("\n"))}</textarea>`;
+    if (f.type === "schedule") return `<label>${esc(f.title)}${h}</label>${(v || []).map((e, i) => `<div class="card" style="padding:8px" data-entry="${i}">
+        <div class="row"><input data-e="name" value="${esc(e.name)}" placeholder="Name"><input data-e="at" value="${esc(e.at)}" style="width:80px" placeholder="HH:MM"></div>
+        <div class="row" style="margin:4px 0;flex-wrap:wrap">${DAYS.map((d, n) => `<label class="check" style="font-size:12px"><input type="checkbox" data-day="${n}" ${(e.weekdays || []).includes(n) ? "checked" : ""}>${d}</label>`).join("")}</div>
+        <textarea rows="2" data-e="text" placeholder="What to do">${esc(e.text)}</textarea>
+        <div class="row"><label class="check"><input type="checkbox" data-e="enabled" ${e.enabled !== false ? "checked" : ""}>on</label><button class="small danger" data-delentry="${i}" style="margin-left:auto">Remove</button></div></div>`).join("")}
+      <button class="small" id="addentry">Add an entry</button>`;
+    if (f.type === "watches") return `<label>${esc(f.title)}${h}</label>${(v || []).map((w, i) => `<div class="card" style="padding:8px" data-watch="${i}">
+        <div class="row"><input data-w="name" value="${esc(w.name)}" placeholder="Name"><input data-w="cooldown" value="${esc(w.cooldown ?? 300)}" style="width:70px" title="Cooldown (s)"></div>
+        <input data-w="entity_id" value="${esc(w.entity_id)}" placeholder="entity, e.g. binary_sensor.door" style="margin-top:4px">
+        <input data-w="to" value="${esc(w.to || "")}" placeholder="state that counts (empty: any change)" style="margin-top:4px">
+        <textarea rows="2" data-w="text" placeholder="What to do" style="margin-top:4px">${esc(w.text)}</textarea>
+        <button class="small danger" data-delwatch="${i}">Remove</button></div>`).join("")}
+      <button class="small" id="addwatch">Add a watch</button>`;
+    if (f.type === "rules") return `<label>${esc(f.title)}${h}</label>${this._rulesEditor(c, v || [])}
+      <details style="margin-top:8px"><summary class="hint">As JSON</summary><label>${tip(`One rule: {"name": "for me", "select": {"by": "kind" | "tag" | "card" | "any", "value": "said", "which": "newest" | "all"}, "test": "contains" (is, starts, ends, matches, has_tag, count_more, empty, always), "value": "computer", "actions": [{"do": "replace", "a": "x", "b": "y"}, {"do": "tag", "a": "addressed"}, {"do": "call", "card": "lists", "function": "add_items", "args": {"list": "Shopping", "items": ["{text}"]}}, {"do": "output", "a": "yes"}, {"do": "stop"}], "go_on": false}`)}</label>
+      <textarea rows="10" data-set="${esc(key)}" data-json style="font-family:monospace;font-size:12px">${esc(JSON.stringify(v || [], null, 1))}</textarea></details>`;
+    return `<label>${esc(f.title)}${h}</label><input data-set="${esc(key)}" value="${esc(v)}">`;
+  }
+
   _side() {
     const d = this.state.domain;
     if (this.showValues) return this._valuesSide();
@@ -511,57 +633,7 @@ class AacPanel extends HTMLElement {
         ${Object.entries(groups).map(([card, tags]) => `<label>${esc(card)}</label>${tags.map((t) => `<div class="hint" style="font-size:12px"><code>${esc(t.tag)}</code> ${esc(t.what)}${card === "You" ? ` <button class="small" data-deltag="${esc(t.tag)}" title="Remove">×</button>` : ""}</div>`).join("")}`).join("")}`;
     }
     const t = this._type(c.type);
-    const field = ([key, f]) => {
-      const v = c.settings[key] ?? f.default, h = f.help ? tip(esc(f.help)) : "";
-      if (f.type === "bool") return `<label class="check"><input type="checkbox" data-set="${esc(key)}" ${v ? "checked" : ""}>${esc(f.title)}${h}</label>`;
-      if (f.type === "select") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}">${f.options.map(([o, l]) => `<option value="${esc(o)}" ${o === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
-      if (f.type === "longtext") return `<label>${esc(f.title)}${h}</label><textarea rows="5" data-set="${esc(key)}">${esc(v)}</textarea>`;
-      if (f.type === "number") return `<label>${esc(f.title)}${h}</label><input type="number" data-set="${esc(key)}" data-num value="${esc(v)}">`;
-      if (f.type === "modellist") {
-        const fit = this.state.models.filter((m) => (m.tags || []).includes(f.tag)), list = v || [];
-        const rows = list.map((e, i) => `<div class="row mlrow" data-ml="${i}"><select data-mlm>${fit.map((m) => `<option value="${esc(m.id)}" ${m.id === e.model ? "selected" : ""}>${esc(m.name)}</option>`).join("")}${fit.some((m) => m.id === e.model) ? "" : `<option value="${esc(e.model)}" selected>${esc(e.model)} (not for ${esc(f.tag)})</option>`}</select>
-          <label class="check" title="When it is busy, wait in its queue (and try the next)"><input type="checkbox" data-mlq ${e.queue ? "checked" : ""}>Queue</label>
-          <button class="small" data-mlup="${i}" ${i ? "" : "disabled"}>↑</button><button class="small danger" data-mldel="${i}">×</button></div>`).join("");
-        const warn = list.length && !list.some((e) => e.queue) ? '<p class="warn">When every model is busy, a context is dropped (tick Queue on one).</p>' : "";
-        return `<label>${esc(f.title)}${h}</label>${rows || `<p class="hint">Empty: every model for ${esc(f.tag)} (${esc(fit.map((m) => m.name).join(", ") || "none yet")}), queued.</p>`}${warn}
-          ${fit.length ? `<button class="small" id="mladd" data-key="${esc(key)}">Add a model</button>` : `<p class="hint">No model for ${esc(f.tag)} yet (Models in the sidebar).</p>`}`;
-      }
-      if (f.type === "tag") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">—</option>${d.tags.map((x) => `<option ${x.tag === v ? "selected" : ""}>${esc(x.tag)}</option>`).join("")}</select>`;
-      if (f.type === "tags") return `<label>${esc(f.title)}${h}</label>${d.tags.map((x) => `<label class="check"><input type="checkbox" data-tag="${esc(key)}" value="${esc(x.tag)}" ${(v || []).includes(x.tag) ? "checked" : ""}>${esc(x.tag)}</label>`).join("") || '<p class="hint">No tags yet.</p>'}`;
-      if (f.type === "list") return `<label>${esc(f.title)}${h}</label><input data-set="${esc(key)}" data-list value="${esc((v || []).join(", "))}">`;
-      if (f.type === "access") return `<label>${esc(f.title)}${h}</label><textarea rows="6" data-set="${esc(key)}" data-access placeholder="switch.lamp: full">${esc(Object.entries(v || {}).map(([e, l]) => `${e}: ${l}`).join("\n"))}</textarea>`;
-      if (f.type === "model") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">—</option>${this.state.models.map((m) => `<option value="${esc(m.id)}" ${m.id === v ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>`;
-      if (f.type === "tts_engine") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">the Audio page's default${this.audio?.settings?.tts ? ` (${esc(this.audio.settings.tts)})` : ""}</option>${(this.audio?.tts_entities || []).map((e) => `<option ${e === v ? "selected" : ""}>${esc(e)}</option>`).join("")}</select>`;
-      if (f.type === "voices") { // a voice per home language, from the card's engine
-        const engine = c.settings.engine || this.audio?.settings?.tts, got = engine && this._vc?.[engine];
-        if (engine && !got) this._voicesOf(engine);
-        const rows = !engine ? '<p class="hint">Pick a voice engine first.</p>' : !got || got.loading ? '<p class="hint">Loading voices…</p>' : got.error ? `<p class="hint">${esc(got.error)}</p>`
-          : (this.audio?.languages || []).map(({ code, name }) => `<div class="row"><span style="flex:0 0 90px">${esc(name)}</span>${got[code]?.locale
-            ? `<select data-voicefor="${esc(code)}" data-key="${esc(key)}"><option value="">the engine's default</option>${got[code].voices.map((x) => `<option value="${esc(x.voice_id)}" data-locale="${esc(x.locale)}" ${x.voice_id === (v || {})[code]?.voice ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select>`
-            : '<span class="hint">the engine has no voice for it</span>'}</div>`).join("");
-        return `<label>${esc(f.title)}${h}</label>${rows}`;
-      }
-      if (f.type === "player") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">the satellite the line came from</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)} (satellite)</option>`).join("")}${Object.keys(this._hass.states).filter((e) => e.startsWith("media_player.") && !e.startsWith("media_player.aac_satellite_")).sort().map((e) => `<option value="${esc(e)}" ${e === v ? "selected" : ""}>${esc(this._hass.states[e].attributes.friendly_name || e)}</option>`).join("")}</select>`;
-      if (f.type === "source") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="${key === "source" && c.type === "microphone" ? "any" : ""}">${c.type === "microphone" ? "any satellite" : "where the line came from"}</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)}</option>`).join("")}</select>`;
-      if (f.type === "outputs") return `<label>${esc(f.title)}${h}</label><textarea rows="4" data-set="${esc(key)}" data-outputs>${esc((v || []).map((o) => `${o.name}: ${o.description || ""}`).join("\n"))}</textarea>`;
-      if (f.type === "schedule") return `<label>${esc(f.title)}${h}</label>${(v || []).map((e, i) => `<div class="card" style="padding:8px" data-entry="${i}">
-          <div class="row"><input data-e="name" value="${esc(e.name)}" placeholder="Name"><input data-e="at" value="${esc(e.at)}" style="width:80px" placeholder="HH:MM"></div>
-          <div class="row" style="margin:4px 0;flex-wrap:wrap">${DAYS.map((d, n) => `<label class="check" style="font-size:12px"><input type="checkbox" data-day="${n}" ${(e.weekdays || []).includes(n) ? "checked" : ""}>${d}</label>`).join("")}</div>
-          <textarea rows="2" data-e="text" placeholder="What to do">${esc(e.text)}</textarea>
-          <div class="row"><label class="check"><input type="checkbox" data-e="enabled" ${e.enabled !== false ? "checked" : ""}>on</label><button class="small danger" data-delentry="${i}" style="margin-left:auto">Remove</button></div></div>`).join("")}
-        <button class="small" id="addentry">Add an entry</button>`;
-      if (f.type === "watches") return `<label>${esc(f.title)}${h}</label>${(v || []).map((w, i) => `<div class="card" style="padding:8px" data-watch="${i}">
-          <div class="row"><input data-w="name" value="${esc(w.name)}" placeholder="Name"><input data-w="cooldown" value="${esc(w.cooldown ?? 300)}" style="width:70px" title="Cooldown (s)"></div>
-          <input data-w="entity_id" value="${esc(w.entity_id)}" placeholder="entity, e.g. binary_sensor.door" style="margin-top:4px">
-          <input data-w="to" value="${esc(w.to || "")}" placeholder="state that counts (empty: any change)" style="margin-top:4px">
-          <textarea rows="2" data-w="text" placeholder="What to do" style="margin-top:4px">${esc(w.text)}</textarea>
-          <button class="small danger" data-delwatch="${i}">Remove</button></div>`).join("")}
-        <button class="small" id="addwatch">Add a watch</button>`;
-      if (f.type === "rules") return `<label>${esc(f.title)}${h}</label>${this._rulesEditor(c, v || [])}
-        <details style="margin-top:8px"><summary class="hint">As JSON</summary><label>${tip(`One rule: {"name": "for me", "select": {"by": "kind" | "tag" | "card" | "any", "value": "said", "which": "newest" | "all"}, "test": "contains" (is, starts, ends, matches, has_tag, count_more, empty, always), "value": "computer", "actions": [{"do": "replace", "a": "x", "b": "y"}, {"do": "tag", "a": "addressed"}, {"do": "call", "card": "lists", "function": "add_items", "args": {"list": "Shopping", "items": ["{text}"]}}, {"do": "output", "a": "yes"}, {"do": "stop"}], "go_on": false}`)}</label>
-        <textarea rows="10" data-set="${esc(key)}" data-json style="font-family:monospace;font-size:12px">${esc(JSON.stringify(v || [], null, 1))}</textarea></details>`;
-      return `<label>${esc(f.title)}${h}</label><input data-set="${esc(key)}" value="${esc(v)}">`;
-    };
+    const field = (e) => this._field(c, e);
     return `<label>Name</label><input id="title" value="${esc(c.title)}">
       <p class="hint" style="margin-top:8px">${esc(t?.help || "")} <span title="The version of its card file">· ${esc(t?.title || c.type)} v${esc(t?.version || "?")}</span></p>
       ${Object.entries(t?.settings || {}).map(field).join("")}
@@ -1067,7 +1139,7 @@ class AacPanel extends HTMLElement {
   }
 
   async _saveSetting(el) {
-    const c = this._card(this.sel), key = el.dataset.set;
+    const c = this._card(el.dataset.card || this.sel), key = el.dataset.set;
     let value = el.type === "checkbox" ? el.checked : el.value;
     if (el.dataset.num !== undefined) value = Number(value);
     if (el.dataset.list !== undefined) value = value.split(",").map((x) => x.trim()).filter(Boolean);
@@ -1089,8 +1161,6 @@ class AacPanel extends HTMLElement {
     this._grips();
     $("#scrim")?.addEventListener("click", () => { this.navOpen = false; this.shadowRoot.querySelector(".root").classList.remove("navopen"); });
     $("#habtn")?.addEventListener("click", () => this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true })));
-    $("#domain")?.addEventListener("change", async (e) => { await this.ws("aac/domain/switch", { domain_id: e.target.value }); this._els = {}; await this._load(); this.go("card", null, null); });
-    $("#clone")?.addEventListener("click", async () => { const name = prompt("Name of the copy?", `${this.state.domain.name} (test)`); if (name) { await this.ws("aac/domain/clone", { name }); await this._load(); this.render(); } });
     // models
     $("#probe")?.addEventListener("click", async () => {
       try { this.probed = (await this.ws("aac/models/probe", { base_url: $("#m_url").value, api_key: $("#m_key").value || null })).models; this.modelForm = { ...(this.modelForm || {}), base_url: $("#m_url").value }; this.render(); }
@@ -1119,19 +1189,6 @@ class AacPanel extends HTMLElement {
     $("#valrefresh")?.addEventListener("click", () => this._loadValues());
     $("#valclose")?.addEventListener("click", () => { this.showValues = false; this.render(); });
     $("#arrange")?.addEventListener("click", () => this._doArrange());
-    $("#export")?.addEventListener("click", async () => {
-      const { setup } = await this.ws("aac/setup/export"), a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob([JSON.stringify(setup, null, 1)], { type: "application/json" }));
-      a.download = `aac-${setup.domain.replace(/\W+/g, "-").toLowerCase()}-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    });
-    $("#import")?.addEventListener("click", () => $("#importfile").click());
-    $("#importfile")?.addEventListener("change", async (e) => {
-      const file = e.target.files[0];
-      if (!file || !confirm(`Load "${file.name}" into this domain? Its cards and wires replace the current ones (Undo goes back).`)) return;
-      try { await this.ws("aac/setup/import", { setup: JSON.parse(await file.text()) }); } catch (err) { alert(`Could not load it: ${err.message || err}`); return; }
-      this.sel = null; await this._load(); this.render(); this._fit();
-    });
     $("#addtag")?.addEventListener("click", async () => { const t = $("#newtag").value.trim(); if (t) { await this.ws("aac/tags/add", { tag: t }); await this._load(); this.render(); } });
     $("#newtag")?.addEventListener("keydown", (e) => { if (e.key === "Enter") $("#addtag").click(); });
     $$("[data-deltag]").forEach((el) => el.addEventListener("click", async () => { await this.ws("aac/tags/remove", { tag: el.dataset.deltag }); await this._load(); this.render(); }));

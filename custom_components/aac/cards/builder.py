@@ -7,7 +7,7 @@ from typing import Any
 
 from custom_components.aac.api import CARD_TYPES, Card, Context, register
 
-VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -20,8 +20,8 @@ class Builder(Card):
     help = ("Wired from a model and back: the model can look at and change the cards and wires of this domain (e.g. "
             "\"set up a reminder card\"). Every change can be undone in Nodes.")
     settings_schema = {
-        "may_change": {"type": "bool", "title": "May add cards, change settings and wires", "default": True},
-        "may_remove": {"type": "bool", "title": "May remove cards", "default": False},
+        "may_change": {"type": "bool", "title": "May add cards, change settings and wires", "default": True, "permission": True},
+        "may_remove": {"type": "bool", "title": "May remove cards", "default": False, "permission": True},
     }
     functions = {
         "cards": {"help": "The cards of this domain: id, type, name, settings, inputs and outputs, and the wires."},

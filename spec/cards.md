@@ -63,7 +63,8 @@ self.save()`), `start()` / `unload()` (timers, listeners, channel subscriptions)
 arrived: True when it was busy and sent its own context on), `held(port)` (what a dotted wire from that read output
 reads), `current()` (its values), `ui = True` (a page of its own, see below). A setting of type `modellist` with a
 `tag` gives it a list of models with queues. A setting may say `min` (and `off`, the value that turns it off),
-and `confirm` (a question the panel asks before it is first turned on, for a setting that changes more than itself).
+and `confirm` (a question the panel asks before it is first turned on, for a setting that changes more than itself). A setting marked
+`permission` also shows on the domain's Permissions page (what the domain's cards may do, all in one place).
 
 ## A card folder
 

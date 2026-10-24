@@ -293,6 +293,30 @@ async def ws_domain_clone(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"id": await _core(hass).clone(msg["name"])})
 
 
+@command({vol.Required("type"): "aac/domain/create", vol.Required("name"): vol.All(str, vol.Length(min=1, max=40))})
+async def ws_domain_create(hass, connection, msg) -> None:
+    """A new, empty domain."""
+    connection.send_result(msg["id"], {"id": await _core(hass).create(msg["name"])})
+
+
+@command({vol.Required("type"): "aac/domain/rename", vol.Required("domain_id"): str,
+          vol.Required("name"): vol.All(str, vol.Length(min=1, max=40))})
+async def ws_domain_rename(hass, connection, msg) -> None:
+    """A domain's new name."""
+    await _core(hass).rename(msg["domain_id"], msg["name"])
+    connection.send_result(msg["id"], {})
+
+
+@command({vol.Required("type"): "aac/domain/delete", vol.Required("domain_id"): str})
+async def ws_domain_delete(hass, connection, msg) -> None:
+    """A domain goes, with its cards' data."""
+    try:
+        await _core(hass).delete(msg["domain_id"])
+    except (ValueError, StopIteration) as err:
+        return await _fail(connection, msg, err)
+    connection.send_result(msg["id"], {"id": _core(hass).domain.id})
+
+
 @command({vol.Required("type"): "aac/domain/switch", vol.Required("domain_id"): str})
 async def ws_domain_switch(hass, connection, msg) -> None:
     """Run another domain."""

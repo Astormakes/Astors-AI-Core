@@ -373,12 +373,47 @@ class Core:
         self.notify("setup", domain=info["id"])
         return self.domain
 
+    def _free_id(self, name: str) -> str:
+        new_id, n = slug(name) or "domain", 2
+        while any(d["id"] == new_id for d in self.data["domains"]):
+            new_id, n = f"{slug(name) or 'domain'}_{n}", n + 1
+        return new_id
+
+    async def create(self, name: str) -> str:
+        """A new, empty domain (no cards yet)."""
+        new_id = self._free_id(name)
+        self.data["domains"].append({"id": new_id, "name": name})
+        self.save()
+        return new_id
+
+    async def rename(self, domain_id: str, name: str) -> None:
+        """A domain's new name."""
+        info = next(d for d in self.data["domains"] if d["id"] == domain_id)
+        info["name"] = name
+        if self.domain is not None and self.domain.id == domain_id:
+            self.domain.name = name
+        self.save()
+        self.notify("setup", domain=domain_id)
+
+    async def delete(self, domain_id: str) -> None:
+        """A domain goes, with its cards' data (not the last one; the running one first hands over to another)."""
+        rest = [d for d in self.data["domains"] if d["id"] != domain_id]
+        if not rest or len(rest) == len(self.data["domains"]):
+            raise ValueError("the last domain cannot go")
+        if self.domain is not None and self.domain.id == domain_id:
+            await self.switch(rest[0]["id"])
+        store = Store(self.hass, 1, f"aac2.domain.{domain_id}")
+        for card_id in ((await store.async_load()) or {}).get("cards", {}):
+            await Store(self.hass, 1, f"aac2.card.{domain_id}.{card_id}").async_remove()
+        await store.async_remove()
+        self.data["domains"] = rest
+        self.save()
+        self.notify("setup", domain=self.domain.id)
+
     async def clone(self, name: str) -> str:
         """A copy of the running domain (cards, wires, their data) to try things out."""
         src = self.domain
-        new_id, n = slug(name) or "domain", 2
-        while any(d["id"] == new_id for d in self.data["domains"]):
-            new_id, n = f"{slug(name)}_{n}", n + 1
+        new_id = self._free_id(name)
         await src.save_now()
         dst = Domain(self, new_id, name)
         dst._specs, dst.wires, dst.positions = deepcopy(src._specs), deepcopy(src.wires), deepcopy(src.positions)  # noqa: SLF001

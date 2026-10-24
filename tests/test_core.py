@@ -299,3 +299,23 @@ async def test_a_closed_connection_is_tried_again_and_errors_are_not_read(hass: 
     assert entries[-1]["kind"] == "error"
     _, chat = conversation(Context(entries=entries), "model", {})
     assert "Error" not in str(chat)
+
+
+async def test_domains_new_rename_delete(hass: HomeAssistant, mock_entry, hass_storage):
+    """The domain menu: a new empty domain, rename, delete (its stores go; the running one hands over; not the last)."""
+    core = await setup_aac(hass, mock_entry)
+    first = core.domain.id
+    new = await core.create("Work")
+    await core.switch(new)
+    assert core.domain.id == new and core.domain.cards == {}
+    await core.domain.add_card("lists", "Lists")
+    await core.domain.cards["lists"].call("create_list", {"list": "Tasks"})
+    await core.rename(new, "Office")
+    assert core.domain.name == "Office" and next(d for d in core.data["domains"] if d["id"] == new)["name"] == "Office"
+    await core.delete(new)
+    assert core.domain.id == first and all(d["id"] != new for d in core.data["domains"])
+    assert not [k for k in hass_storage if k.startswith(f"aac2.card.{new}.") or k == f"aac2.domain.{new}"]
+    with pytest.raises(ValueError):
+        await core.delete(first)  # the last one stays
+    perms = [k for c in core.domain.cards.values() for k, f in c.settings_schema.items() if f.get("permission")]
+    assert {"offers", "default", "levels"} <= set(perms)

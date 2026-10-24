@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 CARD_TYPES: dict[str, type[Card]] = {}
 UI_URL = "/aac_cards"  # a card file's UI (<stem>.js next to it) is served here
-OFFERS = {"type": "bool", "title": "Offers its functions to models in its loop", "default": True,
+OFFERS = {"type": "bool", "title": "Offers its functions to models in its loop", "default": True, "permission": True,
           "help": "A Model (or a Conditional's call action) whose output comes back to it through this card, straight or "
                   "through other cards, can use these functions, with their descriptions and this card's id. Off: it "
                   "stays out of their tools."}
