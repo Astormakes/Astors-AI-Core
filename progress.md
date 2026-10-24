@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`, its progress file `docs/progress-v1.md` (private).
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-23) – 2.0.0-alpha.15, live on the owner's HA
+## Current state (2026-10-23) – 2.0.0-alpha.16, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -53,6 +53,17 @@ the owner wires them (no automatic wiring), the message is a document of entries
   context with a stop; the next turn shows the model "[stopped]". Voice out cannot cut playback yet (add-on).
 - **Live wires (alpha.15):** a push lights the wires it took (brighter, thicker, fading over 4 s) with a -_-_ wave
   running along; audio streams keep the wave running while sound flows.
+- **Contexts and wires (alpha.16, owner 2026-10-24):** solid wire = push (a context arrives, the card runs), dotted
+  wire = read (looked at when the card runs, never starts anything). Chat holds a context per chat: typing adds the
+  line and sends the whole context; its input replaces what it holds; what it shows is read from that context. A
+  Relay with a dotted wire into `reads` starts from what it reads (a Chat's current conversation; new after the quiet
+  time) and puts the arriving lines on top. Core: when AAC last spoke (`{{ audio.last… }}`, per satellite
+  `{{ audio.satellites[id]… }}`); Conditional has a template test.
+- **Voice chain (alpha.16):** Speech to text → three Conditionals side by side: Stop word (sends stop forward), Wake
+  word ("computer"/"assistent" → Spoken turn), Follow-up (AAC spoke there < 10 s ago → Follow-up turn: a note "maybe not
+  meant for you, then answer nothing"); both Relays read the Chat dotted and go to the Charter; Model → Answer (Relay) →
+  Chat and Voice out. The Voice chat card and Voice out's status port are gone; voice chats moved into the Chat card.
+  Ports have descriptions (folded "Ports" section); rules, functions, values, tags fold.
 - **One-time steps on the owner's HA:** v1's 05:25 trigger → Schedule card; v1's voice settings; the voice chain
   (Wake word = a Conditional: "computer" or a follow-up; Voice rules = a Relay after the turn); an HA Assist card.
 - **First start** (`defaults.py`): the default domain (Chat → Charter → Time → Model → Chat; Pool "Models"; Lists and
@@ -61,7 +72,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
   lists, Nodes, Models), chat (live answer, document view, stop), lists page, models page (find a server's models),
   node view (types left with info, click in the grid to place, drag to wire, Delete/button to unwire, settings right
   with functions and tags, Undo, slots 1–3 (Shift-click loads), Send stop, monitor on a wire).
-- Tests: 23 (`../.venv/bin/python -m pytest -q -p no:logging`).
+- Tests: 25 (`../.venv/bin/python -m pytest -q -p no:logging`).
 
 ## Owner's data
 
@@ -69,7 +80,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
   default domain's Lists card now (Open Issues 4, Project Portfolio 10).
 - v1 storage on the HA is untouched (`/config/.storage/aac.*`), backup `/config/aac/bak-before-v2-20261023/`.
 - HA's own Assist pipeline uses `conversation.qwen3_8b` (not AAC). Backups of v2 storage: `/config/aac/bak-v2-alpha2/`,
-  `/config/aac/bak-v2-alpha3/`.
+  `/config/aac/bak-v2-alpha3/`, `/config/aac/bak-v2-alpha15/` (before the voice rebuild).
 
 ## Deploy and test
 
