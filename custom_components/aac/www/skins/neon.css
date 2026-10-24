@@ -1,0 +1,26 @@
+/*
+name: Neon
+description: Dark, thin glowing lines, cyberpunk (AAC's first look).
+author: AAC
+*/
+
+:host {
+  --primary-background-color: #07070d;
+  --secondary-background-color: #11111c;
+  --card-background-color: #0c0c16;
+  --sidebar-background-color: #09090f;
+  --primary-text-color: #d8f6ff;
+  --secondary-text-color: #7fa8b8;
+  --primary-color: #ff2bd6;
+  --text-primary-color: #07070d;
+  --divider-color: rgba(0, 240, 255, .25);
+  --error-color: #ff4d6d;
+  color-scheme: dark;
+}
+nav, main, header { background: var(--primary-background-color); }
+h2, h3, h4, b { color: #00f0ff; text-shadow: 0 0 6px rgba(0, 240, 255, .55); }
+.card, .box, input, select, textarea, button { border-color: rgba(0, 240, 255, .45) !important; }
+.card, .box { box-shadow: 0 0 8px rgba(0, 240, 255, .18); }
+button:hover, .item.on { box-shadow: 0 0 8px rgba(255, 43, 214, .5); }
+.node.sel .box { stroke: #ff2bd6; filter: drop-shadow(0 0 4px #ff2bd6); }
+.wire { filter: drop-shadow(0 0 2px currentColor); }

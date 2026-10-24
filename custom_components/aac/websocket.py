@@ -311,6 +311,25 @@ async def ws_domain_switch(hass, connection, msg) -> None:
 
 
 # ---------------------------------------------------------------------- audio (core)
+@command({vol.Required("type"): "aac/appearance"})
+async def ws_appearance(hass, connection, msg) -> None:
+    """The skins and the one in use (shared by every device)."""
+    from .skins import list_skins  # noqa: PLC0415
+
+    connection.send_result(msg["id"], {"skins": await hass.async_add_executor_job(list_skins, hass),
+                                       "skin": _core(hass).data.get("skin", "")})
+
+
+@command({vol.Required("type"): "aac/appearance/set", vol.Required("skin"): str})
+async def ws_appearance_set(hass, connection, msg) -> None:
+    """Use a skin ("" = Home Assistant's look)."""
+    core = _core(hass)
+    core.data["skin"] = msg["skin"]
+    core.save()
+    core.notify("appearance")
+    connection.send_result(msg["id"], {})
+
+
 @command({vol.Required("type"): "aac/audio"})
 async def ws_audio(hass, connection, msg) -> None:
     """Satellites (live levels), engines, volume."""

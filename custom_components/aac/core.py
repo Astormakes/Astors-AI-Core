@@ -300,8 +300,6 @@ class Core:
         await self.switch(self.data["active"])
         from .defaults import async_voice_chain  # noqa: PLC0415
         await async_voice_chain(self)
-        for done in ("v1_audio", "v1_triggers", "voice_v2", "assist_card", "calendar_card"):  # flags of steps that are gone
-            self.data.pop(done, None)
 
     def save(self) -> None:
         """Keep the core."""

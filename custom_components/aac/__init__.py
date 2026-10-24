@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
 from .audio import AudioView, async_satellite_access
+from .skins import USER_URL, user_dir
 from .cards import load_all
 from .const import DOMAIN, PANEL_URL
 from .core import Core
@@ -35,8 +36,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     entry.async_create_background_task(hass, async_satellite_access(core), "aac satellite access")
     version = (await async_get_integration(hass, DOMAIN)).version
     if not hass.data.get(f"{DOMAIN}_static"):
+        skins = user_dir(hass)
+        await hass.async_add_executor_job(lambda: skins.mkdir(parents=True, exist_ok=True))
         await hass.http.async_register_static_paths(
-            [StaticPathConfig(PANEL_URL, str(Path(__file__).parent / "www"), cache_headers=False)])
+            [StaticPathConfig(PANEL_URL, str(Path(__file__).parent / "www"), cache_headers=False),
+             StaticPathConfig(USER_URL, str(skins), cache_headers=False)])
         hass.data[f"{DOMAIN}_static"] = True
     await panel_custom.async_register_panel(
         hass, webcomponent_name="aac-panel", frontend_url_path="aac", sidebar_title="AAC", sidebar_icon="mdi:robot-outline",

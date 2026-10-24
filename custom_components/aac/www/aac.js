@@ -174,7 +174,8 @@ class AacPanel extends HTMLElement {
   }
 
   async _load() {
-    [this.state, this.audio] = await Promise.all([this.ws("aac/state"), this.ws("aac/audio").catch(() => null)]);
+    [this.state, this.audio, this.look] = await Promise.all([this.ws("aac/state"), this.ws("aac/audio").catch(() => null),
+      this.ws("aac/appearance").catch(() => ({ skins: [], skin: "" }))]);
   }
   _cards(page) { return (this.state?.domain.cards || []).filter((c) => c.page === page); }
   _card(id) { return (this.state?.domain.cards || []).find((c) => c.id === id); }
@@ -199,6 +200,8 @@ class AacPanel extends HTMLElement {
       this._st = setTimeout(async () => { await this._load(); if (this.view.kind !== "nodes" || !this._dragging) this.render(); }, 150);
     } else if (ev.what === "card" && this.view.card === ev.card && ["lists", "log", "memory", "file"].includes(this.view.kind)) {
       this._loadPage().then(() => this.render());
+    } else if (ev.what === "appearance") {
+      this.ws("aac/appearance").then((look) => { this.look = look; this.render(); });
     } else if (ev.what === "audio" && this.view.kind === "audio") {
       clearTimeout(this._at); this._at = setTimeout(async () => { this.audio = await this.ws("aac/audio"); this.render(); }, 300);
     } else if (ev.what === "level") {
@@ -246,8 +249,9 @@ class AacPanel extends HTMLElement {
     const v = this.view;
     const main = v.kind === "nodes" ? this._nodes() : v.kind === "models" ? this._models() : v.kind === "lists" ? this._listsView()
       : v.kind === "log" ? this._logView() : v.kind === "memory" ? this._memoryView() : v.kind === "file" ? this._fileView()
-      : v.kind === "audio" ? this._audioView() : this._chatView();
-    this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="root ${this.navOpen ? "navopen" : ""}">${this._nav()}<div class="scrim" id="scrim"></div><div class="grip" data-grip="nav" data-target="nav" title="Drag: width of the sidebar (double-click: back to normal)"></div><main>${main}</main></div>`;
+      : v.kind === "audio" ? this._audioView() : v.kind === "appearance" ? this._appearanceView() : this._chatView();
+    const skin = this.look?.skins.find((k) => k.id && k.id === this.look.skin);
+    this.shadowRoot.innerHTML = `<style>${STYLE}</style>${skin ? `<link rel="stylesheet" href="${esc(skin.url)}?v=${esc(this.state.version)}">` : ""}<div class="root ${this.navOpen ? "navopen" : ""}">${this._nav()}<div class="scrim" id="scrim"></div><div class="grip" data-grip="nav" data-target="nav" title="Drag: width of the sidebar (double-click: back to normal)"></div><main>${main}</main></div>`;
     this._bind();
     if (v.kind === "nodes") this._drawGrid();
     if (v.kind === "chat") { const log = this.shadowRoot.querySelector(".log"); if (log) log.scrollTop = log.scrollHeight; }
@@ -265,7 +269,7 @@ class AacPanel extends HTMLElement {
       <div class="dom"><select id="domain">${s.domains.map((d) => `<option value="${esc(d.id)}" ${d.id === s.active ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select>
         <button class="small" id="clone" title="A copy of this setup to try things out">Clone</button></div>
       <div class="scroll">${chats}${lists}${pages ? `<h4>MORE</h4>${pages}` : ""}</div>
-      <div class="bottom">${item("Nodes", "nodes")}${item("Models", "models")}${item("Audio", "audio")}</div></nav>`;
+      <div class="bottom">${item("Nodes", "nodes")}<h4>SETTINGS</h4>${item("Audio", "audio")}${item("Models", "models")}${item("Appearance", "appearance")}</div></nav>`;
   }
 
   _header(title, extra = "") { return `<header><button class="menu" id="navbtn" title="Menu">☰</button><h2>${esc(title)}</h2>${extra}</header>`; }
@@ -360,6 +364,14 @@ class AacPanel extends HTMLElement {
       || '<p class="hint">No satellite connected (the AAC satellite add-on, or the PC program).</p>';
   }
 
+  _appearanceView() {
+    const look = this.look || { skins: [], skin: "" };
+    const rows = look.skins.map((k) => `<label class="check" style="display:flex;gap:8px;align-items:flex-start;margin:8px 0"><input type="radio" name="skin" data-skin="${esc(k.id)}" ${k.id === look.skin ? "checked" : ""}>
+      <span><b>${esc(k.name)}</b> <span class="hint">${esc(k.source)}${k.author ? ` · ${esc(k.author)}` : ""}</span><br><span class="hint">${esc(k.description)}</span></span></label>`).join("");
+    return `${this._header("Appearance", tip("How the panel looks, the same on every device. Own skins: a CSS file in config/aac/skins (a comment header with name, description, author; HA's theme variables inside :host, e.g. --primary-color)."))}
+      <div class="content"><div class="card"><h3 style="margin-top:0">Skin</h3>${rows}</div></div>`;
+  }
+
   _audioView() {
     const a = this.audio || { settings: {} }, st = a.settings || {};
     const sttItems = (a.stt_entities || []).map((e) => [e, e]);
@@ -404,7 +416,7 @@ class AacPanel extends HTMLElement {
     }).join("");
     const t = this.selType && this._type(this.selType);
     const ports = (title, list) => (Object.keys(list).length ? `<label>${title}</label>${Object.entries(list).map(([p, k]) => `<div class="fn"><code>${esc(p)}</code> <span class="hint">${esc(KIND_NAME[k] || k)}</span>${t.ports_help?.[p] ? `<br>${esc(t.ports_help[p])}` : ""}</div>`).join("")}` : "");
-    const info = t ? `<b>${esc(t.title)}</b> <span class="hint">v${esc(t.version)}</span><p style="margin:6px 0">${esc(t.help)}</p>${ports("Takes", t.inputs)}${ports("Outputs", t.outputs)}${this._fnDocs(t.functions)}<p class="hint">Click in the grid to place it.</p>`
+    const info = t ? `<b>${esc(t.title)}</b> <span class="hint">v${esc(t.version)}</span><p style="margin:6px 0">${esc(t.help)}</p>${ports("Takes", t.inputs)}${ports("Outputs", t.outputs)}${this._fnDocs(t.functions)}<p class="hint">Click in the grid to place it. <button class="small" id="unpick" title="Put it back (Esc, or click the type again)">Cancel</button></p>`
       : '<span class="hint">Pick a card type above, then click in the grid to place it.</span>';
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
     return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it.")}
@@ -948,10 +960,10 @@ class AacPanel extends HTMLElement {
         return;
       }
       if (this.selType) { const w = this._world(e); this._place(this.selType, w); return; }
-      drag = { kind: "pan", x: e.clientX - this.vp.x, y: e.clientY - this.vp.y };
+      drag = { kind: "pan", x: e.clientX - this.vp.x, y: e.clientY - this.vp.y, at: [e.clientX, e.clientY] };
     });
     svg.addEventListener("pointermove", (e) => {
-      if (!drag) return;
+      if (!drag) { this._ghost(e); return; }
       if (drag.kind === "pan") { this.vp.x = e.clientX - drag.x; this.vp.y = e.clientY - drag.y; this._view(); }
       if (drag.kind === "move") {
         const w = this._world(e), p = this.state.domain.positions[drag.id];
@@ -966,9 +978,13 @@ class AacPanel extends HTMLElement {
         line.setAttribute("d", `M${p.x + (this._mirror?.has(a) ? 0 : W)},${oy} L${w.x},${w.y}`);
       }
     });
+    svg.addEventListener("pointerleave", () => this.shadowRoot.querySelector("#ghost")?.remove());
     svg.addEventListener("pointerup", async (e) => {
       const d = drag; drag = null; this._dragging = false;
       if (!d) return;
+      if (d.kind === "pan" && Math.hypot(e.clientX - d.at[0], e.clientY - d.at[1]) < 4 && (this.sel || this.selWire)) { // a click on empty grid lets go
+        this.sel = this.selWire = null; this.render(); return;
+      }
       if (d.kind === "move") {
         if (d.moved) { this._snap(d.id); this._drawGrid(); await this._savePositions(); }
         else { this.sel = d.id; this.selWire = null; this.selMon = null; this.showValues = false; this.render(); }
@@ -984,9 +1000,22 @@ class AacPanel extends HTMLElement {
     });
   }
 
+  _spot(at) { return { x: Math.round((at.x - W / 2) / COL) * COL, y: Math.round(at.y / 20) * 20 }; } // where a new card lands
+
+  _ghost(e) { // the picked card type, see-through, where a click would place it
+    const t = this.selType && this._type(this.selType);
+    let g = this.shadowRoot.querySelector("#ghost");
+    if (!t) { g?.remove(); return; }
+    const p = this._spot(this._world(e)), h = this._height({ inputs: t.inputs, outputs: t.outputs });
+    if (!g) { g = document.createElementNS("http://www.w3.org/2000/svg", "g"); g.id = "ghost"; g.setAttribute("pointer-events", "none"); this.shadowRoot.querySelector("#cards").appendChild(g); }
+    g.setAttribute("transform", `translate(${p.x},${p.y})`);
+    g.innerHTML = `<rect class="box" width="${W}" height="${h}" rx="8" style="opacity:.45;stroke-dasharray:5 4"></rect><text x="10" y="18" style="opacity:.6">${esc(t.title)}</text>`;
+  }
+
+  _unpick() { this.selType = null; this.shadowRoot.querySelector("#ghost")?.remove(); this.render(); }
+
   async _place(type, at) {
-    const col = Math.round((at.x - W / 2) / COL) * COL;
-    const card = await this.ws("aac/card/add", { card_type: type, x: col, y: Math.round(at.y / 20) * 20 });
+    const card = await this.ws("aac/card/add", { card_type: type, ...this._spot(at) });
     this.selType = null; this.sel = card.id;
     await this._load(); this.render();
   }
@@ -1052,6 +1081,8 @@ class AacPanel extends HTMLElement {
     $$("[data-pick]").forEach((el) => el.addEventListener("click", () => { this.selType = this.selType === el.dataset.pick ? null : el.dataset.pick; this.render(); }));
     $("#undo")?.addEventListener("click", async () => { await this.ws("aac/undo"); await this._load(); this.render(); });
     $("#fit")?.addEventListener("click", () => this._fit());
+    $("#unpick")?.addEventListener("click", () => this._unpick());
+    $$("[data-skin]").forEach((el) => el.addEventListener("change", async () => { await this.ws("aac/appearance/set", { skin: el.dataset.skin }); }));
     $("#values")?.addEventListener("click", () => { this.showValues = !this.showValues; this.values = null; this.render(); if (this.showValues) this._loadValues(); });
     $("#valrefresh")?.addEventListener("click", () => this._loadValues());
     $("#valclose")?.addEventListener("click", () => { this.showValues = false; this.render(); });
@@ -1143,7 +1174,13 @@ class AacPanel extends HTMLElement {
     if (!this._keys) {
       this._keys = true;
       window.addEventListener("keydown", (e) => { // Delete: the selected wire or card goes (Undo brings it back)
-        if (this.view.kind !== "nodes" || !(e.key === "Delete" || e.key === "Backspace") || /INPUT|TEXTAREA|SELECT/.test(e.composedPath()[0]?.tagName)) return;
+        if (this.view.kind !== "nodes" || /INPUT|TEXTAREA|SELECT/.test(e.composedPath()[0]?.tagName)) return;
+        if (e.key === "Escape") { // put back a picked card type, or let go of the selected card or wire
+          if (this.selType) this._unpick();
+          else if (this.sel || this.selWire || this.selMon || this.showValues) { this.sel = this.selWire = this.selMon = null; this.showValues = false; this.render(); }
+          return;
+        }
+        if (!(e.key === "Delete" || e.key === "Backspace")) return;
         if (this.selWire) this._unwire();
         else if (this.sel) this._removeCard();
       });

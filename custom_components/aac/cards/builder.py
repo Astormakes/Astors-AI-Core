@@ -1,4 +1,4 @@
-"""Builder: lets a model see and change the setup (cards and wires) of its domain, with your permission settings;
+"""Node editor: lets a model see and change the setup (cards and wires) of its domain, with your permission settings;
 every change can be undone (Nodes → Undo)."""
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ from typing import Any
 
 from custom_components.aac.api import CARD_TYPES, Card, Context, register
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -15,7 +15,7 @@ class Builder(Card):
     """A model builds."""
 
     type = "builder"
-    title = "Builder"
+    title = "Node editor"
     category = "Other"
     help = ("Wired from a model and back: the model can look at and change the cards and wires of this domain (e.g. "
             "\"set up a reminder card\"). Every change can be undone in Nodes.")
@@ -48,11 +48,11 @@ class Builder(Card):
                      "inputs": t.inputs, "outputs": t.outputs} for t in CARD_TYPES.values()]
         if function == "remove_card":
             if not self.settings.get("may_remove"):
-                return {"error": "Removing cards is not allowed (the Builder card's settings)."}
+                return {"error": "Removing cards is not allowed (the Node editor card's settings)."}
             await domain.remove_card(str(args.get("card")))
             return {"removed": args.get("card")}
         if not self.settings.get("may_change", True):
-            return {"error": "Changing the setup is not allowed (the Builder card's settings)."}
+            return {"error": "Changing the setup is not allowed (the Node editor card's settings)."}
         if function == "add_card":
             card = await domain.add_card(str(args.get("type")), str(args.get("name") or ""), args.get("settings") or {})
             return card.summary()

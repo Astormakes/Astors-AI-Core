@@ -11,7 +11,7 @@ from homeassistant.helpers.template import Template
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 KIND = {"start": "system", "note": "note", "after": "trailer"}
 
@@ -28,7 +28,7 @@ class Relay(Card):
             "'reads' it starts from what it reads (e.g. a chat's conversation) and puts the arriving lines on top.")
     inputs = {"in": "text", "reads": "read"}
     ports_help = {"in": "a context arrives: the Relay runs",
-                  "reads": "dotted: read when a context arrives, never starts anything. Wired from a Chat's 'said': the "
+                  "reads": "dotted: read when a context arrives, never starts anything. Wired from a Chat's 'provides': the "
                            "arriving lines go on top of that chat's conversation, and the answer files into that chat",
                   "out": "the context, with its text added"}
     tags = {"text": "its text"}

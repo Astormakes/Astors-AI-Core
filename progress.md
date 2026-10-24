@@ -21,7 +21,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
 - **More cards (alpha.3):** Schedule, HA event, Heartbeat (start a chain, keep a log page; Schedule entries can be
   added by a model), HA Assist (AAC is HA's conversation agent again, entity `conversation.aac_qwen3_8b`), Decide,
   Memory (by meaning with an embedding model, else by words), File, Notify, Timer, Web (DuckDuckGo or SearXNG),
-  Builder (a model changes cards and wires, within its settings).
+  Node editor (type builder: a model changes cards and wires, within its settings).
 - **Audio (alpha.3, `audio.py` + `cards/audio.py`):** satellites on `/api/aac/audio` (same protocol: the add-on works
   unchanged, its HA user taken over from v1), STT in the order on the Audio page (Whisper on the PC, then HA's),
   TTS (Piper, voices per language), volume; cards Microphone, Noise gate, Audio clipper, Speech to text, Voice chat
