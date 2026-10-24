@@ -15,12 +15,14 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, is_stop, new_id, register
 
-VERSION = "1.6.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.7.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NO_ANSWER = "(no answer came back: is a model wired back into this chat?)"
 SILENT = ("nothing", "nothing.")  # the answer to a line that was not meant for AAC: nothing is kept
 
+
+ARCHIVE = "archive"  # the sidebar entry (and page) of the archived chats
 
 @register
 class Chat(Card):
@@ -55,8 +57,8 @@ class Chat(Card):
         "read": {"help": "The newest messages of a chat (default: this one).",
                  "args": {"turns": {"type": "integer", "help": "How many (default 10)."},
                           "chat": {"type": "string", "help": "A chat's id (from chats)."}}},
-        "chats": {"help": "The chats, newest first: id, title, when, the first thing said; with a search only those that "
-                          "mention it.", "args": {"search": {"type": "string", "help": "Words to look for (optional)."}}},
+        "chats": {"help": "The chats, newest first: id, title, when, the first thing said (archived ones are marked; they "
+                          "cannot be read or continued); with a search only those that mention it.", "args": {"search": {"type": "string", "help": "Words to look for (optional)."}}},
         "continue": {"help": "Switch to an older chat: when this turn is done, that chat is the current one and this turn "
                              "(the asking and the switch) is not kept; the next turns (spoken ones too) go on there.",
                      "args": {"chat": {"type": "string", "help": "Its id (from chats).", "required": True}}},
@@ -85,9 +87,32 @@ class Chat(Card):
 
     # ------------------------------------------------------------------ chats
     def nav(self) -> dict[str, Any]:
-        return {"add": "New chat", "entries": [{"id": c["id"], "title": c["title"]} for c in self.chats()]}
+        """Its chats (each with delete, archive, rename), and the archived ones in "Archive (n)" at the end."""
+        acts = lambda archived: [{"id": "delete", "label": "Delete", "icon": "🗑"},  # noqa: E731
+                                 {"id": "restore" if archived else "archive", "label": "Restore" if archived else "Archive"},
+                                 {"id": "rename", "label": "Rename…", "ask": "New name"}]
+        chats = self.chats()
+        live = [{"id": c["id"], "title": c["title"], "actions": acts(False)} for c in chats if not c.get("archived")]
+        old = [c for c in chats if c.get("archived")]
+        return {"add": "New chat", "entries": live + ([{"id": ARCHIVE, "title": f"Archive ({len(old)})"}] if old else [])}
 
     async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
+        if action == "nav_action":  # from its sidebar entries: delete, archive, restore, rename
+            chat = self.data["chats"].get(str(args.get("entry") or ""))
+            what = args.get("action")
+            if chat is None:
+                raise ValueError("no such chat")
+            if what == "delete":
+                return await self.delete(chat["id"])
+            if what in ("archive", "restore"):
+                chat["archived"] = what == "archive"
+            elif what == "rename" and str(args.get("value") or "").strip():
+                chat["title"] = str(args["value"]).strip()[:48]
+            await self.save()
+            self.core.notify("chat", domain=self.domain.id, card=self.id)
+            return {"done": what}
+        if action == "archived":  # the Archive page: archived chats, newest first
+            return [c for c in self.chats() if c.get("archived")]
         """Its page: the chats, one chat, writing, deleting, Stop."""
         if action == "get":
             return self.get(args["chat_id"])
@@ -127,7 +152,7 @@ class Chat(Card):
 
     def current(self) -> dict[str, Any] | None:
         """The chat that cards reading this one continue: the newest, unless it has been quiet too long."""
-        chats = self.chats()
+        chats = [c for c in self.chats() if not c.get("archived")]  # an archived chat is never the current one
         if not chats:
             return None
         quiet = timedelta(minutes=float(self.settings.get("new_after") or 20))
@@ -246,12 +271,15 @@ class Chat(Card):
                 said = next((e["text"] for e in self.data["chats"][c["id"]]["entries"] if e["kind"] == "said"), "")
                 text = plain(" ".join([c["title"], *(e["text"] for e in self.data["chats"][c["id"]]["entries"])]))
                 if all(w in text for w in words):
-                    found.append({"id": c["id"], "title": c["title"], "updated": c["updated"], "first": said[:200]})
+                    found.append({"id": c["id"], "title": c["title"], "updated": c["updated"], "first": said[:200],
+                                  **({"archived": True} if c.get("archived") else {})})
             return found[:20]
         if function == "continue":
             chat = self.data["chats"].get(str(args.get("chat") or ""))
             if chat is None:
                 return {"error": "no such chat (see chats)"}
+            if chat.get("archived"):
+                return {"error": "that chat is archived (the owner can restore it)"}
             if context is None:  # not from a turn (a Conditional's action without one): it is the current chat now
                 await self._make_current(chat["id"])
             else:
@@ -260,6 +288,8 @@ class Chat(Card):
                     self._switch.pop(next(iter(self._switch)))
             return {"switching_to": chat["title"]}
         if function == "read":
+            if args.get("chat") and (self.data["chats"].get(str(args["chat"])) or {}).get("archived"):
+                return {"error": "that chat is archived (the owner can restore it)"}
             chat = (self.get(str(args["chat"])) if args.get("chat") else None) or \
                 (self.get(context.chat_id) if context and context.chat_id else (self.chats() and self.get(self.chats()[0]["id"])))
             turns = int(args.get("turns") or 10)

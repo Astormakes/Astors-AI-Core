@@ -261,3 +261,27 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
     assert ("context", "answer #model.answer: Hello there  [1 entries]") in texts
     assert ("clip", "1.4 s, phrase 2") in texts and ("audio", "started") in texts
     assert any(w == "audio" and t.startswith("stopped") for w, t in texts) and ("read", "said : a new line") in texts
+
+
+async def test_chat_archive(hass: HomeAssistant, mock_entry):
+    """Sidebar actions: archive moves a chat into 'Archive (n)'; an archived chat is never the current one, and models
+    see it marked but cannot read or continue it; restore and delete work the same way."""
+    core = await setup_aac(hass, mock_entry)
+    card = core.domain.cards["chat"]
+    chat = card._new("Old talk")
+    chat["entries"] = [{"id": "e1", "by": "chat", "kind": "said", "text": "hello", "tags": [], "time": "", "data": {}, "state": "closed"}]
+    await card.save()
+    entry = next(e for e in card.nav()["entries"] if e["id"] == chat["id"])
+    assert [a["id"] for a in entry["actions"]] == ["delete", "archive", "rename"]
+    await card.ui_call("nav_action", {"entry": chat["id"], "action": "archive"})
+    nav = card.nav()["entries"]
+    assert chat["id"] not in [e["id"] for e in nav] and nav[-1]["id"] == "archive" and nav[-1]["title"] == "Archive (1)"
+    assert [c["id"] for c in await card.ui_call("archived", {})] == [chat["id"]]
+    assert (card.current() or {}).get("id") != chat["id"]
+    assert next(c for c in await card.call("chats", {}) if c["id"] == chat["id"])["archived"] is True
+    assert "error" in await card.call("read", {"chat": chat["id"]}) and "error" in await card.call("continue", {"chat": chat["id"]})
+    await card.ui_call("nav_action", {"entry": chat["id"], "action": "rename", "value": "Renamed"})
+    await card.ui_call("nav_action", {"entry": chat["id"], "action": "restore"})
+    assert next(e for e in card.nav()["entries"] if e["id"] == chat["id"])["title"] == "Renamed"
+    await card.ui_call("nav_action", {"entry": chat["id"], "action": "delete"})
+    assert chat["id"] not in [c["id"] for c in card.chats()]

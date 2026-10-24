@@ -12,11 +12,20 @@ class AacChatPage extends HTMLElement {
   }
 
   async show() { // the panel set .card / .entry
+    if (this.entry === "archive") { this.archived = await this.panel.ui("archived"); this._loaded = "archive"; this.render(); return; }
     if (this.entry !== this._loaded) {
       this._loaded = this.entry; this.mode = ""; this.chat = null;
       if (this.entry) await this._get();
     }
     this.render();
+  }
+
+  _archive() { // the archived chats: open, restore, delete
+    const { esc, header } = this.panel;
+    const rows = (this.archived || []).map((c) => `<div class="card row"><span class="t" data-open="${esc(c.id)}" style="cursor:pointer"><b>${esc(c.title)}</b>
+      <div class="hint">${esc(new Date(c.updated).toLocaleString())}</div></span><button class="small" data-restore="${esc(c.id)}">Restore</button>
+      <button class="small danger" data-delete="${esc(c.id)}">Delete</button></div>`).join("");
+    this.innerHTML = `${header("Archive")}<div class="content">${rows || '<p class="hint">Nothing archived.</p>'}</div>`;
   }
 
   async _get() {
@@ -35,6 +44,7 @@ class AacChatPage extends HTMLElement {
   }
 
   render() {
+    if (this.entry === "archive") return this._archive();
     const { esc, md, header } = this.panel, card = this.card, msgs = this.chat?.messages || [];
     const name = (id) => this.panel.cardTitle(id);
     const log = this.mode === "request" && this.chat ? (this.requests || []).map((r) => `<div class="entry"><div class="k">${esc(name(r.card))} · ${esc(new Date(r.at).toLocaleTimeString())} · tools: ${esc(r.tools.join(", ") || "none")}</div></div>${r.messages.map((m) => `<div class="entry"><div class="k">${esc(m.role)} · from ${esc([...new Set(m._from || [])].map(name).join(", ") || "?")}</div>${m.tool_calls ? esc(m.tool_calls.map((c) => `${c.function.name}(${c.function.arguments})`).join("; ")) : `<pre class="req">${esc(m.content || "")}</pre>`}</div>`).join("")}`).join("")
@@ -47,7 +57,7 @@ class AacChatPage extends HTMLElement {
     this.innerHTML = `<div class="chat">${header(this.chat?.title || `New chat · ${card.title}`, `${modes}<button class="small" id="chatstop" title="Stop: sends this chat's context with a stop; a model still writing cuts its answer">Stop</button>`)}
       <div class="log">${log}${live}</div>
       ${(this.panel.failing?.() || []).length ? `<div class="warnline">Not answering: ${esc(this.panel.failing().join(", "))} (Settings → Models)</div>` : ""}
-      <div class="composer"><textarea id="input" placeholder="Message AAC…" ${this.busy ? "disabled" : ""}></textarea><button class="primary" id="send" ${this.busy ? "disabled" : ""}>Send</button></div></div>`;
+      ${this.chat?.archived ? `<div class="composer"><span class="hint" style="flex:1">This chat is archived.</span><button id="restore">Restore</button></div>` : `<div class="composer"><textarea id="input" placeholder="Message AAC…" ${this.busy ? "disabled" : ""}></textarea><button class="primary" id="send" ${this.busy ? "disabled" : ""}>Send</button></div>`}</div>`;
     const box = this.querySelector(".log");
     if (box) box.scrollTop = box.scrollHeight;
     if (!this.busy) this.querySelector("#input")?.focus();
@@ -71,13 +81,19 @@ class AacChatPage extends HTMLElement {
   }
 
   async _click(e) {
-    const t = e.target;
+    const t = e.target, d = t.dataset || {};
+    if (d.open) return this.panel.go(d.open);
+    if (d.restore || d.delete) { // on the Archive page
+      await this.panel.ui("nav_action", { entry: d.restore || d.delete, action: d.restore ? "restore" : "delete" });
+      return this.show();
+    }
+    if (t.id === "restore") { await this.panel.ui("nav_action", { entry: this.entry, action: "restore" }); await this._get(); return this.render(); }
     if (t.id === "send") this._send();
     else if (t.dataset?.mode !== undefined) {
       this.mode = t.dataset.mode;
       if (this.mode === "request") this.requests = (await this.panel.ws("aac/chat/request", { chat_id: this.entry })).requests;
       this.render();
-    } else if (t.id === "delchat" && confirm("Delete this chat?")) {
+    } else if (t.id === "delchat" && await this.panel.confirm("Delete this chat?", "Delete", true)) {
       await this.panel.ui("delete", { chat_id: this.entry });
       this.panel.go(null);
     } else if (t.id === "chatstop") {

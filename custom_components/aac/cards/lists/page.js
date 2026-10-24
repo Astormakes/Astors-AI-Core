@@ -23,7 +23,7 @@ class AacListsPage extends HTMLElement {
   event(ev) { if (ev.what === "card") { clearTimeout(this._t); this._t = setTimeout(async () => { await this._load(); this.render(); }, 150); } }
 
   async _call(fn, args) {
-    try { await this.panel.call(fn, args); } catch (e) { alert(e.message || e); }
+    try { await this.panel.call(fn, args); } catch (e) { this.panel.alert(e.message || e); }
     await this._load(); this.render();
   }
 
@@ -60,18 +60,18 @@ class AacListsPage extends HTMLElement {
     if (!t) return;
     const d = t.dataset;
     if (d.open) this.panel.go(d.open);
-    else if (d.edit) { const v = prompt("Entry", t.textContent); if (v && v.trim()) this._call("update_item", { list: d.list, item: d.edit, text: v }); }
-    else if (d.field) { const v = prompt(`${d.field} (empty removes it)`, t.textContent.split(": ").slice(1).join(": ")); if (v !== null) this._call("update_item", { list: d.list, item: d.item, field: d.field, value: v }); }
-    else if (d.addfield) { const f = prompt("Field name (e.g. status)"); if (!f) return; const v = prompt(f); if (v) this._call("update_item", { list: d.list, item: d.addfield, field: f, value: v }); }
-    else if (d.sub) { const v = prompt("Sub-entry"); if (v) this._call("add_items", { list: d.list, items: [v], under: d.sub }); }
+    else if (d.edit) { const v = await this.panel.prompt("Entry", t.textContent); if (v && v.trim()) this._call("update_item", { list: d.list, item: d.edit, text: v }); }
+    else if (d.field) { const v = await this.panel.prompt(`${d.field} (empty removes it)`, t.textContent.split(": ").slice(1).join(": ")); if (v !== null) this._call("update_item", { list: d.list, item: d.item, field: d.field, value: v }); }
+    else if (d.addfield) { const f = await this.panel.prompt("Field name (e.g. status)"); if (!f) return; const v = await this.panel.prompt(f); if (v) this._call("update_item", { list: d.list, item: d.addfield, field: f, value: v }); }
+    else if (d.sub) { const v = await this.panel.prompt("Sub-entry"); if (v) this._call("add_items", { list: d.list, items: [v], under: d.sub }); }
     else if (d.del) { this.undo = true; this._call("remove_items", { list: d.list, items: [d.del] }); }
-    else if (d.dellist) { if (confirm(`Delete the list ${d.dellist}?`)) { this.undo = true; await this._call("delete_list", { list: d.dellist }); this.panel.go(null); } }
+    else if (d.dellist) { if (await this.panel.confirm(`Delete the list ${d.dellist}?`, "Delete", true)) { this.undo = true; await this._call("delete_list", { list: d.dellist }); this.panel.go(null); } }
     else if (t.id === "newlist") this.add();
     else if (t.id === "undoremove") { this.undo = false; this._call("undo_remove", {}); }
   }
 
   async add() { // the sidebar's + (and New list)
-    const n = prompt("Name of the new list");
+    const n = await this.panel.prompt("Name of the new list");
     if (n) { await this._call("create_list", { list: n }); this.panel.go(n); }
   }
 }

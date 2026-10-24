@@ -49,6 +49,16 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 h4[data-alarm] { color: var(--error-color, #db4437); animation: alarm 2s ease-in-out infinite; }
 @keyframes alarm { 50% { opacity: .45; } }
 .warnline { color: var(--error-color, #db4437); font-size: 12px; padding: 4px 16px 0; }
+#dlg { position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.dlgbox { background: var(--card-background-color, #fff); color: var(--primary-text-color); border-radius: 12px; padding: 18px 20px; width: min(440px, 100%);
+  box-shadow: 0 8px 32px rgba(0,0,0,.35); } .dlgbox h3 { margin: 0 0 8px; } .dlgbox p { margin: 0 0 8px; white-space: normal; }
+.dlgbox input, .dlgbox textarea { width: 100%; box-sizing: border-box; }
+button.danger:not(.small) { background: var(--error-color, #db4437); color: #fff; border-color: transparent; }
+nav .item { position: relative; } .item .navacts { display: none; position: absolute; right: 6px; top: 4px; gap: 2px;
+  background: var(--sidebar-background-color, var(--card-background-color)); border-radius: 6px; } .item .navacts button { padding: 0 5px; }
+.item:hover .navacts, .item.on .navacts, .item .navacts.open { display: inline-flex; }
+.navmenu { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 8px; margin: 4px 0; padding: 2px 0;
+  box-shadow: 0 4px 12px rgba(0,0,0,.2); clear: both; }
 .permhead { margin: 0; cursor: pointer; user-select: none; } .card .permhead + * { margin-top: 10px; }
 .access .acclist { max-height: 420px; overflow-y: auto; border: 1px solid var(--divider-color); border-radius: 8px; }
 .accrow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--divider-color); }
@@ -164,6 +174,15 @@ class AacPanel extends HTMLElement {
     this.shadowRoot.addEventListener("focusin", place);
     this.shadowRoot.addEventListener("mouseout", hide);
     this.shadowRoot.addEventListener("focusout", hide);
+    this.shadowRoot.addEventListener("keydown", (e) => { // a dialog: Enter confirms, Esc cancels
+      if (!this._dialog) return;
+      if (e.key === "Escape") { e.stopPropagation(); this._closeDialog("cancel"); }
+      if (e.key === "Enter" && !(e.target.tagName === "TEXTAREA" && !e.ctrlKey)) {
+        e.preventDefault(); e.stopPropagation();
+        const main = this._dialog.buttons.find(([, , k]) => k === "primary" || k === "danger") || this._dialog.buttons.at(-1);
+        this._closeDialog(main[0]);
+      }
+    }, true);
     this.shadowRoot.addEventListener("change", (e) => { if (e.target.id === "importfile") { this._loadFile(e.target.files[0]); e.target.value = ""; } });
     this.shadowRoot.addEventListener("input", (e) => { // an access list's search: only its rows are drawn again
       const box = e.target.dataset?.accsearch;
@@ -174,17 +193,24 @@ class AacPanel extends HTMLElement {
     });
     // one listener for what is drawn by others or redrawn often: the sidebar, a card page's ☰, the Audio page's meters
     this.shadowRoot.addEventListener("click", (e) => {
-      const t = e.target.closest?.("[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],[data-acclevel],[data-accall],[data-permopen],#dombtn,#navbtn");
+      if (e.target.id === "dlg") { this._closeDialog("cancel"); return; } // a click beside the dialog
+      const dlg = e.target.closest?.("[data-dlg]");
+      if (dlg) { this._closeDialog(dlg.dataset.dlg); return; }
+      const t = e.target.closest?.("[data-navact],[data-navmore],[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],[data-acclevel],[data-accall],[data-permopen],#dombtn,#navbtn");
       if (!t) return;
       const d = t.dataset;
       if (d.say) this.ws("aac/audio/say", { source: d.say, text: "This is how I sound." });
       else if (t.id === "dombtn") { this.domOpen = !this.domOpen; this.render(); }
+      else if (d.navmore) { e.stopPropagation(); this.navMenu = this.navMenu === d.navmore ? null : d.navmore; this._redrawNav(); }
+      else if (d.navact) { e.stopPropagation(); this._navAction(d.entry, d.navact); }
       else if (d.acclevel) this._setAccess(d.acc, [d.accid], d.acclevel);
       else if (d.accall) {
         const [cardId] = d.acc.split("|"), q = ((this._accFilter || {})[d.acc] || "").toLowerCase();
         const shown = (this._accItems?.[cardId] || []).filter((x) => !q || `${x.name} ${x.id} ${x.area} ${x.group}`.toLowerCase().includes(q));
-        if (shown.length > 20 && !confirm(`Set ${shown.length} entries to ${d.accall === "read" ? "read-only" : d.accall}?`)) return;
-        this._setAccess(d.acc, shown.map((x) => x.id), d.accall);
+        (async () => {
+          if (shown.length > 20 && !(await this.confirm(`Set ${shown.length} entries to ${d.accall === "read" ? "read-only" : d.accall}?`))) return;
+          this._setAccess(d.acc, shown.map((x) => x.id), d.accall);
+        })();
       } else if (d.permopen) { this.permOpen = this.permOpen === d.permopen ? null : d.permopen; this.render(); }
       else if (d.domact) this._domainAction(d.domact);
       else if (d.domgo) { this.domOpen = false; this.ws("aac/domain/switch", { domain_id: d.domgo }).then(async () => { this._els = {}; await this._load(); this.go("card", null, null); }); }
@@ -292,6 +318,8 @@ class AacPanel extends HTMLElement {
       go: (entry) => this.go("card", card, entry),
       header: (title, extra) => this._header(title, extra), cardTitle: (id) => this._card(id)?.title || id, esc, md, tip,
       failing: () => this._failing(), // names of models that do not answer (a page may warn)
+      confirm: (text, ok, danger) => this.confirm(text, ok, danger), prompt: (text, value, multiline) => this.prompt(text, value, multiline),
+      alert: (text) => this.alert(text), dialog: (o) => this.dialog(o), // AAC's own dialogs
     };
   }
 
@@ -317,9 +345,50 @@ class AacPanel extends HTMLElement {
     const skin = this.look?.skins.find((k) => k.id && k.id === this.look.skin);
     this.shadowRoot.innerHTML = `<style>${STYLE}</style>${skin ? `<link rel="stylesheet" href="${esc(skin.url)}?v=${esc(this.state.version)}">` : ""}<div class="root ${this.navOpen ? "navopen" : ""}">${this._nav()}<div class="scrim" id="scrim"></div><div class="grip" data-grip="nav" data-target="nav" title="Drag: width of the sidebar (double-click: back to normal)"></div><main>${main}</main></div>`;
     this._bind();
+    if (this._dialog) this._drawDialog(); // a redraw keeps an open dialog
     if (v.kind === "nodes") this._drawGrid();
     const el = v.kind === "card" && this._els[v.card];
     if (el) this.shadowRoot.querySelector("#cardhost")?.replaceChildren(el); // a redraw keeps the page as it is
+  }
+
+  // ------------------------------------------------------------------ dialogs (AAC's own, not the browser's)
+  dialog({ title = "", text = "", input, multiline = false, buttons = [["ok", "OK", "primary"]] }) { // → {button, value}
+    return new Promise((resolve) => { this._dialog = { title, text, input, multiline, buttons, resolve }; this._drawDialog(); });
+  }
+
+  async confirm(text, ok = "OK", danger = false) {
+    return (await this.dialog({ text, buttons: [["cancel", "Cancel"], ["ok", ok, danger ? "danger" : "primary"]] })).button === "ok";
+  }
+
+  async prompt(text, value = "", multiline = false) {
+    const r = await this.dialog({ text, input: value ?? "", multiline, buttons: [["cancel", "Cancel"], ["ok", "OK", "primary"]] });
+    return r.button === "ok" ? r.value : null;
+  }
+
+  async alert(text) { await this.dialog({ text }); }
+
+  _drawDialog() {
+    this.shadowRoot.querySelector("#dlg")?.remove();
+    const d = this._dialog;
+    if (!d) return;
+    const box = document.createElement("div");
+    box.id = "dlg";
+    box.innerHTML = `<div class="dlgbox" role="dialog">${d.title ? `<h3>${esc(d.title)}</h3>` : ""}<p>${esc(d.text).replace(/\n/g, "<br>")}</p>
+      ${d.input === undefined ? "" : d.multiline ? `<textarea id="dlginput" rows="5">${esc(d.input)}</textarea>` : `<input id="dlginput" value="${esc(d.input)}">`}
+      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px">${d.buttons.map(([v, l, k]) => `<button class="${k || ""}" data-dlg="${esc(v)}">${esc(l)}</button>`).join("")}</div></div>`;
+    this.shadowRoot.appendChild(box);
+    const field = box.querySelector("#dlginput");
+    (field || box.querySelector("button.primary, button.danger, button:last-child"))?.focus();
+    if (field?.select) field.select();
+  }
+
+  _closeDialog(button) {
+    const d = this._dialog;
+    if (!d) return;
+    const value = this.shadowRoot.querySelector("#dlginput")?.value;
+    this._dialog = null;
+    this.shadowRoot.querySelector("#dlg")?.remove();
+    d.resolve({ button, value });
   }
 
   _domainMenu() { // the domain: switch, new, copy, rename, permissions, save and load a file, delete
@@ -339,19 +408,19 @@ class AacPanel extends HTMLElement {
     this.domOpen = false;
     try {
       if (act === "new" || act === "copy") {
-        const n = prompt(act === "new" ? "Name of the new domain (it starts empty)" : "Name of the copy (cards, wires and their data)", act === "copy" ? `${name} (copy)` : "");
+        const n = await this.prompt(act === "new" ? "Name of the new domain (it starts empty)" : "Name of the copy (cards, wires and their data)", act === "copy" ? `${name} (copy)` : "");
         if (!n?.trim()) return this.render();
         const { id } = await this.ws(act === "new" ? "aac/domain/create" : "aac/domain/clone", { name: n.trim() });
         await this.ws("aac/domain/switch", { domain_id: id });
         this._els = {}; await this._load(); return this.go(act === "new" ? "nodes" : "card", null, null);
       }
       if (act === "rename") {
-        const n = prompt("New name", name);
+        const n = await this.prompt("New name", name);
         if (n?.trim() && n.trim() !== name) await this.ws("aac/domain/rename", { domain_id: s.domain.id, name: n.trim() });
         await this._load(); return this.render();
       }
       if (act === "delete") {
-        if (!confirm(`Delete "${name}" with all its cards and their data (chats, lists, memories)? This cannot be undone.`)) return this.render();
+        if (!(await this.confirm(`Delete "${name}" with all its cards and their data (chats, lists, memories)? This cannot be undone.`, "Delete", true))) return this.render();
         await this.ws("aac/domain/delete", { domain_id: s.domain.id });
         this._els = {}; await this._load(); return this.go("card", null, null);
       }
@@ -364,12 +433,12 @@ class AacPanel extends HTMLElement {
         return this.render();
       }
       if (act === "load") { this.render(); this.shadowRoot.querySelector("#importfile")?.click(); }
-    } catch (e) { alert(e.message || e); this.render(); }
+    } catch (e) { this.alert(e.message || e); this.render(); }
   }
 
   async _loadFile(file) {
-    if (!file || !confirm(`Load "${file.name}" into this domain? Its cards and wires replace the current ones (Undo goes back).`)) return;
-    try { await this.ws("aac/setup/import", { setup: JSON.parse(await file.text()) }); } catch (err) { alert(`Could not load it: ${err.message || err}`); return; }
+    if (!file || !(await this.confirm(`Load "${file.name}" into this domain? Its cards and wires replace the current ones (Undo goes back).`, "Load"))) return;
+    try { await this.ws("aac/setup/import", { setup: JSON.parse(await file.text()) }); } catch (err) { this.alert(`Could not load it: ${err.message || err}`); return; }
     this.sel = null; this._els = {}; await this._load(); this.go("nodes");
   }
 
@@ -387,6 +456,22 @@ class AacPanel extends HTMLElement {
       <p class="hint">Fields save when you leave them.</p></div>`;
   }
 
+  _redrawNav() { const n = this.shadowRoot.querySelector("nav"); if (n) n.outerHTML = this._nav(); }
+
+  async _navAction(key, action) { // an action on a card's sidebar entry: the card does it (ui_call "nav_action")
+    const [card, entry] = key.split("|"), n = this.nav.find((x) => x.card === card);
+    const find = (list) => list.flatMap((e) => [e, ...find(e.children || [])]);
+    const spec = find(n?.nav?.entries || []).find((e) => e.id === entry), act = (spec?.actions || []).find((a) => a.id === action) || {};
+    this.navMenu = null;
+    let value;
+    if (act.ask && (value = await this.prompt(act.ask, spec?.title || "")) === null) return this._redrawNav();
+    if (act.confirm && !(await this.confirm(act.confirm, act.label, true))) return this._redrawNav();
+    try { await this.ws("aac/card/ui", { card, action: "nav_action", args: { entry, action, value } }); } catch (err) { this.alert(err.message || err); }
+    this.nav = (await this.ws("aac/nav")).nav;
+    if (this.view.kind === "card" && this.view.card === card && this.view.id === entry && ["delete", "archive"].includes(action)) this.go("card", card, null);
+    else this._redrawNav();
+  }
+
   _failing() { return (this.state?.models || []).filter((m) => m.failing).map((m) => m.name); }
 
   _foldMode(key) { return this.look?.folds?.[key] || (key === "chat" ? "arrow" : "auto"); } // how a sidebar group folds
@@ -401,7 +486,14 @@ class AacPanel extends HTMLElement {
       const auto = this._foldMode(key) === "auto", open = auto ? active : !folds[key];
       return `<h4 class="fold ${auto && active ? "lit" : ""}" ${go}>${auto ? "" : `<span class="arrow" data-fold="${esc(key)}" title="Keep it open or closed">${open ? "▾" : "▸"}</span> `}${esc(title.toUpperCase())}${add}</h4>${open ? body : ""}`;
     };
-    const entries = (n, list, depth = 1) => list.map((e) => `${item(e.title, "card", n.card, e.id, depth)}${e.children?.length ? entries(n, e.children, depth + 1) : ""}`).join("");
+    const acts = (n, e) => { // an entry's actions (the card says which): icons at once, the rest in its ⋯ menu
+      const all = e.actions || [], key = `${n.card}|${e.id}`;
+      if (!all.length) return "";
+      const open = this.navMenu === key;
+      return `<span class="navacts ${open ? "open" : ""}">${all.filter((a) => a.icon).map((a) => `<button class="small" data-navact="${esc(a.id)}" data-entry="${esc(key)}" title="${esc(a.label)}">${esc(a.icon)}</button>`).join("")}${all.some((a) => !a.icon) ? `<button class="small" data-navmore="${esc(key)}" title="More">⋯</button>` : ""}</span>
+        ${open ? `<div class="navmenu">${all.filter((a) => !a.icon).map((a) => `<div class="item" data-navact="${esc(a.id)}" data-entry="${esc(key)}">${esc(a.label)}</div>`).join("")}</div>` : ""}`;
+    };
+    const entries = (n, list, depth = 1) => list.map((e) => `${item(e.title, "card", n.card, e.id, depth).replace(/<\/div>$/, `${acts(n, e)}</div>`)}${e.children?.length ? entries(n, e.children, depth + 1) : ""}`).join("");
     const groups = this.nav.filter((n) => n.nav).map((n) => group(n.card, n.title, v.kind === "card" && v.card === n.card,
       entries(n, n.nav.entries || []) || '<div class="item hint" style="cursor:default">nothing yet</div>',
       n.nav.add ? `<button class="small" data-navadd="${esc(n.card)}" title="${esc(n.nav.add)}">+</button>` : "",
@@ -1220,12 +1312,12 @@ class AacPanel extends HTMLElement {
     if (el.dataset.num !== undefined) value = Number(value);
     if (el.dataset.list !== undefined) value = value.split(",").map((x) => x.trim()).filter(Boolean);
     if (el.dataset.outputs !== undefined) value = value.split("\n").map((l) => { const [n, ...r] = l.split(":"); return { name: n.trim().replace(/[^\w-]/g, "_"), description: r.join(":").trim() }; }).filter((o) => o.name);
-    if (el.dataset.json !== undefined) { try { value = JSON.parse(value || "[]"); } catch (err) { alert(`Not valid: ${err.message}`); return; } }
+    if (el.dataset.json !== undefined) { try { value = JSON.parse(value || "[]"); } catch (err) { this.alert(`Not valid: ${err.message}`); return; } }
     const f = this._type(c.type)?.settings?.[key] || {}, old = c.settings[key] ?? f.default;
     if (f.min !== undefined && value < f.min && value !== f.off) { // too small to work: say so instead of doing nothing
-      alert(`${f.title}: at least ${f.min}${f.off !== undefined ? ` (or ${f.off} = off)` : ""}.`); this.render(); return;
+      this.alert(`${f.title}: at least ${f.min}${f.off !== undefined ? ` (or ${f.off} = off)` : ""}.`); this.render(); return;
     }
-    if (f.confirm && !old && value && !confirm(f.confirm)) { this.render(); return; } // a setting that changes more than itself asks first
+    if (f.confirm && !old && value && !(await this.confirm(f.confirm))) { this.render(); return; } // a setting that changes more than itself asks first
     await this.ws("aac/card/update", { card: c.id, settings: { [key]: value } });
     await this._load(); this.render();
   }
@@ -1239,19 +1331,19 @@ class AacPanel extends HTMLElement {
     // models
     $("#probe")?.addEventListener("click", async () => {
       try { this.probed = (await this.ws("aac/models/probe", { base_url: $("#m_url").value, api_key: $("#m_key").value || null })).models; this.modelForm = { ...(this.modelForm || {}), base_url: $("#m_url").value }; this.render(); }
-      catch (e) { alert(`No answer: ${e.message || e}`); }
+      catch (e) { this.alert(`No answer: ${e.message || e}`); }
     });
     $("#savemodel")?.addEventListener("click", async () => {
       const model = { name: $("#m_name").value || $("#m_model").value, base_url: $("#m_url").value, model: $("#m_model").value, api_key: $("#m_key").value || null,
         tags: [...this.shadowRoot.querySelectorAll("[data-mtag]")].filter((x) => x.checked).map((x) => x.dataset.mtag),
         parallel: Math.max(1, Number($("#m_parallel").value) || 1) };
       if (this.modelForm?.id) model.id = this.modelForm.id;
-      if (!model.model) { alert("Pick or type a model"); return; }
+      if (!model.model) { this.alert("Pick or type a model"); return; }
       await this.ws("aac/models/save", { model }); this.modelForm = null; this.probed = null; await this._load(); this.render();
     });
     $("#cancelmodel")?.addEventListener("click", () => { this.modelForm = null; this.probed = null; this.render(); });
     $$("[data-editmodel]").forEach((el) => el.addEventListener("click", () => { this.modelForm = { ...this.state.models.find((m) => m.id === el.dataset.editmodel) }; this.probed = null; this.render(); }));
-    $$("[data-delmodel]").forEach((el) => el.addEventListener("click", async () => { if (confirm("Delete this model?")) { await this.ws("aac/models/delete", { model_id: el.dataset.delmodel }); await this._load(); this.render(); } }));
+    $$("[data-delmodel]").forEach((el) => el.addEventListener("click", async () => { if (await this.confirm("Delete this model?")) { await this.ws("aac/models/delete", { model_id: el.dataset.delmodel }); await this._load(); this.render(); } }));
     // nodes
     $$("[data-pick]").forEach((el) => el.addEventListener("click", () => { this.selType = this.selType === el.dataset.pick ? null : el.dataset.pick; this.render(); }));
     $("#undo")?.addEventListener("click", async () => { await this.ws("aac/undo"); await this._load(); this.render(); });
@@ -1269,7 +1361,7 @@ class AacPanel extends HTMLElement {
     $$("[data-deltag]").forEach((el) => el.addEventListener("click", async () => { await this.ws("aac/tags/remove", { tag: el.dataset.deltag }); await this._load(); this.render(); }));
     $$("[data-slot]").forEach((el) => el.addEventListener("click", async (e) => {
       const slot = el.dataset.slot;
-      if (e.shiftKey) { if (confirm(`Load slot ${slot}? (Undo brings the current setup back)`)) await this.ws("aac/slot", { slot, action: "load" }); }
+      if (e.shiftKey) { if (await this.confirm(`Load slot ${slot}? (Undo brings the current setup back)`)) await this.ws("aac/slot", { slot, action: "load" }); }
       else await this.ws("aac/slot", { slot, action: "save" });
       await this._load(); this.render();
     }));
@@ -1310,7 +1402,7 @@ class AacPanel extends HTMLElement {
     $$("[data-fold]").forEach((el) => el.addEventListener("toggle", () => { const set = ((this.openRules ||= {})[this.sel] ||= new Set()); if (el.open) set.add(Number(el.dataset.fold)); else set.delete(Number(el.dataset.fold)); }));
     $$("[data-rule] input, [data-rule] select").forEach((el) => el.addEventListener("change", () => saveList("rules", this._collectRules())));
     $("#addrule")?.addEventListener("click", () => { const rules = this._collectRules(); ((this.openRules ||= {})[this.sel] ||= new Set()).add(rules.length); saveList("rules", [...rules, { name: "", select: { by: "kind", value: "said", which: "newest" }, test: "contains", value: "", actions: [{ do: "output", a: "out" }] }]); });
-    $$("[data-delrule]").forEach((el) => el.addEventListener("click", () => { if (confirm("Remove this rule?")) saveList("rules", this._collectRules().filter((_, i) => i !== Number(el.dataset.delrule))); }));
+    $$("[data-delrule]").forEach((el) => el.addEventListener("click", async () => { if (await this.confirm("Remove this rule?")) saveList("rules", this._collectRules().filter((_, i) => i !== Number(el.dataset.delrule))); }));
     $$("[data-moverule]").forEach((el) => el.addEventListener("click", () => { const r = this._collectRules(), i = Number(el.dataset.moverule), j = i + Number(el.dataset.dir); [r[i], r[j]] = [r[j], r[i]]; saveList("rules", r); }));
     $$("[data-addact]").forEach((el) => el.addEventListener("click", () => { const r = this._collectRules(); r[Number(el.dataset.addact)].actions.push({ do: "tag", a: "" }); saveList("rules", r); }));
     $$("[data-delact]").forEach((el) => el.addEventListener("click", () => { const r = this._collectRules(), i = Number(el.closest("[data-rule]").dataset.rule); r[i].actions.splice(Number(el.dataset.delact), 1); saveList("rules", r); }));
@@ -1332,7 +1424,7 @@ class AacPanel extends HTMLElement {
     $("#langha")?.addEventListener("click", () => langSet(null));
     $$("[data-langdel]").forEach((el) => el.addEventListener("click", () => { const l = langs().filter((_, i) => i !== Number(el.dataset.langdel)); if (l.length) langSet(l); }));
     $$("[data-langup]").forEach((el) => el.addEventListener("click", () => { const l = langs(), i = Number(el.dataset.langup); [l[0], l[i]] = [l[i], l[0]]; langSet(l); }));
-    $$("[data-forget]").forEach((el) => el.addEventListener("click", async () => { if (confirm("Forget this satellite? (It comes back when it connects again.)")) { this.audio = await this.ws("aac/audio/forget", { source: el.dataset.forget }); this.render(); } }));
+    $$("[data-forget]").forEach((el) => el.addEventListener("click", async () => { if (await this.confirm("Forget this satellite? (It comes back when it connects again.)")) { this.audio = await this.ws("aac/audio/forget", { source: el.dataset.forget }); this.render(); } }));
     $("#volume")?.addEventListener("input", (e) => { $("#volval").textContent = e.target.value; });
     $("#volume")?.addEventListener("change", (e) => audioSet({ volume: Number(e.target.value) }));
 

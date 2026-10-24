@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.1.20, live on the owner's HA
+## Current state (2026-10-24) – 2.1.22, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -144,6 +144,10 @@ Z.Y.X: X = changes the backup survives (fixes and new features alike), Y = a bac
 (and `upgrade()` for their saved settings). Bump the manifest version with every deploy (the browser caches the panel
 by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2.1.2; from 2.1.3 on as above.
 
+- 2.1.21: points 12 and 13: AAC's own dialogs (`dialog` / `confirm` / `prompt` / `alert`, also for card pages;
+  no browser dialogs left); chat archive: sidebar entries can carry actions (icon at once, the rest in ⋯; `nav_action`),
+  the Chat's are delete (no question), archive, rename; "Archive (n)" page with restore / delete; archived chats are
+  never current, models see them marked but cannot read or continue them.
 - 2.1.18: point 5 done: every card with functions has "Instructions for models" (fold "For models"); a model
   reads them under "About your tools". The Node editor's list of cards counts long settings (an access list had cut
   the 8000-character result: the model said "6 cards"), `card` gives one in full. Voice rule: "call the tool first,
@@ -252,10 +256,8 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     the chat moves up and the box grows upwards; send is a checkmark (grey, green on hover), so resending is a double
     click. Editing your line runs the turn again from there; first a warning: Resend (what came after it goes) / Keep
     the rest (only the text changes) / Cancel. Editing an answer only changes the text.
-12. **Own popups and message boxes** (owner): AAC's own dialogs instead of the browser's confirm / prompt / alert.
-13. **Archive for chats** (owner, as in v1): a chat can be archived; the sidebar shows a trashcan next to the "⋯" menu
-    of each chat (deleting there asks nothing), archiving in the "⋯" menu. A model's `chats` still lists archived
-    chats (marked), but `read` and `continue` refuse them.
+12. ~~Own dialogs~~ **done (2.1.21).**
+13. ~~Archive for chats~~ **done (2.1.21).**
 14. **Switchable models on the PC** (owner, as planned in v1): llama-server's router mode (`--models-dir ~/models
     --models-max 1` instead of `-m …$MODEL` in `aac-llm`, the unit reads `~/.config/aac/llm.env`) offers every model in
     ~/models (now Ornith-1.5-35B and Qwen3.6-35B-A3B); AAC adds each as a model on the same address. A switch loads the

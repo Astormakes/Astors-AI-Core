@@ -95,12 +95,16 @@ without shadow DOM, so the panel's look and skins apply. The panel hands it:
   card's `ui_call()`), `data()` (its stored data), `save(settings)`, `go(entry)` (open another of its entries),
   `header(title, buttonsHtml)`, `tip(html)`, `esc(text)`, `md(text)`, `cardTitle(id)`;
 - `.card` (the card: id, title, settings …) and `.entry` (the sidebar entry picked, or null), then calls `show()`.
+- AAC's own dialogs: `confirm(text, okLabel, danger)` → true/false, `prompt(text, value, multiline)` → text or null,
+  `alert(text)`, `dialog({title, text, input, buttons: [[value, label, "primary"|"danger"]]})` → `{button, value}`.
 
 It may define `event(ev)` (what the card tells open panels: `core.notify(what, card=self.id, …)`) and `add()` (the
 `+` in its sidebar group). The element is kept while the page is open elsewhere, so its state survives.
 
-In Python: `nav()` gives its sidebar entries (`{"entries": [{id, title, children?}], "add": "New list"}`; None: one
-item), and `ui_call(action, args)` answers its page for what is not a function for models (a Chat's send).
+In Python: `nav()` gives its sidebar entries (`{"entries": [{id, title, children?, actions?}], "add": "New list"}`;
+None: one item). An entry's `actions` (`[{id, label, icon?, ask?, confirm?}]`) show in the sidebar: one with an icon
+as a button, the others in its ⋯ menu; `ask` asks for a value first, `confirm` asks first. The panel then calls
+`ui_call("nav_action", {entry, action, value})`, and `ui_call(action, args)` answers its page for what is not a function for models (a Chat's send).
 
 ## The core's services
 

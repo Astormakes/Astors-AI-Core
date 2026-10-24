@@ -9,7 +9,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, register
 
-VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 ARG_LIST = {"type": "string", "help": "The list's name.", "required": True}
 
