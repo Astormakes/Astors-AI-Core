@@ -23,7 +23,7 @@ const STYLE = `
 :host { display: block; height: 100vh; color: var(--primary-text-color); background: var(--primary-background-color);
   font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
 * { box-sizing: border-box; }
-.root { display: flex; height: 100%; }
+.root { display: flex; height: 100%; position: relative; }
 nav { width: var(--nav-w, 250px); flex: none; background: var(--sidebar-background-color, var(--card-background-color));
   border-right: 1px solid var(--divider-color); display: flex; flex-direction: column; }
 nav .top { padding: 14px 16px 6px; display: flex; align-items: baseline; gap: 8px; }
@@ -118,7 +118,10 @@ textarea { resize: vertical; }
 .warn { color: var(--error-color, #db4437); font-size: 12px; margin: 4px 0; }
 .mlrow select { flex: 1; } .mlrow .check { font-size: 12px; white-space: nowrap; }
 .hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
-@media (max-width: 800px) { nav { position: absolute; z-index: 20; height: 100%; transform: translateX(-100%); } .root.navopen nav { transform: none; }
+.menu { display: none; background: none; border: none; font-size: 22px; padding: 4px 8px 4px 0; cursor: pointer; color: var(--primary-text-color); }
+.scrim { display: none; }
+@media (max-width: 800px) { nav { position: absolute; z-index: 20; height: 100%; transform: translateX(-100%); transition: transform .2s; } .root.navopen nav { transform: none; }
+  .menu { display: inline-block; } .root.navopen .scrim { display: block; position: absolute; inset: 0; z-index: 15; background: rgba(0,0,0,.3); }
   .palette, .side { width: 170px; } .grip { display: none; } }
 `;
 
@@ -202,6 +205,7 @@ class AacPanel extends HTMLElement {
 
   async go(kind, card = null, id = null) {
     this.view = { kind, card, id };
+    this.navOpen = false; // on a phone the sidebar closes when a page is picked
     if (kind === "chat" && id) await this._getChat();
     if (kind === "chat" && !id) this.chat = null;
     if (["lists", "log", "memory", "file"].includes(kind)) await this._loadPage();
@@ -228,7 +232,7 @@ class AacPanel extends HTMLElement {
     const main = v.kind === "nodes" ? this._nodes() : v.kind === "models" ? this._models() : v.kind === "lists" ? this._listsView()
       : v.kind === "log" ? this._logView() : v.kind === "memory" ? this._memoryView() : v.kind === "file" ? this._fileView()
       : v.kind === "audio" ? this._audioView() : this._chatView();
-    this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="root">${this._nav()}<div class="grip" data-grip="nav" data-target="nav" title="Drag: width of the sidebar (double-click: back to normal)"></div><main>${main}</main></div>`;
+    this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="root ${this.navOpen ? "navopen" : ""}">${this._nav()}<div class="scrim" id="scrim"></div><div class="grip" data-grip="nav" data-target="nav" title="Drag: width of the sidebar (double-click: back to normal)"></div><main>${main}</main></div>`;
     this._bind();
     if (v.kind === "nodes") this._drawGrid();
     if (v.kind === "chat") { const log = this.shadowRoot.querySelector(".log"); if (log) log.scrollTop = log.scrollHeight; }
@@ -242,14 +246,14 @@ class AacPanel extends HTMLElement {
       ${(this.chats[c.id] || []).map((ch) => item(ch.title, "chat", c.id, ch.id)).join("") || '<div class="item hint" style="cursor:default">no chats yet</div>'}`).join("");
     const lists = this._cards("lists").map((c) => `<h4>${esc(c.title.toUpperCase())}</h4>${item("All lists", "lists", c.id)}`).join("");
     const pages = ["log", "memory", "file"].flatMap((pg) => this._cards(pg)).map((c) => item(c.title, c.page, c.id)).join("");
-    return `<nav><div class="top"><b>AAC</b><span>v${esc(s.version)}</span></div>
+    return `<nav><div class="top"><button class="menu" id="habtn" title="Home Assistant's menu">⌂</button><b>AAC</b><span>v${esc(s.version)}</span></div>
       <div class="dom"><select id="domain">${s.domains.map((d) => `<option value="${esc(d.id)}" ${d.id === s.active ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select>
         <button class="small" id="clone" title="A copy of this setup to try things out">Clone</button></div>
       <div class="scroll">${chats}${lists}${pages ? `<h4>MORE</h4>${pages}` : ""}</div>
       <div class="bottom">${item("Nodes", "nodes")}${item("Models", "models")}${item("Audio", "audio")}</div></nav>`;
   }
 
-  _header(title, extra = "") { return `<header><h2>${esc(title)}</h2>${extra}</header>`; }
+  _header(title, extra = "") { return `<header><button class="menu" id="navbtn" title="Menu">☰</button><h2>${esc(title)}</h2>${extra}</header>`; }
 
   // ------------------------------------------------------------------ chat
   _chatView() {
@@ -963,6 +967,9 @@ class AacPanel extends HTMLElement {
     const $ = (s) => this.shadowRoot.querySelector(s), $$ = (s) => this.shadowRoot.querySelectorAll(s);
     $$("[data-go]").forEach((el) => el.addEventListener("click", () => this.go(el.dataset.go, el.dataset.card || null, el.dataset.id || null)));
     this._grips();
+    $("#navbtn")?.addEventListener("click", () => { this.navOpen = true; this.shadowRoot.querySelector(".root").classList.add("navopen"); });
+    $("#scrim")?.addEventListener("click", () => { this.navOpen = false; this.shadowRoot.querySelector(".root").classList.remove("navopen"); });
+    $("#habtn")?.addEventListener("click", () => this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true })));
     $$("[data-newchat]").forEach((el) => el.addEventListener("click", () => this.go("chat", el.dataset.newchat, null)));
     $("#domain")?.addEventListener("change", async (e) => { await this.ws("aac/domain/switch", { domain_id: e.target.value }); await this._load(); this.chats = {}; for (const c of this._cards("chat")) await this._openChats(c.id); this.go("chat", this._cards("chat")[0]?.id || null); });
     $("#clone")?.addEventListener("click", async () => { const name = prompt("Name of the copy?", `${this.state.domain.name} (test)`); if (name) { await this.ws("aac/domain/clone", { name }); await this._load(); this.render(); } });

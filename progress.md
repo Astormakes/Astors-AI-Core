@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`, its progress file `docs/progress-v1.md` (private).
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-23) – 2.0.0-alpha.20, live on the owner's HA
+## Current state (2026-10-23) – 2.0.0-alpha.21, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -84,6 +84,8 @@ the owner wires them (no automatic wiring), the message is a document of entries
   ticked: a red warning, and a context is dropped when all are busy. The card shows its first model in the grid.
   Speech to text: its models, then HA's engines from the Audio page. On the HA: Model 35B → qwen3-8b, Memory card
   (bge-m3 on CT 110, a tool of the Model), Speech to text Whisper.
+- **Phone (alpha.21):** ☰ in the top bar opens AAC's sidebar (picking a page or tapping beside it closes it); ⌂ in
+  the sidebar opens Home Assistant's menu (back to the overview).
 - **Grid (alpha.20):** a small legend lower right (context, read, sound, speech); read inputs are triangles.
 - **One-time steps that ran on the owner's HA (code removed):** v1's 05:25 trigger → Schedule card; v1's voice settings; the voice chain
   (Wake word = a Conditional: "computer" or a follow-up; Voice rules = a Relay after the turn); an HA Assist card.
