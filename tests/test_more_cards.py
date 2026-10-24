@@ -4,12 +4,12 @@ from datetime import datetime
 
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components import conversation
-from homeassistant.core import Context, HomeAssistant
+from homeassistant.core import Context as HaContext, HomeAssistant
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.aac.flow import Step
-from custom_components.aac.message import Message
+from custom_components.aac.context import Context
 
 from .conftest import model_answers, reply, setup_aac, v1_files
 
@@ -57,7 +57,7 @@ async def test_ha_assist_is_a_conversation_agent(hass: HomeAssistant, mock_entry
     await core.domain.add_card("assist", "HA Assist", card_id="assist")
     core.domain.set_wires([*core.domain.wires, {"from": "assist.said", "to": "charter.in"}, {"from": "model.out", "to": "assist.answers"}])
     model_answers(aioclient_mock, reply("It is noon."))
-    result = await conversation.async_converse(hass, "what time is it?", None, Context(), agent_id=mock_entry.entry_id)
+    result = await conversation.async_converse(hass, "what time is it?", None, HaContext(), agent_id=mock_entry.entry_id)
     assert result.response.speech["plain"]["speech"] == "It is noon."
     assert core.domain.cards["assist"].get(result.conversation_id)["messages"][0]["text"] == "what time is it?"
 
@@ -70,9 +70,9 @@ async def test_decide_picks_an_output(hass: HomeAssistant, mock_entry, aioclient
     yes = await core.domain.add_card("relay", "Go")
     core.domain.set_wires([*core.domain.wires, {"from": "for_me.yes", "to": "go.in"}, {"from": "models.models", "to": "for_me.pool"}])
     model_answers(aioclient_mock, reply("yes"))
-    message = Message()
-    message.add("chat", "said", "computer, lights on")
-    assert await decide.handle(message, "in", Step(core.domain.flow, decide, "in", message)) == [("yes", yes.id)]
+    context = Context()
+    context.add("chat", "said", "computer, lights on")
+    assert await decide.handle(context, "in", Step(core.domain.flow, decide, "in", context)) == [("yes", yes.id)]
 
 
 async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
@@ -80,16 +80,16 @@ async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
     core = await setup_aac(hass, mock_entry)
     memory = await core.domain.add_card("memory", "Memory")
     await memory.call("remember", {"text": "The drill is on basement shelf 2."})
-    message = Message()
-    message.add("chat", "said", "where is the drill?")
-    await memory.handle(message, "in", None)
-    assert "basement shelf 2" in message.last("note")["text"]
+    context = Context()
+    context.add("chat", "said", "where is the drill?")
+    await memory.handle(context, "in", None)
+    assert "basement shelf 2" in context.last("note")["text"]
     file = await core.domain.add_card("file", "Notes", {"name": "test"})
     await file.call("write", {"text": "# Hi"})
     await file.call("append", {"text": "more"})
     assert await file.call("read", {}) == "# Hi\nmore\n"
     timer = await core.domain.add_card("timer", "Wait", {"seconds": 0})
-    assert await timer.handle(Message(), "in", None) is None
+    assert await timer.handle(Context(), "in", None) is None
     builder = await core.domain.add_card("builder", "Builder")
     added = await builder.call("add_card", {"type": "buffer", "name": "Room"})
     assert added["id"] == "room" and (await builder.call("remove_card", {"card": "room"}))["error"]

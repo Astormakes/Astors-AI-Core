@@ -93,6 +93,7 @@ class Satellite:
         self.args = args
         self.token = token
         self.playing = False
+        self._proc: asyncio.subprocess.Process | None = None
         self.devices = [] if args.input_file else devices.attached()
         for plugin in self.devices:  # a device plugin knows its own mic and speaker
             args.mic = args.mic or find_audio("sources", plugin.mic_hint)
@@ -177,6 +178,7 @@ class Satellite:
 
     async def _receive(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         pending: dict | None = None
+        player: asyncio.Task | None = None
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.TEXT:
                 data = msg.json()
@@ -184,11 +186,28 @@ class Satellite:
                     pending = data
                     self.playing = True
                     LOG.info("AAC: %s", data.get("text", ""))
+                elif data.get("type") == "stop":  # cut off what is playing (it answers "played")
+                    self._cut()
             elif msg.type == aiohttp.WSMsgType.BINARY and pending is not None:
                 pending = None
-                await self._play(msg.data)
-                self.playing = False
+                if player and not player.done():  # a new answer replaces the one still playing
+                    self._cut()
+                    await player
+                    self.playing = True
+                player = asyncio.create_task(self._play_then_tell(ws, msg.data))  # in the background: a stop can come
+
+    async def _play_then_tell(self, ws: aiohttp.ClientWebSocketResponse, wav: bytes) -> None:
+        try:
+            await self._play(wav)
+        finally:
+            self.playing = False
+            if not ws.closed:
                 await ws.send_json({"type": "played"})
+
+    def _cut(self) -> None:
+        if self._proc and self._proc.returncode is None:
+            LOG.info("Stopped")
+            self._proc.terminate()
 
     async def _play(self, wav: bytes) -> None:
         if self.args.output_dir:  # testing: keep the answers as files
@@ -200,8 +219,8 @@ class Satellite:
         with tempfile.NamedTemporaryFile(suffix=".wav") as file:
             file.write(wav)
             file.flush()
-            proc = await asyncio.create_subprocess_exec(*play_cmd(file.name, self.args.speaker))
-            await proc.wait()
+            self._proc = await asyncio.create_subprocess_exec(*play_cmd(file.name, self.args.speaker))
+            await self._proc.wait()
 
 
 def main() -> None:

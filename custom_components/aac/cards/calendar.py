@@ -8,7 +8,7 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from ..message import Message, new_id
+from ..context import Context, new_id
 from . import Card, register
 
 DATE_FIELDS = ("when", "date", "due")
@@ -97,7 +97,7 @@ class Calendar(Card):
                 out.append({**e, "start_v": s, "end_v": en, "all_day": all_day})
         return sorted(out, key=lambda e: str(e["start_v"]))
 
-    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         if function == "calendar":
             today = dt_util.now()
             start = parse(args.get("start")) or today
@@ -119,7 +119,7 @@ class Calendar(Card):
         elif function == "remove":
             self.data["events"] = [e for e in events if e["uid"] != args.get("uid")]
         else:
-            return await super().call(function, args, message)
+            return await super().call(function, args, context)
         await self.save()
         self.core.notify("calendar")
         return {"done": function}

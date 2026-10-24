@@ -1,5 +1,5 @@
 """Cards that wake a chain on their own (docs/v2 page 2): Schedule (times), HA event (entity changes), Heartbeat
-(every N minutes). Each starts a message at its output; what the model concluded comes back into `answers` and goes
+(every N minutes). Each starts a context at its output; what the model concluded comes back into `answers` and goes
 into the card's log (its page in the sidebar). "NOTHING" or an empty answer is logged as quiet."""
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 from homeassistant.util import dt as dt_util
 
 from ..const import LOGGER
-from ..message import Message
+from ..context import Context
 from . import Card, register
 
 LOG_SIZE = 60
@@ -45,11 +45,11 @@ class AutoCard(Card):
         self._unsubs = []
 
     def fire(self, name: str, text: str) -> None:
-        """Start a message at the output (in the background)."""
-        message = Message(origin=self.id)
-        message.add(self.id, "said", text, ["fired"], name=name)
-        self._log(name, text, None, message.id)
-        task = self.hass.async_create_background_task(self.domain.flow.send(message, self.id, "out"), f"aac {self.id}")
+        """Start a context at the output (in the background)."""
+        context = Context(origin=self.id)
+        context.add(self.id, "said", text, ["fired"], name=name)
+        self._log(name, text, None, context.id)
+        task = self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "out"), f"aac {self.id}")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -59,11 +59,11 @@ class AutoCard(Card):
         self.hass.async_create_task(self.save())
         self.core.notify("card", domain=self.domain.id, card=self.id)
 
-    async def handle(self, message: Message, port: str, step) -> list[Any] | None:
+    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         """What the chain concluded."""
-        answer = message.answer.strip()
+        answer = context.answer.strip()
         for item in reversed(self.data["log"]):
-            if item.get("id") == message.id:
+            if item.get("id") == context.id:
                 item["answer"] = "" if answer.lower() in SILENT else answer
                 break
         await self.save()
@@ -117,7 +117,7 @@ class Schedule(AutoCard):
             self.hass.async_create_task(self.domain.update_card(self.id, settings={"entries": [
                 e for e in self.settings.get("entries") or [] if e["name"] not in gone]}))
 
-    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         entries = list(self.settings.get("entries") or [])
         if function == "list":
             return entries
@@ -139,7 +139,7 @@ class Schedule(AutoCard):
             self.fire(found["name"], f"Run now ({found['name']}): {found.get('text', '')}")
             return {"started": found["name"]}
         else:
-            return await super().call(function, args, message)
+            return await super().call(function, args, context)
         await self.domain.update_card(self.id, settings={"entries": entries})
         return {"done": function}
 

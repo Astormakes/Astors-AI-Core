@@ -1,11 +1,11 @@
 """Buffer: keeps the last N entries of the tags you choose (e.g. the room's last heard lines) and writes them into
-each message as one entry; a model or a Conditional can read and change it through its functions."""
+each context as one entry; a model or a Conditional can read and change it through its functions."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from ..message import Message
+from ..context import Context
 from . import Card, register
 
 KIND = {"start": "system", "note": "note", "after": "trailer"}
@@ -18,7 +18,7 @@ class Buffer(Card):
     type = "buffer"
     title = "Buffer"
     category = "Logic"
-    help = "Keeps the last lines of the tags you pick and adds them to each message as one entry; a model can read and edit it."
+    help = "Keeps the last lines of the tags you pick and adds them to each context as one entry; a model can read and edit it."
     tags = {"lines": "the kept lines (one entry)"}
     keeps_data = True
     settings_schema = {
@@ -55,18 +55,18 @@ class Buffer(Card):
         lines = self.data["lines"]
         return (f"{self.name} (newest last):\n" + "\n".join(f"{i}. {t}" for i, t in enumerate(lines, 1))) if lines else ""
 
-    async def handle(self, message: Message, port: str, step) -> list[Any] | None:
+    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         tags = self.settings.get("tags") or []
-        newest = next((e for e in reversed(message.entries)
+        newest = next((e for e in reversed(context.entries)
                        if (any(t in e["tags"] for t in tags) if tags else e["kind"] == "said") and e["text"].strip()), None)
         if newest and (not self.data["lines"] or self.data["lines"][-1] != newest["text"].strip()):
             self._keep(newest["text"].strip())
             await self.save()
         if (position := self.settings.get("position") or "note") in KIND:
-            message.put(self.id, KIND[position], self.block(), "lines")
+            context.put(self.id, KIND[position], self.block(), "lines")
         return None
 
-    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         lines = self.data["lines"]
         if function == "add" and str(args.get("text") or "").strip():
             self._keep(str(args["text"]).strip())
@@ -80,6 +80,6 @@ class Buffer(Card):
         elif function == "clear":
             self.data["lines"] = []
         elif function != "read":
-            return await super().call(function, args, message)
+            return await super().call(function, args, context)
         await self.save()
         return {"lines": self.data["lines"]}

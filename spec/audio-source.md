@@ -10,13 +10,16 @@ Assistant access token (`Authorization: Bearer …`).
 | AAC → source | `{"type": "welcome", "source_id": "pc"}` |
 | source → AAC | binary: raw PCM, 16-bit little endian, 16 kHz, mono, any chunk size (20 ms recommended), continuously |
 | AAC → source | `{"type": "play", "format": "wav", "bytes": n, "text": "…"}`, then one binary message of n bytes |
-| source → AAC | `{"type": "played"}` when playback finished |
+| source → AAC | `{"type": "played"}` when playback finished (or was stopped) |
+| AAC → source | `{"type": "stop"}`: stop playing now (a stop reached Voice out, or HA's stop on its media player) |
 
 Rules:
 - While a source plays AAC's answer, AAC ignores its microphone (no talking to itself).
   The source may stop sending meanwhile.
 - `id` is stable per source (a reconnect replaces the old connection); AAC remembers sources
   that connected once.
+- Each source is also a Home Assistant media player (`media_player.aac_satellite_<name>`, v2): HA can play
+  media and TTS on it, set the volume and stop it.
 - Raw audio lives only in AAC's RAM ring buffer (last 30 s), never on disk.
 
 What AAC does with it (built): voice activity → speech segments → speech to text (a

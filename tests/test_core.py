@@ -2,7 +2,7 @@
 
 from homeassistant.core import HomeAssistant
 
-from custom_components.aac.message import Message
+from custom_components.aac.context import Context
 
 from .conftest import BASE_URL, model_answers, reply, setup_aac, v1_files
 
@@ -99,16 +99,16 @@ async def test_relay_positions_and_replace(hass: HomeAssistant, mock_entry):
     domain = core.domain
     start = await domain.add_card("relay", "Role", {"position": "start", "text": "You are AAC."})
     after = await domain.add_card("relay", "Note", {"position": "after", "text": "Be short.", "replace": False})
-    message = Message()
-    message.add("chat", "said", "hi")
-    await start.handle(message, "in", None)
-    await start.handle(message, "in", None)
-    await after.handle(message, "in", None)
-    message.add("chat", "said", "and?")
-    await after.handle(message, "in", None)
-    assert [(e["kind"], e["text"]) for e in message.entries] == [
+    context = Context()
+    context.add("chat", "said", "hi")
+    await start.handle(context, "in", None)
+    await start.handle(context, "in", None)
+    await after.handle(context, "in", None)
+    context.add("chat", "said", "and?")
+    await after.handle(context, "in", None)
+    assert [(e["kind"], e["text"]) for e in context.entries] == [
         ("system", "You are AAC."), ("said", "hi"), ("trailer", "Be short."), ("said", "and?"), ("trailer", "Be short.")]
-    assert all(t.startswith(("role.", "note.", "chat.")) for e in message.entries for t in e["tags"])
+    assert all(t.startswith(("role.", "note.", "chat.")) for e in context.entries for t in e["tags"])
 
 
 async def test_setup_file_round_trip(hass: HomeAssistant, mock_entry, aioclient_mock):
@@ -128,7 +128,7 @@ async def test_stop_cuts_the_answer_and_stays_visible(hass: HomeAssistant, mock_
     turn tells the model it was stopped (an old stop does not stop the next turn)."""
     import asyncio
 
-    from custom_components.aac.message import is_stop
+    from custom_components.aac.context import is_stop
 
     from .conftest import BASE_URL
 

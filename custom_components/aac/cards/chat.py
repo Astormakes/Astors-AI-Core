@@ -12,7 +12,7 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from ..message import Message, is_stop, new_id
+from ..context import Context, is_stop, new_id
 from . import Card, register
 
 WAIT = 600  # seconds a chat waits for its answer
@@ -92,10 +92,10 @@ class Chat(Card):
         quiet = timedelta(minutes=float(self.settings.get("new_after") or 20))
         return self.get(chats[0]["id"]) if dt_util.utcnow() - datetime.fromisoformat(chats[0]["updated"]) <= quiet else None
 
-    def held(self, port: str) -> Message:
+    def held(self, port: str) -> Context:
         """What a dotted wire from `said` reads: the current chat's context (empty: the next turn starts a new chat)."""
         chat = self.current()
-        return Message(entries=deepcopy(chat["entries"]) if chat else [], origin=self.id, chat_id=chat["id"] if chat else None)
+        return Context(entries=deepcopy(chat["entries"]) if chat else [], origin=self.id, chat_id=chat["id"] if chat else None)
 
     async def delete(self, chat_id: str) -> None:
         """Delete a chat."""
@@ -111,17 +111,17 @@ class Chat(Card):
         if (turns := int(self.settings.get("turns") or 0)) > 0:  # only the last turns go along
             said = [i for i, e in enumerate(entries) if e["kind"] == "said"]
             entries = entries[said[-turns]:] if len(said) >= turns else entries
-        message = Message(entries=entries, origin=self.id, chat_id=chat["id"])
-        line = message.add(self.id, "said", text, ["said"])
+        context = Context(entries=entries, origin=self.id, chat_id=chat["id"])
+        line = context.add(self.id, "said", text, ["said"])
         await self._hold(chat, [*chat["entries"], line])
         future = asyncio.get_running_loop().create_future()
-        self._waiting[message.id] = future
+        self._waiting[context.id] = future
         try:  # the whole way runs before send returns: no answer by then means none comes (nothing waits forever)
-            await asyncio.wait_for(self.domain.flow.send(message, self.id, "said"), WAIT)
+            await asyncio.wait_for(self.domain.flow.send(context, self.id, "said"), WAIT)
         except TimeoutError:
             pass
         finally:
-            self._waiting.pop(message.id, None)
+            self._waiting.pop(context.id, None)
         if future.done():
             return chat["id"], future.result()
         await self._hold(chat, [*chat["entries"], {**line, "id": new_id(), "kind": "error", "text": NO_ANSWER, "tags": [self.tag("error")]}])
@@ -132,40 +132,40 @@ class Chat(Card):
         chat = self.get(chat_id)
         if chat is None:
             return
-        message = Message(entries=list(chat["entries"]), origin=self.id, chat_id=chat_id)
-        message.add(self.id, "signal", "stop", ["stop"])
-        self.hass.async_create_background_task(self.domain.flow.send(message, self.id, "said"), f"aac {self.id} stop")
+        context = Context(entries=list(chat["entries"]), origin=self.id, chat_id=chat_id)
+        context.add(self.id, "signal", "stop", ["stop"])
+        self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "said"), f"aac {self.id} stop")
 
-    async def handle(self, message: Message, port: str, step) -> list[Any] | None:
+    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         """A context came in: it replaces what the chat holds (a new chat if it belongs to none yet)."""
-        cut = (message.last("answer") or {}).get("state") == "cut"
-        if message.stopped and not cut:  # a stop came through and nothing was busy: nothing to keep
+        cut = (context.last("answer") or {}).get("state") == "cut"
+        if context.stopped and not cut:  # a stop came through and nothing was busy: nothing to keep
             return []
-        text = message.answer or ("" if cut else "(no answer)")
-        if message.origin == self.id and text.strip().lower() not in SILENT:
-            chat = self.get(message.chat_id or "")
+        text = context.answer or ("" if cut else "(no answer)")
+        if context.origin == self.id and text.strip().lower() not in SILENT:
+            chat = self.get(context.chat_id or "")
             if chat is None:  # a turn built on an empty read (quiet for long): a new chat
-                said = message.last("said") or {}
+                said = context.last("said") or {}
                 name = said.get("data", {}).get("mic_name")
-                chat = self._new(f"Voice · {name} · {dt_util.now().strftime('%H:%M')}" if name else said.get("text", ""), message.chat_id)
-            await self._hold(chat, message.entries)
-        if (future := self._waiting.get(message.id)) and not future.done():
+                chat = self._new(f"Voice · {name} · {dt_util.now().strftime('%H:%M')}" if name else said.get("text", ""), context.chat_id)
+            await self._hold(chat, context.entries)
+        if (future := self._waiting.get(context.id)) and not future.done():
             future.set_result(text)
         return []
 
-    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         if function == "read":
-            chat = self.get(message.chat_id) if message and message.chat_id else (self.chats() and self.get(self.chats()[0]["id"]))
+            chat = self.get(context.chat_id) if context and context.chat_id else (self.chats() and self.get(self.chats()[0]["id"]))
             turns = int(args.get("turns") or 10)
             return [{"role": m["role"], "text": m["text"]} for m in (chat or {}).get("messages", [])[-turns:]]
         if function == "post":
             chats = self.chats()
             chat = self.get(chats[0]["id"]) if chats else self._new("From AAC")
-            post = Message()
+            post = Context()
             post.add(self.id, "answer", str(args.get("text") or ""))
             await self._hold(chat, [*chat["entries"], *post.entries])
             return {"posted": True}
-        return await super().call(function, args, message)
+        return await super().call(function, args, context)
 
 
 def shown(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:

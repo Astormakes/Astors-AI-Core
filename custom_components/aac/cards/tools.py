@@ -1,5 +1,5 @@
 """Small single-purpose cards: File (a Markdown file), Notify (a phone notification through HA), Timer (hold a
-message for a while), Web (search and read pages)."""
+context for a while), Web (search and read pages)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import aiohttp
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
-from ..message import Message
+from ..context import Context
 from . import Card, register
 
 
@@ -53,15 +53,15 @@ class File(Card):
         with self.path().open("a" if append else "w", encoding="utf-8") as f:
             f.write(text)
 
-    async def handle(self, message: Message, port: str, step) -> list[Any] | None:
+    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         what = self.settings.get("in_line") or "answer"
-        text = message.answer if what == "answer" else message.text if what == "said" else ""
+        text = context.answer if what == "answer" else context.text if what == "said" else ""
         if text.strip():
             stamp = dt_util.now().strftime("%Y-%m-%d %H:%M")
             await self.hass.async_add_executor_job(self._write, f"\n## {stamp}\n\n{text.strip()}\n", True)
         return None
 
-    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         if function == "read":
             return (await self.hass.async_add_executor_job(self._read))[-8000:]
         if function in ("append", "write"):
@@ -69,7 +69,7 @@ class File(Card):
             await self.hass.async_add_executor_job(self._write, text if text.endswith("\n") else text + "\n", function == "append")
             self.core.notify("card", domain=self.domain.id, card=self.id)
             return {"done": function}
-        return await super().call(function, args, message)
+        return await super().call(function, args, context)
 
 
 @register
@@ -95,32 +95,32 @@ class Notify(Card):
         await self.hass.services.async_call(domain, service, {"message": text, "title": title or self.settings.get("title") or "AAC"}, blocking=True)
         return {"sent": True}
 
-    async def handle(self, message: Message, port: str, step) -> list[Any] | None:
-        if self.settings.get("in_line", True) and message.answer.strip() and message.answer.strip().lower() not in ("nothing", "nothing."):
-            await self._send(message.answer.strip())
+    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
+        if self.settings.get("in_line", True) and context.answer.strip() and context.answer.strip().lower() not in ("nothing", "nothing."):
+            await self._send(context.answer.strip())
         return None
 
-    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         if function == "send":
             return await self._send(str(args.get("message") or ""), args.get("title"))
-        return await super().call(function, args, message)
+        return await super().call(function, args, context)
 
 
 @register
 class Timer(Card):
-    """Holds a message for a while."""
+    """Holds a context for a while."""
 
     type = "timer"
     title = "Timer"
     category = "Logic"
-    help = "Holds the message for some seconds, then sends it on (e.g. to wait for a reply); a stop ends the wait."
+    help = "Holds the context for some seconds, then sends it on (e.g. to wait for a reply); a stop ends the wait."
     settings_schema = {"seconds": {"type": "number", "title": "Seconds", "default": 5}}
 
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
         self._waits: set[asyncio.Task] = set()
 
-    async def handle(self, message: Message, port: str, step) -> list[Any] | None:
+    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         task = asyncio.current_task()
         self._waits.add(task)
         try:
@@ -157,7 +157,7 @@ class Web(Card):
         "read": {"help": "A page as plain text.", "args": {"url": {"type": "string", "help": "The address.", "required": True}}},
     }
 
-    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         session = async_get_clientsession(self.hass)
         timeout = aiohttp.ClientTimeout(total=20)
         headers = {"User-Agent": "Mozilla/5.0 (AAC)"}
@@ -183,4 +183,4 @@ class Web(Card):
                 return re.sub(r"\s+", " ", html.unescape(TAG.sub(" ", page))).strip()[:8000]
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
             return {"error": str(err)}
-        return await super().call(function, args, message)
+        return await super().call(function, args, context)

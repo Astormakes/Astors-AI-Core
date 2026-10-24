@@ -3,7 +3,7 @@
 from homeassistant.core import HomeAssistant
 
 from custom_components.aac.flow import Step
-from custom_components.aac.message import Message
+from custom_components.aac.context import Context
 
 from .conftest import setup_aac
 
@@ -22,13 +22,13 @@ async def test_conditional_edits_tags_calls_and_routes(hass: HomeAssistant, mock
     no = await domain.add_card("relay", "No")
     domain.set_wires([{"from": "check.aac", "to": "yes.in"}, {"from": "check.out", "to": "no.in"},
                       {"from": "check.out", "to": "room.in"}, {"from": "room.out", "to": "check.in"}])
-    message = Message()
-    message.add("chat", "said", "Computer, lights on")
-    route = await cond.handle(message, "in", Step(domain.flow, cond, "in", message))
-    said = message.last("said")
+    context = Context()
+    context.add("chat", "said", "Computer, lights on")
+    route = await cond.handle(context, "in", Step(domain.flow, cond, "in", context))
+    said = context.last("said")
     assert route == [("aac", "yes")] and said["text"] == "lights on" and "user.addressed" in said["tags"]
     assert buffer.data["lines"] == ["lights on"]
-    other = Message()
+    other = Context()
     other.add("chat", "said", "hello")
     assert await cond.handle(other, "in", Step(domain.flow, cond, "in", other)) == [("out", "no")]  # the buffer is a tool
 
@@ -38,11 +38,11 @@ async def test_buffer_keeps_and_writes(hass: HomeAssistant, mock_entry):
     core = await setup_aac(hass, mock_entry)
     buffer = await core.domain.add_card("buffer", "Room", {"size": 2})
     for text in ("one", "two", "three"):
-        message = Message()
-        message.add("stt", "said", text)
-        await buffer.handle(message, "in", None)
+        context = Context()
+        context.add("stt", "said", text)
+        await buffer.handle(context, "in", None)
     assert buffer.data["lines"] == ["two", "three"]
-    assert message.last("note")["text"].endswith("1. two\n2. three") and message.last("note")["tags"] == ["room.lines"]
+    assert context.last("note")["text"].endswith("1. two\n2. three") and context.last("note")["tags"] == ["room.lines"]
     await buffer.call("remove_matching", {"text": "two"})
     assert (await buffer.call("read", {}))["lines"] == ["three"]
 
@@ -96,8 +96,8 @@ async def test_template_test_reads_when_aac_last_spoke(hass: HomeAssistant, mock
         {"select": {"by": "kind", "value": "said"}, "test": "template",
          "value": "{{ audio.satellites[entry.data.mic].seconds < 10 }}", "actions": [{"do": "output", "a": "yes"}]}]})
     for mic, port in (("kitchen", "yes"), ("office", "out")):
-        message = Message(origin="ears")
-        message.add("ears", "said", "and tomorrow?", mic=mic)
-        assert await card.handle(message, "in", Step(core.domain.flow, card, "in", message)) == []  # nothing wired
-        assert card._template(card.settings["rules"][0], [message.last("said")], message) == (port == "yes")
+        context = Context(origin="ears")
+        context.add("ears", "said", "and tomorrow?", mic=mic)
+        assert await card.handle(context, "in", Step(core.domain.flow, card, "in", context)) == []  # nothing wired
+        assert card._template(card.settings["rules"][0], [context.last("said")], context) == (port == "yes")
     assert core.audio.spoken()["last"]["satellite"] == "kitchen"

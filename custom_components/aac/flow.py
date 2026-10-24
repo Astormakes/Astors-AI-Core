@@ -1,8 +1,8 @@
-"""How a message moves (docs/v2): from a card's output along the wires into the next cards.
+"""How a context moves (docs/v2): from a card's output along the wires into the next cards.
 
 A round output gives every wire a copy; on a square one the card picks the wire. A card's tools are the cards wired
 from its output and back into it (a loop): it calls their functions directly, the call and its result are written
-into the message. What passed each output is kept for the monitor, and open panels hear about it (live wires).
+into the context. What passed each output is kept for the monitor, and open panels hear about it (live wires).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from .const import LOGGER
-from .message import Message
+from .context import Context
 
 if TYPE_CHECKING:
     from .cards import Card
@@ -19,15 +19,15 @@ if TYPE_CHECKING:
 
 LEVEL_EVERY = 0.25  # seconds between an audio wire's loudness updates
 KEEP_RECORDS, KEEP_SECONDS = 10, 600  # what passed an output lately (the monitor windows)
-MAX_STEPS = 80  # a message that visits more cards than this is stopped (the wiring loops)
+MAX_STEPS = 80  # a context that visits more cards than this is stopped (the wiring loops)
 
 
 class Step:
-    """What a card sees while it works on a message."""
+    """What a card sees while it works on a context."""
 
-    def __init__(self, flow: Flow, card: Card, port: str, message: Message) -> None:
+    def __init__(self, flow: Flow, card: Card, port: str, context: Context) -> None:
         """Initialize."""
-        self.flow, self.card, self.port, self.message = flow, card, port, message
+        self.flow, self.card, self.port, self.context = flow, card, port, context
 
     def targets(self, port: str = "out") -> list[tuple[Card, str]]:
         """The cards (and their input) wired to one of this card's outputs."""
@@ -48,25 +48,25 @@ class Step:
         """The cards wired into one of this card's inputs (e.g. the Pool on a Model's pool input)."""
         return [c for c, _ in self.flow.wired_into(self.card.id, port)]
 
-    def read(self, port: str) -> list[Message]:
+    def read(self, port: str) -> list[Context]:
         """What the dotted wires into one of this card's inputs hold now (reading never starts anything)."""
         return [m for c, p in self.flow.wired_into(self.card.id, port) if (m := c.held(p)) is not None]
 
     def live(self, text: str) -> None:
         """Text that is still growing (a model writing): open panels show it."""
-        self.flow.domain.core.notify("delta", domain=self.flow.domain.id, chat_id=self.message.chat_id,
-                                     card=self.message.origin, text=text)
+        self.flow.domain.core.notify("delta", domain=self.flow.domain.id, chat_id=self.context.chat_id,
+                                     card=self.context.origin, text=text)
 
 
 class Flow:
-    """The message flow of one domain."""
+    """The context flow of one domain."""
 
     def __init__(self, domain: Domain) -> None:
         """Initialize."""
         self.domain = domain
-        self.last: dict[str, dict[str, Any]] = {}  # "card.port" → the newest message that left there
+        self.last: dict[str, dict[str, Any]] = {}  # "card.port" → the newest context that left there
         self.records: dict[str, list[dict[str, Any]]] = {}
-        self.held: dict[str, Message] = {}  # "card.port" → a copy of the newest context that left there (dotted wires read it)  # "card.port" → what passed lately: {time, text}
+        self.held: dict[str, Context] = {}  # "card.port" → a copy of the newest context that left there (dotted wires read it)  # "card.port" → what passed lately: {time, text}
         self._level_at: dict[str, float] = {}
 
     def wired_from(self, card_id: str, port: str) -> list[tuple[Card, str]]:
@@ -89,12 +89,12 @@ class Flow:
                 found.append((card, ap))
         return found
 
-    def record(self, card_id: str, port: str, message: Message, to: list[str] | None = None) -> None:
+    def record(self, card_id: str, port: str, context: Context, to: list[str] | None = None) -> None:
         """What left an output: kept for the monitor; open panels pulse the wire."""
         key = f"{card_id}.{port}"
-        self.last[key] = {**message.summary(), "time": time.time()}
-        self.held[key] = message.branch()
-        newest = next((e for e in reversed(message.entries) if e["kind"] not in ("system", "signal") and e["text"].strip()), None)
+        self.last[key] = {**context.summary(), "time": time.time()}
+        self.held[key] = context.branch()
+        newest = next((e for e in reversed(context.entries) if e["kind"] not in ("system", "signal") and e["text"].strip()), None)
         self._keep(key, newest["text"][:400] if newest else "")
         self.domain.core.notify("flow", domain=self.domain.id, wire=key, to=to)  # to: the inputs it went to (a square output picks)
 
@@ -128,29 +128,29 @@ class Flow:
             if hasattr(target, "piece"):
                 self.domain.hass.async_create_background_task(target.piece(in_port, piece), f"aac {target.id} piece")
 
-    async def send(self, message: Message, card_id: str, port: str = "out") -> None:
-        """A card sends a message from one of its outputs."""
-        await self._out(self.domain.cards[card_id], message, [port])
+    async def send(self, context: Context, card_id: str, port: str = "out") -> None:
+        """A card sends a context from one of its outputs."""
+        await self._out(self.domain.cards[card_id], context, [port])
 
-    async def enter(self, card: Card, port: str, message: Message) -> None:
-        """A message arrives at a card's input."""
-        message.way.append(card.id)
-        if len(message.way) > MAX_STEPS:
-            LOGGER.warning("AAC: a message visited %s cards; the wiring may loop (stopped at %s)", MAX_STEPS, card.id)
+    async def enter(self, card: Card, port: str, context: Context) -> None:
+        """A context arrives at a card's input."""
+        context.way.append(card.id)
+        if len(context.way) > MAX_STEPS:
+            LOGGER.warning("AAC: a context visited %s cards; the wiring may loop (stopped at %s)", MAX_STEPS, card.id)
             return
-        if message.stopped:  # a stop runs forward: a busy card cuts and sends its own context on, the stop ends there
-            if await card.stop(message.entries[-1]):
+        if context.stopped:  # a stop runs forward: a busy card cuts and sends its own context on, the stop ends there
+            if await card.stop(context.entries[-1]):
                 return
-            await self._out(card, message, None)
+            await self._out(card, context, None)
             return
         try:
-            result = await card.handle(message, port, Step(self, card, port, message))
+            result = await card.handle(context, port, Step(self, card, port, context))
         except Exception:  # noqa: BLE001 - one broken card must not stop the domain
             LOGGER.exception("AAC: card %s failed", card.id)
             return
-        await self._out(card, message, result)
+        await self._out(card, context, result)
 
-    async def _out(self, card: Card, message: Message, result: list[Any] | None) -> None:
+    async def _out(self, card: Card, context: Context, result: list[Any] | None) -> None:
         _, outs, square = card.ports()
         if result is None:
             picks = [p for p, kind in outs.items() if kind == "text" and p not in square]
@@ -161,7 +161,7 @@ class Flow:
             port, only = pick if isinstance(pick, tuple) else (pick, None)
             targets = [(c, p) for c, p in self.wired_from(card.id, port) if only is None or c.id == only]
             if targets:
-                self.record(card.id, port, message, [f"{c.id}.{p}" for c, p in targets])
+                self.record(card.id, port, context, [f"{c.id}.{p}" for c, p in targets])
             sends += targets
         for i, (target, in_port) in enumerate(sends):
-            await self.enter(target, in_port, message if i == len(sends) - 1 else message.branch())
+            await self.enter(target, in_port, context if i == len(sends) - 1 else context.branch())

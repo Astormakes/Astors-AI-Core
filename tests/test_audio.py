@@ -1,4 +1,4 @@
-"""Audio: a satellite streams, the audio cards hear, the answer is spoken at the satellite, a follow-up window opens."""
+"""Audio: a satellite streams, the audio cards hear, the answer is spoken at the satellite (also an HA media player)."""
 
 import asyncio
 from array import array
@@ -65,7 +65,7 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
     """Stop word, Wake word and Follow-up each get every heard line; only the right one passes it on."""
     from custom_components.aac.defaults import async_voice_chain
     from custom_components.aac.flow import Step
-    from custom_components.aac.message import Message
+    from custom_components.aac.context import Context
 
     await hass.async_add_executor_job(v1_files, hass.config.config_dir)
     core = await setup_aac(hass, mock_entry)
@@ -78,7 +78,7 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
     assert {"from": "model.out", "to": "chat.answers"} not in d.wires
 
     async def route(card, text):
-        m = Message()
+        m = Context()
         m.add("ears", "said", text, mic="pc")
         return await d.cards[card].handle(m, "in", Step(d.flow, d.cards[card], "in", m)), m
     assert (await route("wake", "Computer, lights on"))[0] == [("yes", "spoken")]
@@ -113,3 +113,42 @@ async def test_the_old_voice_chain_is_rebuilt(hass: HomeAssistant, mock_entry):
     assert "voice" not in d._specs and "voice_rules" not in d.cards and "v1" in d.cards["chat"].data["chats"]
     assert [r["value"] for r in d.cards["wake"].settings["rules"]] == ["assistent"]
     assert {"from": "ears.out", "to": "follow_up.in"} in d.wires and not any("voice." in w["from"] + w["to"] for w in d.wires)
+
+
+async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, mock_entry, aioclient_mock):
+    """HA plays on the satellite and stops it; a stop reaching Voice out cuts off what it says."""
+    from custom_components.aac.flow import Step
+    from custom_components.aac.context import Context
+
+    core = await setup_aac(hass, mock_entry)
+    core.audio.settings.update({"tts": "tts.test", "volume": 100})
+    aioclient_mock.get("http://example.local/chime.wav", content=b"RIFFchime")
+    client = await hass_client()
+    with patch.object(core.audio, "tts", AsyncMock(return_value=b"RIFFwave")):
+        ws = await client.ws_connect("/api/aac/audio")
+        await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "rate": 16000})
+        assert (await ws.receive_json())["type"] == "welcome"
+        await hass.async_block_till_done()
+        player = "media_player.aac_satellite_pc"
+        assert hass.states.get(player).state == "idle"
+        await hass.services.async_call("media_player", "play_media", {"entity_id": player, "media_content_id": "http://example.local/chime.wav",
+                                                                      "media_content_type": "music"}, blocking=True)
+        assert (await ws.receive_json())["type"] == "play" and await ws.receive_bytes() == b"RIFFchime"
+        assert hass.states.get(player).state == "playing"
+        await hass.services.async_call("media_player", "media_stop", {"entity_id": player}, blocking=True)
+        assert await ws.receive_json() == {"type": "stop"}
+        await ws.send_json({"type": "played"})
+        for _ in range(100):  # the satellite's "played" arrives on its own connection
+            if hass.states.get(player).state == "idle":
+                break
+            await asyncio.sleep(0.01)
+        assert hass.states.get(player).state == "idle"
+        speaker = await core.domain.add_card("voice_out", "Voice out")
+        m = Context()
+        m.add("ears", "said", "computer, tell me a story", mic="pc")
+        m.add("model", "answer", "Once upon a time …")
+        await speaker.handle(m, "in", Step(core.domain.flow, speaker, "in", m))
+        assert (await ws.receive_json())["text"] == "Once upon a time …" and await ws.receive_bytes() == b"RIFFwave"
+        assert await speaker.stop({"kind": "signal", "text": "stop"})
+        assert await ws.receive_json() == {"type": "stop"}
+        await ws.close()

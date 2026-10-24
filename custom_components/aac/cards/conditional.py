@@ -11,7 +11,7 @@ from homeassistant.exceptions import TemplateError
 from homeassistant.helpers.template import Template
 
 from ..const import LOGGER
-from ..message import Message, entry
+from ..context import Context, entry
 from . import Card, register
 
 TESTS = ["contains", "is", "starts", "ends", "matches", "has_tag", "count_more", "empty", "always", "template"]
@@ -19,10 +19,10 @@ ACTIONS = ["replace", "insert", "remove", "remove_entries", "cut", "split", "joi
            "stop", "signal", "output"]
 
 
-def _select(message: Message, rule: dict[str, Any]) -> list[dict[str, Any]]:
+def _select(context: Context, rule: dict[str, Any]) -> list[dict[str, Any]]:
     pick = rule.get("select") or {}
     by, value = pick.get("by", "kind"), pick.get("value", "said")
-    found = [e for e in message.entries if e["kind"] != "signal" and (
+    found = [e for e in context.entries if e["kind"] != "signal" and (
         by == "any" or (by == "tag" and value in e["tags"]) or (by == "kind" and e["kind"] == value)
         or (by == "card" and e["by"] == value))]
     return found[-1:] if pick.get("which", "newest") == "newest" else found
@@ -59,7 +59,7 @@ class Conditional(Card):
     type = "conditional"
     title = "Conditional"
     category = "Logic"
-    help = ("If … then … without a model: checks the message, edits it (replace, cut, split …), tags it, calls a function "
+    help = ("If … then … without a model: checks the context, edits it (replace, cut, split …), tags it, calls a function "
             "of a card wired to it, stops, or sends it to one of its outputs.")
     ports_help = {"in": "a context arrives: the rules are checked from the top",
                   "out": "where the context goes when no rule picked an output (leave it unwired to drop those)",
@@ -68,7 +68,7 @@ class Conditional(Card):
             "stop": "a stop it sent"}
     settings_schema = {
         "outputs": {"type": "list", "title": "Outputs", "default": [],
-                    "help": "Names of extra outputs a rule can send the message to ('out' is always there)."},
+                    "help": "Names of extra outputs a rule can send the context to ('out' is always there)."},
         "rules": {"type": "rules", "title": "Rules", "default": [], "help": "Checked from the top; the first that matches acts."},
     }
 
@@ -76,23 +76,23 @@ class Conditional(Card):
         names = [n for n in self.settings.get("outputs") or [] if n and n != "out"]
         return {"in": "text"}, {"out": "text", **{n: "text" for n in names}}, {"out", *names}
 
-    async def handle(self, message: Message, port: str, step) -> list[Any] | None:
+    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         chosen: str | None = None
         for n, rule in enumerate(self.settings.get("rules") or []):
-            entries = _select(message, rule)
-            if not (self._template(rule, entries, message) if rule.get("test") == "template" else _test(entries, rule)):
+            entries = _select(context, rule)
+            if not (self._template(rule, entries, context) if rule.get("test") == "template" else _test(entries, rule)):
                 continue
-            message.add(self.id, "signal", f"rule {n + 1}: {rule.get('name') or ''}".strip(), ["match"])  # the trace
+            context.add(self.id, "signal", f"rule {n + 1}: {rule.get('name') or ''}".strip(), ["match"])  # the trace
             for action in rule.get("actions") or []:
-                chosen = await self._do(action, entries, message, step) or chosen
+                chosen = await self._do(action, entries, context, step) or chosen
             if not rule.get("go_on"):
                 break
-        # its tools (cards wired from it and back) only take calls; the message goes on to the others
+        # its tools (cards wired from it and back) only take calls; the context goes on to the others
         tools = {c.id for c in step.tool_cards()}
         port_out = chosen if chosen in self.ports()[1] else "out"
         return [(port_out, c.id) for c, _ in step.targets(port_out) if c.id not in tools]
 
-    def _template(self, rule: dict[str, Any], entries: list[dict[str, Any]], message: Message) -> bool:
+    def _template(self, rule: dict[str, Any], entries: list[dict[str, Any]], context: Context) -> bool:
         """The template test: true when it renders true. It sees `entry` (the newest picked entry), `entries`, every
         card's values and `audio` (when AAC last spoke: {{ audio.last.seconds < 10 }})."""
         variables = {**self.domain.template_values(), "entry": entries[-1] if entries else None, "entries": entries}
@@ -103,7 +103,7 @@ class Conditional(Card):
             return False
         return str(out).strip().lower() in ("true", "yes", "on", "1")
 
-    async def _do(self, action: dict[str, Any], entries: list[dict[str, Any]], message: Message, step) -> str | None:
+    async def _do(self, action: dict[str, Any], entries: list[dict[str, Any]], context: Context, step) -> str | None:
         do, a, b = action.get("do"), str(action.get("a", "")), str(action.get("b", ""))
         for e in entries:
             if do == "replace" and a:
@@ -125,28 +125,28 @@ class Conditional(Card):
                 tag = a if "." in a else f"user.{a}"
                 e["tags"] = [*e["tags"], tag] if tag not in e["tags"] else e["tags"]
         if do == "remove_entries":
-            message.entries[:] = [e for e in message.entries if e not in entries]
+            context.entries[:] = [e for e in context.entries if e not in entries]
         elif do == "split" and a:
             for e in entries:
                 parts = [p.strip() for p in e["text"].split(a) if p.strip()]
-                at = message.entries.index(e)
-                message.entries[at:at + 1] = [{**entry(self.id, e["kind"], p, [*e["tags"], self.tag("split")])} for p in parts]
+                at = context.entries.index(e)
+                context.entries[at:at + 1] = [{**entry(self.id, e["kind"], p, [*e["tags"], self.tag("split")])} for p in parts]
         elif do == "join" and len(entries) > 1:
             first = entries[0]
             first["text"] = (b or "\n").join(e["text"] for e in entries)
-            message.entries[:] = [e for e in message.entries if e is first or e not in entries]
+            context.entries[:] = [e for e in context.entries if e is first or e not in entries]
         elif do == "call":
             card = self.domain.cards.get(action.get("card", ""))
             if card and card in step.tool_cards():  # only cards wired from it and back (like a model's tools)
                 text = entries[-1]["text"] if entries else ""
                 args = {k: (v.replace("{text}", text) if isinstance(v, str) else v) for k, v in (action.get("args") or {}).items()}
-                result = await card.call(action.get("function", ""), args, message)
-                message.add(self.id, "call", "", ["call"], function=f"{card.id}.{action.get('function')}", args=args)
-                message.add(card.id, "result", str(result)[:4000])
+                result = await card.call(action.get("function", ""), args, context)
+                context.add(self.id, "call", "", ["call"], function=f"{card.id}.{action.get('function')}", args=args)
+                context.add(card.id, "result", str(result)[:4000])
         elif do == "stop":
-            message.add(self.id, "signal", "stop", [self.tag("stop")])
+            context.add(self.id, "signal", "stop", [self.tag("stop")])
         elif do == "signal" and a:
-            message.add(self.id, "signal", a, [a if "." in a else f"user.{a}"])
+            context.add(self.id, "signal", a, [a if "." in a else f"user.{a}"])
         elif do == "output" and a:
             return a
         return None

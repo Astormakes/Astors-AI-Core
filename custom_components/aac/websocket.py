@@ -180,9 +180,9 @@ async def ws_stop(hass, connection, msg) -> None:
 
 @command({vol.Required("type"): "aac/monitor", vol.Required("wire"): str})
 async def ws_monitor(hass, connection, msg) -> None:
-    """The newest message that passed an output, and what passed it lately (10 minutes)."""
+    """The newest context that passed an output, and what passed it lately (10 minutes)."""
     flow = _core(hass).domain.flow
-    connection.send_result(msg["id"], {"message": flow.last.get(msg["wire"]), "records": flow.records.get(msg["wire"], [])})
+    connection.send_result(msg["id"], {"context": flow.last.get(msg["wire"]), "records": flow.records.get(msg["wire"], [])})
 
 
 @command({vol.Required("type"): "aac/tags/add", vol.Required("tag"): str})

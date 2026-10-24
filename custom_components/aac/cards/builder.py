@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..message import Message
+from ..context import Context
 from . import CARD_TYPES, Card, register
 
 
@@ -38,7 +38,7 @@ class Builder(Card):
                                                       "to": {"type": "string", "help": "card.port", "required": True}}},
     }
 
-    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         domain = self.domain
         if function == "cards":
             return {"cards": [c.summary() for c in domain.cards.values()], "wires": domain.wires}
@@ -65,4 +65,4 @@ class Builder(Card):
             wires = [w for w in domain.wires if w != wire] + ([wire] if function == "wire" else [])
             domain.set_wires(wires)
             return {"wired" if function == "wire" else "unwired": wire in domain.wires if function == "wire" else wire not in domain.wires}
-        return await super().call(function, args, message)
+        return await super().call(function, args, context)

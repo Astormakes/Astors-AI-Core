@@ -7,7 +7,7 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from ..message import Message, new_id
+from ..context import Context, new_id
 from . import Card, register
 
 ARG_LIST = {"type": "string", "help": "The list's name.", "required": True}
@@ -82,7 +82,7 @@ class Lists(Card):
         now = dt_util.utcnow().isoformat()
         return {"id": new_id(), "text": text.strip(), "done": False, "fields": {}, "created": now, "updated": now}
 
-    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         if function == "lists":
             def count(items): return sum(1 + count(i.get("children") or []) for i in items)
             return [{"name": li["name"], "entries": count(li["items"])} for li in self.data["lists"]]
@@ -137,7 +137,7 @@ class Lists(Card):
                         gone.append(found[1])
                 self.data["removed"] = {"from": li["name"], "items": gone}
             else:
-                return await super().call(function, args, message)
+                return await super().call(function, args, context)
             li["updated"] = dt_util.utcnow().isoformat()
         await self.save()
         self.core.notify("card", domain=self.domain.id, card=self.id)

@@ -1,11 +1,11 @@
-"""Decide: a model picks one of the named outputs (e.g. "for AAC" / "not for AAC"); the message goes on there."""
+"""Decide: a model picks one of the named outputs (e.g. "for AAC" / "not for AAC"); the context goes on there."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from ..const import LOGGER
-from ..message import Message
+from ..context import Context
 from ..models import Client, ModelError
 from . import Card, register
 
@@ -19,7 +19,7 @@ class Decide(Card):
     type = "decide"
     title = "Decide"
     category = "Logic"
-    help = ("A model reads the newest entries and picks one of the outputs you name (with what each is for); the message "
+    help = ("A model reads the newest entries and picks one of the outputs you name (with what each is for); the context "
             "goes on there. Wire a Pool into its dotted input (a fast small model is enough).")
     inputs = {"in": "text", "pool": "pool"}
     tags = {"choice": "what it picked"}
@@ -34,18 +34,18 @@ class Decide(Card):
         names = [o["name"] for o in self.settings.get("outputs") or [] if o.get("name")]
         return dict(self.inputs), {n: "text" for n in names}, set(names)
 
-    async def handle(self, message: Message, port: str, step) -> list[Any] | None:
+    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         if port != "in":
             return []
         outs = [o for o in self.settings.get("outputs") or [] if o.get("name")]
         if not outs:
             return []
-        choice = await self._choose(message, outs, step)
-        message.add(self.id, "signal", f"decided: {choice}", ["choice"])
+        choice = await self._choose(context, outs, step)
+        context.add(self.id, "signal", f"decided: {choice}", ["choice"])
         return [(choice, c.id) for c, _ in step.targets(choice)]
 
-    async def _choose(self, message: Message, outs: list[dict[str, str]], step) -> str:
-        lines = [f"{e['by']} ({e['kind']}): {e['text']}" for e in message.entries
+    async def _choose(self, context: Context, outs: list[dict[str, str]], step) -> str:
+        lines = [f"{e['by']} ({e['kind']}): {e['text']}" for e in context.entries
                  if e["kind"] in ("said", "answer", "note", "trailer") and e["text"].strip()][-LOOK_BACK:]
         options = "\n".join(f"- {o['name']}: {o.get('description', '')}" for o in outs)
         prompt = (f"{self.settings.get('question') or ''}\n\nOptions:\n{options}\n\nAnswer with exactly one option name, "

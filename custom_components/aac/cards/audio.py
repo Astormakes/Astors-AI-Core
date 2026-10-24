@@ -10,7 +10,8 @@ from typing import Any
 from homeassistant.util import dt as dt_util
 
 from ..audio import SAMPLE_RATE, Segmenter, level, make_vad
-from ..message import Message
+from ..const import LOGGER
+from ..context import Context
 from . import Card, register
 
 SILENT = ("nothing", "nothing.", "")
@@ -113,10 +114,10 @@ class SpeechToText(Card):
         text = ((heard or {}).get("text") or "").strip()
         if not text:
             return
-        message = Message(origin=self.id)
-        message.add(self.id, "said", text, ["heard"], mic=piece.get("source"), mic_name=piece.get("name"),
+        context = Context(origin=self.id)
+        context.add(self.id, "said", text, ["heard"], mic=piece.get("source"), mic_name=piece.get("name"),
                     area=piece.get("area"), seconds=piece.get("seconds"), language=(heard or {}).get("language"))
-        await self.domain.flow.send(message, self.id, "out")
+        await self.domain.flow.send(context, self.id, "out")
 
 
 @register
@@ -126,18 +127,52 @@ class VoiceOut(Card):
     type = "voice_out"
     title = "Voice out"
     category = "Audio"
-    help = ("Speaks the newest answer at the satellite the spoken line came from (the voice and volume are on the Audio "
-            "page). An answer 'nothing' stays silent.")
+    help = ("Speaks the newest answer: at the satellite the spoken line came from, or on any Home Assistant media "
+            "player (the voice and volume are on the Audio page). An answer 'nothing' stays silent; a stop cuts it off.")
     inputs = {"in": "text"}
     outputs: dict[str, str] = {}
-    ports_help = {"in": "a context: its newest answer is spoken where its newest spoken line came from (or at the set satellite)"}
-    settings_schema = {"source": {"type": "source", "title": "Speaks at", "default": "",
-                                  "help": "Empty: where the spoken line came from."}}
+    ports_help = {"in": "a context: its newest answer is spoken (a stop arriving here cuts off what it is saying)"}
+    settings_schema = {"source": {"type": "player", "title": "Speaks at", "default": "",
+                                  "help": "Empty: the satellite the spoken line came from. Or any media player."}}
 
-    async def handle(self, message: Message, port: str, step) -> list[Any] | None:
-        text = message.answer.strip()
-        said = next((e for e in reversed(message.entries) if e["kind"] == "said" and e["data"].get("mic")), None)
-        mic = self.settings.get("source") or (said["data"].get("mic") if said else None)
-        if mic and text and text.lower() not in SILENT:
-            await self.core.audio.say(mic, text, (said or {}).get("data", {}).get("language"))
+    def __init__(self, *args: Any) -> None:
+        super().__init__(*args)
+        self._spoke_at: set[str] = set()  # satellites and media players it spoke on (a stop cuts them)
+
+    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
+        text = context.answer.strip()
+        said = next((e for e in reversed(context.entries) if e["kind"] == "said" and e["data"].get("mic")), None)
+        where = self.settings.get("source") or (said["data"].get("mic") if said else None)
+        language = (said or {}).get("data", {}).get("language")
+        if not where or not text or text.lower() in SILENT:
+            return []
+        self._spoke_at.add(where)
+        if where.startswith("media_player."):
+            await self._speak_on(where, text, language)
+        else:
+            await self.core.audio.say(where, text, language)
         return []
+
+    async def _speak_on(self, player: str, text: str, language: str | None) -> None:
+        """Speak on a Home Assistant media player with AAC's voice engine (HA's tts.speak)."""
+        audio = self.core.audio.settings
+        voice = (audio.get("voices") or {}).get((language or self.hass.config.language or "en")[:2])
+        data = {"entity_id": audio.get("tts"), "media_player_entity_id": player, "message": text}
+        if voice:
+            data |= {"language": voice["language"], "options": {"voice": voice["voice"]}}
+        try:
+            await self.hass.services.async_call("tts", "speak", data, blocking=True)
+        except Exception as err:  # noqa: BLE001 - a speaker that fails must not break the chain
+            LOGGER.warning("AAC: speaking on %s failed: %s", player, err)
+
+    async def stop(self, stop: dict[str, Any] | None = None) -> bool:
+        busy = False
+        for where in list(self._spoke_at):
+            if where.startswith("media_player."):
+                if (state := self.hass.states.get(where)) and state.state == "playing":
+                    await self.hass.services.async_call("media_player", "media_stop", {"entity_id": where}, blocking=True)
+                    busy = True
+            elif await self.core.audio.stop(where):
+                busy = True
+        self._spoke_at.clear()
+        return busy

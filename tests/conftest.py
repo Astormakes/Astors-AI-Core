@@ -58,11 +58,11 @@ async def setup_aac(hass: HomeAssistant, entry: MockConfigEntry):
 
 def reply(text: str = "", calls: list[tuple[str, dict]] | None = None) -> dict[str, Any]:
     """A model's (non-streamed) answer."""
-    message: dict[str, Any] = {"role": "assistant", "content": text}
+    context: dict[str, Any] = {"role": "assistant", "content": text}
     if calls:
-        message["tool_calls"] = [{"id": f"c{i}", "type": "function", "function": {"name": n, "arguments": json.dumps(a)}}
+        context["tool_calls"] = [{"id": f"c{i}", "type": "function", "function": {"name": n, "arguments": json.dumps(a)}}
                                  for i, (n, a) in enumerate(calls)]
-    return {"choices": [{"message": message}]}
+    return {"choices": [{"message": context}]}
 
 
 def model_answers(aioclient_mock, *replies: dict[str, Any]) -> list[dict[str, Any]]:

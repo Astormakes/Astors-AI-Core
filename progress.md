@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`, its progress file `docs/progress-v1.md` (private).
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-23) – 2.0.0-alpha.16, live on the owner's HA
+## Current state (2026-10-23) – 2.0.0-alpha.17, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -50,7 +50,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
 - **Stop as a context (alpha.15):** a stop is a context whose newest entry is a stop signal (`<card>.stop`); it runs
   forward on the wires; a busy card (a model writing) cuts its block, appends the stop (marked done: visible history)
   and sends its own context on, the stop ends there; idle cards pass it on. The chat's Stop button sends the chat's
-  context with a stop; the next turn shows the model "[stopped]". Voice out cannot cut playback yet (add-on).
+  context with a stop; the next turn shows the model "[stopped]". 
 - **Live wires (alpha.15):** a push lights the wires it took (brighter, thicker, fading over 4 s) with a -_-_ wave
   running along; audio streams keep the wave running while sound flows.
 - **Contexts and wires (alpha.16, owner 2026-10-24):** solid wire = push (a context arrives, the card runs), dotted
@@ -64,6 +64,12 @@ the owner wires them (no automatic wiring), the message is a document of entries
   meant for you, then answer nothing"); both Relays read the Chat dotted and go to the Charter; Model → Answer (Relay) →
   Chat and Voice out. The Voice chat card and Voice out's status port are gone; voice chats moved into the Chat card.
   Ports have descriptions (folded "Ports" section); rules, functions, values, tags fold.
+- **Satellites are HA media players (alpha.17):** `media_player.aac_satellite_<name>` per known satellite (play any
+  media / TTS, volume = AAC's volume, stop, browse); Voice out speaks at the line's satellite or on any media player
+  (HA's tts.speak) and a stop cuts it off (the add-on 0.1.2 understands `{"type": "stop"}`; protocol in
+  spec/audio-source.md). Live test: TTS on the satellite, HA's stop cut it.
+- **Words (alpha.17):** what runs through the wires is a **context** (`context.py`, class `Context`), in code, panel
+  and docs/v2.
 - **One-time steps on the owner's HA:** v1's 05:25 trigger → Schedule card; v1's voice settings; the voice chain
   (Wake word = a Conditional: "computer" or a follow-up; Voice rules = a Relay after the turn); an HA Assist card.
 - **First start** (`defaults.py`): the default domain (Chat → Charter → Time → Model → Chat; Pool "Models"; Lists and
@@ -72,7 +78,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
   lists, Nodes, Models), chat (live answer, document view, stop), lists page, models page (find a server's models),
   node view (types left with info, click in the grid to place, drag to wire, Delete/button to unwire, settings right
   with functions and tags, Undo, slots 1–3 (Shift-click loads), Send stop, monitor on a wire).
-- Tests: 25 (`../.venv/bin/python -m pytest -q -p no:logging`).
+- Tests: 26 (`../.venv/bin/python -m pytest -q -p no:logging`).
 
 ## Owner's data
 
@@ -80,7 +86,8 @@ the owner wires them (no automatic wiring), the message is a document of entries
   default domain's Lists card now (Open Issues 4, Project Portfolio 10).
 - v1 storage on the HA is untouched (`/config/.storage/aac.*`), backup `/config/aac/bak-before-v2-20261023/`.
 - HA's own Assist pipeline uses `conversation.qwen3_8b` (not AAC). Backups of v2 storage: `/config/aac/bak-v2-alpha2/`,
-  `/config/aac/bak-v2-alpha3/`, `/config/aac/bak-v2-alpha15/` (before the voice rebuild).
+  `/config/aac/bak-v2-alpha3/`, `/config/aac/bak-v2-alpha15/` (before the voice rebuild), `/config/aac/bak-v2-alpha16/`; add-on 0.1.1 files in
+  `/config/aac/bak-addon-0.1.1`.
 
 ## Deploy and test
 

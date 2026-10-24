@@ -8,7 +8,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 
-from ..message import Message
+from ..context import Context
 from . import Card, register
 
 LEVELS = ["hidden", "read", "full"]
@@ -56,7 +56,7 @@ class HomeAssistantCard(Card):
         """hidden, read or full."""
         return (self.settings.get("levels") or {}).get(entity_id) or self.settings.get("default") or "hidden"
 
-    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         hass = self.hass
         if function == "find":
             word, domain = str(args.get("search") or "").lower(), str(args.get("domain") or "")
@@ -90,4 +90,4 @@ class HomeAssistantCard(Card):
                                            blocking=True)
             state = hass.states.get(entity_id)
             return {"done": True, "state": state.state if state else None}
-        return await super().call(function, args, message)
+        return await super().call(function, args, context)

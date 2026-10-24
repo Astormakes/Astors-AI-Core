@@ -1,4 +1,4 @@
-"""Relay: passes the message on (its round output copies it to every wire) and can add a text where its setting says:
+"""Relay: passes the context on (its round output copies it to every wire) and can add a text where its setting says:
 nothing (a pure relay), the start (system prompt, cached by the server), a note before the turn, or after the turn.
 It can also add a text to entries picked by tag. It never holds a stream back."""
 
@@ -9,7 +9,7 @@ from typing import Any
 from homeassistant.exceptions import TemplateError
 from homeassistant.helpers.template import Template
 
-from ..message import Message
+from ..context import Context
 from . import Card, register
 
 KIND = {"start": "system", "note": "note", "after": "trailer"}
@@ -58,22 +58,22 @@ class Relay(Card):
         except TemplateError as err:
             return f"{text}\n[template error: {err}]"
 
-    async def handle(self, message: Message, port: str, step) -> list[Any] | None:
+    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         if port != "in":
             return []
         if step and (read := step.read("reads")):  # start from what it reads (a chat's context), the new lines on top
-            base, new = read[0], [e for e in message.entries if e["kind"] not in ("system", "signal")]
-            message.entries[:] = [*base.entries, *new]
-            message.origin, message.chat_id = base.origin, base.chat_id
+            base, new = read[0], [e for e in context.entries if e["kind"] not in ("system", "signal")]
+            context.entries[:] = [*base.entries, *new]
+            context.origin, context.chat_id = base.origin, base.chat_id
         position = self.settings.get("position") or "nothing"
         if position in KIND:
-            message.put(self.id, KIND[position], self.render(), "text", replace_it=bool(self.settings.get("replace")))
+            context.put(self.id, KIND[position], self.render(), "text", replace_it=bool(self.settings.get("replace")))
         if (tag := self.settings.get("add_tag")) and (extra := self.settings.get("add_text")):
-            for e in message.tagged(tag)[-1:]:  # the newest one (earlier turns stay as they were)
+            for e in context.tagged(tag)[-1:]:  # the newest one (earlier turns stay as they were)
                 e["text"] = f"{extra}{e['text']}" if self.settings.get("add_where") == "start" else f"{e['text']}{extra}"
         return None
 
-    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         if function == "text":
             return self.render()
-        return await super().call(function, args, message)
+        return await super().call(function, args, context)

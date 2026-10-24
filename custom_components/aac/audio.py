@@ -7,7 +7,8 @@ engine) at a source. It does not listen while AAC speaks there. Raw audio stays 
 
 Protocol: satellite → {"type": "hello", "id", "name", "area", "rate": 16000}; AAC → {"type": "welcome",
 "source_id"}; satellite → binary PCM; AAC → {"type": "play", "format": "wav", "bytes", "text"} + the WAV;
-satellite → {"type": "played"}. Auth: an HA access token (the add-on's comes from `<config>/aac/satellite.json`).
+satellite → {"type": "played"}; AAC → {"type": "stop"} cuts what it plays (it answers "played"). Each satellite is
+also an HA media player (`media_player.py`): anything in HA can play on it. Auth: an HA access token (the add-on's comes from `<config>/aac/satellite.json`).
 """
 
 from __future__ import annotations
@@ -325,9 +326,15 @@ class AudioHub:
 
     async def say(self, source_id: str, text: str, language: str | None = None) -> bool:
         """Speak at a satellite, at the set volume (0 = never aloud)."""
+        if source_id not in self.sources or int(self.settings.get("volume", 40)) <= 0 or not (audio := await self.tts(text, language)):
+            return False
+        return await self.play(source_id, audio, text)
+
+    async def play(self, source_id: str, audio: bytes, text: str = "") -> bool:
+        """Play a 16-bit WAV at a satellite, at the set volume (its media player and Voice out use this)."""
         source = self.sources.get(source_id)
         volume = int(self.settings.get("volume", 40))
-        if source is None or volume <= 0 or not (audio := await self.tts(text, language)):
+        if source is None or volume <= 0:
             return False
         if volume < 100:
             audio = await self.hass.async_add_executor_job(scale_wav, audio, volume / 100)
@@ -335,6 +342,14 @@ class AudioHub:
         self.core.notify("audio")
         await source.send({"type": "play", "format": "wav", "bytes": len(audio), "text": text})
         await source.send(audio)
+        return True
+
+    async def stop(self, source_id: str) -> bool:
+        """Stop what a satellite is playing (True if it was playing)."""
+        source = self.sources.get(source_id)
+        if source is None or not source.playing:
+            return False
+        await source.send({"type": "stop"})
         return True
 
     def summary(self) -> dict[str, Any]:

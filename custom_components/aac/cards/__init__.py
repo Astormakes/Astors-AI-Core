@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 if TYPE_CHECKING:
     from ..core import Domain
     from ..flow import Step
-    from ..message import Message
+    from ..context import Context
 
 CARD_TYPES: dict[str, type[Card]] = {}
 CATEGORIES = ["In and out", "Text", "Logic", "Models", "Data", "Home Assistant", "Audio", "Other"]
@@ -54,7 +54,7 @@ class Card:
         """Its values now (see `values`)."""
         return {}
 
-    def held(self, port: str) -> Message | None:
+    def held(self, port: str) -> Context | None:
         """What a dotted wire from one of its outputs reads: by default the newest context that left there."""
         return self.domain.flow.held.get(f"{self.id}.{port}")
 
@@ -82,12 +82,12 @@ class Card:
         """One of its tags with the card in front."""
         return f"{self.id}.{name}"
 
-    async def handle(self, message: Message, port: str, step: Step) -> list[Any] | None:
-        """A message arrived. Return None: on to every round output; []: it ends here; [port] or [(port, card)]:
+    async def handle(self, context: Context, port: str, step: Step) -> list[Any] | None:
+        """A context arrived. Return None: on to every round output; []: it ends here; [port] or [(port, card)]:
         the outputs (or the one wire) it takes."""
         return None
 
-    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         """One of its functions (a model's tool call, a Conditional's action)."""
         raise ValueError(f"{self.name} has no function {function}")
 

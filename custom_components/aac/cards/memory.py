@@ -13,7 +13,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from ..const import LOGGER
-from ..message import Message, new_id
+from ..context import Context, new_id
 from . import Card, register
 
 WORD = re.compile(r"\w{3,}")
@@ -89,13 +89,13 @@ class Memory(Card):
             scored = [x for x in scored if x[0] > 0]
         return [m for _, m in sorted(scored, key=lambda x: -x[0])[:limit]]
 
-    async def handle(self, message: Message, port: str, step) -> list[Any] | None:
-        if self.settings.get("in_line", True) and message.text:
-            found = await self.find(message.text, int(self.settings.get("how_many") or 3))
-            message.put(self.id, "note", "Memories that may matter:\n" + "\n".join(f"- {m['text']}" for m in found) if found else "", "recall")
+    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
+        if self.settings.get("in_line", True) and context.text:
+            found = await self.find(context.text, int(self.settings.get("how_many") or 3))
+            context.put(self.id, "note", "Memories that may matter:\n" + "\n".join(f"- {m['text']}" for m in found) if found else "", "recall")
         return None
 
-    async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         memories = self.data["memories"]
         if function == "remember":
             text = str(args.get("text") or "").strip()
@@ -110,7 +110,7 @@ class Memory(Card):
         elif function == "list":
             return [{"id": m["id"], "text": m["text"], "time": m["time"]} for m in memories[-30:]]
         else:
-            return await super().call(function, args, message)
+            return await super().call(function, args, context)
         await self.save()
         self.core.notify("card", domain=self.domain.id, card=self.id)
         return {"done": function, "memories": len(self.data["memories"])}

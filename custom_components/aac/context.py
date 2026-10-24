@@ -1,8 +1,8 @@
-"""The message (docs/v2 page 1): a document of entries in time order, each written by a card.
+"""The context (docs/v2 page 1): a document of entries in time order, each written by a card.
 
 An entry: {id, by (card id), kind, text, tags (`<card>.<tag>`), time, data, state}. Kinds: system (a system
 prompt part), note (a side remark before the turn), trailer (after the newest turn), said (a person), answer (a
-model), call / result (a tool loop), signal (no content: stop, `<card>.finished`). State: open while it grows,
+model), call / result (a tool loop), signal (no content: `<card>.stop`). State: open while it grows,
 closed when done, cut when a stop ended it.
 """
 
@@ -36,8 +36,8 @@ def entry(by: str, kind: str, text: str = "", tags: list[str] | None = None, **d
 
 
 @dataclass
-class Message:
-    """A message on its way through the cards."""
+class Context:
+    """A context on its way through the cards."""
 
     entries: list[dict[str, Any]] = field(default_factory=list)
     origin: str = ""  # the card it started at (an answer goes back there)
@@ -99,7 +99,7 @@ class Message:
         """It is a stop: its newest entry is a stop signal (an old stop further up is only history)."""
         return bool(self.entries) and is_stop(self.entries[-1]) and not self.entries[-1]["data"].get("done")
 
-    def branch(self) -> Message:
+    def branch(self) -> Context:
         """A copy for one of several wires."""
         return replace(self, entries=deepcopy(self.entries), way=list(self.way))
 
