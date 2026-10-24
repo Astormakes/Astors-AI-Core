@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.3.0, live on the owner's HA
+## Current state (2026-10-24) – 2.1.3, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -139,14 +139,15 @@ the owner wires them (no automatic wiring), the message is a document of entries
 
 ## Versions (owner, 2026-10-24)
 
-From 2.1.0 on: patch (2.1.1) = fixes, minor (2.2.0) = new features or changed behaviour, major (3.0.0) = old setups or
-backups no longer load, decided by `tests/test_backups.py` (the backup of the current major version must load). Card files have their own VERSION (and `upgrade()` for their saved settings). Bump the
-manifest version with every deploy (the browser caches the panel by it).
+Z.Y.X: X = changes the backup survives (fixes and new features alike), Y = a backup no longer loads, Z = a rebuild.
+`tests/test_backups.py` decides X or Y (the backup of the current Z.Y must load). Card files have their own VERSION
+(and `upgrade()` for their saved settings). Bump the manifest version with every deploy (the browser caches the panel
+by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2.1.2; from 2.1.3 on as above.
 
-- 2.3.0: the Level card (loudness as a small graph moving right to left; an inline view in its port row, so it
-  keeps the size of any card). Backup test passed: minor.
-- 2.2.0: card folders, cards with a view (Scope), live wires 10×/s only while Nodes is open. Backup test passed:
-  minor.
+- 2.1.3: the version numbers follow Z.Y.X.
+- 2.1.2 (deployed as 2.3.0): the Level card (loudness as a small graph moving right to left; an inline view in its port row, so it
+  keeps the size of any card).
+- 2.1.1 (deployed as 2.2.0): card folders, cards with a view (Scope), live wires 10×/s only while Nodes is open.
 - 2.1.0: a kept-alive connection the server had closed is tried once more (a model was taken for off after every tool
   call that came quickly); errors ("Error: no model was available.") are their own entries: shown and spoken, never
   read by a model (it had copied the old message as its answer); Chat search ignores punctuation ("13.13" finds 13:13).
@@ -179,10 +180,10 @@ manifest version with every deploy (the browser caches the panel by it).
   (search), `continue` and `read` of any chat. `continue` (alpha.40, owner): when the turn is done, the other chat
   is the current one; the asking turn and the switch are not kept (a chat that was only that turn goes); the panel
   opens the other chat.
-2. ~~Cards with a view~~ **done (2.2.0):** `view = {"height": …}` + `view.js` in the card's folder; `self.show(data)`
+2. ~~Cards with a view~~ **done (2.1.1):** `view = {"height": …}` + `view.js` in the card's folder; `self.show(data)`
    sends frames only while a Nodes page shows the card (`aac/view/watch`, said every 8 s). First one: Scope (Audio:
    level bars, waveform, spectrum with numpy; passes the audio on). Next: Gain, Compressor.
-3. ~~Faster lights~~ **done (2.2.0):** wire levels 10×/s, only while a Nodes page is open.
+3. ~~Faster lights~~ **done (2.1.1):** wire levels 10×/s, only while a Nodes page is open.
 4. **Audio delay**: measure each stage first (clip end → text → model → speech → playing), then: the satellite
    plays a stream instead of whole WAVs; sentence-wise speech (item 1); the Audio clipper's pause. Found: the
    Microphone → Speaker loop sounded broken because AAC ignores a satellite's microphone while it plays (no talking
@@ -193,7 +194,7 @@ manifest version with every deploy (the browser caches the panel by it).
 5. **Editable instructions for models**: each card's text that a wired model gets (its functions' help) gets an
    override/extra text in the card's settings: a fold at the bottom that explains it, with a text box.
 6. **Relay and Conditional UI** (later).
-7. ~~Card folders~~ **done (2.2.0):** `chat/card.py` + `page.js` (+ `view.js`); old flat files go when AAC starts.
+7. ~~Card folders~~ **done (2.1.1):** `chat/card.py` + `page.js` (+ `view.js`); old flat files go when AAC starts.
 8. **Card files reload while AAC runs** (owner): AAC notices a card file whose VERSION went up and loads it again, and
    remakes that type's cards when they are not busy (no restart). Changes to the core still need one.
 9. **Tool menus (v0's idea)** (owner): instead of every function at once, a model sees one entry per card and opens it
@@ -201,8 +202,8 @@ manifest version with every deploy (the browser caches the panel by it).
    mistakes). v0.40.0 did it as areas first, then `open_area` + `use_tool`, the tool list staying fixed so the prompt
    cache holds. Try it as a Model setting and compare.
 10. ~~Backups checked by tests~~ **done (2.1.0):** tests/backups/ keeps one backup (made-up data), from the first
-    release of the current major version; `tests/test_backups.py` loads it and runs a turn. Passes: the change is minor
-    or patch. Fails: it is a major version; raise the major number, then `AAC_SAVE_BACKUP=1 pytest tests/test_backups.py`
+    release of the current Z.Y; `tests/test_backups.py` loads it and runs a turn. Passes: raise X. Fails: raise Y,
+    then `AAC_SAVE_BACKUP=1 pytest tests/test_backups.py`
     replaces the backup. Every test also runs twice by itself (conftest `start`): on a fresh install and on one that
     starts from that backup (dated as an old install); `@pytest.mark.fresh` for the few that only make sense fresh.
 11. **Edit messages in a chat** (owner, as in v1, often used to resend): a pencil under a message (yours or the

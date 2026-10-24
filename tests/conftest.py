@@ -26,7 +26,7 @@ BACKUPS = Path(__file__).parent / "backups"
 
 @pytest.fixture(autouse=True, params=["fresh", "from_backup"])
 def start(request, hass_storage):
-    """Every test runs twice: on a fresh install, and on one that starts from the backup of this major version
+    """Every test runs twice: on a fresh install, and on one that starts from the backup of this Z.Y
     (tests/backups, see test_backups.py). A test that only makes sense on a fresh install says @pytest.mark.fresh."""
     if request.param == "from_backup":
         if request.node.get_closest_marker("fresh"):
