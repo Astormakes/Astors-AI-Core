@@ -10,7 +10,7 @@ import numpy as np
 
 from custom_components.aac.api import Card, register
 
-VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
