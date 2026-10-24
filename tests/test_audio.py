@@ -185,6 +185,8 @@ async def test_a_scope_shows_audio_only_while_watched(hass, mock_entry):
 
 async def test_a_level_card_keeps_the_size_of_any_card(hass, mock_entry):
     """The Level card: an inline view (no extra height), one point per frame while watched, audio passed on."""
+    from custom_components.aac.context import Context
+
     core = await setup_aac(hass, mock_entry)
     level = await core.domain.add_card("level", "Level")
     assert level.summary()["view"]["inline"] is True
@@ -194,10 +196,13 @@ async def test_a_level_card_keeps_the_size_of_any_card(hass, mock_entry):
         assert shown == []  # nobody watches: nothing computed
         core.watch([level.id])
         level.stream("in", audio((LOUD, 0.1)), {"source": "pc"})
-        await level.clip("in", {"pcm": b"\x00\x00", "seconds": 1.2, "utterance": "u1", "part": 1})
-        await level.clip("ends", {"utterance": "u1", "parts": 1})
+        for data in ({"cut": "start", "utterance": "u1", "ago": 0.3}, {"cut": "end", "utterance": "u1", "parts": 1}):
+            c = Context()
+            c.add("cut", "signal", f"cut: {data['cut']}", [data["cut"]], **data)
+            assert await level.handle(c, "cuts", None) is None  # on at 'cuts'
+
     assert len(shown) == 3 and -40 < shown[0]["db"] < 0
-    assert shown[1] == {"mark": "phrase", "seconds": 1.2} and shown[2] == {"mark": "sentence", "seconds": 0}
+    assert shown[1] == {"mark": "start", "ago": 0.3} and shown[2] == {"mark": "end", "ago": 0.0}
     await core.domain.update_card(level.id, settings={"height": 80})
     assert core.domain.cards[level.id].summary()["view"]["height"] == 80  # bigger: under its ports
 
@@ -220,7 +225,7 @@ def test_phrases_inside_the_speech():
     """With a phrase pause, a short pause inside the speech hands out the phrase so far; the long pause ends it."""
     seg = Segmenter(EnergyVad(), pause_ms=600, phrase_ms=200)
     got = seg.feed_parts(audio((SILENCE, 0.2), (LOUD, 0.6), (SILENCE, 0.3), (LOUD, 0.6), (SILENCE, 0.8)))
-    assert [k for k, _ in got] == ["phrase", "phrase", "end"] and got[-1][1] == 2
+    assert [k for k, _ in got] == ["start", "phrase", "phrase", "end"] and got[-1][1] == 2
     whole = Segmenter(EnergyVad(), pause_ms=600)  # without: one piece, as before
     assert len(whole.feed(audio((SILENCE, 0.2), (LOUD, 0.6), (SILENCE, 0.3), (LOUD, 0.6), (SILENCE, 0.8)))) == 1
 
@@ -241,8 +246,13 @@ async def test_phrase_joiner_and_its_wiring(hass, mock_entry):
     await hass.async_block_till_done()
     joiner = next(c for c in d.cards.values() if c.type == "phrase_joiner")
     assert d.positions["wake"]["x"] == wake_x + 290 and d.positions[joiner.id] == {"x": ears["x"] + 290, "y": ears["y"]}
-    assert {"from": "cut.ends", "to": f"{joiner.id}.ends"} in d.wires and {"from": "ears.out", "to": f"{joiner.id}.lines"} in d.wires
+    assert {"from": "cut.cuts", "to": f"{joiner.id}.cuts"} in d.wires and {"from": "ears.out", "to": f"{joiner.id}.lines"} in d.wires
     assert {"from": f"{joiner.id}.out", "to": "wake.in"} in d.wires and {"from": "ears.out", "to": "wake.in"} not in d.wires
+    d.set_wires([w for w in d.wires if w["from"] != "cut.cuts"])  # its cuts wire lost (a port renamed): no second joiner
+    await d.update_card("cut", settings={"pause": 700})
+    await hass.async_block_till_done()
+    assert [c.id for c in d.cards.values() if c.type == "phrase_joiner"] == [joiner.id]
+    assert {"from": "cut.cuts", "to": f"{joiner.id}.cuts"} in d.wires
     sent = []
     with patch.object(d.flow, "send", AsyncMock(side_effect=lambda ctx, card, port: sent.append(ctx))):
         for part, text in ((2, "what time is it?"), (1, "computer,")):  # out of order
@@ -250,6 +260,10 @@ async def test_phrase_joiner_and_its_wiring(hass, mock_entry):
             c.add("ears", "said", text, ["heard"], mic="pc", utterance="u1", part=part, seconds=0.6)
             assert await joiner.handle(c, "lines", None) == []
         assert sent == []
-        await joiner.clip("ends", {"utterance": "u1", "parts": 2})
+        for data in ({"cut": "phrase", "utterance": "u1", "part": 2}, {"cut": "end", "utterance": "u1", "parts": 2}):
+            c = Context()
+            c.add("cut", "signal", f"cut: {data['cut']}", [data["cut"]], **data)
+            assert await joiner.handle(c, "cuts", None) == []
+            assert (sent == []) == (data["cut"] == "phrase")  # only the end counts
     (whole,) = sent
     assert whole.last("said")["text"] == "computer, what time is it?" and whole.last("said")["data"]["mic"] == "pc"

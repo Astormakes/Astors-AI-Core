@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 from custom_components.aac.api import (LOGGER, SAMPLE_RATE, Card, Context, Segmenter, level, make_vad, new_id, pcm_to_wav,
                                       register, resample, wav_to_pcm)
 
-VERSION = "2.4.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.5.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -81,14 +81,17 @@ class PauseCut(Card):
     title = "Audio clipper"
     category = "Audio"
     help = ("Speech detection: a stretch of speech that ends with a pause leaves as one clip. Wire it into Speech to text. "
-            "With a phrase pause it hands out each phrase at once (Speech to text works while you still speak) and says "
-            "at 'ends' when the sentence is done: a Phrase joiner after Speech to text puts it together again.")
+            "With a phrase pause it hands out each phrase at once (Speech to text works while you still speak); a Phrase "
+            "joiner after Speech to text puts the sentence together again. 'cuts' says where it cuts.")
     inputs = {"in": "audio"}
-    outputs = {"out": "clip", "ends": "clip"}
+    outputs = {"out": "clip", "cuts": "text"}
     ports_help = {"in": "live audio",
                   "out": "one clip per stretch of speech that ends with a pause (with a phrase pause: one per phrase, "
                          "tagged with its sentence and number)",
-                  "ends": "with a phrase pause: 'this sentence is done, it had N phrases' (for a Phrase joiner)"}
+                  "cuts": "where it cuts, as small contexts (a signal entry tagged start / phrase / end; data: the sentence, "
+                          "the parts, the satellite): for a Phrase joiner, a Level card, or any card"}
+    tags = {"start": "speech began (data: ago = how many seconds back)", "phrase": "a phrase was cut (data: part)",
+            "end": "the sentence is done (data: parts)"}
     settings_schema = {"pause": {"type": "number", "title": "Pause that ends a clip (ms)", "default": 800,
                                  "help": "Shorter: quicker, but a pause mid-sentence cuts it. Longer: whole sentences."},
                        "longest": {"type": "number", "title": "Longest clip (s)", "default": 30},
@@ -109,22 +112,39 @@ class PauseCut(Card):
         self._parts: dict[str, int] = {}  # sentence → phrases sent
 
     async def start(self) -> None:
-        if int(self.settings.get("phrase") or 0) > 0 and not any(w["from"] == f"{self.id}.ends" for w in self.domain.wires):
+        if int(self.settings.get("phrase") or 0) > 0 and not self._joined():
             self.hass.async_create_task(self._add_joiner())  # after this card is set up
+
+    def _cut(self, what: str, meta: dict[str, Any], **data: Any) -> None:
+        """A cut goes out at 'cuts' as a small context: one signal entry tagged start / phrase / end."""
+        context = Context(origin=self.id)
+        context.add(self.id, "signal", f"cut: {what}", [what], cut=what, source=meta.get("source"), name=meta.get("name"), **data)
+        self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "cuts"), f"aac {self.id} cut")
+
+    def _joined(self) -> bool:
+        """A card at its cuts that also takes heard lines puts phrases together (a Phrase joiner, or one of your own)."""
+        cards = self.domain.cards
+        return any(w["from"] == f"{self.id}.cuts" and (c := cards.get(w["to"].split(".")[0])) is not None and "lines" in c.ports()[0]
+                   for w in self.domain.wires)
 
     async def _add_joiner(self) -> None:
         """Phrases need their sister card: a Phrase joiner after the cards it feeds (Speech to text), which takes over
-        their outgoing wires; its 'ends' comes from here."""
+        their outgoing wires; its 'cuts' come from here."""
         d = self.domain
-        if any(w["from"] == f"{self.id}.ends" for w in d.wires):
+        if self._joined():
             return
         fed = [w["to"].split(".")[0] for w in d.wires if w["from"] == f"{self.id}.out"]
+        for w in d.wires:  # a joiner already behind Speech to text (only its cuts wire was lost): wire that one
+            target = d.cards.get(w["to"].split(".")[0])
+            if w["from"].split(".")[0] in fed and target is not None and {"lines", "cuts"} <= set(target.ports()[0]):
+                d.set_wires([*d.wires, {"from": f"{self.id}.cuts", "to": f"{target.id}.cuts"}])
+                return
         at = dict(d.positions.get(fed[0] if fed else self.id, {"x": 0, "y": 0}))
         for card_id, p in d.positions.items():  # room: what is right of Speech to text moves one column over
             if p["x"] > at["x"] and card_id != self.id:
                 p["x"] += COLUMN
         joiner = await d.add_card("phrase_joiner", "Phrase joiner", at={"x": at["x"] + COLUMN, "y": at["y"]})
-        wires = [{"from": f"{self.id}.ends", "to": f"{joiner.id}.ends"}]
+        wires = [{"from": f"{self.id}.cuts", "to": f"{joiner.id}.cuts"}]
         for w in d.wires:
             if w["from"].split(".")[0] in fed and w["from"].endswith(".out"):  # what Speech to text fed, the joiner feeds now
                 wires.append({"from": f"{joiner.id}.out", "to": w["to"]})
@@ -140,18 +160,22 @@ class PauseCut(Card):
             seg = self._cuts[key] = Segmenter(make_vad(), int(self.settings.get("pause") or 800), int(self.settings.get("longest") or 30),
                                               int(self.settings.get("phrase") or 0))
         for kind, audio in seg.feed_parts(chunk):
-            if kind == "end":  # the sentence is done: how many phrases it had
+            if kind == "start":  # speech began (`audio` frames ago)
+                self._utterance[key] = utterance = new_id()
+                self._cut("start", meta, utterance=utterance, ago=audio / 100)
+                continue
+            utterance = self._utterance.get(key)
+            if kind == "end":  # the sentence is done: how many parts it had
                 self.core.audio.mark(meta.get("source"), "speech ended")
-                self.domain.flow.clip(self.id, "ends", {**meta, "utterance": self._utterance.pop(key, None), "parts": audio})
+                self._parts.pop(utterance, None)
+                self._cut("end", meta, utterance=self._utterance.pop(key, None), parts=audio)
                 continue
             pcm = b"".join(audio) if kind == "piece" else audio
             clip = {**meta, "pcm": pcm, "seconds": round(len(pcm) / (SAMPLE_RATE * 2), 1), "end": dt_util.utcnow().isoformat()}
             if kind == "phrase":
-                utterance = self._utterance.setdefault(key, new_id())
                 self._parts[utterance] = self._parts.get(utterance, 0) + 1
                 clip |= {"utterance": utterance, "part": self._parts[utterance]}
-            else:
-                self.core.audio.mark(meta.get("source"), "speech ended")
+                self._cut("phrase", meta, utterance=utterance, part=self._parts[utterance])
             self.domain.flow.clip(self.id, "out", clip)
 
 
@@ -377,12 +401,12 @@ class PhraseJoiner(Card):
     title = "Phrase joiner"
     category = "Audio"
     help = ("Puts a sentence together again that an Audio clipper sent in phrases (its phrase pause): the heard lines "
-            "from Speech to text come in at 'lines', the clipper's 'ends' says how many there are; then the whole "
-            "sentence goes on as one line. Lines without phrase tags go straight on.")
-    inputs = {"lines": "text", "ends": "clip"}
+            "from Speech to text come in at 'lines', the clipper's 'cuts' say when the sentence is done and how many "
+            "parts it had; then the whole sentence goes on as one line. Lines without phrase tags go straight on.")
+    inputs = {"lines": "text", "cuts": "text"}
     outputs = {"out": "text"}
     ports_help = {"lines": "heard lines from Speech to text (one per phrase)",
-                  "ends": "the Audio clipper's 'ends': the sentence is done, with how many phrases",
+                  "cuts": "the Audio clipper's 'cuts': it acts on 'the sentence is done, with how many parts'",
                   "out": "the whole sentence as one heard line (data: the satellite, the language, the phrases)"}
     tags = {"heard": "a whole sentence put together from phrases"}
 
@@ -393,6 +417,11 @@ class PhraseJoiner(Card):
         self._waits: dict[str, Any] = {}  # sentence → the timer that sends it with what came
 
     async def handle(self, context: Context, port: str, step) -> list[Any] | None:
+        if port == "cuts":  # the clipper's cuts: only "the sentence is done" counts
+            cut = next((e["data"] for e in reversed(context.entries) if e["kind"] == "signal" and e["data"].get("cut")), {})
+            if cut.get("cut") == "end" and cut.get("utterance"):
+                await self._ended(cut["utterance"], int(cut.get("parts") or 0))
+            return []
         said = context.last("said") or {}
         utterance = said.get("data", {}).get("utterance")
         if port != "lines" or not utterance:
@@ -401,10 +430,8 @@ class PhraseJoiner(Card):
         await self._check(utterance)
         return []
 
-    async def clip(self, port: str, clip: dict[str, Any]) -> None:
-        if port != "ends" or not (utterance := clip.get("utterance")):
-            return
-        self._expected[utterance] = int(clip.get("parts") or 0)
+    async def _ended(self, utterance: str, parts: int) -> None:
+        self._expected[utterance] = parts
         await self._check(utterance)
         if utterance in self._expected:  # a phrase without text never comes: send what came after a moment
             self._waits[utterance] = self.hass.loop.call_later(JOIN_WAIT, lambda: self.hass.async_create_task(self._send(utterance)))

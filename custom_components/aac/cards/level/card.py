@@ -1,5 +1,5 @@
 """Level: the loudness of the audio passing through it, as a graph moving right to left inside the card, with a line
-where clips begin and end (whole clips, phrases, the end of a sentence). Audio and clips go on unchanged."""
+where an Audio clipper cuts (speech starts, a phrase is cut, the sentence is done). Audio and cuts go on unchanged."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from typing import Any
 
 import numpy as np
 
-from custom_components.aac.api import Card, register
+from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.5.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -21,14 +21,12 @@ class Level(Card):
     title = "Level"
     category = "Audio"
     help = ("Shows how loud the audio passing through it is, as a graph moving right to left inside the card, and a line "
-            "where clips begin and end: whole clips, phrases (a phrase pause), and the end of a sentence (an Audio "
-            "clipper's 'ends'). Wire the audio and the clips into it to see where cuts are made. Audio and clips go on "
-            "unchanged.")
-    inputs = {"in": "audio|clip", "ends": "clip"}
-    outputs = {"out": "audio", "clips": "clip", "ends": "clip"}
-    ports_help = {"in": "live audio and/or clips (e.g. a Microphone and an Audio clipper's out)",
-                  "ends": "the signals that a sentence is done (an Audio clipper's ends): a red line",
-                  "out": "the same audio, unchanged", "clips": "the same clips, unchanged"}
+            "where an Audio clipper cuts: green where speech starts, purple where a phrase is cut, red where the "
+            "sentence is done. Wire the audio into 'in' and the clipper's 'cuts' into 'cuts'. Both go on unchanged.")
+    inputs = {"in": "audio", "cuts": "text"}
+    outputs = {"out": "audio", "cuts": "text"}
+    ports_help = {"in": "live audio (e.g. a Microphone): the graph", "cuts": "an Audio clipper's cuts: the lines",
+                  "out": "the same audio, unchanged"}
     settings_schema = {
         "height": {"type": "number", "title": "Height (px)", "default": 0,
                    "help": "0: a small graph in its port row (the size of any card). E.g. 60 or 120: a bigger graph under it."},
@@ -55,11 +53,9 @@ class Level(Card):
             self.show({"db": round(20 * np.log10(self._peak + 1e-9), 1)})
             self._peak = 0.0
 
-    async def clip(self, port: str, clip: dict[str, Any]) -> None:
-        self.domain.flow.clip(self.id, "ends" if port == "ends" else "clips", clip)  # on unchanged, each its own way
-        if not self.watched or clip.get("stop"):
-            return
-        if port == "ends" or clip.get("pcm") is None:  # the sentence is done
-            self.show({"mark": "sentence", "seconds": 0})
-        else:  # it arrives at its end and knows how long it is
-            self.show({"mark": "phrase" if clip.get("utterance") else "clip", "seconds": float(clip.get("seconds") or 0)})
+    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
+        """A cut (a signal entry with data cut: start / phrase / end): a line; the context goes on at 'cuts'."""
+        cut = next((e["data"] for e in reversed(context.entries) if e["kind"] == "signal" and e["data"].get("cut")), None)
+        if self.watched and cut and cut["cut"] in ("start", "phrase", "end"):  # a start knows how long ago speech began
+            self.show({"mark": cut["cut"], "ago": float(cut.get("ago") or 0)})
+        return None

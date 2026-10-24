@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.1.9, live on the owner's HA
+## Current state (2026-10-24) – 2.1.11, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -144,6 +144,11 @@ Z.Y.X: X = changes the backup survives (fixes and new features alike), Y = a bac
 (and `upgrade()` for their saved settings). Bump the manifest version with every deploy (the browser caches the panel
 by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2.1.2; from 2.1.3 on as above.
 
+- 2.1.11: the clipper reuses a joiner already behind Speech to text (after the port rename it had added a second;
+  cleaned up on the HA).
+- 2.1.10 (owner's idea): the Audio clipper's second output is `cuts`: small contexts with one signal entry tagged
+  start (data: ago) / phrase (part) / end (parts), usable by any card; the Phrase joiner acts on end; the Level card
+  has `in` (audio, the graph) and `cuts` (text, the lines: green start, purple phrase, red end).
 - 2.1.9: the Level card has its own `ends` input (and output) for the sentence signals.
 - 2.1.8: the Level view moves with the clock (it stood still without audio coming in).
 - 2.1.7: the Level card takes audio and clips (input `audio|clip`, clips go on at `clips`) and draws a line where

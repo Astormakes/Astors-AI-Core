@@ -1,8 +1,8 @@
 // The Level card's view (spec/cards.md "A card's view"): loudness over the last seconds, newest on the right, moving
-// right to left with the clock (also while nothing comes in), and lines where clips begin (dashed) and end. Small in
-// the card's port row, or bigger under it (its settings).
+// right to left with the clock (also while nothing comes in), and lines where an Audio clipper cuts: speech starts
+// (green), a phrase is cut (purple), the sentence is done (red). Small in the card's port row, or bigger under it.
 
-const MARKS = { clip: "#4caf50", phrase: "#9c27b0", sentence: "#db4437" };
+const MARKS = { start: "#4caf50", phrase: "#9c27b0", end: "#db4437" };
 
 class AacLevelView extends HTMLElement {
   connectedCallback() {
@@ -20,10 +20,8 @@ class AacLevelView extends HTMLElement {
 
   frame(data) {
     const now = performance.now();
-    if (data.mark) { // a clip ended now and began `seconds` ago
-      this.marks.push({ t: now, kind: data.mark, edge: "end" });
-      if (data.seconds) this.marks.push({ t: now - data.seconds * 1000, kind: data.mark, edge: "start" });
-    } else this.points.push({ t: now, db: data.db });
+    if (data.mark) this.marks.push({ t: now - (data.ago || 0) * 1000, kind: data.mark }); // a cut (a start: `ago` s back)
+    else this.points.push({ t: now, db: data.db });
   }
 
   draw() {
@@ -36,11 +34,9 @@ class AacLevelView extends HTMLElement {
     const x = (t) => w - ((now - t) / span) * w, y = (v) => h - Math.max(0, Math.min(1, (v + 70) / 70)) * h; // -70 … 0 dB
     g.clearRect(0, 0, w, h);
     for (const m of this.marks) {
-      g.strokeStyle = MARKS[m.kind] || "#999"; g.lineWidth = (m.kind === "sentence" ? 2.5 : 1.5) * r;
-      g.setLineDash(m.edge === "start" ? [3 * r, 3 * r] : []);
+      g.strokeStyle = MARKS[m.kind] || "#999"; g.lineWidth = (m.kind === "phrase" ? 1.5 : 2.5) * r;
       g.beginPath(); g.moveTo(x(m.t), 0); g.lineTo(x(m.t), h); g.stroke();
     }
-    g.setLineDash([]);
     g.beginPath();
     this.points.forEach((p, i) => (i ? g.lineTo(x(p.t), y(p.db)) : g.moveTo(x(p.t), y(p.db))));
     g.strokeStyle = color; g.lineWidth = 1.5 * r; g.stroke();

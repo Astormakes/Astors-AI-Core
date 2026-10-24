@@ -164,8 +164,9 @@ class Segmenter:
         return [b"".join(audio) for kind, audio in self.feed_parts(chunk) if kind == "piece"]
 
     def feed_parts(self, chunk: bytes) -> list[tuple[str, Any]]:
-        """Add audio; returns what is finished, in order: ("phrase", pcm) at a short pause inside the speech (only with
-        phrase_ms), ("piece", frames or pcm) for a whole piece without phrases, ("end", phrases) when the pause came."""
+        """Add audio; returns what happened, in order: ("start", frames since the speech really began), ("phrase", pcm)
+        at a short pause inside the speech (only with phrase_ms), ("piece", frames) for a whole piece (without phrases),
+        ("end", parts) when the pause came."""
         done: list[tuple[str, Any]] = []
         data = self._pending + chunk
         usable = len(data) - len(data) % FRAME_BYTES
@@ -181,6 +182,7 @@ class Segmenter:
                     self._segment, self._speech, self._silence = list(self._preroll), self._run, 0
                     self._cut, self._cut_speech, self._phrases = 0, self._run, 0
                     self._preroll.clear()
+                    done.append(("start", len(self._segment)))
                 continue
             self._segment.append(frame)
             if speech:
@@ -199,6 +201,7 @@ class Segmenter:
                         done.append(("end", self._phrases))
                 elif self._speech >= MIN_SPEECH_FRAMES:
                     done.append(("piece", self._segment))
+                    done.append(("end", 1))
                 self._segment, self._run = None, 0
         return done
 
