@@ -1,0 +1,504 @@
+{
+ "aac2.domain.assistant": {
+  "version": 1,
+  "minor_version": 1,
+  "key": "aac2.domain.assistant",
+  "data": {
+   "cards": {
+    "chat": {
+     "type": "chat",
+     "title": "Chat",
+     "settings": {
+      "ha_agent": true
+     },
+     "version": "1.5.0"
+    },
+    "charter": {
+     "type": "relay",
+     "title": "Charter",
+     "settings": {
+      "position": "start",
+      "text": "Be kind.",
+      "replace": true
+     },
+     "version": "1.2.0"
+    },
+    "time": {
+     "type": "relay",
+     "title": "Time",
+     "settings": {
+      "position": "after",
+      "text": "Local time: {{ now().strftime('%A %Y-%m-%d %H:%M') }}",
+      "replace": false
+     },
+     "version": "1.2.0"
+    },
+    "model": {
+     "type": "model",
+     "title": "Model",
+     "settings": {},
+     "version": "1.3.0"
+    },
+    "lists": {
+     "type": "lists",
+     "title": "Lists",
+     "settings": {},
+     "version": "1.1.0"
+    },
+    "home": {
+     "type": "homeassistant",
+     "title": "Home",
+     "settings": {
+      "default": "hidden"
+     },
+     "version": "1.0.0"
+    },
+    "calendar": {
+     "type": "calendar",
+     "title": "Calendar",
+     "settings": {},
+     "version": "1.1.0"
+    },
+    "mic": {
+     "type": "microphone",
+     "title": "Microphone",
+     "settings": {
+      "source": "any"
+     },
+     "version": "2.2.0"
+    },
+    "cut": {
+     "type": "pause_cut",
+     "title": "Audio clipper",
+     "settings": {
+      "pause": 800
+     },
+     "version": "2.2.0"
+    },
+    "ears": {
+     "type": "speech_to_text",
+     "title": "Speech to text",
+     "settings": {},
+     "version": "2.2.0"
+    },
+    "voice": {
+     "type": "text_to_speech",
+     "title": "Text to speech",
+     "settings": {},
+     "version": "2.2.0"
+    },
+    "speaker": {
+     "type": "speaker",
+     "title": "Speaker",
+     "settings": {},
+     "version": "2.2.0"
+    },
+    "stop_word": {
+     "type": "conditional",
+     "title": "Stop word",
+     "settings": {
+      "outputs": [
+       "stop"
+      ],
+      "rules": [
+       {
+        "name": "says stop",
+        "select": {
+         "by": "kind",
+         "value": "said",
+         "which": "newest"
+        },
+        "test": "contains",
+        "value": "stop",
+        "actions": [
+         {
+          "do": "stop"
+         },
+         {
+          "do": "output",
+          "a": "stop"
+         }
+        ]
+       }
+      ]
+     },
+     "version": "1.1.0"
+    },
+    "wake": {
+     "type": "conditional",
+     "title": "Wake word",
+     "settings": {
+      "outputs": [
+       "yes"
+      ],
+      "rules": [
+       {
+        "name": "says computer",
+        "select": {
+         "by": "kind",
+         "value": "said",
+         "which": "newest"
+        },
+        "test": "contains",
+        "value": "computer",
+        "actions": [
+         {
+          "do": "output",
+          "a": "yes"
+         }
+        ]
+       }
+      ]
+     },
+     "version": "1.1.0"
+    },
+    "follow_up": {
+     "type": "conditional",
+     "title": "Follow-up",
+     "settings": {
+      "outputs": [
+       "yes"
+      ],
+      "rules": [
+       {
+        "name": "AAC spoke there less than 10 s ago",
+        "select": {
+         "by": "kind",
+         "value": "said",
+         "which": "newest"
+        },
+        "test": "template",
+        "value": "{{ entry is not none and audio.satellites.get(entry.data.mic, {}).get('seconds', 999999) < 10 and not (entry.text | lower is search('stop|computer')) }}",
+        "actions": [
+         {
+          "do": "output",
+          "a": "yes"
+         }
+        ]
+       }
+      ]
+     },
+     "version": "1.1.0"
+    },
+    "spoken": {
+     "type": "relay",
+     "title": "Spoken turn",
+     "settings": {
+      "position": "after",
+      "replace": false,
+      "text": "You are heard and answer aloud: one or two short sentences, plain words, no lists."
+     },
+     "version": "1.2.0"
+    },
+    "followed": {
+     "type": "relay",
+     "title": "Follow-up turn",
+     "settings": {
+      "position": "after",
+      "replace": false,
+      "text": "You are heard and answer aloud: one or two short sentences, plain words, no lists.",
+      "add_tag": "ears.heard",
+      "add_text": "(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) ",
+      "add_where": "start"
+     },
+     "version": "1.2.0"
+    },
+    "answer": {
+     "type": "relay",
+     "title": "Answer",
+     "settings": {},
+     "version": "1.2.0"
+    }
+   },
+   "wires": [
+    {
+     "from": "chat.said",
+     "to": "charter.in"
+    },
+    {
+     "from": "charter.out",
+     "to": "time.in"
+    },
+    {
+     "from": "time.out",
+     "to": "model.in"
+    },
+    {
+     "from": "model.out",
+     "to": "lists.in"
+    },
+    {
+     "from": "lists.out",
+     "to": "model.in"
+    },
+    {
+     "from": "model.out",
+     "to": "home.in"
+    },
+    {
+     "from": "home.out",
+     "to": "model.in"
+    },
+    {
+     "from": "model.out",
+     "to": "calendar.in"
+    },
+    {
+     "from": "calendar.out",
+     "to": "model.in"
+    },
+    {
+     "from": "mic.out",
+     "to": "cut.in"
+    },
+    {
+     "from": "cut.out",
+     "to": "ears.in"
+    },
+    {
+     "from": "ears.out",
+     "to": "stop_word.in"
+    },
+    {
+     "from": "ears.out",
+     "to": "wake.in"
+    },
+    {
+     "from": "ears.out",
+     "to": "follow_up.in"
+    },
+    {
+     "from": "wake.yes",
+     "to": "spoken.in"
+    },
+    {
+     "from": "follow_up.yes",
+     "to": "followed.in"
+    },
+    {
+     "from": "answer.out",
+     "to": "voice.in"
+    },
+    {
+     "from": "voice.out",
+     "to": "speaker.in"
+    },
+    {
+     "from": "stop_word.stop",
+     "to": "charter.in"
+    },
+    {
+     "from": "spoken.out",
+     "to": "charter.in"
+    },
+    {
+     "from": "followed.out",
+     "to": "charter.in"
+    },
+    {
+     "from": "chat.provides",
+     "to": "spoken.reads"
+    },
+    {
+     "from": "chat.provides",
+     "to": "followed.reads"
+    },
+    {
+     "from": "answer.out",
+     "to": "chat.answers"
+    },
+    {
+     "from": "model.out",
+     "to": "answer.in"
+    }
+   ],
+   "positions": {
+    "chat": {
+     "x": 0,
+     "y": 0
+    },
+    "charter": {
+     "x": 290,
+     "y": 0
+    },
+    "time": {
+     "x": 580,
+     "y": 0
+    },
+    "model": {
+     "x": 870,
+     "y": 0
+    },
+    "lists": {
+     "x": 870,
+     "y": 140
+    },
+    "home": {
+     "x": 870,
+     "y": 260
+    },
+    "calendar": {
+     "x": 870,
+     "y": 380
+    },
+    "mic": {
+     "x": -720,
+     "y": 420
+    },
+    "cut": {
+     "x": -480,
+     "y": 420
+    },
+    "ears": {
+     "x": -240,
+     "y": 420
+    },
+    "voice": {
+     "x": 1440,
+     "y": 600
+    },
+    "speaker": {
+     "x": 1730,
+     "y": 600
+    },
+    "stop_word": {
+     "x": 0,
+     "y": 300
+    },
+    "wake": {
+     "x": 0,
+     "y": 420
+    },
+    "follow_up": {
+     "x": 0,
+     "y": 540
+    },
+    "spoken": {
+     "x": 240,
+     "y": 420
+    },
+    "followed": {
+     "x": 240,
+     "y": 540
+    },
+    "answer": {
+     "x": 1200,
+     "y": 420
+    }
+   },
+   "undo": [],
+   "slots": {},
+   "user_tags": []
+  }
+ },
+ "aac2.card.assistant.chat": {
+  "version": 1,
+  "minor_version": 1,
+  "key": "aac2.card.assistant.chat",
+  "data": {
+   "chats": {
+    "83cffb5856": {
+     "id": "83cffb5856",
+     "title": "what time is it?",
+     "created": "2026-10-24T12:55:31.923232+00:00",
+     "updated": "2026-10-24T12:55:31.927243+00:00",
+     "entries": [
+      {
+       "id": "9295aba658",
+       "by": "chat",
+       "kind": "said",
+       "text": "what time is it?",
+       "tags": [
+        "chat.said"
+       ],
+       "time": "2026-10-24T12:55:31.923251+00:00",
+       "data": {},
+       "state": "closed"
+      },
+      {
+       "id": "08d4915af1",
+       "by": "time",
+       "kind": "trailer",
+       "text": "Local time: Saturday 2026-10-24 05:55",
+       "tags": [
+        "time.text"
+       ],
+       "time": "2026-10-24T12:55:31.925046+00:00",
+       "data": {},
+       "state": "closed"
+      },
+      {
+       "id": "bbce6797d9",
+       "by": "model",
+       "kind": "answer",
+       "text": "It is noon.",
+       "tags": [
+        "model.answer"
+       ],
+       "time": "2026-10-24T12:55:31.925523+00:00",
+       "data": {},
+       "state": "closed"
+      }
+     ],
+     "messages": [
+      {
+       "role": "user",
+       "text": "what time is it?",
+       "time": "2026-10-24T12:55:31.923251+00:00"
+      }
+     ]
+    }
+   }
+  }
+ },
+ "aac2.card.assistant.lists": {
+  "version": 1,
+  "minor_version": 1,
+  "key": "aac2.card.assistant.lists",
+  "data": {
+   "lists": [
+    {
+     "id": "4efdc7801f",
+     "name": "Shopping",
+     "view": "checklist",
+     "created": "2026-10-24T12:55:31.927378+00:00",
+     "updated": "2026-10-24T12:55:31.927395+00:00",
+     "items": [
+      {
+       "id": "4e20644048",
+       "text": "Oat milk",
+       "done": false,
+       "fields": {},
+       "created": "2026-10-24T12:55:31.927387+00:00",
+       "updated": "2026-10-24T12:55:31.927387+00:00"
+      },
+      {
+       "id": "4181e9a983",
+       "text": "Coffee",
+       "done": false,
+       "fields": {},
+       "created": "2026-10-24T12:55:31.927392+00:00",
+       "updated": "2026-10-24T12:55:31.927392+00:00"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "aac2.card.assistant.calendar": {
+  "version": 1,
+  "minor_version": 1,
+  "key": "aac2.card.assistant.calendar",
+  "data": {
+   "events": [
+    {
+     "uid": "8a9c3dd9cd",
+     "summary": "Dentist",
+     "start": "2026-11-02T10:00",
+     "end": null,
+     "description": ""
+    }
+   ]
+  }
+ }
+}

@@ -140,7 +140,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
 ## Versions (owner, 2026-10-24)
 
 From 2.1.0 on: patch (2.1.1) = fixes, minor (2.2.0) = new features or changed behaviour, major (3.0.0) = old setups or
-backups no longer load. Card files have their own VERSION (and `upgrade()` for their saved settings). Bump the
+backups no longer load, decided by `tests/test_backups.py` (the backup of the current major version must load). Card files have their own VERSION (and `upgrade()` for their saved settings). Bump the
 manifest version with every deploy (the browser caches the panel by it).
 
 - 2.1.0: a kept-alive connection the server had closed is tried once more (a model was taken for off after every tool
@@ -199,11 +199,13 @@ manifest version with every deploy (the browser caches the panel by it).
    to get that card's functions; fewer tools per turn, maybe better for weaker models (the 35B still makes many tool
    mistakes). v0.40.0 did it as areas first, then `open_area` + `use_tool`, the tool list staying fixed so the prompt
    cache holds. Try it as a Model setting and compare.
-10. **Backups stay loadable, checked by tests** (owner): keep a saved setup file (and a storage copy) of each released
-    version under tests/; a test loads every one and runs a turn. A version that breaks one is a major one.
+10. ~~Backups checked by tests~~ **done (2.1.0):** tests/backups/ keeps one backup (made-up data), from the first
+    release of the current major version; `tests/test_backups.py` loads it and runs a turn. Passes: the change is minor
+    or patch. Fails: it is a major version; raise the major number, then `AAC_SAVE_BACKUP=1 pytest tests/test_backups.py`
+    replaces the backup.
 11. **Edit messages in a chat** (owner, as in v1, often used to resend): a pencil under a message (yours or the
     model's), visible when hovering the message or near the pencil. Editing keeps the message where it is on screen,
     the chat moves up and the box grows upwards; send is a checkmark (grey, green on hover), so resending is a double
-    click. Editing your line runs the turn again from there (what came after it goes); editing an answer only changes
-    the text.
+    click. Editing your line runs the turn again from there; first a warning: Resend (what came after it goes) / Keep
+    the rest (only the text changes) / Cancel. Editing an answer only changes the text.
 - Presets; docs/v2 page 2 details for the remaining cards.
