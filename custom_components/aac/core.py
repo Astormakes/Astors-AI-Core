@@ -31,7 +31,7 @@ def slug(text: str) -> str:
 
 
 WATCH_SECONDS = 15  # an open Nodes page says every few seconds which views it shows
-CARD_FILES_EVERY = 5  # seconds between looks at the cards folder (a card file whose VERSION went up)
+CARD_FILES_EVERY = 10  # seconds between looks at the cards folder (a card file whose VERSION went up)
 
 class Domain:
     """One setup of cards and wires."""

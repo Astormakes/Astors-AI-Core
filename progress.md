@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.1.23, live on the owner's HA
+## Current state (2026-10-24) – 2.1.24, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -144,6 +144,7 @@ Z.Y.X: X = changes the backup survives (fixes and new features alike), Y = a bac
 (and `upgrade()` for their saved settings). Bump the manifest version with every deploy (the browser caches the panel
 by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2.1.2; from 2.1.3 on as above.
 
+- 2.1.24: the cards folder is looked at every 10 s.
 - 2.1.23: point 8: card files load again while AAC runs when their VERSION goes up (or they are new; deleted ones
   leave the palette); running cards are made again when not `busy` (Model, Text to speech); card files are compiled
   fresh (no cached bytecode). The watcher is a plain task (HA's background tasks are awaited in tests).
