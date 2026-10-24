@@ -347,6 +347,15 @@ class AacPanel extends HTMLElement {
     return found;
   }
 
+  _timingCard() { // where the time of a spoken turn goes (core.audio.mark)
+    const rows = this.audio?.timing || [], steps = ["text ready", "first sentence", "voice ready", "playing"];
+    if (!rows.length) return "";
+    const cell = (v, prev) => (v === undefined ? '<td class="hint">–</td>' : `<td>${v.toFixed(1)} s${prev !== undefined ? `<div class="hint">+${(v - prev).toFixed(1)}</div>` : ""}</td>`);
+    return `<div class="card"><h3 style="margin-top:0">Timing of the last spoken turns ${tip("Seconds after you stopped speaking (the Audio clipper's pause is before this). Under each: how long that step took.")}</h3>
+      <table style="width:100%;font-size:13px;border-collapse:collapse"><tr class="hint"><td>When</td>${steps.map((x) => `<td>${esc(x)}</td>`).join("")}</tr>
+      ${rows.map((r) => `<tr><td>${esc(new Date(r.at * 1000).toLocaleTimeString())}<div class="hint">${esc(r.source)}</div></td>${steps.map((x, i) => cell(r.stages[x], i ? r.stages[steps[i - 1]] : 0)).join("")}</tr>`).join("")}</table></div>`;
+  }
+
   _languagesCard() {
     const a = this.audio || {}, names = a.language_names || {};
     const rows = (a.languages || []).map(({ code, name }, i) => {
@@ -368,6 +377,7 @@ class AacPanel extends HTMLElement {
       <div class="content"><h3>Satellites</h3><div id="meters">${this._meters()}</div>
       ${(st.known || []).filter((k) => !(a.sources || []).some((s) => s.id === k.id)).map((k) => `<div class="row"><span class="hint">${esc(k.name)} · offline</span><button class="small danger" data-forget="${esc(k.id)}" style="margin-left:auto" title="Remove it from AAC (and its media player in HA)">Forget</button></div>`).join("")}
       ${this._languagesCard()}
+      ${this._timingCard()}
       <div class="card"><h3 style="margin-top:0">HA's speech to text (in order) ${tip("Home Assistant's engines, tried after the models in a Speech to text card's list (that list is in the card's settings in Nodes).")}</h3>
         ${order.map((id, i) => `<div class="row"><span class="t">${esc((sttItems.find((x) => x[0] === id) || [id, id])[1])}</span>
           <button class="small" data-sttup="${i}">↑</button><button class="small danger" data-sttdel="${i}">✕</button></div>`).join("") || '<p class="hint">None yet.</p>'}

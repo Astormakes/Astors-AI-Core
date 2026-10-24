@@ -195,3 +195,17 @@ async def test_a_level_card_keeps_the_size_of_any_card(hass, mock_entry):
         core.watch([level.id])
         level.stream("in", audio((LOUD, 0.1)), {"source": "pc"})
     assert len(shown) == 1 and -40 < shown[0] < 0
+
+
+async def test_spoken_turn_timing(hass, mock_entry):
+    """The steps of a spoken turn are timed from the end of the speech; only turns that got to playing are shown."""
+    core = await setup_aac(hass, mock_entry)
+    a = core.audio
+    a.mark("pc", "speech ended")
+    a.mark("pc", "text ready")
+    assert a.timing() == []  # not answered (yet)
+    a.mark("pc", "first sentence")
+    a.mark("pc", "text ready")  # once per turn
+    a.mark("pc", "playing")
+    (turn,) = a.timing()
+    assert turn["source"] == "pc" and list(turn["stages"]) == ["text ready", "first sentence", "playing"]

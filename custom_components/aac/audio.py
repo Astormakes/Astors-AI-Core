@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 SAMPLE_RATE = 16000
 CLIP_SECONDS = 300  # how long a clip for a media player stays fetchable
 QUEUE_WAIT = 120  # seconds a queued clip waits for the one before it at most
+TIMING_START, TIMING_KEEP = "speech ended", 8  # the step that starts a spoken turn; turns kept for the Audio page
 FRAME_BYTES = 320  # 10 ms of 16-bit mono
 PREROLL_FRAMES = 50  # 500 ms before speech starts (the detector reacts late)
 START_FRAMES = 3
@@ -218,6 +219,7 @@ class AudioHub:
         self._queues: dict[str, asyncio.Lock] = {}  # clips waiting to play at a satellite, one after another
         self._idle: dict[str, asyncio.Event] = {}  # set when a satellite finished playing (or was stopped)
         self._turns: dict[str, int] = {}  # counts the stops at a satellite (a queued clip of an older turn is dropped)
+        self._timing: list[dict[str, Any]] = []  # spoken turns: when each step happened (mark)
 
     @property
     def settings(self) -> dict[str, Any]:
@@ -260,6 +262,25 @@ class AudioHub:
         meta = {"source": source.id, "name": source.name, "area": source.area}
         for _, handler in self.core.subscribers("audio"):
             handler(chunk, meta)
+
+    def mark(self, source_id: str | None, stage: str) -> None:
+        """A step of a spoken turn at a satellite, for the Audio page's timing table: "speech ended" starts a turn,
+        later stages count from it (each only once per turn)."""
+        if not source_id:
+            return
+        now = time.monotonic()
+        if stage == TIMING_START:
+            self._timing.append({"source": source_id, "at": time.time(), "start": now, "stages": {}})
+            del self._timing[:-TIMING_KEEP * 4]
+            return
+        turn = next((t for t in reversed(self._timing) if t["source"] == source_id), None)
+        if turn is not None and stage not in turn["stages"] and now - turn["start"] < 120:
+            turn["stages"][stage] = round(now - turn["start"], 2)
+
+    def timing(self) -> list[dict[str, Any]]:
+        """The last spoken turns that got an answer: when, where, and each step in seconds after the speech ended."""
+        done = [t for t in self._timing if "playing" in t["stages"]]
+        return [{"at": t["at"], "source": t["source"], "stages": t["stages"]} for t in done[-TIMING_KEEP:]][::-1]
 
     def spoken(self) -> dict[str, Any]:
         """When AAC last spoke, for templates ({{ audio.last.seconds }}, {{ audio.satellites[id].seconds }}): seconds
@@ -424,6 +445,7 @@ class AudioHub:
         if volume < 100:
             audio = await self.hass.async_add_executor_job(scale_wav, audio, volume / 100)
         source.playing = True
+        self.mark(source.id, "playing")
         self.core.notify("audio")
         await source.send({"type": "play", "format": "wav", "bytes": len(audio), "text": text})
         await source.send(audio)
@@ -455,7 +477,7 @@ class AudioHub:
         return {"sources": [s.summary() for s in self.sources.values()], "settings": self.settings,
                 "languages": describe(self.core.languages()), "languages_own": bool(self.core.data.get("languages")),
                 "languages_ha": describe(from_ha(self.hass.config.language, self.hass.config.country)),
-                "language_names": NAMES,
+                "language_names": NAMES, "timing": self.timing(),
                 "stt_entities": sorted(self.hass.states.async_entity_ids("stt")),
                 "tts_entities": sorted(self.hass.states.async_entity_ids("tts"))}
 

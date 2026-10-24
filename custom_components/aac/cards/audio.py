@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 from custom_components.aac.api import (LOGGER, SAMPLE_RATE, Card, Context, Segmenter, level, make_vad, pcm_to_wav, register,
                                       resample, wav_to_pcm)
 
-VERSION = "2.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -96,6 +96,7 @@ class PauseCut(Card):
         if seg is None:
             seg = self._cuts[key] = Segmenter(make_vad(), int(self.settings.get("pause") or 800), int(self.settings.get("longest") or 30))
         for pcm in seg.feed(chunk):
+            self.core.audio.mark(meta.get("source"), "speech ended")
             seconds = round(len(pcm) / (SAMPLE_RATE * 2), 1)
             self.domain.flow.clip(self.id, "out", {**meta, "pcm": pcm, "seconds": seconds, "end": dt_util.utcnow().isoformat()})
 
@@ -130,6 +131,7 @@ class SpeechToText(Card):
         text = ((heard or {}).get("text") or "").strip()
         if not text:
             return
+        self.core.audio.mark(clip.get("source"), "text ready")
         context = Context(origin=self.id)
         context.add(self.id, "said", text, ["heard"], mic=clip.get("source"), mic_name=clip.get("name"),
                     area=clip.get("area"), seconds=clip.get("seconds"), language=(heard or {}).get("language"))
@@ -196,6 +198,7 @@ class TextToSpeech(Card):
                 continue
             self._spoken[e["id"]] = end
             if text.strip().lower() not in SILENT and (part := text[upto:end].strip()):
+                self.core.audio.mark(heard.get("mic"), "first sentence")
                 self._queue(part, heard)
         while len(self._spoken) > 50:  # only recent turns matter
             self._spoken.pop(next(iter(self._spoken)))
@@ -209,6 +212,7 @@ class TextToSpeech(Card):
                 await before
             if not wav or round_ != self._round:
                 return
+            self.core.audio.mark(heard.get("mic"), "voice ready")
             pcm, rate = wav_to_pcm(wav)
             self.domain.flow.clip(self.id, "out", {"pcm": pcm, "rate": rate, "seconds": round(len(pcm) / 2 / rate, 1), "text": text,
                                                    "source": heard.get("mic"), "name": heard.get("mic_name"), "language": heard.get("language")})
