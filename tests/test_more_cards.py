@@ -11,22 +11,17 @@ from pytest_homeassistant_custom_component.common import async_fire_time_changed
 from custom_components.aac.flow import Step
 from custom_components.aac.context import Context
 
-from .conftest import model_answers, reply, setup_aac, v1_files
+from .conftest import model_answers, reply, setup_aac
 
 
-async def test_v1_trigger_becomes_a_schedule_that_fires(hass: HomeAssistant, mock_entry, aioclient_mock, freezer: FrozenDateTimeFactory):
-    """v1's 05:25 trigger is a Schedule entry; at the time it wakes the chain and the answer lands in its log."""
-    import json
-    from pathlib import Path
-
-    await hass.async_add_executor_job(v1_files, hass.config.config_dir)
-    Path(hass.config.config_dir, ".storage", "aac.mod.triggers.triggers").write_text(json.dumps({"data": {"triggers": [
-        {"id": "t1", "name": "Bed light", "enabled": True, "when": {"type": "time", "at": "05:25", "weekdays": []},
-         "do": {"instruction": "Turn on the bed light."}}]}}))
+async def test_a_schedule_fires_at_its_time(hass: HomeAssistant, mock_entry, aioclient_mock, freezer: FrozenDateTimeFactory):
+    """A Schedule entry at 05:25 wakes the chain; the answer lands in its log."""
     asked = model_answers(aioclient_mock, reply("The bed light is on."))
     core = await setup_aac(hass, mock_entry)
-    schedule = core.domain.cards["schedule"]
-    assert schedule.settings["entries"][0]["at"] == "05:25" and {"from": "model.out", "to": "schedule.answers"} in core.domain.wires
+    d = core.domain
+    schedule = await d.add_card("schedule", "Schedule", {"entries": [{"name": "Bed light", "at": "05:25", "weekdays": [],
+                                                                       "text": "Turn on the bed light.", "enabled": True}]}, card_id="schedule")
+    d.set_wires([*d.wires, {"from": "schedule.out", "to": "charter.in"}, {"from": "model.out", "to": "schedule.answers"}])
     freezer.move_to(dt_util.as_utc(datetime(2026, 10, 26, 5, 25, 0, tzinfo=dt_util.get_default_time_zone())))
     async_fire_time_changed(hass)
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -52,7 +47,6 @@ async def test_ha_event_and_heartbeat_fire(hass: HomeAssistant, mock_entry, aioc
 
 async def test_ha_assist_is_a_conversation_agent(hass: HomeAssistant, mock_entry, aioclient_mock):
     """HA's conversation API reaches the HA Assist card; a follow-up continues the same chat."""
-    await hass.async_add_executor_job(v1_files, hass.config.config_dir)
     core = await setup_aac(hass, mock_entry)
     await core.domain.add_card("assist", "HA Assist", card_id="assist")
     core.domain.set_wires([*core.domain.wires, {"from": "assist.said", "to": "charter.in"}, {"from": "model.out", "to": "assist.answers"}])
@@ -64,7 +58,6 @@ async def test_ha_assist_is_a_conversation_agent(hass: HomeAssistant, mock_entry
 
 async def test_decide_picks_an_output(hass: HomeAssistant, mock_entry, aioclient_mock):
     """The model's word picks the output."""
-    await hass.async_add_executor_job(v1_files, hass.config.config_dir)
     core = await setup_aac(hass, mock_entry)
     decide = await core.domain.add_card("decide", "For me?", {"outputs": [{"name": "yes", "description": "for AAC"}, {"name": "no", "description": "else"}]})
     yes = await core.domain.add_card("relay", "Go")

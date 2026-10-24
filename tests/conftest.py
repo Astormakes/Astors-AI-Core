@@ -26,25 +26,6 @@ def mock_entry() -> MockConfigEntry:
     return MockConfigEntry(domain=DOMAIN, title="AAC", data={}, version=3)
 
 
-def v1_files(tmp_config: str, lists: list[dict[str, Any]] | None = None) -> None:
-    """What v1 left behind in .storage (models, charter, entity access, lists)."""
-    from pathlib import Path
-
-    storage = Path(tmp_config) / ".storage"
-    storage.mkdir(parents=True, exist_ok=True)
-    (storage / "aac.config").write_text(json.dumps({"version": 1, "key": "aac.config", "data": {
-        "models": [{"id": "m_big", "name": "Big", "base_url": BASE_URL, "model": "big"},
-                   {"id": "m_small", "name": "Small", "base_url": BASE_URL, "model": "small"}],
-        "pools": {"master": ["m_big", "m_small"]},
-        "graphs": {"assistant": {"modules": {"charter": {"settings": {"text": "Be kind."}}}}},
-        "domains": [{"id": "assistant", "visible": ["sensor.outside"]}],
-        "entity_access": {"switch.lamp": {"read": True, "write": True}}}}))
-    (storage / "aac.mod.lists.lists").write_text(json.dumps({"version": 1, "key": "aac.mod.lists.lists", "data": {
-        "lists": lists or [{"id": "l1", "name": "Project Portfolio", "view": "checklist", "created": "", "updated": "",
-                            "items": [{"id": "i1", "text": "Car Projects", "done": False, "fields": {}, "children": [
-                                {"id": "i2", "text": "ESP32 on the CAN bus", "done": False, "fields": {"status": "Parts there"}}]}]}]}}))
-
-
 async def setup_aac(hass: HomeAssistant, entry: MockConfigEntry):
     """Set up AAC; returns the core."""
     from homeassistant.setup import async_setup_component
@@ -53,7 +34,11 @@ async def setup_aac(hass: HomeAssistant, entry: MockConfigEntry):
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    return entry.runtime_data
+    core = entry.runtime_data
+    for model_id, name in (("m_big", "big"), ("m_small", "small")):  # two models on the test server, a short charter
+        core.save_model({"id": model_id, "name": name.title(), "base_url": BASE_URL, "model": name})
+    await core.domain.update_card("charter", settings={"text": "Be kind."})
+    return core
 
 
 def reply(text: str = "", calls: list[tuple[str, dict]] | None = None) -> dict[str, Any]:

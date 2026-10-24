@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`, its progress file `docs/progress-v1.md` (private).
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-23) – 2.0.0-alpha.17, live on the owner's HA
+## Current state (2026-10-23) – 2.0.0-alpha.18, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -70,7 +70,12 @@ the owner wires them (no automatic wiring), the message is a document of entries
   spec/audio-source.md). Live test: TTS on the satellite, HA's stop cut it.
 - **Words (alpha.17):** what runs through the wires is a **context** (`context.py`, class `Context`), in code, panel
   and docs/v2.
-- **One-time steps on the owner's HA:** v1's 05:25 trigger → Schedule card; v1's voice settings; the voice chain
+- **No dead weight (alpha.18, owner rule):** the v1 import and every one-time upgrade step are gone (they ran on the
+  owner's HA; a fresh install builds the whole default domain: Chat, HA Assist, Charter, Time, Pool, Model, Lists, Home,
+  Calendar; the voice chain once satellites are known). An empty Pool means every model. Offline satellites can be
+  forgotten on the Audio page (their media player goes too). Removed on the HA: the test satellite, conversation.aac_test,
+  calendar.aac_test_calendar, v1's AAC device.
+- **One-time steps that ran on the owner's HA (code removed):** v1's 05:25 trigger → Schedule card; v1's voice settings; the voice chain
   (Wake word = a Conditional: "computer" or a follow-up; Voice rules = a Relay after the turn); an HA Assist card.
 - **First start** (`defaults.py`): the default domain (Chat → Charter → Time → Model → Chat; Pool "Models"; Lists and
   Home as the model's tools), taking over v1's models, master order, charter, lists and entity access.
@@ -78,7 +83,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
   lists, Nodes, Models), chat (live answer, document view, stop), lists page, models page (find a server's models),
   node view (types left with info, click in the grid to place, drag to wire, Delete/button to unwire, settings right
   with functions and tags, Undo, slots 1–3 (Shift-click loads), Send stop, monitor on a wire).
-- Tests: 26 (`../.venv/bin/python -m pytest -q -p no:logging`).
+- Tests: 25 (`../.venv/bin/python -m pytest -q -p no:logging`).
 
 ## Owner's data
 
@@ -88,6 +93,25 @@ the owner wires them (no automatic wiring), the message is a document of entries
 - HA's own Assist pipeline uses `conversation.qwen3_8b` (not AAC). Backups of v2 storage: `/config/aac/bak-v2-alpha2/`,
   `/config/aac/bak-v2-alpha3/`, `/config/aac/bak-v2-alpha15/` (before the voice rebuild), `/config/aac/bak-v2-alpha16/`; add-on 0.1.1 files in
   `/config/aac/bak-addon-0.1.1`.
+
+## Cleanup waiting for the owner (2026-10-24)
+
+The permission check blocked deleting these on the HA; run it in the HA terminal (or allow it). Everything is v1 or
+superseded; `/config/aac/bak-v2-alpha17/` (v2 storage before alpha.18) stays as the one backup, `satellite.json` stays
+(the add-on reads it).
+
+- `/config/.storage/aac.*`: v1's storage (chats, config + its 4 old backups, jobs, lists, triggers, voices, requests,
+  runs, the `.test` copies); v2 no longer reads it.
+- `/config/.storage/aac2.card.assistant.voice`: the removed Voice chat card's data (its chats are in the Chat card).
+- `/config/aac/bak-*` except `bak-v2-alpha17`: 18 old backups (v1 0.46 … 1.0.0-dev.69, before-clean, before-v2,
+  v2 alpha2/3/15/16, add-on 0.1.1).
+- `/config/aac/aac.config.bak-1.0.0-dev.19`, `/config/aac/memory*.db*` (v1's memory), `/config/aac/skins` (v1's skins).
+
+```sh
+cd /config/aac && for d in bak-*; do [ "$d" = bak-v2-alpha17 ] || rm -rf "$d"; done
+rm -rf /config/aac/aac.config.bak-1.0.0-dev.19 /config/aac/memory.db* /config/aac/memory_test.db* /config/aac/skins
+rm -f /config/.storage/aac.* /config/.storage/aac2.card.assistant.voice
+```
 
 ## Deploy and test
 

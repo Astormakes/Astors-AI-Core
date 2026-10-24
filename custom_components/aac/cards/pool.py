@@ -18,5 +18,15 @@ class Pool(Card):
     outputs = {"models": "pool"}
     settings_schema = {
         "models": {"type": "models", "title": "Models (in order)", "default": [],
-                   "help": "Picked from Settings → Models; the first that answers is used."},
+                   "help": "Picked from Settings → Models; the first that answers is used. None picked: all, in their order."},
     }
+
+    def ids(self) -> list[str]:
+        """The model ids to try, in order (none picked: every model)."""
+        return list(self.settings.get("models") or []) or [m["id"] for m in self.core.pool.models]
+
+
+def pool_ids(card: Card, step) -> list[str]:
+    """The models a card with a dotted pool input tries: its Pool's, else every model."""
+    pools = step.wired_into("pool")
+    return pools[0].ids() if pools else [m["id"] for m in card.core.pool.models]

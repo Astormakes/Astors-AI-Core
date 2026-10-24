@@ -16,6 +16,7 @@ from homeassistant.components.media_player import (
     async_process_play_media_url,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -31,6 +32,12 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddC
     @callback
     def add_new(event: dict[str, Any] | None = None) -> None:
         if event is not None and event.get("what") != "audio":
+            return
+        if event and (gone := event.get("forgot")):  # forgotten: its media player is removed
+            made.discard(gone)
+            registry = er.async_get(hass)
+            if entity_id := registry.async_get_entity_id("media_player", DOMAIN, f"{entry.entry_id}_satellite_{gone}"):
+                registry.async_remove(entity_id)
             return
         new = [k for k in core.audio.settings.get("known", []) if k["id"] not in made]
         made.update(k["id"] for k in new)

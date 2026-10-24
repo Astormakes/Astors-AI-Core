@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 
 from custom_components.aac.audio import EnergyVad, Segmenter
 
-from .conftest import model_answers, reply, setup_aac, v1_files
+from .conftest import model_answers, reply, setup_aac
 
 SILENCE = array("h", [0] * 160).tobytes()  # 10 ms
 LOUD = array("h", [3000, -3000] * 80).tobytes()
@@ -28,8 +28,6 @@ async def test_a_spoken_round_trip(hass: HomeAssistant, hass_client, mock_entry,
     """The default voice chain: "computer, …" is answered aloud and lands in a new chat; a line right after AAC spoke
     goes to the model as a possible follow-up, and "nothing" stays silent and is not kept."""
     from custom_components.aac.defaults import FOLLOW_UP, async_voice_chain
-
-    await hass.async_add_executor_job(v1_files, hass.config.config_dir)
     core = await setup_aac(hass, mock_entry)
     core.audio.settings.update({"tts": "tts.test", "volume": 100, "known": [{"id": "pc", "name": "PC"}]})
     core.data["voice_chain"] = False
@@ -66,8 +64,6 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
     from custom_components.aac.defaults import async_voice_chain
     from custom_components.aac.flow import Step
     from custom_components.aac.context import Context
-
-    await hass.async_add_executor_job(v1_files, hass.config.config_dir)
     core = await setup_aac(hass, mock_entry)
     core.audio.settings["known"] = [{"id": "pc", "name": "PC"}]
     core.data["voice_chain"] = False
@@ -89,30 +85,6 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
     core.audio._spoke["pc"] = __import__("time").time()
     assert (await route("follow_up", "and the kitchen too"))[0] == [("yes", "followed")]
     assert (await route("follow_up", "computer, and the kitchen"))[0] == []  # the Wake word takes that one
-
-
-async def test_the_old_voice_chain_is_rebuilt(hass: HomeAssistant, mock_entry):
-    """The owner's alpha voice chain (Voice chat card, Wake word with a follow-up tag, Voice rules) becomes the new
-    one once; the voice chats move into the Chat card and the wake words stay."""
-    from custom_components.aac.defaults import async_voice_v2
-
-    core = await setup_aac(hass, mock_entry)
-    d = core.domain
-    for kind, cid in (("microphone", "mic"), ("pause_cut", "cut"), ("speech_to_text", "ears"), ("voice_out", "speaker"),
-                      ("relay", "voice_rules")):
-        await d.add_card(kind, cid, card_id=cid)
-    await d.add_card("conditional", "Wake word", {"outputs": ["yes"], "rules": [
-        {"test": "contains", "value": "assistent", "actions": [{"do": "output", "a": "yes"}]},
-        {"test": "has_tag", "value": "voice.follow_up", "actions": [{"do": "output", "a": "yes"}]}]}, card_id="wake")
-    d._specs["voice"] = {"type": "voice_chat", "title": "Voice chat", "settings": {}}
-    d.wires.append({"from": "model.out", "to": "voice.answers"})
-    await d.save_card_data("voice", {"chats": {"v1": {"id": "v1", "title": "Voice · PC · 20:14", "created": "2026-10-23T18:14:00+00:00",
-                                                      "updated": "2026-10-23T18:14:00+00:00", "entries": [], "messages": []}}})
-    core.data["voice_v2"] = False
-    await async_voice_v2(core)
-    assert "voice" not in d._specs and "voice_rules" not in d.cards and "v1" in d.cards["chat"].data["chats"]
-    assert [r["value"] for r in d.cards["wake"].settings["rules"]] == ["assistent"]
-    assert {"from": "ears.out", "to": "follow_up.in"} in d.wires and not any("voice." in w["from"] + w["to"] for w in d.wires)
 
 
 async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, mock_entry, aioclient_mock):
@@ -152,3 +124,6 @@ async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, m
         assert await speaker.stop({"kind": "signal", "text": "stop"})
         assert await ws.receive_json() == {"type": "stop"}
         await ws.close()
+    core.audio.forget("pc")  # gone for good: out of the known ones, its media player removed
+    await hass.async_block_till_done()
+    assert hass.states.get(player) is None and not core.audio.settings["known"]

@@ -44,6 +44,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     return True
 
 
+async def async_remove_config_entry_device(hass: HomeAssistant, entry: AACConfigEntry, device) -> bool:
+    """Devices left from older versions can be deleted in HA (v2 makes none)."""
+    return True
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     """Stop: the setup is kept."""
     frontend.async_remove_panel(hass, "aac")
@@ -54,11 +59,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool
         await core.domain.unload()
         await core.domain.save_now()
     hass.data.pop(DOMAIN, None)
-    return True
-
-
-async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """v1's entry becomes v2's (v2 keeps everything in its own storage; v1's files stay untouched)."""
-    if entry.version < 3:
-        hass.config_entries.async_update_entry(entry, data={}, options={}, version=3, minor_version=1)
     return True

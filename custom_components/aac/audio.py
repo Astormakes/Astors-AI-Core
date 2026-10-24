@@ -209,6 +209,14 @@ class AudioHub:
         return source
 
     @callback
+    def forget(self, source_id: str) -> None:
+        """A satellite that is gone for good: out of the known ones (its media player goes too)."""
+        self.settings["known"] = [k for k in self.settings.get("known", []) if k["id"] != source_id]
+        self._spoke.pop(source_id, None)
+        self.core.save()
+        self.core.notify("audio", forgot=source_id)
+
+    @callback
     def disconnect(self, source: Source) -> None:
         """A satellite went away."""
         if self.sources.get(source.id) is source:

@@ -13,6 +13,7 @@ from ..const import LOGGER
 from ..context import Context, entry, is_stop
 from ..models import Client, ModelError, ModelUnreachable
 from . import Card, register, tool_spec
+from .pool import pool_ids
 
 MAX_ROUNDS = 8  # model → tool → model … per context
 KEEP_REQUESTS = 30  # chats whose last request is kept for the panel
@@ -94,8 +95,7 @@ class Model(Card):
         self.requests: dict[str, dict[str, Any]] = {}
 
     def _models(self, step) -> list[dict[str, Any]]:
-        pools = step.wired_into("pool")
-        ids = pools[0].settings.get("models") or [] if pools else [m["id"] for m in self.core.pool.models]
+        ids = pool_ids(self, step)
         return [m for i in ids if (m := self.core.pool.get(i))]
 
     async def handle(self, context: Context, port: str, step) -> list[Any] | None:

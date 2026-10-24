@@ -31,7 +31,7 @@ class AACCalendar(CalendarEntity):
     _attr_supported_features = CalendarEntityFeature.CREATE_EVENT | CalendarEntityFeature.UPDATE_EVENT | CalendarEntityFeature.DELETE_EVENT
 
     def __init__(self, entry) -> None:
-        """Initialize (v1's unique id: the entity stays calendar.aac_calendar)."""
+        """Initialize (the entity is calendar.aac_calendar)."""
         self._attr_unique_id = f"{entry.entry_id}_calendar_assistant"
         self._event: CalendarEvent | None = None
 

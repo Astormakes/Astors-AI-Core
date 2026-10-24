@@ -320,6 +320,14 @@ async def ws_audio_settings(hass, connection, msg) -> None:
     connection.send_result(msg["id"], core.audio.summary())
 
 
+@command({vol.Required("type"): "aac/audio/forget", vol.Required("source"): str})
+async def ws_audio_forget(hass, connection, msg) -> None:
+    """Forget a satellite that is gone (its media player goes too)."""
+    core = _core(hass)
+    core.audio.forget(msg["source"])
+    connection.send_result(msg["id"], core.audio.summary())
+
+
 @command({vol.Required("type"): "aac/audio/say", vol.Required("source"): str, vol.Required("text"): str})
 async def ws_audio_say(hass, connection, msg) -> None:
     """Speak a test sentence at a satellite."""

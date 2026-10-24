@@ -6,8 +6,6 @@ positions, Undo history and three save slots, all kept on the server.
 from __future__ import annotations
 
 from copy import deepcopy
-import json
-from pathlib import Path
 import re
 from typing import Any
 
@@ -277,7 +275,7 @@ class Core:
         self.audio = AudioHub(self)
 
     async def load(self) -> None:
-        """Read the core; the first time, build the default domain (with what v1 left behind)."""
+        """Read the core; the first time, build the default domain."""
         self.data = await self._store.async_load() or {}
         first = not self.data
         self.data.setdefault("models", [])
@@ -290,12 +288,10 @@ class Core:
             self.data["domains"] = [{"id": "assistant", "name": "Assistant"}]
         self.data.setdefault("active", self.data["domains"][0]["id"])
         await self.switch(self.data["active"])
-        from .defaults import async_assist_card, async_calendar_card, async_upgrade, async_voice_chain, async_voice_v2  # noqa: PLC0415
-        await async_upgrade(self)
+        from .defaults import async_voice_chain  # noqa: PLC0415
         await async_voice_chain(self)
-        await async_assist_card(self)
-        await async_calendar_card(self)
-        await async_voice_v2(self)
+        for done in ("v1_audio", "v1_triggers", "voice_v2", "assist_card", "calendar_card"):  # flags of steps that are gone
+            self.data.pop(done, None)
 
     def save(self) -> None:
         """Keep the core."""
@@ -355,12 +351,3 @@ class Core:
         """Take a model out of the pool."""
         self.data["models"][:] = [m for m in self.data["models"] if m["id"] != model_id]
         self.save()
-
-
-def read_v1(hass: HomeAssistant, key: str) -> dict[str, Any] | None:
-    """A v1 storage file, read as it is (only at the first start of v2)."""
-    path = Path(hass.config.path(".storage", key))
-    try:
-        return json.loads(path.read_text(encoding="utf-8")).get("data")
-    except (OSError, ValueError):
-        return None

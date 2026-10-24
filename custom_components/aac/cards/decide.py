@@ -8,6 +8,7 @@ from ..const import LOGGER
 from ..context import Context
 from ..models import Client, ModelError
 from . import Card, register
+from .pool import pool_ids
 
 LOOK_BACK = 8  # entries the deciding model reads
 
@@ -50,9 +51,7 @@ class Decide(Card):
         options = "\n".join(f"- {o['name']}: {o.get('description', '')}" for o in outs)
         prompt = (f"{self.settings.get('question') or ''}\n\nOptions:\n{options}\n\nAnswer with exactly one option name, "
                   "nothing else.")
-        pools = step.wired_into("pool")
-        ids = (pools[0].settings.get("models") or []) if pools else [m["id"] for m in self.core.pool.models]
-        for model_id in ids:
+        for model_id in pool_ids(self, step):
             if not (model := self.core.pool.get(model_id)) or not self.core.pool.usable(model_id):
                 continue
             try:

@@ -4,27 +4,24 @@ from homeassistant.core import HomeAssistant
 
 from custom_components.aac.context import Context
 
-from .conftest import BASE_URL, model_answers, reply, setup_aac, v1_files
+from .conftest import BASE_URL, model_answers, reply, setup_aac
 
 
-async def test_first_start_takes_over_v1(hass: HomeAssistant, mock_entry):
-    """v1's models (master order), charter, lists and entity access land in the default domain."""
-    await hass.async_add_executor_job(v1_files, hass.config.config_dir)
+async def test_first_start_builds_the_default_domain(hass: HomeAssistant, mock_entry):
+    """A fresh install: Chat and HA Assist → Charter → Time → Model → back; Lists, Home, Calendar are its tools; an
+    empty Pool means every model, in order."""
     core = await setup_aac(hass, mock_entry)
     domain = core.domain
-    assert [m["id"] for m in core.pool.models] == ["m_big", "m_small"]
-    assert {"chat", "charter", "time", "models", "model", "lists", "home"} <= set(domain.cards)
-    assert domain.cards["charter"].settings["text"] == "Be kind."
-    assert domain.cards["models"].settings["models"] == ["m_big", "m_small"]
-    assert domain.cards["lists"].data["lists"][0]["name"] == "Project Portfolio"
-    assert domain.cards["home"].level("switch.lamp") == "full" and domain.cards["home"].level("sensor.outside") == "read"
+    assert {"chat", "assist", "charter", "time", "models", "model", "lists", "home", "calendar"} <= set(domain.cards)
+    assert {"from": "model.out", "to": "chat.answers"} in domain.wires and {"from": "calendar.out", "to": "model.in"} in domain.wires
     assert domain.cards["home"].level("light.other") == "hidden"
-    assert {"from": "model.out", "to": "chat.answers"} in domain.wires and domain.undo == []
+    from custom_components.aac.flow import Step
+    model = domain.cards["model"]
+    assert [m["id"] for m in model._models(Step(domain.flow, model, "in", None))] == ["m_big", "m_small"]
 
 
 async def test_a_chat_round_trip(hass: HomeAssistant, mock_entry, aioclient_mock):
     """Chat → Charter (start) → Time (after the turn) → Model → back to the chat, which keeps the conversation."""
-    await hass.async_add_executor_job(v1_files, hass.config.config_dir)
     core = await setup_aac(hass, mock_entry)
     asked = model_answers(aioclient_mock, reply("Hello!"), reply("You said hi."))
     chat = core.domain.cards["chat"]
@@ -44,7 +41,6 @@ async def test_a_chat_round_trip(hass: HomeAssistant, mock_entry, aioclient_mock
 
 async def test_tools_are_the_cards_wired_out_and_back(hass: HomeAssistant, mock_entry, aioclient_mock):
     """The model calls the Lists card's function; the call and its result go into the message."""
-    await hass.async_add_executor_job(v1_files, hass.config.config_dir)
     core = await setup_aac(hass, mock_entry)
     asked = model_answers(aioclient_mock, reply(calls=[("lists__add_items", {"list": "Shopping", "items": ["Milk"]})]),
                           reply("Added milk."))
@@ -60,8 +56,6 @@ async def test_tools_are_the_cards_wired_out_and_back(hass: HomeAssistant, mock_
 async def test_the_next_model_when_a_machine_is_off(hass: HomeAssistant, mock_entry, aioclient_mock):
     """The Pool's order: the first that answers."""
     import aiohttp
-
-    await hass.async_add_executor_job(v1_files, hass.config.config_dir)
     core = await setup_aac(hass, mock_entry)
     seen = []
 
@@ -79,9 +73,9 @@ async def test_the_next_model_when_a_machine_is_off(hass: HomeAssistant, mock_en
 
 async def test_undo_slots_and_clone(hass: HomeAssistant, mock_entry):
     """Undo brings the setup back; slots keep it; a clone is a separate domain with the cards' data."""
-    await hass.async_add_executor_job(v1_files, hass.config.config_dir)
     core = await setup_aac(hass, mock_entry)
     domain = core.domain
+    await domain.cards["lists"].call("add_items", {"list": "Project Portfolio", "items": ["Car Projects"]})
     domain.save_slot("1")
     await domain.add_card("buffer", "Room")
     assert "room" in domain.cards

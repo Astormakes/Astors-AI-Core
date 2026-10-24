@@ -26,7 +26,7 @@ class AACAgent(conversation.ConversationEntity, conversation.AbstractConversatio
     _attr_supported_features = conversation.ConversationEntityFeature.CONTROL
 
     def __init__(self, entry) -> None:
-        """Initialize (the entry id as unique id: v1's agent entity stays the same)."""
+        """Initialize (the entry id as unique id)."""
         self.entry = entry
         self._attr_unique_id = entry.entry_id
 

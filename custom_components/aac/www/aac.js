@@ -343,6 +343,7 @@ class AacPanel extends HTMLElement {
     const order = st.stt || [];
     return `${this._header("Audio", tip("The satellites, how AAC hears (speech to text, in this order: the first that answers) and speaks (an HA voice engine). Shared by all domains; the audio cards in Nodes decide what happens with it."))}
       <div class="content"><h3>Satellites</h3><div id="meters">${this._meters()}</div>
+      ${(st.known || []).filter((k) => !(a.sources || []).some((s) => s.id === k.id)).map((k) => `<div class="row"><span class="hint">${esc(k.name)} · offline</span><button class="small danger" data-forget="${esc(k.id)}" style="margin-left:auto" title="Remove it from AAC (and its media player in HA)">Forget</button></div>`).join("")}
       <div class="card"><h3 style="margin-top:0">Speech to text (in order)</h3>
         ${order.map((id, i) => `<div class="row"><span class="t">${esc((sttItems.find((x) => x[0] === id) || [id, id])[1])}</span>
           <button class="small" data-sttup="${i}">↑</button><button class="small danger" data-sttdel="${i}">✕</button></div>`).join("") || '<p class="hint">None yet.</p>'}
@@ -1033,6 +1034,7 @@ class AacPanel extends HTMLElement {
     $$("[data-sttdel]").forEach((el) => el.addEventListener("click", () => audioSet({ stt: this.audio.settings.stt.filter((_, i) => i !== Number(el.dataset.sttdel)) })));
     $$("[data-sttup]").forEach((el) => el.addEventListener("click", () => { const l = [...this.audio.settings.stt], i = Number(el.dataset.sttup); if (i > 0) { [l[i - 1], l[i]] = [l[i], l[i - 1]]; audioSet({ stt: l }); } }));
     $("#ttsset")?.addEventListener("change", (e) => audioSet({ tts: e.target.value || null }));
+    $$("[data-forget]").forEach((el) => el.addEventListener("click", async () => { if (confirm("Forget this satellite? (It comes back when it connects again.)")) { this.audio = await this.ws("aac/audio/forget", { source: el.dataset.forget }); this.render(); } }));
     $("#volume")?.addEventListener("input", (e) => { $("#volval").textContent = e.target.value; });
     $("#volume")?.addEventListener("change", (e) => audioSet({ volume: Number(e.target.value) }));
 
