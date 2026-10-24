@@ -50,7 +50,7 @@ textarea { resize: vertical; }
 .hint { color: var(--secondary-text-color); font-size: 12px; }
 .qm { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--secondary-text-color);
   font-size: 11px; color: var(--secondary-text-color); position: relative; cursor: help; margin-left: 4px; vertical-align: middle; }
-.qm .tip { display: none; position: absolute; top: 20px; right: -10px; z-index: 30; width: 300px; background: var(--card-background-color);
+.qm .tip { display: none; position: fixed; z-index: 1000; width: 300px; max-width: calc(100vw - 24px); background: var(--card-background-color);
   border: 1px solid var(--divider-color); border-radius: 8px; padding: 10px; font-size: 12px; color: var(--primary-text-color); box-shadow: 0 4px 16px rgba(0,0,0,.25); text-align: left; white-space: normal; }
 .qm:hover .tip, .qm:focus .tip { display: block; }
 /* chat */
@@ -132,6 +132,20 @@ class AacPanel extends HTMLElement {
     this.view = { kind: "chat", card: null, id: null };
     this.chats = {}; this.chat = null; this.live = {}; this.busy = false; this.expert = ""; this.requests = [];
     this.lists = {}; this.sel = null; this.selType = null; this.selWire = null; this.vp = { x: 80, y: 120, k: 1 };
+    // a ? tip floats above everything (fixed), placed under its ? and kept inside the window
+    const place = (e) => {
+      const qm = e.target.closest?.(".qm"), t = qm?.querySelector(".tip");
+      if (!t) return;
+      t.style.display = "block";
+      const r = qm.getBoundingClientRect(), w = t.offsetWidth, h = t.offsetHeight, m = 12;
+      t.style.left = `${Math.max(m, Math.min(r.right - w + 10, innerWidth - w - m))}px`;
+      t.style.top = `${r.bottom + 4 + h > innerHeight - m ? Math.max(m, r.top - 4 - h) : r.bottom + 4}px`;
+    };
+    const hide = (e) => { const t = e.target.closest?.(".qm")?.querySelector(".tip"); if (t && !e.target.closest(".qm").matches(":hover, :focus")) t.style.display = ""; };
+    this.shadowRoot.addEventListener("mouseover", place);
+    this.shadowRoot.addEventListener("focusin", place);
+    this.shadowRoot.addEventListener("mouseout", hide);
+    this.shadowRoot.addEventListener("focusout", hide);
     // one listener for buttons that are redrawn often (the Audio page's meters)
     this.shadowRoot.addEventListener("click", (e) => {
       const b = e.target.closest?.("[data-say]");
