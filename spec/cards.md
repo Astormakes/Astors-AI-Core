@@ -62,7 +62,8 @@ More a card may define: `default_data()` + `keeps_data = True` (its own stored d
 self.save()`), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop(stop_entry) -> bool` (a stop
 arrived: True when it was busy and sent its own context on), `held(port)` (what a dotted wire from that read output
 reads), `current()` (its values), `ui = True` (a page of its own, see below). A setting of type `modellist` with a
-`tag` gives it a list of models with queues.
+`tag` gives it a list of models with queues. A setting may say `min` (and `off`, the value that turns it off),
+and `confirm` (a question the panel asks before it is first turned on, for a setting that changes more than itself).
 
 ## A card folder
 

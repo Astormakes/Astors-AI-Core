@@ -231,9 +231,11 @@ async def test_phrase_joiner_and_its_wiring(hass, mock_entry):
     core.data["voice_chain"] = False
     await async_voice_chain(core)
     d = core.domain
+    wake_x, ears = d.positions["wake"]["x"], dict(d.positions["ears"])
     await d.update_card("cut", settings={"phrase": 250})
     await hass.async_block_till_done()
     joiner = next(c for c in d.cards.values() if c.type == "phrase_joiner")
+    assert d.positions["wake"]["x"] == wake_x + 290 and d.positions[joiner.id] == {"x": ears["x"] + 290, "y": ears["y"]}
     assert {"from": "cut.ends", "to": f"{joiner.id}.ends"} in d.wires and {"from": "ears.out", "to": f"{joiner.id}.lines"} in d.wires
     assert {"from": f"{joiner.id}.out", "to": "wake.in"} in d.wires and {"from": "ears.out", "to": "wake.in"} not in d.wires
     sent = []

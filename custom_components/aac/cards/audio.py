@@ -20,6 +20,7 @@ SILENT = ("nothing", "nothing.", "")
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 STREAM_PIECE = 2  # seconds of a live stream the Speaker plays at a time
 JOIN_WAIT = 1.5  # seconds the Phrase joiner waits for a phrase that may bring no text
+COLUMN = 290  # one column in the grid (the panel's card width and gap)
 
 
 @register
@@ -92,6 +93,9 @@ class PauseCut(Card):
                                  "help": "Shorter: quicker, but a pause mid-sentence cuts it. Longer: whole sentences."},
                        "longest": {"type": "number", "title": "Longest clip (s)", "default": 30},
                        "phrase": {"type": "number", "title": "Phrase pause (ms): faster speech to text", "default": 0,
+                                  "min": 100, "off": 0,
+                                  "confirm": "This adds a Phrase joiner after Speech to text and moves the cards to its "
+                                             "right one column over: the joiner takes over Speech to text's wires. OK?",
                                   "help": "0 = off: Speech to text only starts once you have finished (after the pause "
                                           "above). E.g. 250: whenever you pause briefly in the middle (a breath, a "
                                           "comma), the part so far goes to Speech to text at once, so most of the text "
@@ -115,8 +119,11 @@ class PauseCut(Card):
         if any(w["from"] == f"{self.id}.ends" for w in d.wires):
             return
         fed = [w["to"].split(".")[0] for w in d.wires if w["from"] == f"{self.id}.out"]
-        at = d.positions.get(fed[0] if fed else self.id, {"x": 0, "y": 0})
-        joiner = await d.add_card("phrase_joiner", "Phrase joiner", at={"x": at["x"] + 290, "y": at["y"]})
+        at = dict(d.positions.get(fed[0] if fed else self.id, {"x": 0, "y": 0}))
+        for card_id, p in d.positions.items():  # room: what is right of Speech to text moves one column over
+            if p["x"] > at["x"] and card_id != self.id:
+                p["x"] += COLUMN
+        joiner = await d.add_card("phrase_joiner", "Phrase joiner", at={"x": at["x"] + COLUMN, "y": at["y"]})
         wires = [{"from": f"{self.id}.ends", "to": f"{joiner.id}.ends"}]
         for w in d.wires:
             if w["from"].split(".")[0] in fed and w["from"].endswith(".out"):  # what Speech to text fed, the joiner feeds now

@@ -1074,6 +1074,11 @@ class AacPanel extends HTMLElement {
     if (el.dataset.access !== undefined) value = Object.fromEntries(value.split("\n").map((l) => l.split(":").map((x) => x.trim())).filter(([e, l]) => e && ["hidden", "read", "full"].includes(l)));
     if (el.dataset.outputs !== undefined) value = value.split("\n").map((l) => { const [n, ...r] = l.split(":"); return { name: n.trim().replace(/[^\w-]/g, "_"), description: r.join(":").trim() }; }).filter((o) => o.name);
     if (el.dataset.json !== undefined) { try { value = JSON.parse(value || "[]"); } catch (err) { alert(`Not valid: ${err.message}`); return; } }
+    const f = this._type(c.type)?.settings?.[key] || {}, old = c.settings[key] ?? f.default;
+    if (f.min !== undefined && value < f.min && value !== f.off) { // too small to work: say so instead of doing nothing
+      alert(`${f.title}: at least ${f.min}${f.off !== undefined ? ` (or ${f.off} = off)` : ""}.`); this.render(); return;
+    }
+    if (f.confirm && !old && value && !confirm(f.confirm)) { this.render(); return; } // a setting that changes more than itself asks first
     await this.ws("aac/card/update", { card: c.id, settings: { [key]: value } });
     await this._load(); this.render();
   }
