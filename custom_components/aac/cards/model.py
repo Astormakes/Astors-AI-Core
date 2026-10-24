@@ -12,7 +12,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import LOGGER, Card, Client, Context, entry, is_stop, ModelError, ModelUnreachable, register, tool_spec
 
-VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 MAX_ROUNDS = 8  # model → tool → model … per context
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -74,7 +74,8 @@ class Model(Card):
     outputs = {"out": "text"}
     square = {"out"}
     uses_tools = True
-    tags = {"answer": "its answers", "call": "its tool calls", "stop": "it was stopped (its answer is cut off)"}
+    tags = {"answer": "its answers", "call": "its tool calls", "stop": "it was stopped (its answer is cut off)",
+            "error": "no answer came (no model available, a model failed); models never read these"}
     ports_help = {"in": "a context arrives: the model reads all of it and answers (a stop while it writes cuts the answer)",
                   "out": "square: the answer goes back to the card the context started at if that is wired, else to "
                          "every wired card but those wired straight back (that pair only attaches a tool). Every card "
@@ -154,7 +155,7 @@ class Model(Card):
         pool = self.core.pool
         entries = pool.entries(self.settings.get("models"), "text")
         if not entries:
-            context.add(self.id, "answer", "No model for text is set up (Models in the sidebar).", ["answer"])
+            context.add(self.id, "error", "Error: no model for text is set up (Models in the sidebar).", ["error"])
             return
         answer = context.add(self.id, "answer", "", ["answer"])
         answer["state"] = "open"
@@ -164,7 +165,7 @@ class Model(Card):
             shown = ([{"role": "system", "content": system, "_from": sources}] if system else []) + chat
             payload = [{k: v for k, v in item.items() if not k.startswith("_")} for item in shown]
             self._keep(context, shown, specs, params)
-            reply, tried, dropped = None, set(), False
+            reply, tried, dropped, failed = None, set(), False, ""
             while True:  # down the list (a free model, else the queues); one that does not answer is skipped
                 left = [e for e in entries if e["model"] not in tried]
                 async with pool.slot(left) as model_id:
@@ -181,14 +182,19 @@ class Model(Card):
                         tried.add(model_id)
                     except ModelError as err:
                         LOGGER.warning("AAC: model %s failed: %s", model_id, err)
-                        answer["text"] = f"The model failed: {err}"
+                        failed = f"Error: the model failed ({err})."
                         break
             if reply is None:
                 if dropped:
                     LOGGER.warning("AAC: %s: every model was busy and none queues; the context was dropped", self.id)
-                answer["text"] = answer["text"] or ("Every model was busy (no Queue ticked): this was dropped." if dropped
-                                                    else "No model answered (are the machines on?).")
-                break
+                failed = failed or ("Error: every model was busy and none queues, so this was dropped." if dropped
+                                    else "Error: no model was available.")
+                if answer["text"]:  # it had begun: what came stays, cut off
+                    answer["state"] = "cut"
+                else:
+                    context.entries.remove(answer)
+                context.add(self.id, "error", failed, ["error"])  # shown and spoken, never read by a model
+                return
             if not reply["tool_calls"]:
                 answer["text"] = reply["content"].strip()
                 break

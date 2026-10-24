@@ -259,3 +259,35 @@ async def test_tools_are_the_cards_in_the_loop(hass: HomeAssistant, mock_entry):
     assert d.cards["model"].summary()["tools"] == sorted(tools)
     await d.update_card("chat", settings={"offers": False})
     assert "chat" not in {c.id for c in d.flow.tools("model")}
+
+
+async def test_a_closed_connection_is_tried_again_and_errors_are_not_read(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """A kept-alive connection the server had closed is tried once more (the model is not taken for off); when no
+    model answers, the turn gets an error entry: shown and returned, but never read by a model (it would copy it)."""
+    import aiohttp
+    from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
+
+    from custom_components.aac.cards.model import conversation
+
+    core = await setup_aac(hass, mock_entry)
+    tries = []
+
+    async def flaky(method, url, data):
+        tries.append(1)
+        if len(tries) == 1:
+            raise aiohttp.ServerDisconnectedError()
+        return AiohttpClientMockResponse(method, url, json=reply("Fine."))
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=flaky)
+    _, answer = await core.domain.cards["chat"].send("hi")
+    assert answer == "Fine." and len(tries) == 2 and all(core.pool.usable(m["id"]) for m in core.pool.models)
+    aioclient_mock.clear_requests()
+
+    async def off(method, url, data):
+        raise aiohttp.ClientConnectionError("off")
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=off)
+    chat_id, answer = await core.domain.cards["chat"].send("still there?")
+    assert answer == "Error: no model was available."
+    entries = core.domain.cards["chat"].get(chat_id)["entries"]
+    assert entries[-1]["kind"] == "error"
+    _, chat = conversation(Context(entries=entries), "model", {})
+    assert "Error" not in str(chat)

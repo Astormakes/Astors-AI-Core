@@ -6,6 +6,7 @@ read from the context it holds. A dotted wire from `provides` lets another card 
 from __future__ import annotations
 
 import asyncio
+import re
 from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Any
@@ -14,7 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, is_stop, new_id, register
 
-VERSION = "1.4.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.5.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NO_ANSWER = "(no answer came back: is a model wired back into this chat?)"
@@ -228,7 +229,8 @@ class Chat(Card):
         cut = (context.last("answer") or {}).get("state") == "cut"
         if context.stopped and not cut:  # a stop came through and nothing was busy: nothing to keep
             return []
-        text = context.answer or ("" if cut else "(no answer)")
+        error = next((e["text"] for e in reversed(context.entries) if e["kind"] == "error"), "")
+        text = context.answer or error or ("" if cut else "(no answer)")
         if context.origin == self.id and text.strip().lower() not in SILENT:
             await self._keep_turn(context)
         if (future := self._waiting.get(context.id)) and not future.done():
@@ -237,12 +239,13 @@ class Chat(Card):
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         if function == "chats":
-            words = str(args.get("search") or "").lower().split()
+            plain = lambda t: re.sub(r"[^\w]+", " ", t.lower())  # noqa: E731 - "13.13" finds "13:13"
+            words = plain(str(args.get("search") or "")).split()
             found = []
             for c in self.chats():
                 said = next((e["text"] for e in self.data["chats"][c["id"]]["entries"] if e["kind"] == "said"), "")
-                text = " ".join(e["text"] for e in self.data["chats"][c["id"]]["entries"]).lower()
-                if all(w in text or w in c["title"].lower() for w in words):
+                text = plain(" ".join([c["title"], *(e["text"] for e in self.data["chats"][c["id"]]["entries"])]))
+                if all(w in text for w in words):
                     found.append({"id": c["id"], "title": c["title"], "updated": c["updated"], "first": said[:200]})
             return found[:20]
         if function == "continue":

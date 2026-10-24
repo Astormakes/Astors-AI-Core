@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 from custom_components.aac.api import (LOGGER, SAMPLE_RATE, Card, Context, Segmenter, level, make_vad, pcm_to_wav, register,
                                       resample, wav_to_pcm)
 
-VERSION = "2.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -184,7 +184,7 @@ class TextToSpeech(Card):
         said = max((i for i, e in enumerate(context.entries) if e["kind"] == "said"), default=-1)
         heard = (context.entries[said]["data"] if said >= 0 else {})
         for e in context.entries[said + 1:]:
-            if e["kind"] != "answer" or e.get("state") == "cut":
+            if e["kind"] not in ("answer", "error") or e.get("state") == "cut":  # an error is said too (nothing came)
                 continue
             text, upto = e["text"], self._spoken.get(e["id"], 0)
             if finished or e.get("state") == "closed":

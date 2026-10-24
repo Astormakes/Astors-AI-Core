@@ -52,7 +52,17 @@ class Client:
 
     async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
                    on_delta: Callable[[str], None] | None = None, **params: Any) -> dict[str, Any]:
-        """One answer, streamed (on_delta gets the text so far). Returns {"content", "tool_calls"}."""
+        """One answer, streamed (on_delta gets the text so far). Returns {"content", "tool_calls"}. A kept-alive
+        connection the server had already closed is tried once more on a fresh one (it fails before anything comes)."""
+        try:
+            return await self._chat(messages, tools, on_delta, **params)
+        except ModelUnreachable as err:
+            if not isinstance(err.__cause__, (aiohttp.ServerDisconnectedError, aiohttp.ClientOSError)) or getattr(err, "started", False):
+                raise
+        return await self._chat(messages, tools, on_delta, **params)
+
+    async def _chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None,
+                    on_delta: Callable[[str], None] | None, **params: Any) -> dict[str, Any]:
         body = {"model": self.model["model"], "messages": messages, "stream": True, **params}
         if tools:
             body["tools"] = tools
@@ -88,7 +98,9 @@ class Client:
                         call["function"]["name"] += fn.get("name") or ""
                         call["function"]["arguments"] += fn.get("arguments") or ""
         except (aiohttp.ClientConnectionError, TimeoutError) as err:  # off, unreachable, dropped
-            raise ModelUnreachable(str(err) or type(err).__name__) from err
+            unreachable = ModelUnreachable(str(err) or type(err).__name__)
+            unreachable.started = bool(content or calls)  # something came already: not asked again
+            raise unreachable from err
         except aiohttp.ClientError as err:
             raise ModelError(str(err)) from err
         return {"content": content, "tool_calls": [calls[i] for i in sorted(calls)]}

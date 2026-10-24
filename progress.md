@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.0.0-alpha.40, live on the owner's HA
+## Current state (2026-10-24) – 2.1.0, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -136,6 +136,16 @@ the owner wires them (no automatic wiring), the message is a document of entries
   node view (types left with info, click in the grid to place, drag to wire, Delete/button to unwire, settings right
   with functions and tags, Undo, slots 1–3 (Shift-click loads), Send stop, monitor on a wire).
 - Tests: 28 (`../.venv/bin/python -m pytest -q -p no:logging`).
+
+## Versions (owner, 2026-10-24)
+
+From 2.1.0 on: patch (2.1.1) = fixes, minor (2.2.0) = new features or changed behaviour, major (3.0.0) = old setups or
+backups no longer load. Card files have their own VERSION (and `upgrade()` for their saved settings). Bump the
+manifest version with every deploy (the browser caches the panel by it).
+
+- 2.1.0: a kept-alive connection the server had closed is tried once more (a model was taken for off after every tool
+  call that came quickly); errors ("Error: no model was available.") are their own entries: shown and spoken, never
+  read by a model (it had copied the old message as its answer); Chat search ignores punctuation ("13.13" finds 13:13).
 
 ## Owner's data
 
