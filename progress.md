@@ -153,7 +153,27 @@ the owner wires them (no automatic wiring), the message is a document of entries
   every panel change). Local test HA: `~/cluade/AAC/dev-ha` (port 8124), runs from the repo.
 - Screenshots: `scripts/ha_screenshot.py` (FIND_PANEL is the `aac-panel` element; `p.go('nodes')`, `p.go('lists','lists')`).
 
-## Next
+## Next (owner's list, 2026-10-24; talk each through first, then build, one at a time)
 
-- Live entries through the flow (today the model streams only to the panel), stop as a message along the wires.
+1. **A model that talks while it works** (owner: "it ends its own little runs with that; it could never check a tool,
+   answer in between and keep going"). Found: text a model writes next to tool calls is dropped today
+   (`model.py`: `reply["content"]` is only kept without tool calls), and its live writing goes only to the panel.
+   Proposal (keeps the push system): the Model pushes the same turn again whenever an entry is finished (a sentence,
+   a "let me check", a tool result), as a snapshot of the context; a growing entry is `state: "open"`. Cards that say
+   `live = True` (Chat, Text to speech) get every snapshot; all others get only the final one, so no card has to
+   handle both. Text to speech speaks each newly finished sentence (also less delay).
+2. **Cards with a view** (owner: spectrum, waveform, level bars, maybe bigger cards): a card declares a view; the
+   panel draws it inside the card (canvas); the card sends small frames (`core.notify("view", card=…, data=…)`) only
+   while a panel shows it. Python/numpy is fast enough (an FFT of 16 kHz audio at 20 frames/s is tiny); the browser
+   draws. Then Gain / Compressor cards (stream in, stream out, numpy).
+3. **Faster lights**: wire levels are sent 4×/s (`LEVEL_EVERY`); 10–20×/s is cheap (a few small websocket messages,
+   only while the Nodes page is open, which should become a condition).
+4. **Audio delay**: measure each stage first (clip end → text → model → speech → playing), then: the satellite
+   plays a stream instead of whole WAVs; sentence-wise speech (item 1); the Audio clipper's pause. Found: the
+   Microphone → Speaker loop sounded broken because AAC ignores a satellite's microphone while it plays (no talking
+   to itself) and the Speaker plays a stream in separate 2 s pieces; needs echo cancellation (best in the satellite)
+   and stream playback.
+5. **Editable instructions for models**: each card's text that a wired model gets (its functions' help) gets an
+   override/extra text in the card's settings: a fold at the bottom that explains it, with a text box.
+6. **Relay and Conditional UI** (later).
 - Presets; docs/v2 page 2 details for the remaining cards.
