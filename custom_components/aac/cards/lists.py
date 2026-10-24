@@ -9,7 +9,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, register
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 ARG_LIST = {"type": "string", "help": "The list's name.", "required": True}
 
@@ -38,7 +38,7 @@ class Lists(Card):
     title = "Lists"
     category = "Data"
     help = "Lists of anything (shopping, projects, ideas), with a page in the sidebar; a model or a Conditional card uses its functions."
-    page = "lists"
+    ui = True
     keeps_data = True
     values = {"lists": "the names of its lists", "open": "open entries per list (name → count)", "total": "open entries in all lists"}
     functions = {
@@ -77,6 +77,9 @@ class Lists(Card):
 
     def default_data(self) -> dict[str, Any]:
         return {"lists": []}
+
+    def nav(self) -> dict[str, Any]:
+        return {"add": "New list", "entries": [{"id": li["name"], "title": li["name"]} for li in self.data.get("lists") or []]}
 
     def _list(self, name: str, create: bool = False) -> dict[str, Any]:
         low = str(name).strip().lower()

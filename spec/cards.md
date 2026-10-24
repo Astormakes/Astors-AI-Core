@@ -49,8 +49,25 @@ class Shout(Card):
 More a card may define: `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
 self.save()`), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop(stop_entry) -> bool` (a stop
 arrived: True when it was busy and sent its own context on), `held(port)` (what a dotted wire from that read output
-reads), `current()` (its values), `page` ("chat", "lists", "log", "memory", "file": a page of its own in the sidebar).
-A setting of type `modellist` with a `tag` gives it a list of models with queues.
+reads), `current()` (its values), `ui = True` (a page of its own, see below). A setting of type `modellist` with a
+`tag` gives it a list of models with queues.
+
+## A card's page
+
+A card with `ui = True` brings its page as a `.js` file next to its `.py` (`lists.py` → `lists.js`, copied and
+versioned with it, served at `/aac_cards/lists.js`). The file defines a custom element `aac-card-<type>` (`_` → `-`)
+without shadow DOM, so the panel's look and skins apply. The panel hands it:
+
+- `.panel`: `ws(type, data)`, `call(function, args)` (the card's functions, like a model), `ui(action, args)` (the
+  card's `ui_call()`), `data()` (its stored data), `save(settings)`, `go(entry)` (open another of its entries),
+  `header(title, buttonsHtml)`, `tip(html)`, `esc(text)`, `md(text)`, `cardTitle(id)`;
+- `.card` (the card: id, title, settings …) and `.entry` (the sidebar entry picked, or null), then calls `show()`.
+
+It may define `event(ev)` (what the card tells open panels: `core.notify(what, card=self.id, …)`) and `add()` (the
+`+` in its sidebar group). The element is kept while the page is open elsewhere, so its state survives.
+
+In Python: `nav()` gives its sidebar entries (`{"entries": [{id, title, children?}], "add": "New list"}`; None: one
+item), and `ui_call(action, args)` answers its page for what is not a function for models (a Chat's send).
 
 ## The core's services
 

@@ -1,5 +1,6 @@
-// AAC 2 panel (docs/v2): one sidebar (cards put their pages in it: chats, lists), the chat, lists, models, and the
-// node view (card types left, the grid, the selected card's settings right). Plain web component, HA's theme.
+// AAC 2 panel (docs/v2): one sidebar (the cards' pages and their entries: chats, lists …; then Nodes and Settings),
+// the cards' own pages (each card file's .js, spec/cards.md), the node view (card types left, the grid, the selected
+// card's settings right), and the core's settings (Audio, Models, Appearance). Plain web component, HA's theme.
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\n/g, "<br>");
@@ -38,6 +39,8 @@ h4 button { margin-left: auto; }
 .item:hover { background: rgba(127,127,127,.1); } .item.on { background: rgba(3,169,244,.15); color: var(--primary-color); }
 nav .bottom { border-top: 1px solid var(--divider-color); padding: 6px 0; }
 main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+#cardhost, #cardhost > * { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+h4.fold { cursor: pointer; user-select: none; }
 header { display: flex; align-items: center; gap: 8px; padding: 0 16px; min-height: 56px; border-bottom: 1px solid var(--divider-color); flex-wrap: wrap; }
 header h2 { margin: 0; font-size: 18px; font-weight: 500; margin-right: auto; }
 button, select, input, textarea { font: inherit; color: inherit; }
@@ -130,9 +133,8 @@ class AacPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
-    this.view = { kind: "chat", card: null, id: null };
-    this.chats = {}; this.chat = null; this.live = {}; this.busy = false; this.expert = ""; this.requests = [];
-    this.lists = {}; this.sel = null; this.selType = null; this.selWire = null; this.vp = { x: 80, y: 120, k: 1 };
+    this.view = { kind: "card", card: null, id: null };
+    this.nav = []; this._els = {}; this.sel = null; this.selType = null; this.selWire = null; this.vp = { x: 80, y: 120, k: 1 };
     // a ? tip floats above everything (fixed), placed under its ? and kept inside the window
     const place = (e) => {
       const qm = e.target.closest?.(".qm"), t = qm?.querySelector(".tip");
@@ -147,10 +149,16 @@ class AacPanel extends HTMLElement {
     this.shadowRoot.addEventListener("focusin", place);
     this.shadowRoot.addEventListener("mouseout", hide);
     this.shadowRoot.addEventListener("focusout", hide);
-    // one listener for buttons that are redrawn often (the Audio page's meters)
+    // one listener for what is drawn by others or redrawn often: the sidebar, a card page's ☰, the Audio page's meters
     this.shadowRoot.addEventListener("click", (e) => {
-      const b = e.target.closest?.("[data-say]");
-      if (b) this.ws("aac/audio/say", { source: b.dataset.say, text: "This is how I sound." });
+      const t = e.target.closest?.("[data-say],[data-go],[data-navadd],[data-fold],#navbtn");
+      if (!t) return;
+      const d = t.dataset;
+      if (d.say) this.ws("aac/audio/say", { source: d.say, text: "This is how I sound." });
+      else if (d.navadd) { e.stopPropagation(); const el = this._els[d.navadd]; if (el?.add) { this.go("card", d.navadd, this.view.card === d.navadd ? this.view.id : null).then(() => el.add()); } else this.go("card", d.navadd, null); }
+      else if (d.fold) { const f = this._folds(); f[d.fold] = !f[d.fold]; this._setFolds(f); this.go("card", d.fold, null); }
+      else if (d.go) this.go(d.go, d.card || null, d.id || null);
+      else if (t.id === "navbtn") { this.navOpen = true; this.shadowRoot.querySelector(".root").classList.add("navopen"); }
     });
   }
 
@@ -168,38 +176,26 @@ class AacPanel extends HTMLElement {
     this._applyWidths();
     await this._load();
     this._hass.connection.subscribeMessage((ev) => this._event(ev), { type: "aac/subscribe" });
-    const chat = this._cards("chat")[0];
-    if (chat) await this._openChats(chat.id);
-    this.render();
+    this.go("card", null, null);
   }
 
   async _load() {
-    [this.state, this.audio, this.look] = await Promise.all([this.ws("aac/state"), this.ws("aac/audio").catch(() => null),
-      this.ws("aac/appearance").catch(() => ({ skins: [], skin: "" }))]);
+    [this.state, this.audio, this.look, this.nav] = await Promise.all([this.ws("aac/state"), this.ws("aac/audio").catch(() => null),
+      this.ws("aac/appearance").catch(() => ({ skins: [], skin: "" })), this.ws("aac/nav").then((r) => r.nav).catch(() => [])]);
   }
-  _cards(page) { return (this.state?.domain.cards || []).filter((c) => c.page === page); }
+  _folds() { try { return JSON.parse(localStorage.getItem("aac.folds") || "{}"); } catch (err) { return {}; } }
+  _setFolds(f) { try { localStorage.setItem("aac.folds", JSON.stringify(f)); } catch (err) { /* private window */ } }
   _card(id) { return (this.state?.domain.cards || []).find((c) => c.id === id); }
   _type(t) { return (this.state?.types || []).find((x) => x.type === t); }
 
-  async _openChats(card) { this.chats[card] = (await this.ws("aac/chat/list", { card })).chats; }
-
   _event(ev) {
-    if (ev.what === "delta" && this.view.kind === "chat" && this.busy) {
-      this.live = { text: ev.text };
-      const box = this.shadowRoot.querySelector("#live");
-      if (box) box.innerHTML = md(ev.text);
-    } else if (ev.what === "chat") {
-      clearTimeout(this._ct);
-      this._ct = setTimeout(async () => {
-        await this._openChats(ev.card);
-        if (this.view.kind === "chat" && this.view.card === ev.card && this.view.id) await this._getChat();
-        if (this.view.kind !== "nodes") this.render(); // the grid stays (a redraw would cut the wires' animations); the sidebar follows on the next page
-      }, 150);
+    if (ev.card && this._els[ev.card]) { try { this._els[ev.card].event?.(ev); } catch (err) { console.error(err); } } // to the card's page
+    if (["chat", "card"].includes(ev.what)) { // a card's sidebar entries may have changed
+      clearTimeout(this._nt);
+      this._nt = setTimeout(async () => { this.nav = (await this.ws("aac/nav")).nav; const n = this.shadowRoot.querySelector("nav"); if (n) n.outerHTML = this._nav(); }, 200);
     } else if (ev.what === "setup") {
       clearTimeout(this._st);
       this._st = setTimeout(async () => { await this._load(); if (this.view.kind !== "nodes" || !this._dragging) this.render(); }, 150);
-    } else if (ev.what === "card" && this.view.card === ev.card && ["lists", "log", "memory", "file"].includes(this.view.kind)) {
-      this._loadPage().then(() => this.render());
     } else if (ev.what === "appearance") {
       this.ws("aac/appearance").then((look) => { this.look = look; this.render(); });
     } else if (ev.what === "audio" && this.view.kind === "audio") {
@@ -224,137 +220,83 @@ class AacPanel extends HTMLElement {
   async go(kind, card = null, id = null) {
     this.view = { kind, card, id };
     this.navOpen = false; // on a phone the sidebar closes when a page is picked
-    if (kind === "chat" && id) await this._getChat();
-    if (kind === "chat" && !id) this.chat = null;
-    if (["lists", "log", "memory", "file"].includes(kind)) await this._loadPage();
+    if (kind === "card" && !this.nav.some((n) => n.card === card)) this.view.card = this.nav[0]?.card || null;
     if (kind === "audio") { this.audio = await this.ws("aac/audio"); clearInterval(this._live); this._live = setInterval(async () => { if (this.view.kind !== "audio") { clearInterval(this._live); return; } this.audio = await this.ws("aac/audio"); const b = this.shadowRoot.querySelector("#meters"); if (b) b.innerHTML = this._meters(); }, 700); }
     this.render();
+    if (kind === "card") await this._showCard();
   }
 
-  async _getChat() {
-    this.chat = (await this.ws("aac/chat/get", { card: this.view.card, chat_id: this.view.id })).chat;
-    if (this.expert === "request") this.requests = (await this.ws("aac/chat/request", { chat_id: this.view.id })).requests;
+  // ------------------------------------------------------------------ cards' own pages (spec/cards.md)
+  async _element(n) { // the card's page element, kept while the card stays (its state survives redraws)
+    const key = `${n.card}|${n.ui}`;
+    if (this._els[n.card]?._key === key) return this._els[n.card];
+    if (!customElements.get(n.element)) await import(n.ui);
+    const el = document.createElement(n.element);
+    el._key = key; el.dataset.cardpage = n.card;
+    el.panel = this._api(n.card);
+    this._els[n.card] = el;
+    return el;
   }
-  async _loadLists(card) { this.lists[card] = (await this.ws("aac/card/data", { card })).data?.lists || []; }
-  async _loadPage() {
-    const card = this.view.card, kind = this.view.kind;
-    if (kind === "lists") return this._loadLists(card);
-    if (kind === "file") { this.page = { text: (await this.ws("aac/card/call", { card, function: "read" })).result }; return; }
-    this.page = (await this.ws("aac/card/data", { card })).data || {};
+
+  _api(card) { // what a card's page may use
+    return {
+      ws: (type, data = {}) => this.ws(type, data),
+      call: async (fn, args = {}) => (await this.ws("aac/card/call", { card, function: fn, args })).result,
+      ui: async (action, args = {}) => (await this.ws("aac/card/ui", { card, action, args })).result,
+      data: async () => (await this.ws("aac/card/data", { card })).data,
+      save: async (settings) => this.ws("aac/card/update", { card, settings }),
+      go: (entry) => this.go("card", card, entry),
+      header: (title, extra) => this._header(title, extra), cardTitle: (id) => this._card(id)?.title || id, esc, md, tip,
+    };
+  }
+
+  async _showCard() {
+    const n = this.nav.find((x) => x.card === this.view.card), host = this.shadowRoot.querySelector("#cardhost");
+    if (!n || !host) return;
+    try {
+      const el = await this._element(n);
+      el.card = this._card(n.card); el.entry = this.view.id;
+      if (this.view.kind !== "card" || this.view.card !== n.card) return; // another page meanwhile
+      host.replaceChildren(el);
+      await el.show?.();
+    } catch (e) { host.innerHTML = `${this._header(n.title)}<div class="content"><p>This card's page could not load: ${esc(e.message || e)}</p></div>`; }
   }
 
   // ------------------------------------------------------------------ layout
   render() {
     if (!this.state) { this.shadowRoot.innerHTML = `<style>${STYLE}</style><p style="padding:20px">Loading…</p>`; return; }
     const v = this.view;
-    const main = v.kind === "nodes" ? this._nodes() : v.kind === "models" ? this._models() : v.kind === "lists" ? this._listsView()
-      : v.kind === "log" ? this._logView() : v.kind === "memory" ? this._memoryView() : v.kind === "file" ? this._fileView()
-      : v.kind === "audio" ? this._audioView() : v.kind === "appearance" ? this._appearanceView() : this._chatView();
+    const main = v.kind === "nodes" ? this._nodes() : v.kind === "models" ? this._models() : v.kind === "audio" ? this._audioView()
+      : v.kind === "appearance" ? this._appearanceView() : v.card ? '<div id="cardhost"></div>'
+      : `${this._header("AAC")}<div class="content"><p>No card with a page in this domain (a Chat, Lists …). Add one in Nodes.</p></div>`;
     const skin = this.look?.skins.find((k) => k.id && k.id === this.look.skin);
     this.shadowRoot.innerHTML = `<style>${STYLE}</style>${skin ? `<link rel="stylesheet" href="${esc(skin.url)}?v=${esc(this.state.version)}">` : ""}<div class="root ${this.navOpen ? "navopen" : ""}">${this._nav()}<div class="scrim" id="scrim"></div><div class="grip" data-grip="nav" data-target="nav" title="Drag: width of the sidebar (double-click: back to normal)"></div><main>${main}</main></div>`;
     this._bind();
     if (v.kind === "nodes") this._drawGrid();
-    if (v.kind === "chat") { const log = this.shadowRoot.querySelector(".log"); if (log) log.scrollTop = log.scrollHeight; }
+    const el = v.kind === "card" && this._els[v.card];
+    if (el) this.shadowRoot.querySelector("#cardhost")?.replaceChildren(el); // a redraw keeps the page as it is
   }
 
-  _nav() {
-    const s = this.state, v = this.view;
-    const item = (label, kind, card = null, id = null) =>
-      `<div class="item ${v.kind === kind && v.card === card && v.id === id ? "on" : ""}" data-go="${kind}" data-card="${esc(card || "")}" data-id="${esc(id || "")}">${esc(label)}</div>`;
-    const chats = this._cards("chat").map((c) => `<h4>${esc(c.title.toUpperCase())}<button class="small" data-newchat="${esc(c.id)}">+</button></h4>
-      ${(this.chats[c.id] || []).map((ch) => item(ch.title, "chat", c.id, ch.id)).join("") || '<div class="item hint" style="cursor:default">no chats yet</div>'}`).join("");
-    const lists = this._cards("lists").map((c) => `<h4>${esc(c.title.toUpperCase())}</h4>${item("All lists", "lists", c.id)}`).join("");
-    const pages = ["log", "memory", "file"].flatMap((pg) => this._cards(pg)).map((c) => item(c.title, c.page, c.id)).join("");
+  _nav() { // the cards' pages and their entries, then Nodes and the core's settings
+    const s = this.state, v = this.view, folds = this._folds();
+    const on = (kind, card = null, id = null) => (v.kind === kind && v.card === card && (v.id || null) === id ? "on" : "");
+    const item = (label, kind, card = null, id = null, indent = 0) =>
+      `<div class="item ${on(kind, card, id)}" data-go="${kind}" data-card="${esc(card || "")}" data-id="${esc(id || "")}" ${indent ? `style="padding-left:${12 + indent * 14}px"` : ""}>${esc(label)}</div>`;
+    const entries = (n, list, depth = 1) => list.map((e) => `${item(e.title, "card", n.card, e.id, depth)}${e.children?.length ? entries(n, e.children, depth + 1) : ""}`).join("");
+    const groups = this.nav.filter((n) => n.nav).map((n) => {
+      const shut = folds[n.card];
+      return `<h4 class="fold" data-fold="${esc(n.card)}" title="Open the page; folds its entries">${shut ? "▸" : "▾"} ${esc(n.title.toUpperCase())}${n.nav.add ? `<button class="small" data-navadd="${esc(n.card)}" title="${esc(n.nav.add)}">+</button>` : ""}</h4>
+        ${shut ? "" : entries(n, n.nav.entries || []) || '<div class="item hint" style="cursor:default">nothing yet</div>'}`;
+    }).join("");
+    const single = this.nav.filter((n) => !n.nav).map((n) => item(n.title, "card", n.card)).join("");
     return `<nav><div class="top"><button class="menu" id="habtn" title="Home Assistant's menu">⌂</button><b>AAC</b><span>v${esc(s.version)}</span></div>
       <div class="dom"><select id="domain">${s.domains.map((d) => `<option value="${esc(d.id)}" ${d.id === s.active ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select>
         <button class="small" id="clone" title="A copy of this setup to try things out">Clone</button></div>
-      <div class="scroll">${chats}${lists}${pages ? `<h4>MORE</h4>${pages}` : ""}</div>
+      <div class="scroll">${groups}${single ? `<h4>MORE</h4>${single}` : ""}</div>
       <div class="bottom">${item("Nodes", "nodes")}<h4>SETTINGS</h4>${item("Audio", "audio")}${item("Models", "models")}${item("Appearance", "appearance")}</div></nav>`;
   }
 
   _header(title, extra = "") { return `<header><button class="menu" id="navbtn" title="Menu">☰</button><h2>${esc(title)}</h2>${extra}</header>`; }
-
-  // ------------------------------------------------------------------ chat
-  _chatView() {
-    const card = this._card(this.view.card) || this._cards("chat")[0];
-    if (!card) return `${this._header("AAC")}<div class="content"><p>No chat card in this domain. Add one in Nodes.</p></div>`;
-    this.view.card = card.id;
-    const msgs = this.chat?.messages || [];
-    const name = (id) => this._card(id)?.title || id;
-    const log = this.expert === "request" && this.chat ? (this.requests || []).map((r) => `<div class="entry"><div class="k">${esc(name(r.card))} · ${esc(new Date(r.at).toLocaleTimeString())} · tools: ${esc(r.tools.join(", ") || "none")}</div></div>${r.messages.map((m) => `<div class="entry"><div class="k">${esc(m.role)} · from ${esc([...new Set(m._from || [])].map(name).join(", ") || "?")}</div>${m.tool_calls ? esc(m.tool_calls.map((c) => `${c.function.name}(${c.function.arguments})`).join("; ")) : `<pre class="req">${esc(m.content || "")}</pre>`}</div>`).join("")}`).join("")
-        || `<div class="hint" style="margin:auto">No request kept for this chat (kept in memory until HA restarts).</div>`
-      : this.expert === "doc" && this.chat ? (this.chat.entries || []).map((e) => `<div class="entry"><div class="k">${esc(e.by)} · ${esc(e.kind)} ${e.tags.map((t) => `#${esc(t)}`).join(" ")}</div>${md(e.text || (e.data?.function ? `${e.data.function}(${JSON.stringify(e.data.args || {})})` : ""))}</div>`).join("")
-      : msgs.map((m) => `<div class="bubble ${m.role === "user" ? "user" : "aac"} ${m.error ? "err" : ""}">${md(m.text)}${m.cut ? '<div class="cut">stopped</div>' : ""}</div>`).join("")
-        || `<div class="hint" style="margin:auto">${esc(card.title)}: ask anything.</div>`;
-    const busy = this.busy ? `<div class="bubble aac" id="live">${md(this.live.text || "…")}</div>` : "";
-    return `<div class="chat">${this._header(this.chat?.title || `New chat · ${card.title}`,
-      `${this.chat ? `<button class="small" data-mode="" ${!this.expert ? "disabled" : ""}>Chat</button><button class="small" data-mode="doc" title="The document: every entry with its card, kind and tags" ${this.expert === "doc" ? "disabled" : ""}>Document</button><button class="small" data-mode="request" title="What the model got for the newest turn: each message with the cards its text came from, and the tools it had" ${this.expert === "request" ? "disabled" : ""}>Request</button><button class="small danger" id="delchat">Delete</button>` : ""}<button class="small" id="chatstop" title="Stop: sends this chat's context with a stop; a model still writing cuts its answer">Stop</button>`)}
-      <div class="log">${log}${busy}</div>
-      <div class="composer"><textarea id="input" placeholder="Message AAC…" ${this.busy ? "disabled" : ""}></textarea><button class="primary" id="send" ${this.busy ? "disabled" : ""}>Send</button></div></div>`;
-  }
-
-  async _send() {
-    const box = this.shadowRoot.querySelector("#input"), text = box.value.trim();
-    if (!text || this.busy) return;
-    const card = this.view.card;
-    this.busy = true; this.live = {};
-    this.chat = this.chat || { title: text.slice(0, 48), messages: [] };
-    this.chat.messages = [...this.chat.messages, { role: "user", text }];
-    this.render();
-    try {
-      const r = await this.ws("aac/chat/send", { card, text, chat_id: this.view.id });
-      this.view.id = r.chat_id;
-      await this._openChats(card); await this._getChat();
-    } catch (e) { this.chat.messages.push({ role: "aac", text: e.message || String(e), error: true }); }
-    this.busy = false;
-    this.render();
-  }
-
-  // ------------------------------------------------------------------ lists
-  _listsView() {
-    const card = this.view.card, lists = this.lists[card] || [];
-    const tree = (items, list) => `<ul>${items.map((it) => `<li><div class="row">
-        <input type="checkbox" style="width:auto" data-done="${esc(it.id)}" data-list="${esc(list)}" ${it.done ? "checked" : ""}>
-        <span class="t ${it.done ? "done" : ""}" data-edit="${esc(it.id)}" data-list="${esc(list)}">${esc(it.text)}</span>
-        <span class="acts"><button class="small" data-sub="${esc(it.id)}" data-list="${esc(list)}" title="Add a sub-entry">+</button>
-          <button class="small" data-addfield="${esc(it.id)}" data-list="${esc(list)}" title="Add a field">field</button>
-          <button class="small danger" data-del="${esc(it.id)}" data-list="${esc(list)}">✕</button></span></div>
-        ${Object.keys(it.fields || {}).length ? `<div class="fields">${Object.entries(it.fields).map(([k, val]) => `<span class="chip" data-field="${esc(k)}" data-item="${esc(it.id)}" data-list="${esc(list)}">${esc(k)}: ${esc(val)}</span>`).join("")}</div>` : ""}
-        ${it.children?.length ? tree(it.children, list) : ""}</li>`).join("")}</ul>`;
-    const body = lists.map((li) => `<div class="card lst"><h3 style="margin:0 0 8px;display:flex">${esc(li.name)}
-        <button class="small danger" style="margin-left:auto" data-dellist="${esc(li.name)}">Delete list</button></h3>
-      ${tree(li.items || [], li.name)}
-      <div class="row" style="margin-top:8px"><input data-newitem="${esc(li.name)}" placeholder="New entry…"></div></div>`).join("");
-    return `${this._header(this._card(card)?.title || "Lists", `${this._undoRemove ? '<button class="small" id="undoremove">Undo remove</button>' : ""}<button class="small" id="newlist">New list</button>`)}
-      <div class="content">${body || '<p class="hint">No lists yet.</p>'}</div>`;
-  }
-
-  async _listCall(fn, args) {
-    try { await this.ws("aac/card/call", { card: this.view.card, function: fn, args }); }
-    catch (e) { alert(e.message || e); }
-    await this._loadLists(this.view.card); this.render();
-  }
-
-  // ------------------------------------------------------------------ pages of cards: log, memory, file
-  _logView() {
-    const log = [...(this.page?.log || [])].reverse();
-    return `${this._header(this._card(this.view.card)?.title || "Log", tip("What woke the chain, and what came back (quiet: the model had nothing to say)."))}
-      <div class="content">${log.map((x) => `<div class="card"><div class="hint">${esc(new Date(x.time).toLocaleString())} · ${esc(x.name)}</div>
-        <div style="margin:4px 0">${md(x.text)}</div><div>${x.answer === null || x.answer === undefined ? '<span class="hint">working…</span>' : x.answer ? md(x.answer) : '<span class="hint">quiet</span>'}</div></div>`).join("") || '<p class="hint">Nothing yet.</p>'}</div>`;
-  }
-
-  _memoryView() {
-    const mem = [...(this.page?.memories || [])].reverse();
-    return `${this._header(this._card(this.view.card)?.title || "Memory")}<div class="content">
-      <div class="row" style="margin-bottom:12px"><input id="newmem" placeholder="Something to remember…"><button id="addmem">Remember</button></div>
-      ${mem.map((m) => `<div class="card row"><span class="t">${esc(m.text)}<div class="hint">${esc(new Date(m.time).toLocaleString())}${m.vector ? " · by meaning" : ""}</div></span>
-        <button class="small danger" data-forget="${esc(m.id)}">Forget</button></div>`).join("") || '<p class="hint">No memories yet.</p>'}</div>`;
-  }
-
-  _fileView() {
-    return `${this._header(this._card(this.view.card)?.title || "File", '<button class="small primary" id="savefile">Save</button>')}
-      <div class="content"><textarea id="filetext" style="height:70vh;font-family:monospace">${esc(this.page?.text || "")}</textarea></div>`;
-  }
 
   // ------------------------------------------------------------------ audio (core)
   _meters() {
@@ -1035,32 +977,11 @@ class AacPanel extends HTMLElement {
   // ------------------------------------------------------------------ events
   _bind() {
     const $ = (s) => this.shadowRoot.querySelector(s), $$ = (s) => this.shadowRoot.querySelectorAll(s);
-    $$("[data-go]").forEach((el) => el.addEventListener("click", () => this.go(el.dataset.go, el.dataset.card || null, el.dataset.id || null)));
     this._grips();
-    $("#navbtn")?.addEventListener("click", () => { this.navOpen = true; this.shadowRoot.querySelector(".root").classList.add("navopen"); });
     $("#scrim")?.addEventListener("click", () => { this.navOpen = false; this.shadowRoot.querySelector(".root").classList.remove("navopen"); });
     $("#habtn")?.addEventListener("click", () => this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true })));
-    $$("[data-newchat]").forEach((el) => el.addEventListener("click", () => this.go("chat", el.dataset.newchat, null)));
-    $("#domain")?.addEventListener("change", async (e) => { await this.ws("aac/domain/switch", { domain_id: e.target.value }); await this._load(); this.chats = {}; for (const c of this._cards("chat")) await this._openChats(c.id); this.go("chat", this._cards("chat")[0]?.id || null); });
+    $("#domain")?.addEventListener("change", async (e) => { await this.ws("aac/domain/switch", { domain_id: e.target.value }); this._els = {}; await this._load(); this.go("card", null, null); });
     $("#clone")?.addEventListener("click", async () => { const name = prompt("Name of the copy?", `${this.state.domain.name} (test)`); if (name) { await this.ws("aac/domain/clone", { name }); await this._load(); this.render(); } });
-    // chat
-    $("#send")?.addEventListener("click", () => this._send());
-    $("#input")?.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this._send(); } });
-    $$("[data-mode]").forEach((el) => el.addEventListener("click", async () => { this.expert = el.dataset.mode; if (this.expert === "request") this.requests = (await this.ws("aac/chat/request", { chat_id: this.view.id })).requests; this.render(); }));
-    $("#delchat")?.addEventListener("click", async () => { if (confirm("Delete this chat?")) { await this.ws("aac/chat/delete", { card: this.view.card, chat_id: this.view.id }); await this._openChats(this.view.card); this.go("chat", this.view.card, null); } });
-    $$("#stop").forEach((el) => el.addEventListener("click", () => this.ws("aac/stop")));
-    $("#chatstop")?.addEventListener("click", () => (this.view.id ? this.ws("aac/chat/stop", { card: this.view.card, chat_id: this.view.id }) : this.ws("aac/stop")));
-    // lists
-    $$("[data-done]").forEach((el) => el.addEventListener("change", () => this._listCall("update_item", { list: el.dataset.list, item: el.dataset.done, done: el.checked })));
-    $$("[data-edit]").forEach((el) => el.addEventListener("click", () => { const t = prompt("Entry", el.textContent); if (t && t.trim()) this._listCall("update_item", { list: el.dataset.list, item: el.dataset.edit, text: t }); }));
-    $$("[data-field]").forEach((el) => el.addEventListener("click", () => { const v = prompt(`${el.dataset.field} (empty removes it)`, el.textContent.split(": ").slice(1).join(": ")); if (v !== null) this._listCall("update_item", { list: el.dataset.list, item: el.dataset.item, field: el.dataset.field, value: v }); }));
-    $$("[data-addfield]").forEach((el) => el.addEventListener("click", () => { const f = prompt("Field name (e.g. status)"); if (!f) return; const v = prompt(f); if (v) this._listCall("update_item", { list: el.dataset.list, item: el.dataset.addfield, field: f, value: v }); }));
-    $$("[data-sub]").forEach((el) => el.addEventListener("click", () => { const t = prompt("Sub-entry"); if (t) this._listCall("add_items", { list: el.dataset.list, items: [t], under: el.dataset.sub }); }));
-    $$("[data-del]").forEach((el) => el.addEventListener("click", async () => { this._undoRemove = true; await this._listCall("remove_items", { list: el.dataset.list, items: [el.dataset.del] }); }));
-    $$("[data-newitem]").forEach((el) => el.addEventListener("keydown", (e) => { if (e.key === "Enter" && el.value.trim()) this._listCall("add_items", { list: el.dataset.newitem, items: [el.value.trim()] }); }));
-    $$("[data-dellist]").forEach((el) => el.addEventListener("click", async () => { if (confirm(`Delete the list ${el.dataset.dellist}?`)) { this._undoRemove = true; await this._listCall("delete_list", { list: el.dataset.dellist }); } }));
-    $("#newlist")?.addEventListener("click", () => { const n = prompt("Name of the new list"); if (n) this._listCall("create_list", { list: n }); });
-    $("#undoremove")?.addEventListener("click", async () => { this._undoRemove = false; await this._listCall("undo_remove", {}); });
     // models
     $("#probe")?.addEventListener("click", async () => {
       try { this.probed = (await this.ws("aac/models/probe", { base_url: $("#m_url").value, api_key: $("#m_key").value || null })).models; this.modelForm = { ...(this.modelForm || {}), base_url: $("#m_url").value }; this.render(); }
@@ -1150,9 +1071,6 @@ class AacPanel extends HTMLElement {
     $$("[data-delentry]").forEach((el) => el.addEventListener("click", () => saveList("entries", collect("[data-entry]", "data-e").filter((_, i) => i !== Number(el.dataset.delentry)))));
     $$("[data-delwatch]").forEach((el) => el.addEventListener("click", () => saveList("watches", collect("[data-watch]", "data-w").filter((_, i) => i !== Number(el.dataset.delwatch)))));
     // memory, file
-    $("#addmem")?.addEventListener("click", async () => { const t = $("#newmem").value.trim(); if (t) { await this.ws("aac/card/call", { card: this.view.card, function: "remember", args: { text: t } }); await this._loadPage(); this.render(); } });
-    $$("[data-forget]").forEach((el) => el.addEventListener("click", async () => { await this.ws("aac/card/call", { card: this.view.card, function: "forget", args: { text: el.dataset.forget } }); await this._loadPage(); this.render(); }));
-    $("#savefile")?.addEventListener("click", async () => { await this.ws("aac/card/call", { card: this.view.card, function: "write", args: { text: $("#filetext").value } }); });
     // audio
     const audioSet = async (data) => { this.audio = await this.ws("aac/audio/settings", data); this.render(); };
     const engines = () => (this.audio.settings.stt || []).filter((e) => e.startsWith("stt."));

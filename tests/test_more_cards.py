@@ -136,20 +136,22 @@ async def test_calendar_card_and_entity(hass: HomeAssistant, mock_entry, aioclie
     assert len(await cal.call("calendar", {})) == 1
 
 
-async def test_chat_commands_take_every_chat_card(hass: HomeAssistant, mock_entry, aioclient_mock, hass_ws_client):
-    """The panel's chat commands take any card with a chat page."""
+async def test_card_pages_through_nav_and_ui(hass: HomeAssistant, mock_entry, aioclient_mock, hass_ws_client):
+    """Cards with a page are in the sidebar with their entries (aac/nav); their page talks to them through aac/card/ui."""
     core = await setup_aac(hass, mock_entry)
     card = core.domain.cards["chat"]
     chat = card._new("Test")
     await card.save()
     client = await hass_ws_client(hass)
-    await client.send_json_auto_id({"type": "aac/chat/list", "card": "chat"})
-    assert [c["id"] for c in (await client.receive_json())["result"]["chats"]] == [chat["id"]]
-    await client.send_json_auto_id({"type": "aac/chat/delete", "card": "chat", "chat_id": chat["id"]})
+    await client.send_json_auto_id({"type": "aac/nav"})
+    nav = {n["card"]: n for n in (await client.receive_json())["result"]["nav"]}
+    assert nav["chat"]["element"] == "aac-card-chat" and nav["chat"]["ui"].startswith("/aac_cards/chat.js")
+    assert [e["id"] for e in nav["chat"]["nav"]["entries"]] == [chat["id"]] and "lists" in nav
+    await client.send_json_auto_id({"type": "aac/card/ui", "card": "chat", "action": "delete", "args": {"chat_id": chat["id"]}})
     assert (await client.receive_json())["success"]
     assert card.chats() == []
-    await client.send_json_auto_id({"type": "aac/chat/list", "card": "lists"})
-    assert not (await client.receive_json())["success"]  # no chat page
+    await client.send_json_auto_id({"type": "aac/card/ui", "card": "lists", "action": "delete", "args": {}})
+    assert not (await client.receive_json())["success"]  # Lists' page has no such action
 
 
 async def test_models_have_tags_and_memory_uses_embedding_models(hass: HomeAssistant, mock_entry, aioclient_mock):

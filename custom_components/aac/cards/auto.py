@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import LOGGER, Card, Context, register
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 SILENT = ("nothing", "nothing.", "")
@@ -27,7 +27,7 @@ class AutoCard(Card):
     category = "In and out"
     inputs = {"answers": "text"}
     outputs = {"out": "text"}
-    page = "log"
+    ui = True
     keeps_data = True
     tags = {"fired": "what woke the chain"}
 

@@ -214,35 +214,32 @@ async def ws_tags_remove(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"tags": domain.tag_pool()})
 
 
-# ---------------------------------------------------------------------- chats
-def _chat_card(hass, card_id: str):
-    card = _core(hass).domain.cards.get(card_id)
-    if card is None or card.page != "chat":  # any card with a chat page (chats, get, send, delete, stop_chat)
-        raise ValueError("no such chat card")
-    return card
+# ---------------------------------------------------------------------- card pages (a card's own .js)
+@command({vol.Required("type"): "aac/nav"})
+async def ws_nav(hass, connection, msg) -> None:
+    """The sidebar: every card with a page, with its entries (chats, lists …)."""
+    found = []
+    for card in _core(hass).domain.cards.values():
+        if card.ui_url:
+            try:
+                nav = card.nav()
+            except Exception as err:  # noqa: BLE001 - one card must not break the sidebar
+                nav = {"entries": [], "error": str(err)}
+            found.append({"card": card.id, "title": card.name, "ui": card.ui_url, "element": f"aac-card-{card.type.replace('_', '-')}", "nav": nav})
+    connection.send_result(msg["id"], {"nav": found})
 
 
-@command({vol.Required("type"): "aac/chat/send", vol.Required("card"): str, vol.Required("text"): vol.All(str, vol.Length(min=1)),
-          vol.Optional("chat_id"): vol.Any(str, None)})
-async def ws_chat_send(hass, connection, msg) -> None:
-    """You wrote something in a chat."""
+@command({vol.Required("type"): "aac/card/ui", vol.Required("card"): str, vol.Required("action"): str,
+          vol.Optional("args", default={}): dict})
+async def ws_card_ui(hass, connection, msg) -> None:
+    """A request from a card's own page."""
+    card = _core(hass).domain.cards.get(msg["card"])
+    if card is None:
+        return await _fail(connection, msg, ValueError("no such card"))
     try:
-        chat_id, answer = await _chat_card(hass, msg["card"]).send(msg["text"], msg.get("chat_id"))
-    except ValueError as err:
-        return await _fail(connection, msg, err)
-    connection.send_result(msg["id"], {"chat_id": chat_id, "answer": answer})
-
-
-@command({vol.Required("type"): "aac/chat/list", vol.Required("card"): str})
-async def ws_chat_list(hass, connection, msg) -> None:
-    """A chat card's chats."""
-    connection.send_result(msg["id"], {"chats": _chat_card(hass, msg["card"]).chats()})
-
-
-@command({vol.Required("type"): "aac/chat/get", vol.Required("card"): str, vol.Required("chat_id"): str})
-async def ws_chat_get(hass, connection, msg) -> None:
-    """One chat with its messages and its document (the expert view)."""
-    connection.send_result(msg["id"], {"chat": _chat_card(hass, msg["card"]).get(msg["chat_id"])})
+        connection.send_result(msg["id"], {"result": await card.ui_call(msg["action"], msg["args"])})
+    except (ValueError, KeyError) as err:
+        await _fail(connection, msg, err)
 
 
 @command({vol.Required("type"): "aac/chat/request", vol.Required("chat_id"): str})
@@ -251,20 +248,6 @@ async def ws_chat_request(hass, connection, msg) -> None:
     found = [card.requests[msg["chat_id"]] for card in _core(hass).domain.cards.values()
              if msg["chat_id"] in getattr(card, "requests", {})]
     connection.send_result(msg["id"], {"requests": sorted(found, key=lambda r: r["at"])})
-
-
-@command({vol.Required("type"): "aac/chat/stop", vol.Required("card"): str, vol.Required("chat_id"): str})
-async def ws_chat_stop(hass, connection, msg) -> None:
-    """A chat's Stop button: its context goes out with a stop."""
-    await _chat_card(hass, msg["card"]).stop_chat(msg["chat_id"])
-    connection.send_result(msg["id"], {})
-
-
-@command({vol.Required("type"): "aac/chat/delete", vol.Required("card"): str, vol.Required("chat_id"): str})
-async def ws_chat_delete(hass, connection, msg) -> None:
-    """Delete a chat."""
-    await _chat_card(hass, msg["card"]).delete(msg["chat_id"])
-    connection.send_result(msg["id"], {})
 
 
 # ---------------------------------------------------------------------- models (core) and domains

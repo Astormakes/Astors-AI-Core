@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
+
+from aiohttp import web
 
 from homeassistant.components import frontend, panel_custom
-from homeassistant.components.http import StaticPathConfig
+from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
 from .audio import AudioView, async_satellite_access
-from .skins import USER_URL, user_dir
-from .cards import load_all
+from .cards import UI_URL, load_all
 from .const import DOMAIN, PANEL_URL
 from .core import Core
+from .skins import USER_URL, user_dir
 from .websocket import async_register
 
 type AACConfigEntry = ConfigEntry[Core]
@@ -30,8 +33,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     hass.data[DOMAIN] = core
     async_register(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    if not hass.data.get(f"{DOMAIN}_audio_view"):  # satellites stream here
+    if not hass.data.get(f"{DOMAIN}_audio_view"):  # satellites stream here; card pages are served from the cards folder
         hass.http.register_view(AudioView())
+        hass.http.register_view(CardUiView(hass.config.path("aac", "cards")))
         hass.data[f"{DOMAIN}_audio_view"] = True
     entry.async_create_background_task(hass, async_satellite_access(core), "aac satellite access")
     version = (await async_get_integration(hass, DOMAIN)).version
@@ -46,6 +50,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         hass, webcomponent_name="aac-panel", frontend_url_path="aac", sidebar_title="AAC", sidebar_icon="mdi:robot-outline",
         module_url=f"{PANEL_URL}/aac.js?v={version}", require_admin=True, config={"version": str(version)})
     return True
+
+
+class CardUiView(HomeAssistantView):
+    """A card's page: `<config>/aac/cards/<stem>.js` (only .js files; the panel imports them as modules)."""
+
+    url = f"{UI_URL}/{{name}}"
+    name = "aac:card_ui"
+    requires_auth = False  # a module import sends no token; card files hold no secrets
+
+    def __init__(self, folder: str) -> None:
+        """Serve from the cards folder."""
+        self.folder = Path(folder)
+
+    async def get(self, request: web.Request, name: str) -> web.StreamResponse:
+        """One card page."""
+        if not re.fullmatch(r"[a-z0-9_]+\.js", name) or not (path := self.folder / name).is_file():
+            return web.Response(status=404)
+        return web.FileResponse(path, headers={"Content-Type": "text/javascript", "Cache-Control": "no-cache"})
 
 
 async def async_remove_config_entry_device(hass: HomeAssistant, entry: AACConfigEntry, device) -> bool:

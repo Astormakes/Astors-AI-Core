@@ -148,6 +148,16 @@ async def test_stop_cuts_the_answer_and_stays_visible(hass: HomeAssistant, mock_
     assert answer == "Fine." and any(m["content"] == "[stopped]" or "[stopped]" in str(m["content"]) for m in asked[-1]["messages"])
 
 
+def _shipped_version(stem: str) -> str:
+    """The VERSION of one of AAC's own card files."""
+    import re
+    from pathlib import Path
+
+    import custom_components.aac.cards as cards
+
+    return re.search(r'VERSION = "([\d.]+)"', (Path(cards.__file__).parent / f"{stem}.py").read_text()).group(1)
+
+
 async def test_card_files_in_your_folder(hass: HomeAssistant, mock_entry):
     """A card file in <config>/aac/cards/ is a card type like AAC's own; AAC's files are copied there, but a newer file
     of the same name stays (it replaces AAC's card); a broken file does not stop the others."""
@@ -194,7 +204,7 @@ class MyRelay(Card):
         context.add("chat", "said", "hello")
         await shout.handle(context, "in", None)
         assert context.last("said")["text"] == "HELLO" and CARD_TYPES["relay"].title == "My relay"
-        assert CARD_TYPES["relay"].version == "9.0.0" and CARD_TYPES["chat"].version == "1.1.0"
+        assert CARD_TYPES["relay"].version == "9.0.0" and CARD_TYPES["chat"].version == _shipped_version("chat")
     finally:  # HA's test config folder is shared by every test
         CARD_TYPES["relay"] = builtin_relay
         CARD_TYPES.pop("shout", None)

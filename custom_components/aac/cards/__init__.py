@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from ..context import Context
 
 CARD_TYPES: dict[str, type[Card]] = {}
+UI_URL = "/aac_cards"  # a card file's UI (<stem>.js next to it) is served here
 CATEGORIES = ["In and out", "Text", "Logic", "Models", "Data", "Home Assistant", "Audio", "Other"]
 
 
@@ -33,7 +34,10 @@ def register(cls: type[Card]) -> type[Card]:
     """Make a card type available (decorator); a later one with the same type replaces it (your folder after AAC's)."""
     if (old := CARD_TYPES.get(cls.type)) is not None and old.__module__ != cls.__module__:
         LOGGER.info("AAC: card type %s from %s replaces the one from %s", cls.type, cls.__module__, old.__module__)
-    cls.version = str(getattr(sys.modules.get(cls.__module__), "VERSION", cls.version))
+    module = sys.modules.get(cls.__module__)
+    cls.version = str(getattr(module, "VERSION", cls.version))
+    file = Path(getattr(module, "__file__", "") or "")
+    cls.ui_url = f"{UI_URL}/{file.stem}.js?v={cls.version}" if cls.ui and file.with_suffix(".js").exists() else None
     CARD_TYPES[cls.type] = cls
     return cls
 
@@ -53,7 +57,8 @@ class Card:
     functions: ClassVar[dict[str, dict[str, Any]]] = {}  # name → {"help", "args": {name: {"type", "help", "required"}}}
     ports_help: ClassVar[dict[str, str]] = {}  # port → one sentence: what goes in or comes out there
     values: ClassVar[dict[str, str]] = {}  # name → what it is: read in templates as {{ <card>.<name> }}
-    page: ClassVar[str | None] = None  # a page of its own in the sidebar ("chat", "lists")
+    ui: ClassVar[bool] = False  # a page of its own: the element aac-card-<type> from the .js next to its file
+    ui_url: ClassVar[str | None] = None  # where the panel loads it (set when the file is loaded)
     keeps_data: ClassVar[bool] = False
     version: ClassVar[str] = "0"  # its file's VERSION
 
@@ -128,14 +133,23 @@ class Card:
         """The type: for the node view's palette and the ? helper."""
         return {"type": cls.type, "title": cls.title, "category": cls.category, "help": cls.help,
                 "inputs": cls.inputs, "outputs": cls.outputs, "square": sorted(cls.square),
-                "settings": cls.settings_schema, "tags": cls.tags, "functions": cls.functions, "values": cls.values, "ports_help": cls.ports_help, "page": cls.page,
+                "settings": cls.settings_schema, "tags": cls.tags, "functions": cls.functions, "values": cls.values, "ports_help": cls.ports_help, "ui": cls.ui_url,
                 "version": cls.version}
+
+    def nav(self) -> dict[str, Any] | None:
+        """Its entries in the sidebar (a card with a page): {"entries": [{id, title, children?}], "add": "New …"};
+        None: the card is one item there."""
+        return None
+
+    async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
+        """A request from its own page (its .js): what the page needs that is not a function for models."""
+        raise ValueError(f"{self.type} has no page action {action}")
 
     def summary(self) -> dict[str, Any]:
         """This card: for the node view."""
         ins, outs, square = self.ports()
         return {"id": self.id, "type": self.type, "title": self.name, "settings": self.settings,
-                "inputs": ins, "outputs": outs, "square": sorted(square), "page": self.page,
+                "inputs": ins, "outputs": outs, "square": sorted(square), "ui": self.ui_url,
                 "tags": {self.tag(t): what for t, what in self.tags.items()}}
 
 
@@ -167,6 +181,9 @@ def load_all(folder: str) -> None:
         if not there.exists() or (_version(there) <= _version(shipped) and there.read_bytes() != shipped.read_bytes()):
             LOGGER.info("AAC: card file %s %s", shipped.name, "updated" if there.exists() else "added")
             shutil.copyfile(shipped, there)
+        ui, ui_there = shipped.with_suffix(".js"), there.with_suffix(".js")  # its page goes with it
+        if ui.exists() and _version(there) == _version(shipped) and (not ui_there.exists() or ui_there.read_bytes() != ui.read_bytes()):
+            shutil.copyfile(ui, ui_there)
     package = sys.modules.setdefault("aac_cards", types.ModuleType("aac_cards"))  # card files can import each other
     package.__path__ = [str(cards)]
     for path in sorted(cards.glob("*.py")):

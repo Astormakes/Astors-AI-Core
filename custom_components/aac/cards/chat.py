@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, is_stop, new_id, register
 
-VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NO_ANSWER = "(no answer came back: is a model wired back into this chat?)"
@@ -37,7 +37,7 @@ class Chat(Card):
                   "said": "what you wrote, with the conversation so far",
                   "provides": "the current chat's context, for cards that read it (dotted): the newest chat, or a new one "
                               "after the quiet time"}
-    page = "chat"
+    ui = True
     keeps_data = True
     tags = {"said": "what you wrote in this chat", "stop": "you pressed Stop", "error": "nothing came back"}
     settings_schema = {
@@ -74,6 +74,22 @@ class Chat(Card):
         return answer
 
     # ------------------------------------------------------------------ chats
+    def nav(self) -> dict[str, Any]:
+        return {"add": "New chat", "entries": [{"id": c["id"], "title": c["title"]} for c in self.chats()]}
+
+    async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
+        """Its page: the chats, one chat, writing, deleting, Stop."""
+        if action == "get":
+            return self.get(args["chat_id"])
+        if action == "send":
+            chat_id, answer = await self.send(str(args["text"]), args.get("chat_id"))
+            return {"chat_id": chat_id, "answer": answer}
+        if action == "delete":
+            return await self.delete(args["chat_id"])
+        if action == "stop":
+            return await self.stop_chat(args["chat_id"])
+        return await super().ui_call(action, args)
+
     def chats(self) -> list[dict[str, Any]]:
         """Newest first, without their contexts."""
         found = [{k: v for k, v in c.items() if k not in ("messages", "entries")} for c in self.data["chats"].values()]

@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.0.0-alpha.29, live on the owner's HA
+## Current state (2026-10-24) – 2.0.0-alpha.31, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -64,6 +64,16 @@ the owner wires them (no automatic wiring), the message is a document of entries
 - **Panel (alpha.28–29):** the palette shows a card type's Takes / Outputs (ports_help); Delete removes the selected
   card or wire (no question, Undo brings it back); Values button: the value pool (`aac/values`), live, with each
   card's descriptions. Pause cut is titled Audio clipper (type `pause_cut` kept).
+- **Settings (alpha.30):** sidebar bottom: Nodes, then SETTINGS (Audio, Models, Appearance). Appearance: skins
+  (Home Assistant = base, Neon built in, own CSS in `<config>/aac/skins`, served at /aac_skins). Ghost of the picked
+  card type in the grid; Esc / Cancel / clicking the type again puts it back; a click on empty grid lets go of the
+  selection. Builder is titled Node editor (type `builder`).
+- **Cards bring their pages (alpha.31, owner: "every card should show its own UI, chat as well"):** `ui = True` +
+  `<stem>.js` next to the card file (spec/cards.md "A card's page"); `nav()` = its sidebar entries (chats, lists as
+  sub-entries, folding), `ui_call()` = its page's requests (`aac/card/ui`); `aac/nav` builds the sidebar. Pages:
+  chat.js, lists.js (one list at a time, or the lists to pick), calendar.js (v1's week grid / table / month / agenda,
+  plus HA calendars from the card's settings), memory.js, tools.js (File), auto.js (Schedule/HA event/Heartbeat log).
+  The panel no longer knows any card type; `aac/chat/*` commands are gone except `aac/chat/request`.
 - **Voice chain (alpha.16):** Speech to text → three Conditionals side by side: Stop word (sends stop forward), Wake
   word ("computer"/"assistent" → Spoken turn), Follow-up (AAC spoke there < 10 s ago → Follow-up turn: a note "maybe not
   meant for you, then answer nothing"); both Relays read the Chat dotted and go to the Charter; Model → Answer (Relay) →

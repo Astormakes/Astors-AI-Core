@@ -17,7 +17,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -29,7 +29,7 @@ class File(Card):
     category = "Data"
     help = ("A Markdown file (<config>/aac/files/<name>.md) with a page in the sidebar. In the line it appends the newest "
             "answer with the time; a model reads, appends and rewrites it.")
-    page = "file"
+    ui = True
     settings_schema = {
         "name": {"type": "text", "title": "File name", "default": "notes"},
         "in_line": {"type": "select", "title": "In the line it appends", "default": "answer",

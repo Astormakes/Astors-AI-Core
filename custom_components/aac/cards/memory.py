@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, ModelError, ModelUnreachable, new_id, register, run
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WORD = re.compile(r"\w{3,}")
 
@@ -34,7 +34,7 @@ class Memory(Card):
     category = "Data"
     help = ("Its own memories. In the line it adds those that match what was said (a note); wired from a model and back, "
             "the model remembers, recalls and forgets. An embedding model finds memories by meaning.")
-    page = "memory"
+    ui = True
     keeps_data = True
     tags = {"recall": "memories that matched"}
     ports_help = {"in": "in the line: it adds the memories that match what was said; as a model's tool (wired from the "
