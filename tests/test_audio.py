@@ -63,7 +63,7 @@ async def test_a_spoken_round_trip(hass: HomeAssistant, hass_client, mock_entry,
     assert kept["title"].startswith("Voice · PC · ") and [m["text"] for m in kept["messages"]] == ["Computer, what time is it?", "It is five."]
 
 
-async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry):
+async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry, start):
     """Stop word, Wake word and Follow-up each get every heard line; only the right one passes it on."""
     from custom_components.aac.defaults import async_voice_chain
     from custom_components.aac.flow import Step
@@ -77,9 +77,9 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
     assert {"from": "chat.provides", "to": "spoken.reads"} in d.wires and {"from": "model.out", "to": "answer.in"} in d.wires
     assert {"from": "model.out", "to": "chat.answers"} not in d.wires
 
-    async def route(card, text):
+    async def route(card, text, seconds=1.0):
         m = Context()
-        m.add("ears", "said", text, mic="pc")
+        m.add("ears", "said", text, mic="pc", seconds=seconds)
         return await d.cards[card].handle(m, "in", Step(d.flow, d.cards[card], "in", m)), m
     assert (await route("wake", "Computer, lights on"))[0] == [("yes", "spoken")]
     assert (await route("wake", "see you in the next video"))[0] == []
@@ -89,6 +89,10 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
     core.audio._spoke["pc"] = __import__("time").time()
     assert (await route("follow_up", "and the kitchen too"))[0] == [("yes", "followed")]
     assert (await route("follow_up", "computer, and the kitchen"))[0] == []  # the Wake word takes that one
+    if start == "fresh":  # the window counts from where you started talking (the backup keeps its older rule)
+        core.audio._spoke["pc"] = __import__("time").time() - 25
+        assert (await route("follow_up", "a long answer", seconds=22))[0] == [("yes", "followed")]  # began 3 s after
+        assert (await route("follow_up", "something later", seconds=2))[0] == []  # began 23 s after
 
 
 async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, mock_entry, aioclient_mock):
