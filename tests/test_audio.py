@@ -8,7 +8,11 @@ from homeassistant.core import HomeAssistant
 
 from custom_components.aac.audio import EnergyVad, Segmenter
 
+from custom_components.aac.audio import pcm_to_wav
+
 from .conftest import model_answers, reply, setup_aac
+
+WAVE = pcm_to_wav(b"\x01\x00" * 1600, 22050)  # what a voice engine gives back
 
 SILENCE = array("h", [0] * 160).tobytes()  # 10 ms
 LOUD = array("h", [3000, -3000] * 80).tobytes()
@@ -37,14 +41,14 @@ async def test_a_spoken_round_trip(hass: HomeAssistant, hass_client, mock_entry,
     heard = AsyncMock(side_effect=[{"text": "Computer, what time is it?"}, {"text": "see you in the next video"}])
     client = await hass_client()
     with (patch("aac_cards.audio.make_vad", return_value=EnergyVad()),
-          patch.object(core.audio, "stt", heard), patch.object(core.audio, "tts", AsyncMock(return_value=b"RIFFwave"))):
+          patch.object(core.audio, "stt", heard), patch.object(core.audio, "tts", AsyncMock(return_value=WAVE))):
         ws = await client.ws_connect("/api/aac/audio")
         await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "rate": 16000})
         assert (await ws.receive_json())["type"] == "welcome"
         await ws.send_bytes(audio((SILENCE, 0.2), (LOUD, 0.8), (SILENCE, 1.0)))
         play = await asyncio.wait_for(ws.receive_json(), 5)
-        assert play == {"type": "play", "format": "wav", "bytes": 8, "text": "It is five."}
-        assert await ws.receive_bytes() == b"RIFFwave"
+        assert play == {"type": "play", "format": "wav", "bytes": len(WAVE), "text": "It is five."}
+        assert await ws.receive_bytes() == WAVE
         await ws.send_json({"type": "played"})
         await hass.async_block_till_done(wait_background_tasks=True)
         assert core.audio.spoken()["satellites"]["pc"]["seconds"] < 10
@@ -88,15 +92,19 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
 
 
 async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, mock_entry, aioclient_mock):
-    """HA plays on the satellite and stops it; a stop reaching Voice out cuts off what it says."""
+    """HA plays on the satellite and stops it; Text to speech makes a clip the Speaker plays at the satellite the line
+    came from; a stop reaching Text to speech goes on to the Speaker and cuts it off."""
     from custom_components.aac.flow import Step
     from custom_components.aac.context import Context
 
     core = await setup_aac(hass, mock_entry)
+    from custom_components.aac.audio import pcm_to_wav
+
     core.audio.settings.update({"tts": "tts.test", "volume": 100})
     aioclient_mock.get("http://example.local/chime.wav", content=b"RIFFchime")
     client = await hass_client()
-    with patch.object(core.audio, "tts", AsyncMock(return_value=b"RIFFwave")):
+    spoken = pcm_to_wav(b"\x01\x00" * 2205, 22050)
+    with patch.object(core.audio, "tts", AsyncMock(return_value=spoken)):
         ws = await client.ws_connect("/api/aac/audio")
         await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "rate": 16000})
         assert (await ws.receive_json())["type"] == "welcome"
@@ -115,13 +123,15 @@ async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, m
                 break
             await asyncio.sleep(0.01)
         assert hass.states.get(player).state == "idle"
-        speaker = await core.domain.add_card("voice_out", "Voice out")
+        voice = await core.domain.add_card("text_to_speech", "Text to speech")
+        speaker = await core.domain.add_card("speaker", "Speaker")
+        core.domain.set_wires([*core.domain.wires, {"from": f"{voice.id}.out", "to": f"{speaker.id}.in"}])
         m = Context()
         m.add("ears", "said", "computer, tell me a story", mic="pc")
         m.add("model", "answer", "Once upon a time …")
-        await speaker.handle(m, "in", Step(core.domain.flow, speaker, "in", m))
-        assert (await ws.receive_json())["text"] == "Once upon a time …" and await ws.receive_bytes() == b"RIFFwave"
-        assert await speaker.stop({"kind": "signal", "text": "stop"})
+        await voice.handle(m, "in", Step(core.domain.flow, voice, "in", m))
+        assert (await ws.receive_json())["text"] == "Once upon a time …" and await ws.receive_bytes() == spoken
+        assert not await voice.stop({"kind": "signal", "text": "stop"})  # it was not busy; its stop clip goes on
         assert await ws.receive_json() == {"type": "stop"}
         await ws.close()
     core.audio.forget("pc")  # gone for good: out of the known ones, its media player removed

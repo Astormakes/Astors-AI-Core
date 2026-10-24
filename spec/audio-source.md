@@ -11,7 +11,7 @@ Assistant access token (`Authorization: Bearer …`).
 | source → AAC | binary: raw PCM, 16-bit little endian, 16 kHz, mono, any chunk size (20 ms recommended), continuously |
 | AAC → source | `{"type": "play", "format": "wav", "bytes": n, "text": "…"}`, then one binary message of n bytes |
 | source → AAC | `{"type": "played"}` when playback finished (or was stopped) |
-| AAC → source | `{"type": "stop"}`: stop playing now (a stop reached Voice out, or HA's stop on its media player) |
+| AAC → source | `{"type": "stop"}`: stop playing now (a stop reached the Speaker card, or HA's stop on its media player) |
 
 Rules:
 - While a source plays AAC's answer, AAC ignores its microphone (no talking to itself).
@@ -24,7 +24,8 @@ Rules:
 
 What AAC does with it is up to the cards: the core hands every chunk to whoever takes the `audio` channel (the
 Microphone card), and the audio cards wired after it (Noise gate, Audio clipper, Speech to text, …) turn it into contexts
-(spec/cards.md). Voice out speaks through `core.audio.say()` / `play()` and stops with `core.audio.stop()`.
+(spec/cards.md). On the way back, Text to speech makes clips (`core.audio.tts()`) and the Speaker plays them (`core.audio.play()`) and stops
+them (`core.audio.stop()`); on an HA media player through a short-lived address (`core.audio.clip_url()`).
 
 ## The satellite program and its device plugins
 

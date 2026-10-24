@@ -1,4 +1,4 @@
-"""Audio cards (docs/v2): Microphone → (Noise gate) → Audio clipper → Speech to text → … → Voice out (speaks at the
+"""Audio cards (docs/v2): Microphone → (Noise gate) → Audio clipper → Speech to text → … → Text to speech → Speaker (at the
 satellite). Raw audio flows on `audio` wires as a stream (never a context); an Audio clipper makes clips (`clip` wires);
 Speech to text turns a clip into a context. When AAC last spoke is the core's (templates: {{ audio.… }})."""
 
@@ -9,11 +9,13 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.api import LOGGER, SAMPLE_RATE, Card, Context, level, make_vad, register, Segmenter
+from custom_components.aac.api import (LOGGER, SAMPLE_RATE, Card, Context, Segmenter, level, make_vad, pcm_to_wav, register,
+                                      resample, wav_to_pcm)
 
-VERSION = "1.4.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
+STREAM_PIECE = 2  # seconds of a live stream the Speaker plays at a time
 
 
 @register
@@ -117,8 +119,11 @@ class SpeechToText(Card):
                                   "help": "The list is run through from the top: a free model takes it; a busy one queues it if its Queue is ticked, then the next is tried. Empty: every model with the tag, queued. HA's engines on the Audio page come after."}}
 
     async def clip(self, port: str, clip: dict[str, Any]) -> None:
+        if not clip.get("pcm"):  # a stop clip
+            return
         entries = self.core.pool.entries(self.settings.get("models"), "speech to text")
-        heard = await self.core.audio.stt(clip["pcm"], self.settings.get("language") or None, entries)
+        pcm = resample(clip["pcm"], int(clip.get("rate") or SAMPLE_RATE))
+        heard = await self.core.audio.stt(pcm, self.settings.get("language") or None, entries)
         text = ((heard or {}).get("text") or "").strip()
         if not text:
             return
@@ -129,21 +134,21 @@ class SpeechToText(Card):
 
 
 @register
-class VoiceOut(Card):
-    """Speaks."""
+class TextToSpeech(Card):
+    """An answer becomes a clip."""
 
-    type = "voice_out"
-    title = "Voice out"
+    type = "text_to_speech"
+    title = "Text to speech"
     category = "Audio"
-    help = ("Speaks the newest answer: at the satellite the spoken line came from, or on any Home Assistant media "
-            "player, in a voice per language (the language it was spoken to in). An answer 'nothing' stays silent; a "
-            "stop cuts it off. The volume is on the Audio page.")
+    help = ("Turns the newest answer into an audio clip, in a voice per language (the language it was spoken to in). The "
+            "clip remembers the satellite the spoken line came from; wire it into a Speaker. An answer 'nothing' stays "
+            "silent; a stop arriving here goes on to the Speaker as a stop.")
     inputs = {"in": "text"}
-    outputs: dict[str, str] = {}
-    ports_help = {"in": "a context: its newest answer is spoken (a stop arriving here cuts off what it is saying)"}
-    settings_schema = {"source": {"type": "player", "title": "Speaks at", "default": "",
-                                  "help": "Empty: the satellite the spoken line came from. Or any media player."},
-                       "engine": {"type": "tts_engine", "title": "Voice engine", "default": "",
+    outputs = {"out": "clip"}
+    ports_help = {"in": "a context: its newest answer is spoken",
+                  "out": "the spoken answer as a clip (data: the satellite it was heard at, the text, the language); a stop "
+                         "goes out as a stop clip"}
+    settings_schema = {"engine": {"type": "tts_engine", "title": "Voice engine", "default": "",
                                   "help": "A Home Assistant text-to-speech engine. Empty: the default on the Audio page."},
                        "voices": {"type": "voices", "title": "Voice per language", "default": {},
                                   "help": "For each home language (Audio page). Not set: the engine's default voice."}}
@@ -155,23 +160,23 @@ class VoiceOut(Card):
                                          "required": True}}},
     }
 
-    def __init__(self, *args: Any) -> None:
-        super().__init__(*args)
-        self._spoke_at: set[str] = set()  # satellites and media players it spoke on (a stop cuts them)
-
     async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         text = context.answer.strip()
-        said = next((e for e in reversed(context.entries) if e["kind"] == "said" and e["data"].get("mic")), None)
-        where = self.settings.get("source") or (said["data"].get("mic") if said else None)
-        language = (said or {}).get("data", {}).get("language")
-        if not where or not text or text.lower() in SILENT:
+        if not text or text.lower() in SILENT:
             return []
-        self._spoke_at.add(where)
-        if where.startswith("media_player."):
-            await self._speak_on(where, text, language)
-        else:
-            await self.core.audio.say(where, text, language, self.settings.get("engine") or None, self.settings.get("voices"))
+        said = next((e for e in reversed(context.entries) if e["kind"] == "said" and e["data"].get("mic")), None)
+        data = (said or {}).get("data", {})
+        wav = await self.core.audio.tts(text, data.get("language"), self.settings.get("engine") or None, self.settings.get("voices"))
+        if not wav:
+            return []
+        pcm, rate = wav_to_pcm(wav)
+        self.domain.flow.clip(self.id, "out", {"pcm": pcm, "rate": rate, "seconds": round(len(pcm) / 2 / rate, 1), "text": text,
+                                               "source": data.get("mic"), "name": data.get("mic_name"), "language": data.get("language")})
         return []
+
+    async def stop(self, stop: dict[str, Any] | None = None) -> bool:
+        self.domain.flow.clip(self.id, "out", {"stop": True})  # the Speaker stops what it plays
+        return False
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         if function == "voices":
@@ -196,25 +201,69 @@ class VoiceOut(Card):
             return {"done": "set_voice", "language": code, "voice": wanted or "the engine's default"}
         return await super().call(function, args, context)
 
-    async def _speak_on(self, player: str, text: str, language: str | None) -> None:
-        """Speak on a Home Assistant media player with AAC's voice engine (HA's tts.speak)."""
-        voice = (self.settings.get("voices") or {}).get(language or self.core.languages()[0])
-        data = {"entity_id": self.settings.get("engine") or self.core.audio.settings.get("tts"), "media_player_entity_id": player, "message": text}
-        if voice:
-            data |= {"language": voice["language"], "options": {"voice": voice["voice"]}}
+
+@register
+class Speaker(Card):
+    """Plays sound."""
+
+    type = "speaker"
+    title = "Speaker"
+    category = "Audio"
+    help = ("Plays audio clips (a spoken answer, a sound) or a live audio stream: at the satellite a clip comes from, or "
+            "at a satellite or Home Assistant media player you pick. A stop clip, or Stop, cuts it off. The volume is on "
+            "the Audio page.")
+    inputs = {"in": "audio|clip"}
+    outputs: dict[str, str] = {}
+    ports_help = {"in": "clips or a live stream (half green, half purple: it takes both)"}
+    settings_schema = {"source": {"type": "player", "title": "Plays at", "default": "",
+                                  "help": "Empty: the satellite the clip came from. Or a satellite or any media player."}}
+
+    def __init__(self, *args: Any) -> None:
+        super().__init__(*args)
+        self._played_at: set[str] = set()  # where it played (a stop cuts them)
+        self._buffers: dict[str, bytearray] = {}  # a live stream, gathered into short clips per satellite
+
+    async def clip(self, port: str, clip: dict[str, Any]) -> None:
+        if clip.get("stop"):
+            await self.stop()
+            return
+        where = self.settings.get("source") or clip.get("source")
+        if not where or not clip.get("pcm"):
+            return
+        await self._play(where, pcm_to_wav(clip["pcm"], int(clip.get("rate") or SAMPLE_RATE)), clip.get("text", ""))
+
+    def stream(self, port: str, chunk: bytes, meta: dict[str, Any]) -> None:
+        """A live stream: played in short pieces (satellites take whole clips)."""
+        where = self.settings.get("source") or meta.get("source")
+        if not where:
+            return
+        buf = self._buffers.setdefault(where, bytearray())
+        buf.extend(chunk)
+        if len(buf) >= SAMPLE_RATE * 2 * STREAM_PIECE:
+            wav, buf[:] = pcm_to_wav(bytes(buf)), b""
+            self.hass.async_create_background_task(self._play(where, wav, ""), f"aac {self.id} stream")
+
+    async def _play(self, where: str, wav: bytes, text: str) -> None:
+        self._played_at.add(where)
+        if not where.startswith("media_player."):
+            await self.core.audio.play(where, wav, text)
+            return
         try:
-            await self.hass.services.async_call("tts", "speak", data, blocking=True)
+            await self.hass.services.async_call("media_player", "play_media", {
+                "entity_id": where, "media_content_id": self.core.audio.clip_url(wav), "media_content_type": "music",
+                "announce": True}, blocking=True)
         except Exception as err:  # noqa: BLE001 - a speaker that fails must not break the chain
-            LOGGER.warning("AAC: speaking on %s failed: %s", player, err)
+            LOGGER.warning("AAC: playing on %s failed: %s", where, err)
 
     async def stop(self, stop: dict[str, Any] | None = None) -> bool:
         busy = False
-        for where in list(self._spoke_at):
+        for where in list(self._played_at):
             if where.startswith("media_player."):
                 if (state := self.hass.states.get(where)) and state.state == "playing":
                     await self.hass.services.async_call("media_player", "media_stop", {"entity_id": where}, blocking=True)
                     busy = True
             elif await self.core.audio.stop(where):
                 busy = True
-        self._spoke_at.clear()
+        self._played_at.clear()
+        self._buffers.clear()
         return busy

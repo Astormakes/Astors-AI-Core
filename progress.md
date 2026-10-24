@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.0.0-alpha.36, live on the owner's HA
+## Current state (2026-10-24) – 2.0.0-alpha.37, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -79,7 +79,13 @@ the owner wires them (no automatic wiring), the message is a document of entries
   several: detected, heard again in the main one when the model heard another); `{{ languages }}`. The voice per
   language moved from the core into Voice out (settings `engine`, `voices`; functions `voices`, `set_voice`); the Audio
   page keeps the home languages, the default engine and the volume. The owner's Danny (en_US) / Thorsten low (de) are
-  in the speaker card. Later (owner): the output line like the input (a TTS card → audio stream → speaker).
+  in the Text to speech card.
+- **Output like input (alpha.37, owner):** Voice out is gone: Text to speech (context in, clip out: voices per
+  language, functions `voices` / `set_voice`; a stop goes on as a stop clip) → Speaker (input `audio|clip`, drawn half
+  green half purple: plays clips or a live stream in 2 s pieces at the clip's satellite or a picked satellite / HA
+  media player via `core.audio.clip_url()`). An input may take several kinds ("audio|clip"). Microphone and Speaker
+  are ordinary cards on the core's interface (the `audio` channel, `core.audio.play/stop`). Wires flash white when
+  something passes (clips too).
 - **Sidebar folding (alpha.33):** per group (each card with entries, and Settings) in Appearance: "opens while in use"
   (lit, closes when you go elsewhere; default) or "arrow keeps it open or closed" (default for Chat); `aac/appearance`
   `folds`.
@@ -135,30 +141,11 @@ the owner wires them (no automatic wiring), the message is a document of entries
 
 - The lists (Open Issues, Project Portfolio) live in the default domain's Lists card.
 - HA's own Assist pipeline uses `conversation.qwen3_8b` (not AAC).
-- The one backup of v2 storage: `/config/aac/bak-v2-alpha21/`. The older backups and v1's storage go with the cleanup
-  below.
+- The one backup of v2 storage: `/config/aac/bak-v2-alpha36/` (before Voice out was replaced). v1's storage and the
+  old backups are gone (owner ran the cleanup, 2026-10-24).
 - Docs cleanup (2026-10-24): v0/v1 docs deleted (history, v1 progress, the old framework and UI design, the lists
   export, the Calisto handoff: built into the satellite's plugin), v1 contracts removed from spec/ (tag `v1-final`).
   One backup of docs/ and spec/ before that: `~/cluade/AAC/docs-backup-2026-10-24.tar.gz`.
-
-## Cleanup waiting for the owner (2026-10-24)
-
-The permission check blocked deleting these on the HA; run it in the HA terminal (or allow it). Everything is v1 or
-superseded; `/config/aac/bak-v2-alpha21/` (v2 storage before alpha.22) stays as the one backup, `satellite.json` stays
-(the add-on reads it).
-
-- `/config/.storage/aac.*`: v1's storage (chats, config + its 4 old backups, jobs, lists, triggers, voices, requests,
-  runs, the `.test` copies); v2 no longer reads it.
-- `/config/.storage/aac2.card.assistant.voice`: the removed Voice chat card's data (its chats are in the Chat card).
-- `/config/aac/bak-*` except the newest (`bak-v2-alpha21`): 18 old backups (v1 0.46 … 1.0.0-dev.69, before-clean, before-v2,
-  v2 alpha2/3/15/16, add-on 0.1.1).
-- `/config/aac/aac.config.bak-1.0.0-dev.19`, `/config/aac/memory*.db*` (v1's memory), `/config/aac/skins` (v1's skins).
-
-```sh
-cd /config/aac && for d in bak-*; do [ "$d" = bak-v2-alpha21 ] || rm -rf "$d"; done
-rm -rf /config/aac/aac.config.bak-1.0.0-dev.19 /config/aac/memory.db* /config/aac/memory_test.db* /config/aac/skins
-rm -f /config/.storage/aac.* /config/.storage/aac2.card.assistant.voice
-```
 
 ## Deploy and test
 

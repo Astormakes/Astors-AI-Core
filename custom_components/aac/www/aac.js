@@ -7,7 +7,8 @@ const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+
 const tip = (html) => `<span class="qm" tabindex="0">?<span class="tip">${html}</span></span>`;
 const W = 180, HEAD = 34, ROW = 20;
 const COL = W + 110; // one slot column (v1: a column per step in the flow)
-const KIND_NAME = { text: "context", read: "read (dotted)", audio: "audio stream", clip: "audio clip" };
+const KIND_NAMES = { text: "context", read: "read (dotted)", audio: "audio stream", clip: "audio clip" };
+const KIND_NAME = new Proxy(KIND_NAMES, { get: (t, k) => String(k).split("|").map((x) => t[x] || x).join(" or ") }); // "audio|clip": either
 const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", clip: "#9c27b0" };
 // the Conditional's rules editor: tests and actions with the fields each needs ([field, label, kind])
 const TESTS = { contains: "contains", is: "is exactly", starts: "starts with", ends: "ends with", matches: "matches (regex)",
@@ -98,7 +99,7 @@ textarea { resize: vertical; }
 .wire { fill: none; stroke-width: 2; opacity: .7; } .wire.read { stroke-dasharray: 4 4; } .wire.sel { stroke-width: 4; opacity: 1; }
 /* something passed (owner): the wire lights up brighter and pulses thick-thin, fading back to normal over a few seconds */
 .wire.lit { animation: lit 4s ease-out; }
-@keyframes lit { 0% { filter: brightness(1.9) saturate(1.4); stroke-width: 2; opacity: 1; } 10% { stroke-width: 6; } 20% { stroke-width: 2.5; }
+@keyframes lit { 0% { stroke: #fff; filter: brightness(1.9) saturate(1.4) drop-shadow(0 0 3px #fff); stroke-width: 2; opacity: 1; } 10% { stroke-width: 6; } 20% { stroke-width: 2.5; }
   30% { stroke-width: 5.5; } 40% { stroke-width: 2.5; } 50% { stroke-width: 4.5; } 60% { stroke-width: 2.5; } 70% { stroke-width: 3.5; filter: brightness(1.4); }
   100% { stroke-width: 2; filter: none; opacity: .7; } }
 .grip { flex: none; width: 7px; margin: 0 -4px 0 -3px; cursor: col-resize; position: relative; z-index: 5; touch-action: none; }
@@ -350,7 +351,7 @@ class AacPanel extends HTMLElement {
         ${i > 0 ? `<button class="small" data-langup="${i}" title="Make it the main language">↑</button>` : ""}<button class="small danger" data-langdel="${i}">✕</button></div>`;
     }).join("");
     const ha = (a.languages_ha || []).map((l) => l.name).join(", ");
-    return `<div class="card"><h3 style="margin-top:0">Home languages ${tip("The languages spoken here, main first. Speech to text listens for them (one: that one; several: detected among them), Voice out speaks each in the voice set in its settings, templates read {{ languages }}. A card can still set its own.")}</h3>
+    return `<div class="card"><h3 style="margin-top:0">Home languages ${tip("The languages spoken here, main first. Speech to text listens for them (one: that one; several: detected among them), Text to speech speaks each in the voice set in its settings, templates read {{ languages }}. A card can still set its own.")}</h3>
       ${rows}
       <div class="row" style="margin-top:8px"><select id="langadd"><option value="">Add a language …</option>${Object.entries(names).sort((x, y) => x[1].localeCompare(y[1])).filter(([c]) => !(a.languages || []).some((l) => l.code === c)).map(([c, n]) => `<option value="${esc(c)}">${esc(n)}</option>`).join("")}</select>
         ${a.languages_own ? `<button class="small" id="langha" title="Use what Home Assistant says about the home">As in Home Assistant (${esc(ha)})</button>` : `<span class="hint">From Home Assistant (its language and country)</span>`}</div></div>`;
@@ -368,7 +369,7 @@ class AacPanel extends HTMLElement {
         ${order.map((id, i) => `<div class="row"><span class="t">${esc((sttItems.find((x) => x[0] === id) || [id, id])[1])}</span>
           <button class="small" data-sttup="${i}">↑</button><button class="small danger" data-sttdel="${i}">✕</button></div>`).join("") || '<p class="hint">None yet.</p>'}
         <div class="row" style="margin-top:8px"><select id="sttadd"><option value="">Add …</option>${sttItems.filter((x) => !order.includes(x[0])).map(([id, l]) => `<option value="${esc(id)}">${esc(l)}</option>`).join("")}</select></div>
-        <h3>Default voice engine ${tip("Used by cards that speak and set no engine of their own (and by Test voice). The voice per language is set in the Voice out card.")}</h3><select id="ttsset"><option value="">—</option>${(a.tts_entities || []).map((e) => `<option ${e === st.tts ? "selected" : ""}>${esc(e)}</option>`).join("")}</select>
+        <h3>Default voice engine ${tip("Used by cards that speak and set no engine of their own (and by Test voice). The voice per language is set in the Text to speech card.")}</h3><select id="ttsset"><option value="">—</option>${(a.tts_entities || []).map((e) => `<option ${e === st.tts ? "selected" : ""}>${esc(e)}</option>`).join("")}</select>
         <h3>Volume: <span id="volval">${esc(st.volume ?? 40)}</span> %</h3><input type="range" id="volume" min="0" max="100" step="5" value="${esc(st.volume ?? 40)}">
         <p class="hint">0 = AAC never speaks aloud.</p></div></div>`;
   }
@@ -411,6 +412,11 @@ class AacPanel extends HTMLElement {
         <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}</div>
         <div class="grip" data-grip="side" data-target=".side" data-side="left" title="Drag: width (double-click: back to normal)"></div>
         <div class="side">${this._side()}</div></div></div>`;
+  }
+
+  _halves(x, y, port, kinds) { // an input that takes two kinds: a dot half in each colour (e.g. audio stream | clip)
+    const [a, b] = kinds.split("|"), at = `data-in="${esc(port)}" data-kind="${esc(kinds)}"`;
+    return `<path class="dot" ${at} d="M${x - 6},${y} A6,6 0 0 1 ${x + 6},${y} Z" fill="${KIND_COLOR[a] || "#999"}"></path><path class="dot" ${at} d="M${x - 6},${y} A6,6 0 0 0 ${x + 6},${y} Z" fill="${KIND_COLOR[b] || "#999"}"></path>`;
   }
 
   _tri(x, y, mirrored) { // a read port: a triangle pointing along the flow (into a read input, out of what provides it)
@@ -626,7 +632,7 @@ class AacPanel extends HTMLElement {
       return `<g class="node ${this.sel === c.id ? "sel" : ""}" data-node="${esc(c.id)}" transform="translate(${p.x},${p.y})">
         <rect class="box" width="${W}" height="${height(c)}" rx="8"></rect>
         <text x="10" y="18">${esc(c.title)}</text><text class="sub" x="10" y="30">${esc(this._sub(c))}</text>
-        ${ins.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-in="${esc(n)}" data-kind="${k}" points="${this._tri(inX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : `<circle class="dot" data-in="${esc(n)}" data-kind="${k}" cx="${inX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${inT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
+        ${ins.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-in="${esc(n)}" data-kind="${k}" points="${this._tri(inX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : k.includes("|") ? this._halves(inX, HEAD + ROW * i + ROW / 2, n, k) : `<circle class="dot" data-in="${esc(n)}" data-kind="${k}" cx="${inX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${inT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
         ${outs.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-out="${esc(n)}" data-kind="${k}" points="${this._tri(outX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : c.square.includes(n) ? `<rect class="dot" data-out="${esc(n)}" data-kind="${k}" x="${outX - 6}" y="${HEAD + ROW * i + ROW / 2 - 6}" width="12" height="12" fill="${KIND_COLOR[k] || "#999"}"></rect>`
           : `<circle class="dot" data-out="${esc(n)}" data-kind="${k}" cx="${outX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${outT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
       </g>`;
@@ -987,7 +993,7 @@ class AacPanel extends HTMLElement {
       if (d.kind === "wire") {
         this.shadowRoot.querySelector("#tmpwire")?.remove();
         const el = this.shadowRoot.elementFromPoint(e.clientX, e.clientY), node = el?.closest?.(".node"), inp = el?.dataset?.in;
-        if (node && inp && el.dataset.kind === d.type) { // the same kind (a read output only into a read input)
+        if (node && inp && el.dataset.kind.split("|").includes(d.type)) { // a kind the input takes (a read output only into a read input)
           await this.ws("aac/wires", { wires: [...this.state.domain.wires, { from: d.from, to: `${node.dataset.node}.${inp}` }] });
           await this._load(); this.render();
         }

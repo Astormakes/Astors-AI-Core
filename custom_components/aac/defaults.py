@@ -70,7 +70,8 @@ async def async_voice_chain(core: Core) -> None:
     await add("microphone", "Microphone", {"source": "any"}, card_id="mic", at={"x": -720, "y": 420})
     await add("pause_cut", "Audio clipper", {"pause": 800}, card_id="cut", at={"x": -480, "y": 420})
     await add("speech_to_text", "Speech to text", card_id="ears", at={"x": -240, "y": 420})
-    await add("voice_out", "Voice out", card_id="speaker", at={"x": 240, "y": 600})
+    await add("text_to_speech", "Text to speech", card_id="voice", at={"x": 1440, "y": 600})
+    await add("speaker", "Speaker", card_id="speaker", at={"x": 1730, "y": 600})
     domain.set_wires([*domain.wires, {"from": "mic.out", "to": "cut.in"}, {"from": "cut.out", "to": "ears.in"}])
     await _voice_cards(domain, ["computer"])
     domain.undo = []
@@ -78,7 +79,7 @@ async def async_voice_chain(core: Core) -> None:
 
 
 async def _voice_cards(domain, names: list[str]) -> None:
-    """The voice cards after Speech to text (`ears`) and their wires (Voice out is `speaker`)."""
+    """The voice cards after Speech to text (`ears`) and their wires (Text to speech `voice` → Speaker `speaker`)."""
     said = {"by": "kind", "value": "said", "which": "newest"}
     words = "|".join(["stop", *names])
     add = domain.add_card
@@ -103,7 +104,7 @@ async def _voice_cards(domain, names: list[str]) -> None:
     wires = [w for w in domain.wires if not (model and chat and w == {"from": f"{model}.out", "to": f"{chat}.answers"})]
     wires += [{"from": "ears.out", "to": "stop_word.in"}, {"from": "ears.out", "to": "wake.in"}, {"from": "ears.out", "to": "follow_up.in"},
               {"from": "wake.yes", "to": "spoken.in"}, {"from": "follow_up.yes", "to": "followed.in"},
-              {"from": "answer.out", "to": "speaker.in"}]
+              {"from": "answer.out", "to": "voice.in"}, {"from": "voice.out", "to": "speaker.in"}]
     if first:
         wires += [{"from": "stop_word.stop", "to": f"{first}.in"}, {"from": "spoken.out", "to": f"{first}.in"},
                   {"from": "followed.out", "to": f"{first}.in"}]

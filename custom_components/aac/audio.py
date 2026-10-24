@@ -24,6 +24,7 @@ import json
 import math
 from pathlib import Path
 import re
+import secrets
 import sys
 import time
 from typing import TYPE_CHECKING, Any
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
     from .core import Core
 
 SAMPLE_RATE = 16000
+CLIP_SECONDS = 300  # how long a clip for a media player stays fetchable
 FRAME_BYTES = 320  # 10 ms of 16-bit mono
 PREROLL_FRAMES = 50  # 500 ms before speech starts (the detector reacts late)
 START_FRAMES = 3
@@ -56,15 +58,36 @@ METER_FRAMES = 10  # one meter point = 100 ms
 METER_POINTS = 100
 
 
-def pcm_to_wav(pcm: bytes) -> bytes:
-    """16 kHz mono PCM as WAV."""
+def pcm_to_wav(pcm: bytes, rate: int = SAMPLE_RATE) -> bytes:
+    """16-bit mono PCM as WAV."""
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
-        wav.setframerate(SAMPLE_RATE)
+        wav.setframerate(rate)
         wav.writeframes(pcm)
     return buf.getvalue()
+
+
+def wav_to_pcm(data: bytes) -> tuple[bytes, int]:
+    """A 16-bit WAV as mono PCM and its sample rate (a clip: {"pcm", "rate"})."""
+    with wave.open(io.BytesIO(data)) as src:
+        rate, channels, frames = src.getframerate(), src.getnchannels(), src.readframes(src.getnframes())
+    if channels > 1:  # keep the first channel
+        samples = array("h", frames)
+        frames = array("h", samples[::channels]).tobytes()
+    return frames, rate
+
+
+def resample(pcm: bytes, rate: int, to: int = SAMPLE_RATE) -> bytes:
+    """16-bit mono PCM at another sample rate (linear; good enough for speech)."""
+    if rate == to or not pcm:
+        return pcm
+    import numpy as np  # noqa: PLC0415
+
+    x = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+    n = max(1, round(len(x) * to / rate))
+    return np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x).astype(np.int16).tobytes()
 
 
 def level(chunk: bytes) -> int:
@@ -370,7 +393,7 @@ class AudioHub:
         return await self.play(source_id, audio, text)
 
     async def play(self, source_id: str, audio: bytes, text: str = "") -> bool:
-        """Play a 16-bit WAV at a satellite, at the set volume (its media player and Voice out use this)."""
+        """Play a 16-bit WAV at a satellite, at the set volume (its media player and the Speaker card use this)."""
         source = self.sources.get(source_id)
         volume = int(self.settings.get("volume", 40))
         if source is None or volume <= 0:
@@ -382,6 +405,16 @@ class AudioHub:
         await source.send({"type": "play", "format": "wav", "bytes": len(audio), "text": text})
         await source.send(audio)
         return True
+
+    def clip_url(self, wav: bytes) -> str:
+        """A short-lived address where a WAV can be fetched (an HA media player plays a clip from it)."""
+        from homeassistant.helpers.network import get_url  # noqa: PLC0415
+
+        now = time.monotonic()
+        self._clips = {k: v for k, v in getattr(self, "_clips", {}).items() if now - v[0] < CLIP_SECONDS}
+        key = secrets.token_hex(16)
+        self._clips[key] = (now, wav)
+        return f"{get_url(self.hass, prefer_external=False)}{ClipView.url.replace('{key}', key)}"
 
     async def stop(self, source_id: str) -> bool:
         """Stop what a satellite is playing (True if it was playing)."""
@@ -428,6 +461,22 @@ def scale_wav(audio: bytes, gain: float) -> bytes:
 
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:40] or "source"
+
+
+class ClipView(HomeAssistantView):
+    """A clip for an HA media player (the address is the secret; it is gone after a few minutes)."""
+
+    url = "/api/aac/clip/{key}.wav"
+    name = "api:aac:clip"
+    requires_auth = False  # a media player fetches it without a token
+
+    async def get(self, request: web.Request, key: str) -> web.StreamResponse:
+        """The WAV, if it is still there."""
+        core = request.app[KEY_HASS].data.get(DOMAIN)
+        found = getattr(core.audio, "_clips", {}).get(key) if core else None
+        if found is None:
+            return web.Response(status=404)
+        return web.Response(body=found[1], content_type="audio/wav")
 
 
 class AudioView(HomeAssistantView):

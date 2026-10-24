@@ -13,7 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
-from .audio import AudioView, async_satellite_access
+from .audio import AudioView, ClipView, async_satellite_access
 from .cards import UI_URL, load_all
 from .const import DOMAIN, PANEL_URL
 from .core import Core
@@ -35,6 +35,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     if not hass.data.get(f"{DOMAIN}_audio_view"):  # satellites stream here; card pages are served from the cards folder
         hass.http.register_view(AudioView())
+        hass.http.register_view(ClipView())
         hass.http.register_view(CardUiView(hass.config.path("aac", "cards")))
         hass.data[f"{DOMAIN}_audio_view"] = True
     entry.async_create_background_task(hass, async_satellite_access(core), "aac satellite access")

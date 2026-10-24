@@ -1,5 +1,5 @@
 """The home's languages (core): one list, main language first, that the cards use (Speech to text listens for them,
-Voice out picks a voice per language, templates read {{ languages }}). Until the owner sets it on the Audio page, it
+Text to speech picks a voice per language, templates read {{ languages }}). Until the owner sets it on the Audio page, it
 comes from Home Assistant: HA's language, then the country's languages; English if neither."""
 
 from __future__ import annotations

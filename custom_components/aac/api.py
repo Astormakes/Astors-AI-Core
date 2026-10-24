@@ -9,7 +9,7 @@ Through `self.core` a card reaches the core's services: `subscribe(channel, card
 other cards only by what they offer (functions, values, `held()`). AAC's own cards use only this too.
 """
 
-from .audio import SAMPLE_RATE, Segmenter, level, make_vad
+from .audio import SAMPLE_RATE, Segmenter, level, make_vad, pcm_to_wav, resample, wav_to_pcm
 from .cards import CARD_TYPES, CATEGORIES, Card, register, tool_spec
 from .const import LOGGER
 from .context import Context, entry, is_stop, new_id
@@ -17,5 +17,6 @@ from .flow import Step
 from .models import MODEL_TAGS, Client, ModelError, ModelUnreachable, run
 
 __all__ = ["CARD_TYPES", "CATEGORIES", "LOGGER", "MODEL_TAGS", "SAMPLE_RATE", "Card", "Client", "Context", "ModelError",
-           "ModelUnreachable", "Segmenter", "Step", "entry", "is_stop", "level", "make_vad", "new_id", "register", "run",
+           "ModelUnreachable", "Segmenter", "Step", "entry", "is_stop", "level", "make_vad", "new_id", "pcm_to_wav", "register",
+           "resample", "run", "wav_to_pcm",
            "tool_spec"]

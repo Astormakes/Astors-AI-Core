@@ -121,8 +121,9 @@ class Flow:
 
     def clip(self, card_id: str, port: str, clip: dict[str, Any]) -> None:
         """An audio clip (e.g. an Audio clipper's stretch of speech): to every wired card that takes clips, in the background."""
-        self.last[f"{card_id}.{port}"] = {"clip": f"{clip.get('seconds')} s of audio", "source": clip.get("name"), "time": time.time()}
-        self._keep(f"{card_id}.{port}", f"{clip.get('seconds')} s of audio from {clip.get('name') or clip.get('source')}")
+        what = "stop" if clip.get("stop") else f"{clip.get('seconds')} s of audio"
+        self.last[f"{card_id}.{port}"] = {"clip": what, "source": clip.get("name"), "time": time.time()}
+        self._keep(f"{card_id}.{port}", f"{what}{f' · {t}' if (t := clip.get('text')) else ''} ({clip.get('name') or clip.get('source') or 'any'})")
         self.domain.core.notify("flow", domain=self.domain.id, wire=f"{card_id}.{port}")
         for target, in_port in self.wired_from(card_id, port):
             if hasattr(target, "clip"):

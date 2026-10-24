@@ -1,5 +1,5 @@
 """Each AAC satellite as a Home Assistant media player: HA (automations, TTS, the media browser) plays on it like on
-any speaker, sets the volume, stops it. AAC's Voice out speaks through media players too."""
+any speaker, sets the volume, stops it. AAC's Speaker card plays on media players too."""
 
 from __future__ import annotations
 
