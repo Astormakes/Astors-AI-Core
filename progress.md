@@ -135,7 +135,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
   lists, Nodes, Models), chat (live answer, document view, stop), lists page, models page (find a server's models),
   node view (types left with info, click in the grid to place, drag to wire, Delete/button to unwire, settings right
   with functions and tags, Undo, slots 1–3 (Shift-click loads), Send stop, monitor on a wire).
-- Tests: 28 (`../.venv/bin/python -m pytest -q -p no:logging`).
+- Tests: 35, each run fresh and from the backup (`../.venv/bin/python -m pytest -q -p no:logging`).
 
 ## Versions (owner, 2026-10-24)
 
@@ -202,7 +202,8 @@ manifest version with every deploy (the browser caches the panel by it).
 10. ~~Backups checked by tests~~ **done (2.1.0):** tests/backups/ keeps one backup (made-up data), from the first
     release of the current major version; `tests/test_backups.py` loads it and runs a turn. Passes: the change is minor
     or patch. Fails: it is a major version; raise the major number, then `AAC_SAVE_BACKUP=1 pytest tests/test_backups.py`
-    replaces the backup.
+    replaces the backup. Every test also runs twice by itself (conftest `start`): on a fresh install and on one that
+    starts from that backup (dated as an old install); `@pytest.mark.fresh` for the few that only make sense fresh.
 11. **Edit messages in a chat** (owner, as in v1, often used to resend): a pencil under a message (yours or the
     model's), visible when hovering the message or near the pencil. Editing keeps the message where it is on screen,
     the chat moves up and the box grows upwards; send is a checkmark (grey, green on hover), so resending is a double

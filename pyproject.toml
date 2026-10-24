@@ -3,7 +3,5 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 markers = [
-    "live: talks to a real model server (AAC_LIVE_URL, default http://127.0.0.1:8080/v1)",
-    "extractor: keep the memory extractor running (it is mocked out otherwise)",
+    "fresh: only on a fresh install (not also on one started from the backup, see conftest.start)",
 ]
-addopts = "-m 'not live'"

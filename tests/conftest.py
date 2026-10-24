@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,6 +19,23 @@ BASE_URL = "http://llm.local:8080/v1"
 def auto_enable_custom_integrations(enable_custom_integrations):
     """Load custom integrations."""
     return
+
+
+BACKUPS = Path(__file__).parent / "backups"
+
+
+@pytest.fixture(autouse=True, params=["fresh", "from_backup"])
+def start(request, hass_storage):
+    """Every test runs twice: on a fresh install, and on one that starts from the backup of this major version
+    (tests/backups, see test_backups.py). A test that only makes sense on a fresh install says @pytest.mark.fresh."""
+    if request.param == "from_backup":
+        if request.node.get_closest_marker("fresh"):
+            pytest.skip("only on a fresh install")
+        saved = next((p for p in sorted(BACKUPS.iterdir()) if p.is_dir()), None) if BACKUPS.is_dir() else None
+        if saved is None:
+            pytest.skip("no backup yet")
+        hass_storage.update(json.loads((saved / "storage.json").read_text()))
+    return request.param
 
 
 @pytest.fixture

@@ -397,45 +397,45 @@
   "key": "aac2.card.assistant.chat",
   "data": {
    "chats": {
-    "7d1ae4c25f": {
-     "id": "7d1ae4c25f",
+    "84df148aac": {
+     "id": "84df148aac",
      "title": "what time is it?",
-     "created": "2026-10-24T12:58:16.270042+00:00",
-     "updated": "2026-10-24T12:58:16.274154+00:00",
+     "created": "2026-01-01T12:00:00+00:00",
+     "updated": "2026-01-01T12:00:00+00:00",
      "entries": [
       {
-       "id": "76cd0978ff",
+       "id": "0511e43514",
        "by": "chat",
        "kind": "said",
        "text": "what time is it?",
        "tags": [
         "chat.said"
        ],
-       "time": "2026-10-24T12:58:16.270059+00:00",
+       "time": "2026-10-24T12:59:46.075424+00:00",
        "data": {},
        "state": "closed"
       },
       {
-       "id": "3ebad47db1",
+       "id": "a69fed08cc",
        "by": "time",
        "kind": "trailer",
-       "text": "Local time: Saturday 2026-10-24 05:58",
+       "text": "Local time: Saturday 2026-10-24 05:59",
        "tags": [
         "time.text"
        ],
-       "time": "2026-10-24T12:58:16.272028+00:00",
+       "time": "2026-10-24T12:59:46.077160+00:00",
        "data": {},
        "state": "closed"
       },
       {
-       "id": "f2f32c1dc9",
+       "id": "c6cc6a8df9",
        "by": "model",
        "kind": "answer",
        "text": "It is noon.",
        "tags": [
         "model.answer"
        ],
-       "time": "2026-10-24T12:58:16.272488+00:00",
+       "time": "2026-10-24T12:59:46.077634+00:00",
        "data": {},
        "state": "closed"
       }
@@ -444,7 +444,7 @@
       {
        "role": "user",
        "text": "what time is it?",
-       "time": "2026-10-24T12:58:16.270059+00:00"
+       "time": "2026-10-24T12:59:46.075424+00:00"
       }
      ]
     }
@@ -458,27 +458,27 @@
   "data": {
    "lists": [
     {
-     "id": "72d6576ccf",
+     "id": "c4c68abf8f",
      "name": "Shopping",
      "view": "checklist",
-     "created": "2026-10-24T12:58:16.274287+00:00",
-     "updated": "2026-10-24T12:58:16.274303+00:00",
+     "created": "2026-10-24T12:59:46.079234+00:00",
+     "updated": "2026-10-24T12:59:46.079251+00:00",
      "items": [
       {
-       "id": "eea38761b3",
+       "id": "619c2db8ff",
        "text": "Oat milk",
        "done": false,
        "fields": {},
-       "created": "2026-10-24T12:58:16.274295+00:00",
-       "updated": "2026-10-24T12:58:16.274295+00:00"
+       "created": "2026-10-24T12:59:46.079243+00:00",
+       "updated": "2026-10-24T12:59:46.079243+00:00"
       },
       {
-       "id": "3fa7d4c6a3",
+       "id": "6461e1322f",
        "text": "Coffee",
        "done": false,
        "fields": {},
-       "created": "2026-10-24T12:58:16.274300+00:00",
-       "updated": "2026-10-24T12:58:16.274300+00:00"
+       "created": "2026-10-24T12:59:46.079248+00:00",
+       "updated": "2026-10-24T12:59:46.079248+00:00"
       }
      ]
     }
@@ -492,7 +492,7 @@
   "data": {
    "events": [
     {
-     "uid": "dc016d95cd",
+     "uid": "8175b83a65",
      "summary": "Dentist",
      "start": "2026-11-02T10:00",
      "end": null,
@@ -541,8 +541,8 @@
     ]
    },
    "satellite_app": {
-    "user_id": "f3bad4f02a82413fbef7263e16081c72",
-    "refresh_token_id": "6cec059117574ccea64fe44db5c32d7a"
+    "user_id": "e8b6eda8adc746c5b6a6dcc19c999973",
+    "refresh_token_id": "570ef50d62304b05ad1f9ca7b783c0ed"
    }
   }
  }

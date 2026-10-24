@@ -42,6 +42,10 @@ async def test_the_backup_is_of_this_major_version(hass: HomeAssistant, mock_ent
     await d.cards["chat"].send("what time is it?")
     await d.cards["lists"].call("add_items", {"list": "Shopping", "items": ["Oat milk", "Coffee"]})
     await d.cards["calendar"].call("add", {"summary": "Dentist", "start": "2026-11-02T10:00"})
+    chat = d.cards["chat"]  # an old install: its chats were quiet for long
+    for c in chat.data["chats"].values():
+        c["created"] = c["updated"] = "2026-01-01T12:00:00+00:00"
+    await chat.save()
     await d.save_now()
     await core.save_now()
     if SAVED:
