@@ -127,3 +127,21 @@ async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, m
     core.audio.forget("pc")  # gone for good: out of the known ones, its media player removed
     await hass.async_block_till_done()
     assert hass.states.get(player) is None and not core.audio.settings["known"]
+
+
+async def test_home_languages(hass, mock_entry, hass_ws_client):
+    """The home's languages: from HA (language, then country) until the owner sets them; templates read them."""
+    from custom_components.aac.languages import code_of, from_ha
+
+    assert from_ha("de-DE", "CH") == ["de", "fr", "it"] and from_ha(None, None) == ["en"]
+    assert code_of("german") == "de" and code_of("en_US") == "en" and code_of("klingon") is None
+    core = await setup_aac(hass, mock_entry)
+    hass.config.language, hass.config.country = "de", "AT"
+    assert core.languages() == ["de"]
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "aac/languages/set", "languages": ["English", "de", "xx"]})
+    result = (await client.receive_json())["result"]
+    assert [x["code"] for x in result["languages"]] == ["en", "de"] and result["languages_own"]
+    assert core.domain.template_values()["languages"] == ["en", "de"]
+    await client.send_json_auto_id({"type": "aac/languages/set", "languages": None})
+    assert [x["code"] for x in (await client.receive_json())["result"]["languages"]] == ["de"]

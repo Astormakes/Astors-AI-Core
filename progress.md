@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.0.0-alpha.31, live on the owner's HA
+## Current state (2026-10-24) – 2.0.0-alpha.36, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -74,6 +74,15 @@ the owner wires them (no automatic wiring), the message is a document of entries
   chat.js, lists.js (one list at a time, or the lists to pick), calendar.js (v1's week grid / table / month / agenda,
   plus HA calendars from the card's settings), memory.js, tools.js (File), auto.js (Schedule/HA event/Heartbeat log).
   The panel no longer knows any card type; `aac/chat/*` commands are gone except `aac/chat/request`.
+- **Languages and voices (alpha.32–36):** the core's `languages()` (languages.py: from HA's language + country until
+  set on the Audio page; `aac/languages/set`); Speech to text uses them when its own language is empty (one: that one;
+  several: detected, heard again in the main one when the model heard another); `{{ languages }}`. The voice per
+  language moved from the core into Voice out (settings `engine`, `voices`; functions `voices`, `set_voice`); the Audio
+  page keeps the home languages, the default engine and the volume. The owner's Danny (en_US) / Thorsten low (de) are
+  in the speaker card. Later (owner): the output line like the input (a TTS card → audio stream → speaker).
+- **Sidebar folding (alpha.33):** per group (each card with entries, and Settings) in Appearance: "opens while in use"
+  (lit, closes when you go elsewhere; default) or "arrow keeps it open or closed" (default for Chat); `aac/appearance`
+  `folds`.
 - **Voice chain (alpha.16):** Speech to text → three Conditionals side by side: Stop word (sends stop forward), Wake
   word ("computer"/"assistent" → Spoken turn), Follow-up (AAC spoke there < 10 s ago → Follow-up turn: a note "maybe not
   meant for you, then answer nothing"); both Relays read the Chat dotted and go to the Charter; Model → Answer (Relay) →

@@ -299,15 +299,20 @@ async def ws_appearance(hass, connection, msg) -> None:
     """The skins and the one in use (shared by every device)."""
     from .skins import list_skins  # noqa: PLC0415
 
-    connection.send_result(msg["id"], {"skins": await hass.async_add_executor_job(list_skins, hass),
-                                       "skin": _core(hass).data.get("skin", "")})
-
-
-@command({vol.Required("type"): "aac/appearance/set", vol.Required("skin"): str})
-async def ws_appearance_set(hass, connection, msg) -> None:
-    """Use a skin ("" = Home Assistant's look)."""
     core = _core(hass)
-    core.data["skin"] = msg["skin"]
+    connection.send_result(msg["id"], {"skins": await hass.async_add_executor_job(list_skins, hass),
+                                       "skin": core.data.get("skin", ""), "folds": core.data.get("folds", {})})
+
+
+@command({vol.Required("type"): "aac/appearance/set", vol.Optional("skin"): str,
+          vol.Optional("folds"): {str: vol.In(["auto", "arrow"])}})
+async def ws_appearance_set(hass, connection, msg) -> None:
+    """Use a skin ("" = Home Assistant's look); how each sidebar group folds (auto: open while in use; arrow)."""
+    core = _core(hass)
+    if "skin" in msg:
+        core.data["skin"] = msg["skin"]
+    if "folds" in msg:
+        core.data["folds"] = {**core.data.get("folds", {}), **msg["folds"]}
     core.save()
     core.notify("appearance")
     connection.send_result(msg["id"], {})
@@ -320,12 +325,28 @@ async def ws_audio(hass, connection, msg) -> None:
 
 
 @command({vol.Required("type"): "aac/audio/settings", vol.Optional("stt"): [str], vol.Optional("tts"): vol.Any(str, None),
-          vol.Optional("volume"): vol.All(vol.Coerce(int), vol.Range(0, 100)), vol.Optional("voices"): dict})
+          vol.Optional("volume"): vol.All(vol.Coerce(int), vol.Range(0, 100))})
 async def ws_audio_settings(hass, connection, msg) -> None:
     """Change the engines and the volume."""
     core = _core(hass)
-    core.audio.settings.update({k: v for k, v in msg.items() if k in ("stt", "tts", "volume", "voices")})
+    core.audio.settings.update({k: v for k, v in msg.items() if k in ("stt", "tts", "volume")})
     core.save()
+    connection.send_result(msg["id"], core.audio.summary())
+
+
+@command({vol.Required("type"): "aac/languages/set", vol.Required("languages"): vol.Any([str], None)})
+async def ws_languages_set(hass, connection, msg) -> None:
+    """The home's languages (main first); None: as Home Assistant describes the home."""
+    from .languages import code_of  # noqa: PLC0415
+
+    core = _core(hass)
+    codes = list(dict.fromkeys(c for c in (code_of(x) for x in msg["languages"] or []) if c))
+    if codes:
+        core.data["languages"] = codes
+    else:
+        core.data.pop("languages", None)
+    core.save()
+    core.notify("audio")
     connection.send_result(msg["id"], core.audio.summary())
 
 

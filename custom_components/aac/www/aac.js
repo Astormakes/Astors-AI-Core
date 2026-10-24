@@ -40,7 +40,8 @@ h4 button { margin-left: auto; }
 nav .bottom { border-top: 1px solid var(--divider-color); padding: 6px 0; }
 main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 #cardhost, #cardhost > * { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-h4.fold { cursor: pointer; user-select: none; }
+h4.fold { cursor: pointer; user-select: none; border-radius: 6px; } h4.fold:hover { background: rgba(127,127,127,.1); }
+h4.fold.lit { color: var(--primary-color); background: rgba(3,169,244,.12); } h4.fold .arrow { display: inline-block; width: 12px; }
 header { display: flex; align-items: center; gap: 8px; padding: 0 16px; min-height: 56px; border-bottom: 1px solid var(--divider-color); flex-wrap: wrap; }
 header h2 { margin: 0; font-size: 18px; font-weight: 500; margin-right: auto; }
 button, select, input, textarea { font: inherit; color: inherit; }
@@ -151,12 +152,12 @@ class AacPanel extends HTMLElement {
     this.shadowRoot.addEventListener("focusout", hide);
     // one listener for what is drawn by others or redrawn often: the sidebar, a card page's ☰, the Audio page's meters
     this.shadowRoot.addEventListener("click", (e) => {
-      const t = e.target.closest?.("[data-say],[data-go],[data-navadd],[data-fold],#navbtn");
+      const t = e.target.closest?.("[data-say],[data-fold],[data-navadd],[data-go],#navbtn");
       if (!t) return;
       const d = t.dataset;
       if (d.say) this.ws("aac/audio/say", { source: d.say, text: "This is how I sound." });
       else if (d.navadd) { e.stopPropagation(); const el = this._els[d.navadd]; if (el?.add) { this.go("card", d.navadd, this.view.card === d.navadd ? this.view.id : null).then(() => el.add()); } else this.go("card", d.navadd, null); }
-      else if (d.fold) { const f = this._folds(); f[d.fold] = !f[d.fold]; this._setFolds(f); this.go("card", d.fold, null); }
+      else if (d.fold) { e.stopPropagation(); const f = this._folds(); f[d.fold] = !f[d.fold]; this._setFolds(f); const n = this.shadowRoot.querySelector("nav"); if (n) n.outerHTML = this._nav(); }
       else if (d.go) this.go(d.go, d.card || null, d.id || null);
       else if (t.id === "navbtn") { this.navOpen = true; this.shadowRoot.querySelector(".root").classList.add("navopen"); }
     });
@@ -277,23 +278,31 @@ class AacPanel extends HTMLElement {
     if (el) this.shadowRoot.querySelector("#cardhost")?.replaceChildren(el); // a redraw keeps the page as it is
   }
 
+  _foldMode(key) { return this.look?.folds?.[key] || (key === "chat" ? "arrow" : "auto"); } // how a sidebar group folds
+
   _nav() { // the cards' pages and their entries, then Nodes and the core's settings
     const s = this.state, v = this.view, folds = this._folds();
     const on = (kind, card = null, id = null) => (v.kind === kind && v.card === card && (v.id || null) === id ? "on" : "");
     const item = (label, kind, card = null, id = null, indent = 0) =>
       `<div class="item ${on(kind, card, id)}" data-go="${kind}" data-card="${esc(card || "")}" data-id="${esc(id || "")}" ${indent ? `style="padding-left:${12 + indent * 14}px"` : ""}>${esc(label)}</div>`;
+    // a group: "auto" opens while one of its pages is in use (lit) and closes when you go elsewhere; "arrow" stays as the arrow left it
+    const group = (key, title, active, body, add = "", go = "") => {
+      const auto = this._foldMode(key) === "auto", open = auto ? active : !folds[key];
+      return `<h4 class="fold ${auto && active ? "lit" : ""}" ${go}>${auto ? "" : `<span class="arrow" data-fold="${esc(key)}" title="Keep it open or closed">${open ? "▾" : "▸"}</span> `}${esc(title.toUpperCase())}${add}</h4>${open ? body : ""}`;
+    };
     const entries = (n, list, depth = 1) => list.map((e) => `${item(e.title, "card", n.card, e.id, depth)}${e.children?.length ? entries(n, e.children, depth + 1) : ""}`).join("");
-    const groups = this.nav.filter((n) => n.nav).map((n) => {
-      const shut = folds[n.card];
-      return `<h4 class="fold" data-fold="${esc(n.card)}" title="Open the page; folds its entries">${shut ? "▸" : "▾"} ${esc(n.title.toUpperCase())}${n.nav.add ? `<button class="small" data-navadd="${esc(n.card)}" title="${esc(n.nav.add)}">+</button>` : ""}</h4>
-        ${shut ? "" : entries(n, n.nav.entries || []) || '<div class="item hint" style="cursor:default">nothing yet</div>'}`;
-    }).join("");
+    const groups = this.nav.filter((n) => n.nav).map((n) => group(n.card, n.title, v.kind === "card" && v.card === n.card,
+      entries(n, n.nav.entries || []) || '<div class="item hint" style="cursor:default">nothing yet</div>',
+      n.nav.add ? `<button class="small" data-navadd="${esc(n.card)}" title="${esc(n.nav.add)}">+</button>` : "",
+      `data-go="card" data-card="${esc(n.card)}" data-id="" title="Open its page"`)).join("");
     const single = this.nav.filter((n) => !n.nav).map((n) => item(n.title, "card", n.card)).join("");
+    const settings = group("settings", "Settings", ["audio", "models", "appearance"].includes(v.kind),
+      `${item("Audio", "audio")}${item("Models", "models")}${item("Appearance", "appearance")}`, "", `data-go="${["audio", "models", "appearance"].includes(v.kind) ? v.kind : "audio"}"`);
     return `<nav><div class="top"><button class="menu" id="habtn" title="Home Assistant's menu">⌂</button><b>AAC</b><span>v${esc(s.version)}</span></div>
       <div class="dom"><select id="domain">${s.domains.map((d) => `<option value="${esc(d.id)}" ${d.id === s.active ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select>
         <button class="small" id="clone" title="A copy of this setup to try things out">Clone</button></div>
       <div class="scroll">${groups}${single ? `<h4>MORE</h4>${single}` : ""}</div>
-      <div class="bottom">${item("Nodes", "nodes")}<h4>SETTINGS</h4>${item("Audio", "audio")}${item("Models", "models")}${item("Appearance", "appearance")}</div></nav>`;
+      <div class="bottom">${item("Nodes", "nodes")}${settings}</div></nav>`;
   }
 
   _header(title, extra = "") { return `<header><button class="menu" id="navbtn" title="Menu">☰</button><h2>${esc(title)}</h2>${extra}</header>`; }
@@ -308,10 +317,43 @@ class AacPanel extends HTMLElement {
 
   _appearanceView() {
     const look = this.look || { skins: [], skin: "" };
-    const rows = look.skins.map((k) => `<label class="check" style="display:flex;gap:8px;align-items:flex-start;margin:8px 0"><input type="radio" name="skin" data-skin="${esc(k.id)}" ${k.id === look.skin ? "checked" : ""}>
+    const rows = look.skins.map((k) => `<label class="check" style="display:flex;gap:8px;align-items:flex-start;margin:8px 0;justify-content:flex-start;text-align:left"><input type="radio" style="width:auto;flex:0 0 auto;margin-top:3px" name="skin" data-skin="${esc(k.id)}" ${k.id === look.skin ? "checked" : ""}>
       <span><b>${esc(k.name)}</b> <span class="hint">${esc(k.source)}${k.author ? ` · ${esc(k.author)}` : ""}</span><br><span class="hint">${esc(k.description)}</span></span></label>`).join("");
     return `${this._header("Appearance", tip("How the panel looks, the same on every device. Own skins: a CSS file in config/aac/skins (a comment header with name, description, author; HA's theme variables inside :host, e.g. --primary-color)."))}
-      <div class="content"><div class="card"><h3 style="margin-top:0">Skin</h3>${rows}</div></div>`;
+      <div class="content"><div class="card"><h3 style="margin-top:0">Skin</h3>${rows}</div>
+      <div class="card"><h3 style="margin-top:0">Sidebar ${tip("How each group in the sidebar folds. Opens while in use: click it, it opens and is lit; go elsewhere and it closes. Arrow: the arrow keeps it open or closed.")}</h3>
+        ${[...this.nav.filter((n) => n.nav).map((n) => [n.card, n.title]), ["settings", "Settings"]].map(([key, title]) => `<div class="row"><span style="flex:0 0 170px">${esc(title)}</span>
+          <select data-foldmode="${esc(key)}"><option value="auto" ${this._foldMode(key) === "auto" ? "selected" : ""}>Opens while in use</option><option value="arrow" ${this._foldMode(key) === "arrow" ? "selected" : ""}>Arrow keeps it open or closed</option></select></div>`).join("")}</div></div>`;
+  }
+
+  async _voicesOf(engine) { // an engine's voices for each home language (HA's own tts commands), kept per engine
+    if (!engine || (this._vc ||= {})[engine]) return this._vc?.[engine];
+    this._vc[engine] = { loading: true };
+    const found = {};
+    try {
+      const langs = (await this.ws("tts/engine/get", { engine_id: engine })).provider?.supported_languages || [];
+      for (const { code } of this.audio?.languages || []) { // every variant of the language (en_GB, en_US …)
+        const locales = langs.filter((l) => l.toLowerCase().split(/[-_]/)[0] === code), voices = [];
+        for (const loc of locales) for (const v of (await this.ws("tts/engine/voices", { engine_id: engine, language: loc })).voices || []) voices.push({ ...v, locale: loc, label: locales.length > 1 ? `${v.name} · ${loc}` : v.name });
+        found[code] = { locale: locales[0] || null, voices };
+      }
+    } catch (e) { found.error = e.message || String(e); }
+    this._vc[engine] = found;
+    if (this.view.kind === "nodes") this.render();
+    return found;
+  }
+
+  _languagesCard() {
+    const a = this.audio || {}, names = a.language_names || {};
+    const rows = (a.languages || []).map(({ code, name }, i) => {
+      return `<div class="row"><span class="t"><b>${esc(name)}</b> <span class="hint">${esc(code)}${i === 0 ? " · main" : ""}</span></span>
+        ${i > 0 ? `<button class="small" data-langup="${i}" title="Make it the main language">↑</button>` : ""}<button class="small danger" data-langdel="${i}">✕</button></div>`;
+    }).join("");
+    const ha = (a.languages_ha || []).map((l) => l.name).join(", ");
+    return `<div class="card"><h3 style="margin-top:0">Home languages ${tip("The languages spoken here, main first. Speech to text listens for them (one: that one; several: detected among them), Voice out speaks each in the voice set in its settings, templates read {{ languages }}. A card can still set its own.")}</h3>
+      ${rows}
+      <div class="row" style="margin-top:8px"><select id="langadd"><option value="">Add a language …</option>${Object.entries(names).sort((x, y) => x[1].localeCompare(y[1])).filter(([c]) => !(a.languages || []).some((l) => l.code === c)).map(([c, n]) => `<option value="${esc(c)}">${esc(n)}</option>`).join("")}</select>
+        ${a.languages_own ? `<button class="small" id="langha" title="Use what Home Assistant says about the home">As in Home Assistant (${esc(ha)})</button>` : `<span class="hint">From Home Assistant (its language and country)</span>`}</div></div>`;
   }
 
   _audioView() {
@@ -321,11 +363,12 @@ class AacPanel extends HTMLElement {
     return `${this._header("Audio", tip("The satellites, how AAC hears (speech to text, in this order: the first that answers) and speaks (an HA voice engine). Shared by all domains; the audio cards in Nodes decide what happens with it."))}
       <div class="content"><h3>Satellites</h3><div id="meters">${this._meters()}</div>
       ${(st.known || []).filter((k) => !(a.sources || []).some((s) => s.id === k.id)).map((k) => `<div class="row"><span class="hint">${esc(k.name)} · offline</span><button class="small danger" data-forget="${esc(k.id)}" style="margin-left:auto" title="Remove it from AAC (and its media player in HA)">Forget</button></div>`).join("")}
+      ${this._languagesCard()}
       <div class="card"><h3 style="margin-top:0">HA's speech to text (in order) ${tip("Home Assistant's engines, tried after the models in a Speech to text card's list (that list is in the card's settings in Nodes).")}</h3>
         ${order.map((id, i) => `<div class="row"><span class="t">${esc((sttItems.find((x) => x[0] === id) || [id, id])[1])}</span>
           <button class="small" data-sttup="${i}">↑</button><button class="small danger" data-sttdel="${i}">✕</button></div>`).join("") || '<p class="hint">None yet.</p>'}
         <div class="row" style="margin-top:8px"><select id="sttadd"><option value="">Add …</option>${sttItems.filter((x) => !order.includes(x[0])).map(([id, l]) => `<option value="${esc(id)}">${esc(l)}</option>`).join("")}</select></div>
-        <h3>Voice</h3><select id="ttsset"><option value="">—</option>${(a.tts_entities || []).map((e) => `<option ${e === st.tts ? "selected" : ""}>${esc(e)}</option>`).join("")}</select>
+        <h3>Default voice engine ${tip("Used by cards that speak and set no engine of their own (and by Test voice). The voice per language is set in the Voice out card.")}</h3><select id="ttsset"><option value="">—</option>${(a.tts_entities || []).map((e) => `<option ${e === st.tts ? "selected" : ""}>${esc(e)}</option>`).join("")}</select>
         <h3>Volume: <span id="volval">${esc(st.volume ?? 40)}</span> %</h3><input type="range" id="volume" min="0" max="100" step="5" value="${esc(st.volume ?? 40)}">
         <p class="hint">0 = AAC never speaks aloud.</p></div></div>`;
   }
@@ -469,6 +512,16 @@ class AacPanel extends HTMLElement {
       if (f.type === "list") return `<label>${esc(f.title)}${h}</label><input data-set="${esc(key)}" data-list value="${esc((v || []).join(", "))}">`;
       if (f.type === "access") return `<label>${esc(f.title)}${h}</label><textarea rows="6" data-set="${esc(key)}" data-access placeholder="switch.lamp: full">${esc(Object.entries(v || {}).map(([e, l]) => `${e}: ${l}`).join("\n"))}</textarea>`;
       if (f.type === "model") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">—</option>${this.state.models.map((m) => `<option value="${esc(m.id)}" ${m.id === v ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>`;
+      if (f.type === "tts_engine") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">the Audio page's default${this.audio?.settings?.tts ? ` (${esc(this.audio.settings.tts)})` : ""}</option>${(this.audio?.tts_entities || []).map((e) => `<option ${e === v ? "selected" : ""}>${esc(e)}</option>`).join("")}</select>`;
+      if (f.type === "voices") { // a voice per home language, from the card's engine
+        const engine = c.settings.engine || this.audio?.settings?.tts, got = engine && this._vc?.[engine];
+        if (engine && !got) this._voicesOf(engine);
+        const rows = !engine ? '<p class="hint">Pick a voice engine first.</p>' : !got || got.loading ? '<p class="hint">Loading voices…</p>' : got.error ? `<p class="hint">${esc(got.error)}</p>`
+          : (this.audio?.languages || []).map(({ code, name }) => `<div class="row"><span style="flex:0 0 90px">${esc(name)}</span>${got[code]?.locale
+            ? `<select data-voicefor="${esc(code)}" data-key="${esc(key)}"><option value="">the engine's default</option>${got[code].voices.map((x) => `<option value="${esc(x.voice_id)}" data-locale="${esc(x.locale)}" ${x.voice_id === (v || {})[code]?.voice ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select>`
+            : '<span class="hint">the engine has no voice for it</span>'}</div>`).join("");
+        return `<label>${esc(f.title)}${h}</label>${rows}`;
+      }
       if (f.type === "player") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">the satellite the line came from</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)} (satellite)</option>`).join("")}${Object.keys(this._hass.states).filter((e) => e.startsWith("media_player.") && !e.startsWith("media_player.aac_satellite_")).sort().map((e) => `<option value="${esc(e)}" ${e === v ? "selected" : ""}>${esc(this._hass.states[e].attributes.friendly_name || e)}</option>`).join("")}</select>`;
       if (f.type === "source") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="${key === "source" && c.type === "microphone" ? "any" : ""}">${c.type === "microphone" ? "any satellite" : "where the line came from"}</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)}</option>`).join("")}</select>`;
       if (f.type === "outputs") return `<label>${esc(f.title)}${h}</label><textarea rows="4" data-set="${esc(key)}" data-outputs>${esc((v || []).map((o) => `${o.name}: ${o.description || ""}`).join("\n"))}</textarea>`;
@@ -1004,6 +1057,7 @@ class AacPanel extends HTMLElement {
     $("#fit")?.addEventListener("click", () => this._fit());
     $("#unpick")?.addEventListener("click", () => this._unpick());
     $$("[data-skin]").forEach((el) => el.addEventListener("change", async () => { await this.ws("aac/appearance/set", { skin: el.dataset.skin }); }));
+    $$("[data-foldmode]").forEach((el) => el.addEventListener("change", async () => { await this.ws("aac/appearance/set", { folds: { [el.dataset.foldmode]: el.value } }); }));
     $("#values")?.addEventListener("click", () => { this.showValues = !this.showValues; this.values = null; this.render(); if (this.showValues) this._loadValues(); });
     $("#valrefresh")?.addEventListener("click", () => this._loadValues());
     $("#valclose")?.addEventListener("click", () => { this.showValues = false; this.render(); });
@@ -1032,6 +1086,11 @@ class AacPanel extends HTMLElement {
     }));
     $("#title")?.addEventListener("change", async (e) => { await this.ws("aac/card/update", { card: this.sel, title: e.target.value }); await this._load(); this.render(); });
     $$("[data-set]").forEach((el) => el.addEventListener("change", () => this._saveSetting(el)));
+    $$("[data-voicefor]").forEach((el) => el.addEventListener("change", async () => {
+      const c = this._card(this.sel), voices = { ...(c.settings[el.dataset.key] || {}) };
+      if (el.value) voices[el.dataset.voicefor] = { language: el.selectedOptions[0].dataset.locale, voice: el.value }; else delete voices[el.dataset.voicefor];
+      await this.ws("aac/card/update", { card: c.id, settings: { [el.dataset.key]: voices } }); await this._load(); this.render();
+    }));
     // a card's list of models: saved whole on any change
     const mlist = () => [...$$("[data-ml]")].map((row) => ({ model: row.querySelector("[data-mlm]").value, queue: row.querySelector("[data-mlq]").checked }));
     const mlsave = (list) => saveList("models", list);
@@ -1078,6 +1137,12 @@ class AacPanel extends HTMLElement {
     $$("[data-sttdel]").forEach((el) => el.addEventListener("click", () => audioSet({ stt: engines().filter((_, i) => i !== Number(el.dataset.sttdel)) })));
     $$("[data-sttup]").forEach((el) => el.addEventListener("click", () => { const l = engines(), i = Number(el.dataset.sttup); if (i > 0) { [l[i - 1], l[i]] = [l[i], l[i - 1]]; audioSet({ stt: l }); } }));
     $("#ttsset")?.addEventListener("change", (e) => audioSet({ tts: e.target.value || null }));
+    const langs = () => (this.audio?.languages || []).map((l) => l.code);
+    const langSet = async (list) => { this.audio = await this.ws("aac/languages/set", { languages: list }); this._vc = {}; this.render(); };
+    $("#langadd")?.addEventListener("change", (e) => e.target.value && langSet([...langs(), e.target.value]));
+    $("#langha")?.addEventListener("click", () => langSet(null));
+    $$("[data-langdel]").forEach((el) => el.addEventListener("click", () => { const l = langs().filter((_, i) => i !== Number(el.dataset.langdel)); if (l.length) langSet(l); }));
+    $$("[data-langup]").forEach((el) => el.addEventListener("click", () => { const l = langs(), i = Number(el.dataset.langup); [l[0], l[i]] = [l[i], l[0]]; langSet(l); }));
     $$("[data-forget]").forEach((el) => el.addEventListener("click", async () => { if (confirm("Forget this satellite? (It comes back when it connects again.)")) { this.audio = await this.ws("aac/audio/forget", { source: el.dataset.forget }); this.render(); } }));
     $("#volume")?.addEventListener("input", (e) => { $("#volval").textContent = e.target.value; });
     $("#volume")?.addEventListener("change", (e) => audioSet({ volume: Number(e.target.value) }));

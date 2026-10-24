@@ -248,9 +248,9 @@ class Domain:
                     found[card.id] = card.current()
                 except Exception:  # noqa: BLE001 - one card's values must not break a template
                     LOGGER.exception("AAC: values of %s", card.id)
-        own = {"states", "now", "utcnow", "is_state", "state_attr", "cards", "audio"}  # HA's and the core's names win
+        own = {"states", "now", "utcnow", "is_state", "state_attr", "cards", "audio", "languages"}  # HA's and the core's names win
         return {**{k: v for k, v in found.items() if k.isidentifier() and k not in own}, "cards": found,
-                "audio": self.core.audio.spoken()}
+                "audio": self.core.audio.spoken(), "languages": self.core.languages()}
 
     def tag_pool(self) -> list[dict[str, str]]:
         """Every tag the cards of this domain write, plus the owner's own (`user.…`)."""
@@ -323,6 +323,12 @@ class Core:
         return list(self._channels.get(channel, []))
 
     @callback
+    def languages(self) -> list[str]:
+        """The home's languages, main first (ISO codes): the owner's list (Audio page), else as HA describes the home."""
+        from .languages import from_ha  # noqa: PLC0415
+
+        return list(self.data.get("languages") or from_ha(self.hass.config.language, self.hass.config.country))
+
     def notify(self, what: str, **data: Any) -> None:
         """Tell open panels."""
         async_dispatcher_send(self.hass, SIGNAL, {"what": what, **data})

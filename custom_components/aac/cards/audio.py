@@ -11,7 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import LOGGER, SAMPLE_RATE, Card, Context, level, make_vad, register, Segmenter
 
-VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.4.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
 
@@ -110,7 +110,9 @@ class SpeechToText(Card):
                   "out": "round: every wire gets each heard line as a new context (data: mic = the satellite, mic_name, "
                          "language), e.g. into several Conditionals side by side"}
     tags = {"heard": "what was said (data: the satellite)"}
-    settings_schema = {"language": {"type": "text", "title": "Language (empty: detect)", "default": ""},
+    settings_schema = {"language": {"type": "text", "title": "Language (empty: the home's)", "default": "",
+                                    "help": "A code like de. Empty: the home's languages from the Audio page (one: that one; "
+                                            "several: detected among them)."},
                        "models": {"type": "modellist", "tag": "speech to text", "title": "Models (in order)", "default": [],
                                   "help": "The list is run through from the top: a free model takes it; a busy one queues it if its Queue is ticked, then the next is tried. Empty: every model with the tag, queued. HA's engines on the Audio page come after."}}
 
@@ -134,12 +136,24 @@ class VoiceOut(Card):
     title = "Voice out"
     category = "Audio"
     help = ("Speaks the newest answer: at the satellite the spoken line came from, or on any Home Assistant media "
-            "player (the voice and volume are on the Audio page). An answer 'nothing' stays silent; a stop cuts it off.")
+            "player, in a voice per language (the language it was spoken to in). An answer 'nothing' stays silent; a "
+            "stop cuts it off. The volume is on the Audio page.")
     inputs = {"in": "text"}
     outputs: dict[str, str] = {}
     ports_help = {"in": "a context: its newest answer is spoken (a stop arriving here cuts off what it is saying)"}
     settings_schema = {"source": {"type": "player", "title": "Speaks at", "default": "",
-                                  "help": "Empty: the satellite the spoken line came from. Or any media player."}}
+                                  "help": "Empty: the satellite the spoken line came from. Or any media player."},
+                       "engine": {"type": "tts_engine", "title": "Voice engine", "default": "",
+                                  "help": "A Home Assistant text-to-speech engine. Empty: the default on the Audio page."},
+                       "voices": {"type": "voices", "title": "Voice per language", "default": {},
+                                  "help": "For each home language (Audio page). Not set: the engine's default voice."}}
+    functions = {
+        "voices": {"help": "The voices it can use for each home language, and the one set."},
+        "set_voice": {"help": "Speak a language in another voice.",
+                      "args": {"language": {"type": "string", "help": "A language code, e.g. de.", "required": True},
+                               "voice": {"type": "string", "help": "A voice's name or id (from voices); empty: the engine's default.",
+                                         "required": True}}},
+    }
 
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
@@ -156,14 +170,36 @@ class VoiceOut(Card):
         if where.startswith("media_player."):
             await self._speak_on(where, text, language)
         else:
-            await self.core.audio.say(where, text, language)
+            await self.core.audio.say(where, text, language, self.settings.get("engine") or None, self.settings.get("voices"))
         return []
+
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
+        if function == "voices":
+            mine = self.settings.get("voices") or {}
+            return {code: {"voices": [v["name"] for v in got["voices"]], "set": next((v["name"] for v in got["voices"]
+                    if v["id"] == mine.get(code, {}).get("voice")), "the engine's default")}
+                    for code, got in self.core.audio.voices(self.settings.get("engine") or None).items()}
+        if function == "set_voice":
+            code, wanted = str(args.get("language") or "").lower()[:3], str(args.get("voice") or "").strip()
+            got = self.core.audio.voices(self.settings.get("engine") or None).get(code)
+            if got is None:
+                return {"error": f"{code} is not a home language"}
+            voices = dict(self.settings.get("voices") or {})
+            if not wanted:
+                voices.pop(code, None)
+            else:
+                voice = next((v for v in got["voices"] if wanted.lower() in (v["id"].lower(), v["name"].lower())), None)
+                if voice is None:
+                    return {"error": f"no voice {wanted} for {code}", "voices": [v["name"] for v in got["voices"]]}
+                voices[code] = {"language": voice["locale"], "voice": voice["id"]}
+            await self.domain.update_card(self.id, settings={"voices": voices})  # the card is made again with it
+            return {"done": "set_voice", "language": code, "voice": wanted or "the engine's default"}
+        return await super().call(function, args, context)
 
     async def _speak_on(self, player: str, text: str, language: str | None) -> None:
         """Speak on a Home Assistant media player with AAC's voice engine (HA's tts.speak)."""
-        audio = self.core.audio.settings
-        voice = (audio.get("voices") or {}).get((language or self.hass.config.language or "en")[:2])
-        data = {"entity_id": audio.get("tts"), "media_player_entity_id": player, "message": text}
+        voice = (self.settings.get("voices") or {}).get(language or self.core.languages()[0])
+        data = {"entity_id": self.settings.get("engine") or self.core.audio.settings.get("tts"), "media_player_entity_id": player, "message": text}
         if voice:
             data |= {"language": voice["language"], "options": {"voice": voice["voice"]}}
         try:

@@ -41,6 +41,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, LOGGER
+from .languages import NAMES, code_of, describe, from_ha
 from .models import ModelError, ModelUnreachable, run
 
 if TYPE_CHECKING:
@@ -256,7 +257,20 @@ class AudioHub:
 
     # ------------------------------------------------------------------ speech to text
     async def stt(self, pcm: bytes, language: str | None = None, entries: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
-        """Speech to text: a card's models first (free ones, else their queues), then HA's engines from the Audio page."""
+        """Speech to text: a card's models first (free ones, else their queues), then HA's engines from the Audio page.
+        No language given: the home's (one: that one; several: detected, and heard again in the main language when the
+        model heard one outside them, e.g. a short word taken for Welsh)."""
+        home = self.core.languages()
+        if not language and len(home) == 1:
+            language = home[0]
+        found = await self._stt(pcm, language or None, entries)
+        if found and not language and code_of(found.get("language")) not in home and not found.get("engine", "").startswith("stt."):  # a model: ask again
+            found = await self._stt(pcm, home[0], entries) or found
+        if found:
+            found["language"] = code_of(found.get("language")) or found.get("language")
+        return found
+
+    async def _stt(self, pcm: bytes, language: str | None, entries: list[dict[str, Any]] | None) -> dict[str, Any] | None:
         async def transcribe(model):
             fd = aiohttp.FormData()
             fd.add_field("file", pcm_to_wav(pcm), filename="speech.wav", content_type="audio/wav")
@@ -310,15 +324,17 @@ class AudioHub:
         return {"text": result.text or "", "language": lang, "engine": entity_id}
 
     # ------------------------------------------------------------------ speaking
-    async def tts(self, text: str, language: str | None = None) -> bytes | None:
-        """Text to speech (WAV) with the chosen HA engine (the voice set for the language, else its default)."""
-        engine = self.settings.get("tts")
+    async def tts(self, text: str, language: str | None = None, engine: str | None = None,
+                  voices: dict[str, dict[str, str]] | None = None) -> bytes | None:
+        """Text to speech (WAV) with an HA engine (a card's, else the Audio page's default), in the voice a card set for
+        the language ({code: {language: locale, voice}}), else the engine's default."""
+        engine = engine or self.settings.get("tts")
         if not engine:
             LOGGER.warning("AAC audio: no voice engine set (Audio in the sidebar)")
             return None
         options = {tts.ATTR_PREFERRED_FORMAT: "wav", tts.ATTR_PREFERRED_SAMPLE_RATE: 22050,
                    tts.ATTR_PREFERRED_SAMPLE_CHANNELS: 1, tts.ATTR_PREFERRED_SAMPLE_BYTES: 2}
-        voice = (self.settings.get("voices") or {}).get((language or self.hass.config.language or "en")[:2])
+        voice = (voices or {}).get(code_of(language) or self.core.languages()[0])
         tries = [(voice["language"], {**options, tts.ATTR_VOICE: voice["voice"]})] if voice else []
         for lang, opts in [*tries, (None, options)]:
             try:
@@ -329,9 +345,27 @@ class AudioHub:
                 LOGGER.warning("AAC audio: text to speech failed: %s", err)
         return None
 
-    async def say(self, source_id: str, text: str, language: str | None = None) -> bool:
+    def voices(self, engine: str | None = None) -> dict[str, dict[str, Any]]:
+        """An engine's voices for each home language, from all its variants (en_GB, en_US …):
+        {code: {locale, voices: [{id, name, locale}]}} (locale None: the engine has none)."""
+        from homeassistant.components.tts.helper import get_engine_instance  # noqa: PLC0415
+
+        entity = get_engine_instance(self.hass, engine or self.settings.get("tts") or "")
+        if entity is None:
+            return {}
+        langs, found = list(entity.supported_languages or []), {}
+        for code in self.core.languages():
+            locales = [x for x in langs if code_of(x) == code]
+            voices = [{"id": v.voice_id, "name": v.name + (f" · {loc}" if len(locales) > 1 else ""), "locale": loc}
+                      for loc in locales for v in entity.async_get_supported_voices(loc) or []]
+            found[code] = {"locale": locales[0] if locales else None, "voices": voices}
+        return found
+
+    async def say(self, source_id: str, text: str, language: str | None = None, engine: str | None = None,
+                  voices: dict[str, dict[str, str]] | None = None) -> bool:
         """Speak at a satellite, at the set volume (0 = never aloud)."""
-        if source_id not in self.sources or int(self.settings.get("volume", 40)) <= 0 or not (audio := await self.tts(text, language)):
+        if source_id not in self.sources or int(self.settings.get("volume", 40)) <= 0 or \
+                not (audio := await self.tts(text, language, engine, voices)):
             return False
         return await self.play(source_id, audio, text)
 
@@ -360,6 +394,9 @@ class AudioHub:
     def summary(self) -> dict[str, Any]:
         """For the panel's Audio page."""
         return {"sources": [s.summary() for s in self.sources.values()], "settings": self.settings,
+                "languages": describe(self.core.languages()), "languages_own": bool(self.core.data.get("languages")),
+                "languages_ha": describe(from_ha(self.hass.config.language, self.hass.config.country)),
+                "language_names": NAMES,
                 "stt_entities": sorted(self.hass.states.async_entity_ids("stt")),
                 "tts_entities": sorted(self.hass.states.async_entity_ids("tts"))}
 

@@ -80,7 +80,12 @@ Through `self.core`:
 - `pool`: the models. `pool.entries(list, tag)` (a card's list of models doing a job), `async with pool.slot(entries)
   as model_id` (a free model, else the queues), `pool.tags(model_id)`; `run(pool, entries, job)` and `Client(hass,
   model).chat(...)` from the api.
-- `audio`: `say(satellite, text, language)`, `play(satellite, wav)`, `stop(satellite)`, `spoken()` (when AAC last spoke).
+- `audio`: `say(satellite, text, language, engine=None, voices=None)` (a card's engine and its voice per language
+  `{code: {language: locale, voice}}`; else the Audio page's default engine), `voices(engine)` (an engine's voices per
+  home language), `play(satellite, wav)`, `stop(satellite)`, `spoken()` (when AAC last spoke), `stt(pcm, language,
+  models)` (no language: the home's).
+- `languages()`: the home's languages, main first (ISO codes; the Audio page, else as Home Assistant describes the
+  home). Templates read `{{ languages }}`.
 - `notify(what, **data)`: tell open panels.
 
 Through `self.domain`: `flow.send(context, self.id, port)` (start a context at an output), `cards` (other cards, used
