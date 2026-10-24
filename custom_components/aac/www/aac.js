@@ -9,7 +9,7 @@ const COL = W + 110; // one slot column (v1: a column per step in the flow)
 const KIND_COLOR = { text: "#f5a623", audio: "#4caf50", pool: "#03a9f4", piece: "#9c27b0" };
 // the Conditional's rules editor: tests and actions with the fields each needs ([field, label, kind])
 const TESTS = { contains: "contains", is: "is exactly", starts: "starts with", ends: "ends with", matches: "matches (regex)",
-  has_tag: "has the tag", count_more: "more entries than", empty: "is empty", always: "always" };
+  has_tag: "has the tag", count_more: "more entries than", empty: "is empty", always: "always", template: "template is true" };
 const ACTIONS = {
   replace: ["Replace text", [["a", "find", "text"], ["b", "with", "text"]]], insert: ["Insert text", [["a", "text", "text"], ["b", "at", ["end", "start"]]]],
   remove: ["Remove text", [["a", "text", "text"]]], remove_entries: ["Remove the entries", []], cut: ["Keep only the part", [["a", "after", "text"], ["b", "before", "text"]]],
@@ -91,15 +91,11 @@ textarea { resize: vertical; }
 .node text { fill: var(--primary-text-color); font-size: 13px; } .node text.sub { fill: var(--secondary-text-color); font-size: 10px; } .node text.port { font-size: 10px; fill: var(--secondary-text-color); }
 .dot { cursor: crosshair; }
 .wire { fill: none; stroke-width: 2; opacity: .7; } .wire.pool { stroke-dasharray: 4 4; } .wire.sel { stroke-width: 4; opacity: 1; }
-/* something passed (owner): a -_-_ wave runs along the wire, the wire lights up brighter and fades back over a few seconds;
-   a stream (live audio) keeps the wave running while it flows */
+/* something passed (owner): the wire lights up brighter and pulses thick-thin, fading back to normal over a few seconds */
 .wire.lit { animation: lit 4s ease-out; }
-@keyframes lit { from { filter: brightness(1.9) saturate(1.4); stroke-width: 3.5; opacity: 1; } }
-.pulse { fill: none; stroke-width: 5.5; stroke-dasharray: 9 11; stroke-linecap: round; opacity: 0; pointer-events: none; filter: brightness(1.7); }
-.pulse.go { animation: wave .7s linear infinite, fade 4s ease-out forwards; }
-.pulse.stream { animation: wave .7s linear infinite; opacity: .85; }
-@keyframes wave { to { stroke-dashoffset: -40; } }
-@keyframes fade { 0% { opacity: .95; } 60% { opacity: .55; } 100% { opacity: 0; } }
+@keyframes lit { 0% { filter: brightness(1.9) saturate(1.4); stroke-width: 2; opacity: 1; } 10% { stroke-width: 6; } 20% { stroke-width: 2.5; }
+  30% { stroke-width: 5.5; } 40% { stroke-width: 2.5; } 50% { stroke-width: 4.5; } 60% { stroke-width: 2.5; } 70% { stroke-width: 3.5; filter: brightness(1.4); }
+  100% { stroke-width: 2; filter: none; opacity: .7; } }
 .grip { flex: none; width: 7px; margin: 0 -4px 0 -3px; cursor: col-resize; position: relative; z-index: 5; touch-action: none; }
 .grip:hover, .grip.drag { background: var(--divider-color); }
 .rule { padding: 8px; margin: 6px 0; font-size: 13px; } .rule .row { display: flex; gap: 4px; align-items: center; }
@@ -186,18 +182,14 @@ class AacPanel extends HTMLElement {
         p.style.strokeWidth = (2 + Math.min(100, ev.level) / 100 * 8).toFixed(1);
         clearTimeout(p._lt); p._lt = setTimeout(() => { p.style.strokeWidth = ""; }, 1200);
       }
-      if (ev.level > 8) for (const p of this.shadowRoot.querySelectorAll(`.pulse[data-from="${CSS.escape(ev.wire)}"]`)) { // a stream: the wave keeps running
-        p.classList.add("stream"); clearTimeout(p._st); p._st = setTimeout(() => p.classList.remove("stream"), 900);
-      }
     } else if (ev.what === "flow") {
       if (this.view.kind === "nodes") for (const key of this._monitors().filter((k) => k.split("|")[0] === ev.wire)) {
         clearTimeout((this._mt ||= {})[key]); this._mt[key] = setTimeout(() => this._loadMonitor(key, true), 250);
       }
-      for (const p of this.shadowRoot.querySelectorAll(`.wire[data-from="${CSS.escape(ev.wire)}"], .pulse[data-from="${CSS.escape(ev.wire)}"]`)) {
+      for (const p of this.shadowRoot.querySelectorAll(`.wire[data-from="${CSS.escape(ev.wire)}"]`)) {
         if (ev.to && !ev.to.includes(p.dataset.to)) continue; // only the wires it took
-        const cls = p.classList.contains("pulse") ? "go" : "lit";
-        p.classList.remove(cls); void p.getBoundingClientRect(); p.classList.add(cls); // restart: a second push lights it up again
-        clearTimeout(p._t); p._t = setTimeout(() => p.classList.remove(cls), 4200);
+        p.classList.remove("lit"); void p.getBoundingClientRect(); p.classList.add("lit"); // restart: a second push lights it up again
+        clearTimeout(p._t); p._t = setTimeout(() => p.classList.remove("lit"), 4200);
       }
     }
   }
@@ -534,7 +526,6 @@ class AacPanel extends HTMLElement {
     this.shadowRoot.querySelector("#wires").innerHTML = wires.map((w) => {
       const path = routes[w.key], sel = this.selWire && `${this.selWire.from}|${this.selWire.to}` === w.key;
       return `<path class="wire ${w.kind === "pool" ? "pool" : ""} ${w.loop ? "loop" : ""} ${sel ? "sel" : ""}" data-from="${esc(`${w.a.id}.${w.ap}`)}" data-to="${esc(`${w.b.id}.${w.bp}`)}" d="${path}" stroke="${KIND_COLOR[w.kind] || "#999"}"></path>
-        <path class="pulse" data-from="${esc(`${w.a.id}.${w.ap}`)}" data-to="${esc(`${w.b.id}.${w.bp}`)}" d="${path}" stroke="${KIND_COLOR[w.kind] || "#999"}"></path>
         <path class="hit" data-wire="${esc(w.key)}" d="${path}"><title>${esc(w.a.title)}.${esc(w.ap)} → ${esc(w.b.title)}.${esc(w.bp)} (${esc(w.kind)})</title></path>`;
     }).join("");
     this._view();

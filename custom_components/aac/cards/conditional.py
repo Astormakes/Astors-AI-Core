@@ -7,10 +7,14 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from homeassistant.exceptions import TemplateError
+from homeassistant.helpers.template import Template
+
+from ..const import LOGGER
 from ..message import Message, entry
 from . import Card, register
 
-TESTS = ["contains", "is", "starts", "ends", "matches", "has_tag", "count_more", "empty", "always"]
+TESTS = ["contains", "is", "starts", "ends", "matches", "has_tag", "count_more", "empty", "always", "template"]
 ACTIONS = ["replace", "insert", "remove", "remove_entries", "cut", "split", "join", "case", "trim", "tag", "call",
            "stop", "signal", "output"]
 
@@ -73,7 +77,7 @@ class Conditional(Card):
         chosen: str | None = None
         for n, rule in enumerate(self.settings.get("rules") or []):
             entries = _select(message, rule)
-            if not _test(entries, rule):
+            if not (self._template(rule, entries, message) if rule.get("test") == "template" else _test(entries, rule)):
                 continue
             message.add(self.id, "signal", f"rule {n + 1}: {rule.get('name') or ''}".strip(), ["match"])  # the trace
             for action in rule.get("actions") or []:
@@ -84,6 +88,17 @@ class Conditional(Card):
         tools = {c.id for c in step.tool_cards()}
         port_out = chosen if chosen in self.ports()[1] else "out"
         return [(port_out, c.id) for c, _ in step.targets(port_out) if c.id not in tools]
+
+    def _template(self, rule: dict[str, Any], entries: list[dict[str, Any]], message: Message) -> bool:
+        """The template test: true when it renders true. It sees `entry` (the newest picked entry), `entries`, every
+        card's values and `audio` (when AAC last spoke: {{ audio.last.seconds < 10 }})."""
+        variables = {**self.domain.template_values(), "entry": entries[-1] if entries else None, "entries": entries}
+        try:
+            out = Template(str(rule.get("value") or ""), self.hass).async_render(variables, parse_result=False)
+        except TemplateError as err:
+            LOGGER.debug("AAC: %s rule template: %s", self.id, err)
+            return False
+        return str(out).strip().lower() in ("true", "yes", "on", "1")
 
     async def _do(self, action: dict[str, Any], entries: list[dict[str, Any]], message: Message, step) -> str | None:
         do, a, b = action.get("do"), str(action.get("a", "")), str(action.get("b", ""))

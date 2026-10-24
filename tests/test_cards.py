@@ -83,3 +83,21 @@ async def test_card_values_in_templates(hass: HomeAssistant, mock_entry, aioclie
     await lists.call("add_items", {"list": "Shopping", "items": ["milk", "eggs"]})
     relay = await core.domain.add_card("relay", "Counts", {"text": "{{ lists.total }} open; {{ cards['lists'].lists | join(',') }}"})
     assert relay.render() == f"{lists.current()['total']} open; {','.join(lists.current()['lists'])}" and "Shopping" in relay.render()
+
+
+async def test_template_test_reads_when_aac_last_spoke(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """A Conditional's template test sees the core's last-spoke times (overall and per satellite) and the entry."""
+    import time
+
+    core = await setup_aac(hass, mock_entry)
+    core.audio.settings["known"] = [{"id": "kitchen", "name": "Kitchen"}, {"id": "office", "name": "Office"}]
+    core.audio._spoke = {"kitchen": time.time() - 4, "office": time.time() - 60}
+    card = await core.domain.add_card("conditional", "Follow-up", {"outputs": ["yes"], "rules": [
+        {"select": {"by": "kind", "value": "said"}, "test": "template",
+         "value": "{{ audio.satellites[entry.data.mic].seconds < 10 }}", "actions": [{"do": "output", "a": "yes"}]}]})
+    for mic, port in (("kitchen", "yes"), ("office", "out")):
+        message = Message(origin="ears")
+        message.add("ears", "said", "and tomorrow?", mic=mic)
+        assert await card.handle(message, "in", Step(core.domain.flow, card, "in", message)) == []  # nothing wired
+        assert card._template(card.settings["rules"][0], [message.last("said")], message) == (port == "yes")
+    assert core.audio.spoken()["last"]["satellite"] == "kitchen"

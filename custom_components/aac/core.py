@@ -241,8 +241,9 @@ class Domain:
                     found[card.id] = card.current()
                 except Exception:  # noqa: BLE001 - one card's values must not break a template
                     LOGGER.exception("AAC: values of %s", card.id)
-        own = {"states", "now", "utcnow", "is_state", "state_attr", "cards"}  # HA's names win
-        return {**{k: v for k, v in found.items() if k.isidentifier() and k not in own}, "cards": found}
+        own = {"states", "now", "utcnow", "is_state", "state_attr", "cards", "audio"}  # HA's and the core's names win
+        return {**{k: v for k, v in found.items() if k.isidentifier() and k not in own}, "cards": found,
+                "audio": self.core.audio.spoken()}
 
     def tag_pool(self) -> list[dict[str, str]]:
         """Every tag the cards of this domain write, plus the owner's own (`user.…`)."""

@@ -188,6 +188,7 @@ class AudioHub:
         self.core, self.hass = core, core.hass
         self.sources: dict[str, Source] = {}
         self._mics: tuple[float, list] = (float("-inf"), [])
+        self._spoke: dict[str, float] = {}  # satellite → when AAC last finished speaking there (time.time())
 
     @property
     def settings(self) -> dict[str, Any]:
@@ -226,9 +227,23 @@ class AudioHub:
             if card.settings.get("source") in ("any", source.id, None, ""):
                 card.hear(chunk, {"source": source.id, "name": source.name, "area": source.area})
 
+    def spoken(self) -> dict[str, Any]:
+        """When AAC last spoke, for templates ({{ audio.last.seconds }}, {{ audio.satellites[id].seconds }}): seconds
+        since it stopped speaking (0 while it speaks, a huge number if never), overall and per satellite."""
+        now, never = time.time(), 10**9
+        sats = {}
+        for k in self.settings.get("known", []):
+            speaking = bool((s := self.sources.get(k["id"])) and s.playing)
+            at = self._spoke.get(k["id"])
+            sats[k["id"]] = {"name": k["name"], "speaking": speaking, "seconds": 0 if speaking else round(now - at, 1) if at else never}
+        last_id = max(sats, key=lambda i: (sats[i]["speaking"], self._spoke.get(i, 0)), default=None)
+        last = {"satellite": last_id, **sats[last_id]} if last_id else {"satellite": None, "name": None, "speaking": False, "seconds": never}
+        return {"last": last, "satellites": sats}
+
     @callback
     def played(self, source: Source) -> None:
         """The satellite finished playing AAC's voice."""
+        self._spoke[source.id] = time.time()
         source.playing = False
         source.meter.reset()
         self.core.notify("audio")
