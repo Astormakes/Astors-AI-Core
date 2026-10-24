@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.1.25, live on the owner's HA
+## Current state (2026-10-24) – 2.1.26, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -144,6 +144,11 @@ Z.Y.X: X = changes the backup survives (fixes and new features alike), Y = a bac
 (and `upgrade()` for their saved settings). Bump the manifest version with every deploy (the browser caches the panel
 by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2.1.2; from 2.1.3 on as above.
 
+- 2.1.26: Undo broke the owner's setup: while it made the cards one by one, the Audio clipper (phrase pause) did not
+  find its joiner among the cards made so far, added a second one, and the loop over the cards broke ("dictionary
+  changed size"); its rewiring dropped every wire to cards not made yet. Fixed: the clipper reads the setup (not the
+  running cards), and loops over cards work on a copy. Repaired from the undo history (26 cards, 40 wires, positions
+  moved back), the Follow-up rule set again; one backup: `/config/aac/bak-v2-2.1.26/`.
 - 2.1.25: the Follow-up counts from where you started talking: (seconds since AAC stopped) − (how long the line
   was) < 6 s, so long answers stay in (owner: answers over 20 s fell out of the window).
 - 2.1.24: the cards folder is looked at every 10 s.
@@ -208,7 +213,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
 
 - The lists (Open Issues, Project Portfolio) live in the default domain's Lists card.
 - HA's own Assist pipeline uses `conversation.qwen3_8b` (not AAC).
-- The one backup of v2 storage: `/config/aac/bak-v2-alpha36/` (before Voice out was replaced). v1's storage and the
+- The one backup of v2 storage: `/config/aac/bak-v2-2.1.26/` (after the Undo repair). v1's storage and the
   old backups are gone (owner ran the cleanup, 2026-10-24).
 - Docs cleanup (2026-10-24): v0/v1 docs deleted (history, v1 progress, the old framework and UI design, the lists
   export, the Calisto handoff: built into the satellite's plugin), v1 contracts removed from spec/ (tag `v1-final`).

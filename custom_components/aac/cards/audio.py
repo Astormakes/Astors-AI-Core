@@ -11,10 +11,10 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.api import (LOGGER, SAMPLE_RATE, Card, Context, Segmenter, level, make_vad, new_id, pcm_to_wav,
+from custom_components.aac.api import (CARD_TYPES, LOGGER, SAMPLE_RATE, Card, Context, Segmenter, level, make_vad, new_id, pcm_to_wav,
                                       register, resample, wav_to_pcm)
 
-VERSION = "2.6.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.7.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -122,10 +122,15 @@ class PauseCut(Card):
         self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "cuts"), f"aac {self.id} cut")
 
     def _joined(self) -> bool:
-        """A card at its cuts that also takes heard lines puts phrases together (a Phrase joiner, or one of your own)."""
-        cards = self.domain.cards
-        return any(w["from"] == f"{self.id}.cuts" and (c := cards.get(w["to"].split(".")[0])) is not None and "lines" in c.ports()[0]
-                   for w in self.domain.wires)
+        """A card at its cuts that also takes heard lines puts phrases together (a Phrase joiner, or one of your own).
+        Read from the domain's setup, not its running cards: while a setup is made (start, Undo), not all are there yet."""
+        setup = self.domain.export()["cards"]
+        def takes_lines(card_id: str) -> bool:
+            if (card := self.domain.cards.get(card_id)) is not None:
+                return "lines" in card.ports()[0]
+            kind = CARD_TYPES.get(setup.get(card_id, {}).get("type", ""))
+            return kind is not None and "lines" in kind.inputs
+        return any(w["from"] == f"{self.id}.cuts" and takes_lines(w["to"].split(".")[0]) for w in self.domain.wires)
 
     async def _add_joiner(self) -> None:
         """Phrases need their sister card: a Phrase joiner after the cards it feeds (Speech to text), which takes over

@@ -271,3 +271,23 @@ async def test_phrase_joiner_and_its_wiring(hass, mock_entry):
             assert (sent == []) == (data["cut"] == "phrase")  # only the end counts
     (whole,) = sent
     assert whole.last("said")["text"] == "computer, what time is it?" and whole.last("said")["data"]["mic"] == "pc"
+
+
+async def test_undo_with_phrases_makes_every_card(hass, mock_entry):
+    """Undo (or a start) makes the cards one after another; an Audio clipper with a phrase pause must not add a second
+    joiner because its joiner is not made yet (it read the running cards, and the loop broke: 2026-10-24)."""
+    from custom_components.aac.defaults import async_voice_chain
+
+    core = await setup_aac(hass, mock_entry)
+    core.audio.settings["known"] = [{"id": "pc", "name": "PC"}]
+    core.data["voice_chain"] = False
+    await async_voice_chain(core)
+    d = core.domain
+    await d.update_card("cut", settings={"phrase": 300})
+    await hass.async_block_till_done()
+    joiners = [c.id for c in d.cards.values() if c.type == "phrase_joiner"]
+    await d.update_card("follow_up", settings={"rules": []})  # one more change, then Undo
+    assert await d.undo_last()
+    await hass.async_block_till_done()
+    assert set(d.export()["cards"]) == set(d.cards)  # every card made
+    assert [c.id for c in d.cards.values() if c.type == "phrase_joiner"] == joiners and d.cards["follow_up"].settings["rules"]

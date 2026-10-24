@@ -62,7 +62,7 @@ class Domain:
         self.slots = data.get("slots", {})
         self.user_tags = data.get("user_tags", [])
         self.cards = {}
-        for card_id, spec in self._specs.items():
+        for card_id, spec in list(self._specs.items()):  # a card made here may add another
             await self._make(card_id, spec)
 
     async def start(self) -> None:
@@ -217,7 +217,7 @@ class Domain:
         for card in list(self.cards.values()):
             await self._end(card)
         self.cards = {}
-        for card_id, spec in self._specs.items():
+        for card_id, spec in list(self._specs.items()):  # a card made here may add another (it waits for its turn)
             await self._make(card_id, spec)
         if "positions" in setup:
             self.positions = deepcopy(setup["positions"])
