@@ -181,3 +181,17 @@ async def test_a_scope_shows_audio_only_while_watched(hass, mock_entry):
         await hass.async_block_till_done()
     unsub()
     assert "view" in seen and "level" in seen
+
+
+async def test_a_level_card_keeps_the_size_of_any_card(hass, mock_entry):
+    """The Level card: an inline view (no extra height), one point per frame while watched, audio passed on."""
+    core = await setup_aac(hass, mock_entry)
+    level = await core.domain.add_card("level", "Level")
+    assert level.summary()["view"]["inline"] is True
+    shown = []
+    with patch.object(type(level), "show", lambda self, data: shown.append(data)):
+        level.stream("in", audio((LOUD, 0.1)), {"source": "pc"})
+        assert shown == []  # nobody watches: nothing computed
+        core.watch([level.id])
+        level.stream("in", audio((LOUD, 0.1)), {"source": "pc"})
+    assert len(shown) == 1 and -40 < shown[0] < 0

@@ -640,7 +640,7 @@ class AacPanel extends HTMLElement {
         ${ins.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-in="${esc(n)}" data-kind="${k}" points="${this._tri(inX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : k.includes("|") ? this._halves(inX, HEAD + ROW * i + ROW / 2, n, k) : `<circle class="dot" data-in="${esc(n)}" data-kind="${k}" cx="${inX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${inT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
         ${outs.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-out="${esc(n)}" data-kind="${k}" points="${this._tri(outX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : c.square.includes(n) ? `<rect class="dot" data-out="${esc(n)}" data-kind="${k}" x="${outX - 6}" y="${HEAD + ROW * i + ROW / 2 - 6}" width="12" height="12" fill="${KIND_COLOR[k] || "#999"}"></rect>`
           : `<circle class="dot" data-out="${esc(n)}" data-kind="${k}" cx="${outX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${outT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
-        ${c.view ? `<foreignObject x="8" y="${this._ports(c) + 2}" width="${W - 16}" height="${c.view.height}"><div xmlns="http://www.w3.org/1999/xhtml" data-viewhost="${esc(c.id)}" style="width:100%;height:100%"></div></foreignObject>` : ""}
+        ${c.view ? `<foreignObject ${c.view.inline ? `x="34" y="${HEAD + 2}" width="${W - 76}" height="${ROW - 4}"` : `x="8" y="${this._ports(c) + 2}" width="${W - 16}" height="${c.view.height}"`}><div xmlns="http://www.w3.org/1999/xhtml" data-viewhost="${esc(c.id)}" style="width:100%;height:100%"></div></foreignObject>` : ""}
       </g>`;
     }).join("");
     this._placeViews();
@@ -682,7 +682,7 @@ class AacPanel extends HTMLElement {
   }
 
   _ports(c) { return HEAD + ROW * Math.max(Object.keys(c.inputs).length, Object.keys(c.outputs).length, 1); } // where its view starts
-  _height(c) { return this._ports(c) + (c.view ? c.view.height + 6 : 0) + 8; }
+  _height(c) { return this._ports(c) + (c.view && !c.view.inline ? c.view.height + 6 : 0) + 8; }
 
   _wireList() {
     const byId = Object.fromEntries(this.state.domain.cards.map((c) => [c.id, c]));

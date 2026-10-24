@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.2.0, live on the owner's HA
+## Current state (2026-10-24) – 2.3.0, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -143,6 +143,8 @@ From 2.1.0 on: patch (2.1.1) = fixes, minor (2.2.0) = new features or changed be
 backups no longer load, decided by `tests/test_backups.py` (the backup of the current major version must load). Card files have their own VERSION (and `upgrade()` for their saved settings). Bump the
 manifest version with every deploy (the browser caches the panel by it).
 
+- 2.3.0: the Level card (loudness as a small graph moving right to left; an inline view in its port row, so it
+  keeps the size of any card). Backup test passed: minor.
 - 2.2.0: card folders, cards with a view (Scope), live wires 10×/s only while Nodes is open. Backup test passed:
   minor.
 - 2.1.0: a kept-alive connection the server had closed is tried once more (a model was taken for off after every tool
@@ -208,4 +210,8 @@ manifest version with every deploy (the browser caches the panel by it).
     the chat moves up and the box grows upwards; send is a checkmark (grey, green on hover), so resending is a double
     click. Editing your line runs the turn again from there; first a warning: Resend (what came after it goes) / Keep
     the rest (only the text changes) / Cancel. Editing an answer only changes the text.
+12. **Own popups and message boxes** (owner): AAC's own dialogs instead of the browser's confirm / prompt / alert.
+13. **Archive for chats** (owner, as in v1): a chat can be archived; the sidebar shows a trashcan next to the "⋯" menu
+    of each chat (deleting there asks nothing), archiving in the "⋯" menu. A model's `chats` still lists archived
+    chats (marked), but `read` and `continue` refuse them.
 - Presets; docs/v2 page 2 details for the remaining cards.
