@@ -10,7 +10,7 @@ import numpy as np
 
 from custom_components.aac.api import Card, register
 
-VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -24,9 +24,10 @@ class Level(Card):
             "where clips begin and end: whole clips, phrases (a phrase pause), and the end of a sentence (an Audio "
             "clipper's 'ends'). Wire the audio and the clips into it to see where cuts are made. Audio and clips go on "
             "unchanged.")
-    inputs = {"in": "audio|clip"}
-    outputs = {"out": "audio", "clips": "clip"}
-    ports_help = {"in": "live audio and/or clips (e.g. a Microphone and an Audio clipper's out and ends)",
+    inputs = {"in": "audio|clip", "ends": "clip"}
+    outputs = {"out": "audio", "clips": "clip", "ends": "clip"}
+    ports_help = {"in": "live audio and/or clips (e.g. a Microphone and an Audio clipper's out)",
+                  "ends": "the signals that a sentence is done (an Audio clipper's ends): a red line",
                   "out": "the same audio, unchanged", "clips": "the same clips, unchanged"}
     settings_schema = {
         "height": {"type": "number", "title": "Height (px)", "default": 0,
@@ -55,10 +56,10 @@ class Level(Card):
             self._peak = 0.0
 
     async def clip(self, port: str, clip: dict[str, Any]) -> None:
-        self.domain.flow.clip(self.id, "clips", clip)
+        self.domain.flow.clip(self.id, "ends" if port == "ends" else "clips", clip)  # on unchanged, each its own way
         if not self.watched or clip.get("stop"):
             return
-        if clip.get("pcm") is None:  # an Audio clipper's 'ends': the sentence is done
+        if port == "ends" or clip.get("pcm") is None:  # the sentence is done
             self.show({"mark": "sentence", "seconds": 0})
         else:  # it arrives at its end and knows how long it is
             self.show({"mark": "phrase" if clip.get("utterance") else "clip", "seconds": float(clip.get("seconds") or 0)})

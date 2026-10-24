@@ -195,7 +195,7 @@ async def test_a_level_card_keeps_the_size_of_any_card(hass, mock_entry):
         core.watch([level.id])
         level.stream("in", audio((LOUD, 0.1)), {"source": "pc"})
         await level.clip("in", {"pcm": b"\x00\x00", "seconds": 1.2, "utterance": "u1", "part": 1})
-        await level.clip("in", {"utterance": "u1", "parts": 1})
+        await level.clip("ends", {"utterance": "u1", "parts": 1})
     assert len(shown) == 3 and -40 < shown[0]["db"] < 0
     assert shown[1] == {"mark": "phrase", "seconds": 1.2} and shown[2] == {"mark": "sentence", "seconds": 0}
     await core.domain.update_card(level.id, settings={"height": 80})
