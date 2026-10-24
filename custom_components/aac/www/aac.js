@@ -619,7 +619,7 @@ class AacPanel extends HTMLElement {
       : '<span class="hint">Pick a card type above, then click in the grid to place it.</span>';
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
     return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it.")}
-        <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="fit">Fit</button><button class="small ${this.showValues ? "on" : ""}" id="values" title="The value pool: what templates can use now ({{ card.value }}), live">Values</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
+        <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="redo" ${d.redo ? "" : "disabled"} title="What the last Undo took back">Redo</button><button class="small" id="fit">Fit</button><button class="small ${this.showValues ? "on" : ""}" id="values" title="The value pool: what templates can use now ({{ card.value }}), live">Values</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
       <div class="nodes"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
         <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
         <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}</div>
@@ -1347,6 +1347,7 @@ class AacPanel extends HTMLElement {
     // nodes
     $$("[data-pick]").forEach((el) => el.addEventListener("click", () => { this.selType = this.selType === el.dataset.pick ? null : el.dataset.pick; this.render(); }));
     $("#undo")?.addEventListener("click", async () => { await this.ws("aac/undo"); await this._load(); this.render(); });
+    $("#redo")?.addEventListener("click", async () => { await this.ws("aac/redo"); await this._load(); this.render(); });
     $("#fit")?.addEventListener("click", () => this._fit());
     $("#unpick")?.addEventListener("click", () => this._unpick());
     $$("[data-selcard]").forEach((el) => el.addEventListener("click", () => { this.sel = el.dataset.selcard; this.render(); }));

@@ -59,6 +59,7 @@ class Domain:
         self.wires = data.get("wires", [])
         self.positions = data.get("positions", {})
         self.undo = data.get("undo", [])
+        self.redo: list[dict[str, Any]] = []  # what Undo took back (until the next change; not kept over a restart)
         self.slots = data.get("slots", {})
         self.user_tags = data.get("user_tags", [])
         self.cards = {}
@@ -130,6 +131,7 @@ class Domain:
 
     def _remember(self) -> None:
         self.undo = [*self.undo, self._snapshot()][-UNDO_STEPS:]
+        self.redo = []  # a new change: what was undone cannot come back
 
     async def add_card(self, card_type: str, title: str = "", settings: dict[str, Any] | None = None,
                        at: dict[str, float] | None = None, card_id: str | None = None) -> Card:
@@ -203,7 +205,17 @@ class Domain:
         if not self.undo:
             return False
         last = self.undo.pop()
+        self.redo = [*self.redo, self._snapshot()][-UNDO_STEPS:]
         await self._restore(last)
+        return True
+
+    async def redo_last(self) -> bool:
+        """Forward again to the setup the last Undo left."""
+        if not self.redo:
+            return False
+        nxt = self.redo.pop()
+        self.undo = [*self.undo, self._snapshot()][-UNDO_STEPS:]
+        await self._restore(nxt)
         return True
 
     async def _restore(self, setup: dict[str, Any]) -> None:
@@ -276,7 +288,7 @@ class Domain:
     def summary(self) -> dict[str, Any]:
         """For the panel."""
         return {"id": self.id, "name": self.name, "cards": [c.summary() for c in self.cards.values()],
-                "wires": self.wires, "positions": self.positions, "undo": len(self.undo),
+                "wires": self.wires, "positions": self.positions, "undo": len(self.undo), "redo": len(self.redo),
                 "slots": {s: bool(self.slots.get(s)) for s in SLOTS}, "tags": self.tag_pool()}
 
 

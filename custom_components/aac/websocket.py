@@ -160,6 +160,12 @@ async def ws_undo(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"undone": await _core(hass).domain.undo_last()})
 
 
+@command({vol.Required("type"): "aac/redo"})
+async def ws_redo(hass, connection, msg) -> None:
+    """Forward again to what the last Undo took back."""
+    connection.send_result(msg["id"], {"redone": await _core(hass).domain.redo_last()})
+
+
 @command({vol.Required("type"): "aac/slot", vol.Required("slot"): vol.In(["1", "2", "3"]), vol.Required("action"): vol.In(["save", "load"])})
 async def ws_slot(hass, connection, msg) -> None:
     """Save the setup to a slot, or load it."""

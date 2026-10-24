@@ -404,3 +404,22 @@ class EchoTest(Card):
         file.unlink(missing_ok=True)
         for cached in (folder / "__pycache__").glob("echo_test.*"):
             cached.unlink()
+
+
+async def test_redo_and_buffer_provides(hass: HomeAssistant, mock_entry):
+    """Redo brings back what Undo took (until the next change); a Buffer provides its lines on a dotted wire."""
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    buf = await d.add_card("buffer", "Room")
+    assert await d.undo_last() and "room" not in d.cards
+    assert await d.redo_last() and "room" in d.cards
+    assert await d.undo_last() and await d.redo_last() and "room" in d.cards
+    await d.add_card("relay", "Other")  # a new change: nothing to redo
+    assert not await d.redo_last()
+    buf = d.cards["room"]
+    await buf.call("add", {"text": "first"})
+    await buf.call("add", {"text": "second"})
+    held = buf.held("provides")
+    assert [e["text"] for e in held.entries] == ["first", "second"] and held.entries[0]["id"] == buf.held("provides").entries[0]["id"]
+    d.set_wires([*d.wires, {"from": "room.provides", "to": "other.reads"}])
+    assert {"from": "room.provides", "to": "other.reads"} in d.wires

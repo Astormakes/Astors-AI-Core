@@ -3,11 +3,12 @@ each context as one entry; a model or a Conditional can read and change it throu
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 KIND = {"start": "system", "note": "note", "after": "trailer"}
 
@@ -19,7 +20,11 @@ class Buffer(Card):
     type = "buffer"
     title = "Buffer"
     category = "Logic"
-    help = "Keeps the last lines of the tags you pick and adds them to each context as one entry; a model can read and edit it."
+    help = ("Keeps the last lines of the tags you pick and adds them to each context as one entry; a model can read and "
+            "edit it. A dotted wire from 'provides' lets another card read its lines.")
+    outputs = {"out": "text", "provides": "read"}
+    ports_help = {"in": "a context: its newest matching line is kept", "out": "the context, with the lines added",
+                  "provides": "its lines, for cards that read them (dotted): one entry per line, oldest first"}
     tags = {"lines": "the kept lines (one entry)"}
     keeps_data = True
     settings_schema = {
@@ -46,6 +51,17 @@ class Buffer(Card):
 
     def default_data(self) -> dict[str, Any]:
         return {"lines": []}
+
+    def held(self, port: str) -> Context | None:
+        """What a dotted wire from 'provides' reads: one entry per line (an entry keeps its id while the line is there)."""
+        if port != "provides":
+            return None
+        context, seen = Context(origin=self.id), {}
+        for text in self.data.get("lines") or []:
+            seen[text] = seen.get(text, 0) + 1
+            line = context.add(self.id, "note", text, ["lines"])
+            line["id"] = hashlib.sha1(f"{self.id}|{text}|{seen[text]}".encode()).hexdigest()[:10]
+        return context
 
     def _keep(self, text: str) -> None:
         lines = [*self.data["lines"], text][-max(1, int(self.settings.get("size") or 10)):]
