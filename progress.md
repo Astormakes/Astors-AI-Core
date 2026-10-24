@@ -199,4 +199,11 @@ manifest version with every deploy (the browser caches the panel by it).
    to get that card's functions; fewer tools per turn, maybe better for weaker models (the 35B still makes many tool
    mistakes). v0.40.0 did it as areas first, then `open_area` + `use_tool`, the tool list staying fixed so the prompt
    cache holds. Try it as a Model setting and compare.
+10. **Backups stay loadable, checked by tests** (owner): keep a saved setup file (and a storage copy) of each released
+    version under tests/; a test loads every one and runs a turn. A version that breaks one is a major one.
+11. **Edit messages in a chat** (owner, as in v1, often used to resend): a pencil under a message (yours or the
+    model's), visible when hovering the message or near the pencil. Editing keeps the message where it is on screen,
+    the chat moves up and the box grows upwards; send is a checkmark (grey, green on hover), so resending is a double
+    click. Editing your line runs the turn again from there (what came after it goes); editing an answer only changes
+    the text.
 - Presets; docs/v2 page 2 details for the remaining cards.
