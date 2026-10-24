@@ -46,6 +46,7 @@ class AacChatPage extends HTMLElement {
     const modes = this.chat ? `<button class="small" data-mode="" ${!this.mode ? "disabled" : ""}>Chat</button><button class="small" data-mode="doc" title="The document: every entry with its card, kind and tags" ${this.mode === "doc" ? "disabled" : ""}>Document</button><button class="small" data-mode="request" title="What the model got for the newest turn: each message with the cards its text came from, and the tools it had" ${this.mode === "request" ? "disabled" : ""}>Request</button><button class="small danger" id="delchat">Delete</button>` : "";
     this.innerHTML = `<div class="chat">${header(this.chat?.title || `New chat · ${card.title}`, `${modes}<button class="small" id="chatstop" title="Stop: sends this chat's context with a stop; a model still writing cuts its answer">Stop</button>`)}
       <div class="log">${log}${live}</div>
+      ${(this.panel.failing?.() || []).length ? `<div class="warnline">Not answering: ${esc(this.panel.failing().join(", "))} (Settings → Models)</div>` : ""}
       <div class="composer"><textarea id="input" placeholder="Message AAC…" ${this.busy ? "disabled" : ""}></textarea><button class="primary" id="send" ${this.busy ? "disabled" : ""}>Send</button></div></div>`;
     const box = this.querySelector(".log");
     if (box) box.scrollTop = box.scrollHeight;

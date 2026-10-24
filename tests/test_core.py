@@ -319,3 +319,20 @@ async def test_domains_new_rename_delete(hass: HomeAssistant, mock_entry, hass_s
         await core.delete(first)  # the last one stays
     perms = [k for c in core.domain.cards.values() for k, f in c.settings_schema.items() if f.get("permission")]
     assert {"offers", "levels"} <= set(perms) and "default" not in perms
+
+
+async def test_a_model_that_does_not_answer_is_flagged_until_it_does(hass: HomeAssistant, mock_entry):
+    """The panel warns about models that do not answer: from the first failure until they answer again."""
+    from homeassistant.helpers.dispatcher import async_dispatcher_connect
+
+    from custom_components.aac.const import SIGNAL
+
+    core = await setup_aac(hass, mock_entry)
+    told = []
+    unsub = async_dispatcher_connect(hass, SIGNAL, lambda e: told.append(e["what"]))
+    core.pool.mark_down("m_big")
+    assert next(m for m in core.pool.summary() if m["id"] == "m_big")["failing"] and told.count("models") == 1
+    core.pool.mark_down("m_big")  # still failing: told once
+    core.pool.mark_up("m_big")
+    assert not next(m for m in core.pool.summary() if m["id"] == "m_big")["failing"] and told.count("models") == 2
+    unsub()

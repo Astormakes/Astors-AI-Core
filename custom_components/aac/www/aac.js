@@ -45,6 +45,10 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .dmenu { position: absolute; left: 0; right: 0; top: 100%; z-index: 50; background: var(--card-background-color); border: 1px solid var(--divider-color);
   border-radius: 8px; padding: 4px 0; box-shadow: 0 4px 16px rgba(0,0,0,.25); } .dmenu hr { border: 0; border-top: 1px solid var(--divider-color); margin: 4px 0; }
 .dot[data-kind="any"] { stroke: #888; stroke-width: 1.5; } /* takes anything: white, with a rim to show on light themes */
+.item[data-warn]::after { content: " !"; color: var(--error-color, #db4437); font-weight: 700; }
+h4[data-alarm] { color: var(--error-color, #db4437); animation: alarm 2s ease-in-out infinite; }
+@keyframes alarm { 50% { opacity: .45; } }
+.warnline { color: var(--error-color, #db4437); font-size: 12px; padding: 4px 16px 0; }
 .permhead { margin: 0; cursor: pointer; user-select: none; } .card .permhead + * { margin-top: 10px; }
 .access .acclist { max-height: 420px; overflow-y: auto; border: 1px solid var(--divider-color); border-radius: 8px; }
 .accrow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--divider-color); }
@@ -225,6 +229,14 @@ class AacPanel extends HTMLElement {
     } else if (ev.what === "setup") {
       clearTimeout(this._st);
       this._st = setTimeout(async () => { await this._load(); if (this.view.kind !== "nodes" || !this._dragging) this.render(); }, 150);
+    } else if (ev.what === "models") { // a model stopped or started answering: the warnings follow
+      clearTimeout(this._mt2);
+      this._mt2 = setTimeout(async () => {
+        this.state = await this.ws("aac/state");
+        const n = this.shadowRoot.querySelector("nav");
+        if (n) n.outerHTML = this._nav();
+        if (this.view.kind === "card") this._els[this.view.card]?.render?.(); else if (this.view.kind === "models") this.render();
+      }, 300);
     } else if (ev.what === "appearance") {
       this.ws("aac/appearance").then((look) => { this.look = look; this.render(); });
     } else if (ev.what === "audio" && this.view.kind === "audio") {
@@ -279,6 +291,7 @@ class AacPanel extends HTMLElement {
       save: async (settings) => this.ws("aac/card/update", { card, settings }),
       go: (entry) => this.go("card", card, entry),
       header: (title, extra) => this._header(title, extra), cardTitle: (id) => this._card(id)?.title || id, esc, md, tip,
+      failing: () => this._failing(), // names of models that do not answer (a page may warn)
     };
   }
 
@@ -374,6 +387,8 @@ class AacPanel extends HTMLElement {
       <p class="hint">Fields save when you leave them.</p></div>`;
   }
 
+  _failing() { return (this.state?.models || []).filter((m) => m.failing).map((m) => m.name); }
+
   _foldMode(key) { return this.look?.folds?.[key] || (key === "chat" ? "arrow" : "auto"); } // how a sidebar group folds
 
   _nav() { // the cards' pages and their entries, then Nodes and the core's settings
@@ -392,8 +407,10 @@ class AacPanel extends HTMLElement {
       n.nav.add ? `<button class="small" data-navadd="${esc(n.card)}" title="${esc(n.nav.add)}">+</button>` : "",
       `data-go="card" data-card="${esc(n.card)}" data-id="" title="Open its page"`)).join("");
     const single = this.nav.filter((n) => !n.nav).map((n) => item(n.title, "card", n.card)).join("");
+    const failing = this._failing();
     const settings = group("settings", "Settings", ["audio", "models", "appearance"].includes(v.kind),
-      `${item("Audio", "audio")}${item("Models", "models")}${item("Appearance", "appearance")}`, "", `data-go="${["audio", "models", "appearance"].includes(v.kind) ? v.kind : "audio"}"`);
+      `${item("Audio", "audio")}${item("Models", "models").replace('data-go="models"', `data-go="models" ${failing.length ? "data-warn" : ""}`)}${item("Appearance", "appearance")}`, "",
+      `data-go="${["audio", "models", "appearance"].includes(v.kind) ? v.kind : failing.length ? "models" : "audio"}" ${failing.length ? `data-alarm title="Not answering: ${esc(failing.join(", "))}"` : ""}`);
     return `<nav><div class="top"><button class="menu" id="habtn" title="Home Assistant's menu">⌂</button><b>AAC</b><span>v${esc(s.version)}</span></div>
       <div class="dom">${this._domainMenu()}</div>
       <div class="scroll">${groups}${single ? `<h4>MORE</h4>${single}` : ""}</div>
@@ -481,7 +498,7 @@ class AacPanel extends HTMLElement {
   // ------------------------------------------------------------------ models
   _models() {
     const rows = this.state.models.map((m) => `<tr><td><b>${esc(m.name)}</b><div class="hint">${esc(m.model)} · ${esc(m.base_url)}</div><div class="hint">${(m.tags || []).map((t) => `<code>${esc(t)}</code>`).join(" ")}</div></td>
-      <td>${m.up ? "✓" : '<span class="hint">skipped (did not answer)</span>'}<div class="hint">${m.busy || 0}/${m.parallel || 1} running${m.waiting ? ` · ${m.waiting} waiting` : ""}</div></td>
+      <td>${m.failing ? `<span style="color:var(--error-color,#db4437)">✗ not answering${m.up ? " (tried again with the next request)" : " (skipped for a minute)"}</span>` : "✓"}<div class="hint">${m.busy || 0}/${m.parallel || 1} running${m.waiting ? ` · ${m.waiting} waiting` : ""}</div></td>
       <td><button class="small" data-editmodel="${esc(m.id)}">Edit</button> <button class="small danger" data-delmodel="${esc(m.id)}">Delete</button></td></tr>`).join("");
     const f = this.modelForm || {};
     return `${this._header("Models", tip("Every model AAC may use, for all domains. Each card that uses models has its own list, picked from these by what they can do (their tags). Any OpenAI-compatible server works: llama.cpp, Ollama, vLLM, LM Studio, cloud APIs."))}

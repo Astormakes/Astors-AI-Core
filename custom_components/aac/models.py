@@ -14,8 +14,9 @@ import aiohttp
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import LOGGER
+from .const import LOGGER, SIGNAL
 
 DOWN_FOR = 60  # seconds a model that did not answer is skipped
 
@@ -133,6 +134,7 @@ class ModelPool:
         self.hass = hass
         self.models = models
         self._down: dict[str, float] = {}
+        self.failing: set[str] = set()  # models that did not answer last time (until they answer again): the panel warns
         self._busy: dict[str, int] = {}  # requests running per model
         self._queues: dict[str, list[asyncio.Future]] = {}  # contexts waiting per model (one queue, every card and domain)
 
@@ -218,16 +220,22 @@ class ModelPool:
     def mark_down(self, model_id: str) -> None:
         """Skip it for a while."""
         self._down[model_id] = time.monotonic() + DOWN_FOR
-        LOGGER.info("AAC: model %s unreachable, skipped for %s s", model_id, DOWN_FOR)
+        LOGGER.warning("AAC: model %s does not answer, skipped for %s s", model_id, DOWN_FOR)
+        if model_id not in self.failing:
+            self.failing.add(model_id)
+            async_dispatcher_send(self.hass, SIGNAL, {"what": "models"})
 
     def mark_up(self, model_id: str) -> None:
         """It answered."""
         self._down.pop(model_id, None)
+        if model_id in self.failing:
+            self.failing.discard(model_id)
+            async_dispatcher_send(self.hass, SIGNAL, {"what": "models"})
 
     def summary(self) -> list[dict[str, Any]]:
         """For the panel (no keys)."""
         return [{**{k: v for k, v in m.items() if k != "api_key"}, "has_key": bool(m.get("api_key")),
-                 "up": self.usable(m["id"]), "tags": self.tags(m["id"]), "busy": self._busy.get(m["id"], 0),
+                 "up": self.usable(m["id"]), "failing": m["id"] in self.failing, "tags": self.tags(m["id"]), "busy": self._busy.get(m["id"], 0),
                  "waiting": len(self._queues.get(m["id"], []))} for m in self.models]
 
 

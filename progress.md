@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.1.16, live on the owner's HA
+## Current state (2026-10-24) – 2.1.17, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -144,6 +144,10 @@ Z.Y.X: X = changes the backup survives (fixes and new features alike), Y = a bac
 (and `upgrade()` for their saved settings). Bump the manifest version with every deploy (the browser caches the panel
 by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2.1.2; from 2.1.3 on as above.
 
+- 2.1.17 (owner): a model that does not answer is flagged until it answers again (`pool.failing`, event
+  "models"): a red line above the chat's input, SETTINGS blinks red, Models gets a red !, the Models page says so.
+  The PC's NVIDIA driver refused a second process after Whisper's crash loop (OOM: the 35B's --fit took the card;
+  now `LLAMA_ARG_FIT_TARGET=2048` in llm.env keeps 2 GB free); needs a PC restart, then start aac-whisper.
 - 2.1.16: the Log card keeps clips as audio (config/aac/log/<domain>.<card>/, newest N) and plays them on its
   page (▶). The PC's Whisper (aac-whisper) had been off since 2026-10-22 20:09: speech to text fell back to HA's
   faster_whisper on the HA machine (rough). Started again; the 35B is Qwen3.6-35B-A3B again (owner: Ornith is worse;
