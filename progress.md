@@ -249,4 +249,8 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     --models-max 1` instead of `-m …$MODEL` in `aac-llm`, the unit reads `~/.config/aac/llm.env`) offers every model in
     ~/models (now Ornith-1.5-35B and Qwen3.6-35B-A3B); AAC adds each as a model on the same address. A switch loads the
     other one (~15–30 s). Later AAC itself decides what to load (the broker idea from v1).
+15. **Smaller undo history**: the domain's store is ~720 KB because every undo step and slot is a whole copy of the
+    setup (the Home card's access list alone is big), and it is written on every change. Keep changes instead of
+    copies, or leave big settings out of the undo steps. Also: a removed card's data stays stored (for Undo); stores of
+    cards that are long gone should go (owner's no-dead-weight rule).
 - Presets; docs/v2 page 2 details for the remaining cards.
