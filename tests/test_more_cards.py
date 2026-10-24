@@ -189,3 +189,18 @@ async def test_busy_models_queue_or_drop(hass: HomeAssistant, mock_entry):
     for model_id in ("m_big", "m_small"):
         pool._release(model_id)
     assert [m["busy"] for m in pool.summary()] == [0, 0]
+
+
+async def test_chat_finds_and_continues_old_chats(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """A model can look up older chats and go on in one: it becomes the current chat for the next (spoken) turns."""
+    core = await setup_aac(hass, mock_entry)
+    card = core.domain.cards["chat"]
+    old, new = card._new("About the drone"), card._new("Groceries")
+    old["entries"] = [{"id": "e1", "by": "chat", "kind": "said", "text": "the LoRa mast drone", "tags": [], "time": "", "data": {}, "state": "closed"}]
+    old["updated"], new["updated"] = "2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00"
+    found = await card.call("chats", {"search": "lora"})
+    assert [c["id"] for c in found] == [old["id"]] and found[0]["first"] == "the LoRa mast drone"
+    assert card.current() is None  # both quiet for long: the next spoken turn would start a new chat
+    assert (await card.call("continue", {"chat": old["id"]}))["continuing"] == "About the drone"
+    assert card.current()["id"] == old["id"]
+    assert (await card.call("read", {"chat": old["id"]}))[0]["text"] == "the LoRa mast drone"

@@ -12,7 +12,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import LOGGER, Card, Client, Context, entry, is_stop, ModelError, ModelUnreachable, register, tool_spec
 
-VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 MAX_ROUNDS = 8  # model → tool → model … per context
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -69,14 +69,16 @@ class Model(Card):
     title = "Model"
     category = "Models"
     help = ("Reads the whole context and answers, with the first free model of its list. Cards wired from its output "
-            "and back into it are its tools. While it works, every finished sentence and tool call goes out at once (a "
+            "back into it (straight, or through other cards like a Chat) are its tools. While it works, every finished sentence and tool call goes out at once (a "
             "Chat shows it, Text to speech speaks it); the finished answer follows.")
     outputs = {"out": "text"}
     square = {"out"}
+    uses_tools = True
     tags = {"answer": "its answers", "call": "its tool calls", "stop": "it was stopped (its answer is cut off)"}
     ports_help = {"in": "a context arrives: the model reads all of it and answers (a stop while it writes cuts the answer)",
                   "out": "square: the answer goes back to the card the context started at if that is wired, else to "
-                         "every wired card that is not one of its tools. Cards wired from here and back are its tools"}
+                         "every wired card but those wired straight back (that pair only attaches a tool). Every card "
+                         "with functions on a way from here back into it is a tool (each can opt out)"}
     settings_schema = {
         "models": {"type": "modellist", "tag": "text", "title": "Models (in order)", "default": [], "help": "The list is run through from the top: a free model takes the context; a busy one queues it if its Queue is ticked, then the next is tried; the first that gets free takes it. Empty: every model with the tag, queued."},
         "temperature": {"type": "number", "title": "Temperature", "default": 0.7, "help": "0 = always the same, higher = more varied."},
@@ -119,8 +121,9 @@ class Model(Card):
 
     @staticmethod
     def _routes(context: Context, step) -> list[Any]:
-        """The answer goes back where the context started (if wired), else to every card that is not a tool."""
-        tools = {c.id for c in step.tool_cards()}
+        """The answer goes back where the context started (if wired), else to every wired card but those wired straight
+        back (they only attach a tool)."""
+        tools = {c.id for c in step.attached()}
         nexts = [c.id for c, _ in step.targets("out") if c.id not in tools]
         if context.origin in nexts:
             return [("out", context.origin)]

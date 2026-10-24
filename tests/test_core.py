@@ -247,3 +247,15 @@ async def test_a_model_talks_while_it_works(hass: HomeAssistant, mock_entry, aio
     assert answer == "You have no lists yet. Shall I make one?"
     assert spoken == clips == ["Let me check.", "You have no lists yet.", "Shall I make one?"]
     assert ["Let me check."] in shown  # the chat showed it while the model went on
+
+
+async def test_tools_are_the_cards_in_the_loop(hass: HomeAssistant, mock_entry):
+    """A model's tools are the cards with functions on a way from its output back into it (straight, or through a
+    Chat and Relays); a card can opt out; the answer never goes to cards wired straight back."""
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    tools = {c.id for c in d.flow.tools("model")}
+    assert {"chat", "lists", "home", "calendar"} <= tools and "charter" not in tools  # a Relay has no functions
+    assert d.cards["model"].summary()["tools"] == sorted(tools)
+    await d.update_card("chat", settings={"offers": False})
+    assert "chat" not in {c.id for c in d.flow.tools("model")}

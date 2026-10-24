@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.0.0-alpha.38, live on the owner's HA
+## Current state (2026-10-24) – 2.0.0-alpha.39, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -159,6 +159,10 @@ the owner wires them (no automatic wiring), the message is a document of entries
    sends a snapshot after every finished sentence and tool result (`Step.progress`, `Card.progress()`: passes on by
    default; Chat holds the turn once something is finished; Text to speech speaks each finished sentence, in order);
    the Speaker queues clips per satellite (`core.audio.play(queue=True)`, a stop drops the queue).
+- ~~Tools in the loop~~ **done (alpha.39, owner's call):** a Model's (and a Conditional's) tools are all cards with
+  functions in its wiring loop (straight back, or through Chat and Relays); each card has the tick "Offers its
+  functions to models in its loop" (Relays: off by default); the Model card lists its tools. Chat got `chats`
+  (search), `continue` (an older chat becomes the current one) and `read` of any chat.
 2. **Cards with a view** (owner: spectrum, waveform, level bars, maybe bigger cards; all in the card's files, and a
    card may become a folder when it has more than one or two files): a card declares a view; the
    panel draws it inside the card (canvas); the card sends small frames (`core.notify("view", card=…, data=…)`) only
@@ -179,4 +183,8 @@ the owner wires them (no automatic wiring), the message is a document of entries
 7. **Card folders**: a card with more than one or two files (Python, page, view …) becomes a folder.
 8. **Card files reload while AAC runs** (owner): AAC notices a card file whose VERSION went up and loads it again, and
    remakes that type's cards when they are not busy (no restart). Changes to the core still need one.
+9. **Tool menus (v0's idea)** (owner): instead of every function at once, a model sees one entry per card and opens it
+   to get that card's functions; fewer tools per turn, maybe better for weaker models (the 35B still makes many tool
+   mistakes). v0.40.0 did it as areas first, then `open_area` + `use_tool`, the tool list staying fixed so the prompt
+   cache holds. Try it as a Model setting and compare.
 - Presets; docs/v2 page 2 details for the remaining cards.

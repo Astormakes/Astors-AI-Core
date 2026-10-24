@@ -27,6 +27,10 @@ if TYPE_CHECKING:
 
 CARD_TYPES: dict[str, type[Card]] = {}
 UI_URL = "/aac_cards"  # a card file's UI (<stem>.js next to it) is served here
+OFFERS = {"type": "bool", "title": "Offers its functions to models in its loop", "default": True,
+          "help": "A Model (or a Conditional's call action) whose output comes back to it through this card, straight or "
+                  "through other cards, can use these functions, with their descriptions and this card's id. Off: it "
+                  "stays out of their tools."}
 CATEGORIES = ["In and out", "Text", "Logic", "Models", "Data", "Home Assistant", "Audio", "Other"]
 
 
@@ -38,6 +42,8 @@ def register(cls: type[Card]) -> type[Card]:
     cls.version = str(getattr(module, "VERSION", cls.version))
     file = Path(getattr(module, "__file__", "") or "")
     cls.ui_url = f"{UI_URL}/{file.stem}.js?v={cls.version}" if cls.ui and file.with_suffix(".js").exists() else None
+    if cls.functions and "offers" not in cls.settings_schema:  # every card with functions can be kept out of a loop's tools
+        cls.settings_schema = {**cls.settings_schema, "offers": {**OFFERS, "default": cls.offers}}
     CARD_TYPES[cls.type] = cls
     return cls
 
@@ -57,6 +63,8 @@ class Card:
     functions: ClassVar[dict[str, dict[str, Any]]] = {}  # name → {"help", "args": {name: {"type", "help", "required"}}}
     ports_help: ClassVar[dict[str, str]] = {}  # port → one sentence: what goes in or comes out there
     values: ClassVar[dict[str, str]] = {}  # name → what it is: read in templates as {{ <card>.<name> }}
+    offers: ClassVar[bool] = True  # its functions go to the models in its loop (the default of its tick)
+    uses_tools: ClassVar[bool] = False  # it calls the functions of the cards in its loop (a Model): the panel lists them
     ui: ClassVar[bool] = False  # a page of its own: the element aac-card-<type> from the .js next to its file
     ui_url: ClassVar[str | None] = None  # where the panel loads it (set when the file is loaded)
     keeps_data: ClassVar[bool] = False
@@ -156,6 +164,7 @@ class Card:
         ins, outs, square = self.ports()
         return {"id": self.id, "type": self.type, "title": self.name, "settings": self.settings,
                 "inputs": ins, "outputs": outs, "square": sorted(square), "ui": self.ui_url,
+                **({"tools": [c.id for c in self.domain.flow.tools(self.id)]} if self.uses_tools else {}),
                 "tags": {self.tag(t): what for t, what in self.tags.items()}}
 
 

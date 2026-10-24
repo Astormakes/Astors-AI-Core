@@ -52,6 +52,12 @@ While a card works on a turn it may send snapshots of it: `await step.progress(p
 speaks each newly finished sentence). The finished turn always follows through `handle()`. A Model sends one after
 every finished sentence and every tool result.
 
+**Tools.** A card that uses tools (`uses_tools = True`: a Model, a Conditional's call action) gets the functions of
+every card in its loop: on a way from its outputs back into its inputs, straight or through other cards (a Chat,
+Relays). Each card with functions has a tick "Offers its functions to models in its loop" (setting `offers`, default
+`offers = True` on the class; a Relay's is off). Tool names are `<card id>__<function>`, so two cards of one type stay
+apart. A card wired straight out and back only attaches a tool: no answer goes there.
+
 More a card may define: `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
 self.save()`), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop(stop_entry) -> bool` (a stop
 arrived: True when it was busy and sent its own context on), `held(port)` (what a dotted wire from that read output

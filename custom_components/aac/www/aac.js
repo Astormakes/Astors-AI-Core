@@ -552,6 +552,8 @@ class AacPanel extends HTMLElement {
     return `<label>Name</label><input id="title" value="${esc(c.title)}">
       <p class="hint" style="margin-top:8px">${esc(t?.help || "")} <span title="The version of its card file">· ${esc(t?.title || c.type)} v${esc(t?.version || "?")}</span></p>
       ${Object.entries(t?.settings || {}).map(field).join("")}
+      ${c.tools ? `<label>Its tools ${tip("The cards in its loop (on a way from its output back into it, straight or through other cards) that offer functions. A card's tick \"Offers its functions to models in its loop\" takes it out.")}</label>
+        <div class="row" style="flex-wrap:wrap;gap:4px">${c.tools.map((id) => `<button class="small" data-selcard="${esc(id)}" title="Select it">${esc(this._card(id)?.title || id)}</button>`).join("") || '<span class="hint">none: wire cards with functions into its loop</span>'}</div>` : ""}
       ${this._fnDocs(t?.functions)}
       ${this._portDocs(c, t)}
       ${Object.keys(t?.values || {}).length ? `<details class="fold"><summary>Values (for templates)</summary>${Object.entries(t.values).map(([n, h]) => `<div class="fn"><code>{{ ${esc(/^[A-Za-z_]\w*$/.test(c.id) ? c.id : `cards['${c.id}']`)}.${esc(n)} }}</code> ${esc(h)}</div>`).join("")}</details>` : ""}
@@ -1062,6 +1064,7 @@ class AacPanel extends HTMLElement {
     $("#undo")?.addEventListener("click", async () => { await this.ws("aac/undo"); await this._load(); this.render(); });
     $("#fit")?.addEventListener("click", () => this._fit());
     $("#unpick")?.addEventListener("click", () => this._unpick());
+    $$("[data-selcard]").forEach((el) => el.addEventListener("click", () => { this.sel = el.dataset.selcard; this.render(); }));
     $$("[data-skin]").forEach((el) => el.addEventListener("change", async () => { await this.ws("aac/appearance/set", { skin: el.dataset.skin }); }));
     $$("[data-foldmode]").forEach((el) => el.addEventListener("change", async () => { await this.ws("aac/appearance/set", { folds: { [el.dataset.foldmode]: el.value } }); }));
     $("#values")?.addEventListener("click", () => { this.showValues = !this.showValues; this.values = null; this.render(); if (this.showValues) this._loadValues(); });

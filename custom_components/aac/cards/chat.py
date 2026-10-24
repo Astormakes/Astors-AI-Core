@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, is_stop, new_id, register
 
-VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.4.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NO_ANSWER = "(no answer came back: is a model wired back into this chat?)"
@@ -51,7 +51,13 @@ class Chat(Card):
                               "next one starts a new chat."},
     }
     functions = {
-        "read": {"help": "The newest messages of the chat.", "args": {"turns": {"type": "integer", "help": "How many (default 10)."}}},
+        "read": {"help": "The newest messages of a chat (default: this one).",
+                 "args": {"turns": {"type": "integer", "help": "How many (default 10)."},
+                          "chat": {"type": "string", "help": "A chat's id (from chats)."}}},
+        "chats": {"help": "The chats, newest first: id, title, when, the first thing said; with a search only those that "
+                          "mention it.", "args": {"search": {"type": "string", "help": "Words to look for (optional)."}}},
+        "continue": {"help": "Go on in an older chat: the next turns (spoken ones too) go into it.",
+                     "args": {"chat": {"type": "string", "help": "Its id (from chats).", "required": True}}},
         "post": {"help": "Write a message into the chat as AAC (a reminder, a finding).",
                  "args": {"text": {"type": "string", "help": "What to write.", "required": True}}},
     }
@@ -202,8 +208,26 @@ class Chat(Card):
         return []
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
+        if function == "chats":
+            words = str(args.get("search") or "").lower().split()
+            found = []
+            for c in self.chats():
+                said = next((e["text"] for e in self.data["chats"][c["id"]]["entries"] if e["kind"] == "said"), "")
+                text = " ".join(e["text"] for e in self.data["chats"][c["id"]]["entries"]).lower()
+                if all(w in text or w in c["title"].lower() for w in words):
+                    found.append({"id": c["id"], "title": c["title"], "updated": c["updated"], "first": said[:200]})
+            return found[:20]
+        if function == "continue":
+            chat = self.data["chats"].get(str(args.get("chat") or ""))
+            if chat is None:
+                return {"error": "no such chat (see chats)"}
+            chat["updated"] = dt_util.utcnow().isoformat()  # the newest: the current one for the next turns
+            await self.save()
+            self.core.notify("chat", domain=self.domain.id, card=self.id)
+            return {"continuing": chat["title"]}
         if function == "read":
-            chat = self.get(context.chat_id) if context and context.chat_id else (self.chats() and self.get(self.chats()[0]["id"]))
+            chat = (self.get(str(args["chat"])) if args.get("chat") else None) or \
+                (self.get(context.chat_id) if context and context.chat_id else (self.chats() and self.get(self.chats()[0]["id"])))
             turns = int(args.get("turns") or 10)
             return [{"role": m["role"], "text": m["text"]} for m in (chat or {}).get("messages", [])[-turns:]]
         if function == "post":

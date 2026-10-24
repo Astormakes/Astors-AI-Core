@@ -12,7 +12,7 @@ from homeassistant.helpers.template import Template
 
 from custom_components.aac.api import LOGGER, Card, Context, entry, register
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 TESTS = ["contains", "is", "starts", "ends", "matches", "has_tag", "count_more", "empty", "always", "template"]
 ACTIONS = ["replace", "insert", "remove", "remove_entries", "cut", "split", "join", "case", "trim", "tag", "call",
@@ -59,6 +59,7 @@ class Conditional(Card):
     type = "conditional"
     title = "Conditional"
     category = "Logic"
+    uses_tools = True
     help = ("If … then … without a model: checks the context, edits it (replace, cut, split …), tags it, calls a function "
             "of a card wired to it, stops, or sends it to one of its outputs.")
     ports_help = {"in": "a context arrives: the rules are checked from the top",
@@ -87,8 +88,8 @@ class Conditional(Card):
                 chosen = await self._do(action, entries, context, step) or chosen
             if not rule.get("go_on"):
                 break
-        # its tools (cards wired from it and back) only take calls; the context goes on to the others
-        tools = {c.id for c in step.tool_cards()}
+        # cards wired from it straight back only take calls; the context goes on to the others
+        tools = {c.id for c in step.attached()}
         port_out = chosen if chosen in self.ports()[1] else "out"
         return [(port_out, c.id) for c, _ in step.targets(port_out) if c.id not in tools]
 
@@ -137,7 +138,7 @@ class Conditional(Card):
             context.entries[:] = [e for e in context.entries if e is first or e not in entries]
         elif do == "call":
             card = self.domain.cards.get(action.get("card", ""))
-            if card and card in step.tool_cards():  # only cards wired from it and back (like a model's tools)
+            if card and card in step.tool_cards():  # only cards in its loop (like a model's tools)
                 text = entries[-1]["text"] if entries else ""
                 args = {k: (v.replace("{text}", text) if isinstance(v, str) else v) for k, v in (action.get("args") or {}).items()}
                 result = await card.call(action.get("function", ""), args, context)

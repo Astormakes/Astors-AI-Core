@@ -11,7 +11,7 @@ from homeassistant.helpers.template import Template
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 KIND = {"start": "system", "note": "note", "after": "trailer"}
 
@@ -48,6 +48,7 @@ class Relay(Card):
         "add_text": {"type": "text", "title": "… this text", "default": ""},
     }
     functions = {"text": {"help": "This card's text (e.g. the time from a Relay with the time)."}}
+    offers = False  # in a model's loop its text is in the line already (its tick turns it on)
 
     def render(self) -> str:
         """Its text through HA's template engine (an error shows in the text)."""

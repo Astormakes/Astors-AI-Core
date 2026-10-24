@@ -37,7 +37,11 @@ class Step:
         return self.flow.wired_from(self.card.id, port)
 
     def tool_cards(self) -> list[Card]:
-        """Cards wired from this card's outputs and back into it: its tools."""
+        """Its tools (Flow.tools)."""
+        return self.flow.tools(self.card.id)
+
+    def attached(self) -> list[Card]:
+        """Cards wired from its outputs straight back into it: they only attach a tool (nothing else goes there)."""
         mine = self.card.id
         back = {w["from"].split(".")[0] for w in self.flow.domain.wires if w["to"].split(".")[0] == mine}
         found: dict[str, Card] = {}
@@ -88,6 +92,26 @@ class Flow:
             if a == card_id and ap == port and (card := self.domain.cards.get(b)):
                 found.append((card, bp))
         return found
+
+    def tools(self, card_id: str) -> list[Card]:
+        """A card's tools: the cards in its loop (on a way from its outputs back into its inputs, straight or through
+        other cards) that offer functions, unless their "offers its functions" tick is off."""
+        wires = self.domain.wires
+
+        def reach(forward: bool) -> set[str]:
+            seen, todo = set(), [card_id]
+            while todo:
+                at = todo.pop()
+                for w in wires:
+                    a, b = w["from"].split(".")[0], w["to"].split(".")[0]
+                    nxt = b if forward and a == at else a if not forward and b == at else None
+                    if nxt and nxt != card_id and nxt not in seen:
+                        seen.add(nxt)
+                        todo.append(nxt)
+            return seen
+        cards = self.domain.cards
+        return [cards[i] for i in sorted(reach(True) & reach(False))
+                if i in cards and cards[i].functions and cards[i].settings.get("offers", cards[i].offers)]
 
     def wired_into(self, card_id: str, port: str) -> list[tuple[Card, str]]:
         """Sources of an input."""
