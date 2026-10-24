@@ -84,13 +84,13 @@ class Flow:
                 found.append((card, ap))
         return found
 
-    def record(self, card_id: str, port: str, message: Message) -> None:
+    def record(self, card_id: str, port: str, message: Message, to: list[str] | None = None) -> None:
         """What left an output: kept for the monitor; open panels pulse the wire."""
         key = f"{card_id}.{port}"
         self.last[key] = {**message.summary(), "time": time.time()}
         newest = next((e for e in reversed(message.entries) if e["kind"] not in ("system", "signal") and e["text"].strip()), None)
         self._keep(key, newest["text"][:400] if newest else "")
-        self.domain.core.notify("flow", domain=self.domain.id, wire=f"{card_id}.{port}")
+        self.domain.core.notify("flow", domain=self.domain.id, wire=key, to=to)  # to: the inputs it went to (a square output picks)
 
     def _keep(self, key: str, text: str) -> None:
         now = time.time()
@@ -155,7 +155,7 @@ class Flow:
             port, only = pick if isinstance(pick, tuple) else (pick, None)
             targets = [(c, p) for c, p in self.wired_from(card.id, port) if only is None or c.id == only]
             if targets:
-                self.record(card.id, port, message)
+                self.record(card.id, port, message, [f"{c.id}.{p}" for c, p in targets])
             sends += targets
         for i, (target, in_port) in enumerate(sends):
             await self.enter(target, in_port, message if i == len(sends) - 1 else message.branch())

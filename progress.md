@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`, its progress file `docs/progress-v1.md` (private).
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-23) – 2.0.0-alpha.12, live on the owner's HA
+## Current state (2026-10-23) – 2.0.0-alpha.15, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -47,6 +47,12 @@ the owner wires them (no automatic wiring), the message is a document of entries
 - **Setup files and own tags (alpha.11):** Save file / Load file in the node view (cards, settings, wires, positions;
   the cards' own data stays; loading is undoable); with no card selected the side panel lists the domain's tags and
   adds/removes the owner's own (`user.…`).
+- **Stop as a context (alpha.15):** a stop is a context whose newest entry is a stop signal (`<card>.stop`); it runs
+  forward on the wires; a busy card (a model writing) cuts its block, appends the stop (marked done: visible history)
+  and sends its own context on, the stop ends there; idle cards pass it on. The chat's Stop button sends the chat's
+  context with a stop; the next turn shows the model "[stopped]". Voice out cannot cut playback yet (add-on).
+- **Live wires (alpha.15):** a push lights the wires it took (brighter, thicker, fading over 4 s) with a -_-_ wave
+  running along; audio streams keep the wave running while sound flows.
 - **One-time steps on the owner's HA:** v1's 05:25 trigger → Schedule card; v1's voice settings; the voice chain
   (Wake word = a Conditional: "computer" or a follow-up; Voice rules = a Relay after the turn); an HA Assist card.
 - **First start** (`defaults.py`): the default domain (Chat → Charter → Time → Model → Chat; Pool "Models"; Lists and
@@ -55,7 +61,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
   lists, Nodes, Models), chat (live answer, document view, stop), lists page, models page (find a server's models),
   node view (types left with info, click in the grid to place, drag to wire, Delete/button to unwire, settings right
   with functions and tags, Undo, slots 1–3 (Shift-click loads), Send stop, monitor on a wire).
-- Tests: 22 (`../.venv/bin/python -m pytest -q -p no:logging`).
+- Tests: 23 (`../.venv/bin/python -m pytest -q -p no:logging`).
 
 ## Owner's data
 
