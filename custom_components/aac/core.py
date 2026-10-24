@@ -172,7 +172,7 @@ class Domain:
         return card
 
     def set_wires(self, wires: list[dict[str, str]]) -> None:
-        """The owner's wires (only output → input of the same kind)."""
+        """The owner's wires (only output → input of the same kind: a read output only into a read input)."""
         found = []
         for w in wires:
             a, _, ap = w["from"].partition(".")
@@ -181,7 +181,7 @@ class Domain:
             if not src or not dst:
                 continue
             kind, takes = src.ports()[1].get(ap), dst.ports()[0].get(bp)
-            if kind and (kind == takes or (takes == "read" and kind == "text")) and {"from": w["from"], "to": w["to"]} not in found:
+            if kind and kind == takes and {"from": w["from"], "to": w["to"]} not in found:
                 found.append({"from": w["from"], "to": w["to"]})
         self._remember()
         self.wires = found

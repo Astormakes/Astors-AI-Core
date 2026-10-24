@@ -400,7 +400,7 @@ class AacPanel extends HTMLElement {
         <div class="side">${this._side()}</div></div></div>`;
   }
 
-  _tri(x, y, mirrored) { // a read input: a triangle pointing into the card
+  _tri(x, y, mirrored) { // a read port: a triangle pointing along the flow (into a read input, out of what provides it)
     const d = mirrored ? -1 : 1;
     return `${x - 6 * d},${y - 6} ${x + 6 * d},${y} ${x - 6 * d},${y + 6}`;
   }
@@ -416,7 +416,7 @@ class AacPanel extends HTMLElement {
     const line = (color, dash, width = 2) => `<svg width="20" height="8"><line x1="1" y1="4" x2="19" y2="4" stroke="${color}" stroke-width="${width}" ${dash ? `stroke-dasharray="${dash}"` : ""}/></svg>`;
     return `<div class="legend">
       <div title="A context arrives and the card runs (the wire swells when one passes)">${line(KIND_COLOR.text)} context</div>
-      <div title="Read when the card runs; starts nothing (a triangle on the card)">${line(KIND_COLOR.text, "3 3")} read</div>
+      <div title="Read when the card runs; starts nothing (triangles: what a card provides, into what reads it)">${line(KIND_COLOR.text, "3 3")} read</div>
       <div title="Live sound (thicker when louder)">${line(KIND_COLOR.audio, "", 3)} sound</div>
       <div title="A piece of speech">${line(KIND_COLOR.piece)} speech</div></div>`;
   }
@@ -579,7 +579,7 @@ class AacPanel extends HTMLElement {
         <rect class="box" width="${W}" height="${height(c)}" rx="8"></rect>
         <text x="10" y="18">${esc(c.title)}</text><text class="sub" x="10" y="30">${esc(this._sub(c))}</text>
         ${ins.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-in="${esc(n)}" data-kind="${k}" points="${this._tri(inX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : `<circle class="dot" data-in="${esc(n)}" data-kind="${k}" cx="${inX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${inT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
-        ${outs.map(([n, k], i) => `${c.square.includes(n) ? `<rect class="dot" data-out="${esc(n)}" data-kind="${k}" x="${outX - 6}" y="${HEAD + ROW * i + ROW / 2 - 6}" width="12" height="12" fill="${KIND_COLOR[k] || "#999"}"></rect>`
+        ${outs.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-out="${esc(n)}" data-kind="${k}" points="${this._tri(outX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : c.square.includes(n) ? `<rect class="dot" data-out="${esc(n)}" data-kind="${k}" x="${outX - 6}" y="${HEAD + ROW * i + ROW / 2 - 6}" width="12" height="12" fill="${KIND_COLOR[k] || "#999"}"></rect>`
           : `<circle class="dot" data-out="${esc(n)}" data-kind="${k}" cx="${outX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${outT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
       </g>`;
     }).join("");
@@ -935,7 +935,7 @@ class AacPanel extends HTMLElement {
       if (d.kind === "wire") {
         this.shadowRoot.querySelector("#tmpwire")?.remove();
         const el = this.shadowRoot.elementFromPoint(e.clientX, e.clientY), node = el?.closest?.(".node"), inp = el?.dataset?.in;
-        if (node && inp && (el.dataset.kind === d.type || (el.dataset.kind === "read" && d.type === "text"))) { // text → a dotted read input too
+        if (node && inp && el.dataset.kind === d.type) { // the same kind (a read output only into a read input)
           await this.ws("aac/wires", { wires: [...this.state.domain.wires, { from: d.from, to: `${node.dataset.node}.${inp}` }] });
           await this._load(); this.render();
         }

@@ -108,7 +108,7 @@ async def _voice_cards(domain, names: list[str]) -> None:
         wires += [{"from": "stop_word.stop", "to": f"{first}.in"}, {"from": "spoken.out", "to": f"{first}.in"},
                   {"from": "followed.out", "to": f"{first}.in"}]
     if chat:
-        wires += [{"from": f"{chat}.said", "to": "spoken.reads"}, {"from": f"{chat}.said", "to": "followed.reads"},
+        wires += [{"from": f"{chat}.provides", "to": "spoken.reads"}, {"from": f"{chat}.provides", "to": "followed.reads"},
                   {"from": "answer.out", "to": f"{chat}.answers"}]
     if model:
         wires.append({"from": f"{model}.out", "to": "answer.in"})

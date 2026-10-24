@@ -70,7 +70,7 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
     await async_voice_chain(core)
     d = core.domain
     assert {"mic", "cut", "ears", "stop_word", "wake", "follow_up", "spoken", "followed", "answer", "speaker"} <= set(d.cards)
-    assert {"from": "chat.said", "to": "spoken.reads"} in d.wires and {"from": "model.out", "to": "answer.in"} in d.wires
+    assert {"from": "chat.provides", "to": "spoken.reads"} in d.wires and {"from": "model.out", "to": "answer.in"} in d.wires
     assert {"from": "model.out", "to": "chat.answers"} not in d.wires
 
     async def route(card, text):

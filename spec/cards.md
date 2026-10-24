@@ -24,7 +24,7 @@ class Shout(Card):
     category = "Text"                   # palette group: In and out, Text, Logic, Models, Data, Home Assistant, Audio, Other
     help = "Makes the newest line upper case."
     inputs = {"in": "text"}             # port → kind: text (a context), read (dotted: read, never starts), audio, piece
-    outputs = {"out": "text"}
+    outputs = {"out": "text"}           # same kinds; a read output (a triangle) is what held(port) provides, wired only into read inputs
     square = set()                      # outputs where the card picks one wire (else every wire gets a copy)
     ports_help = {"in": "a context arrives", "out": "the same context, louder"}
     settings_schema = {"loud": {"type": "bool", "title": "Really loud", "default": True}}
@@ -48,7 +48,7 @@ class Shout(Card):
 
 More a card may define: `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
 self.save()`), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop(stop_entry) -> bool` (a stop
-arrived: True when it was busy and sent its own context on), `held(port)` (what a dotted wire from that output
+arrived: True when it was busy and sent its own context on), `held(port)` (what a dotted wire from that read output
 reads), `current()` (its values), `page` ("chat", "lists", "log", "memory", "file": a page of its own in the sidebar).
 A setting of type `modellist` with a `tag` gives it a list of models with queues.
 

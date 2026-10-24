@@ -1,7 +1,7 @@
 """Chat: a chat in the sidebar. It holds a context per chat. What you write is added to it and the whole context
 leaves at `said`; a context that comes into `answers` replaces what the chat holds (an answer to what you wrote, or
 a turn that started elsewhere, e.g. a spoken line a Relay put on top of this chat's context). What the chat shows is
-read from the context it holds. A dotted wire from `said` lets another card read the current chat's context."""
+read from the context it holds. A dotted wire from `provides` lets another card read the current chat's context."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, is_stop, new_id, register
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NO_ANSWER = "(no answer came back: is a model wired back into this chat?)"
@@ -31,11 +31,12 @@ class Chat(Card):
     help = ("A chat in the sidebar. It holds the conversation (a context per chat): what you write is added and the "
             "whole context goes out at 'said'; a context coming into 'answers' replaces what it holds and shows up.")
     inputs = {"answers": "text"}
-    outputs = {"said": "text"}
+    outputs = {"said": "text", "provides": "read"}
     ports_help = {"answers": "a context that replaces what the chat holds (the answer to what you wrote, or a spoken "
                              "turn built on this chat's context); its new lines and answers show up in the chat",
-                  "said": "what you wrote, with the conversation so far. Wired dotted into another card, that card "
-                          "reads the current chat's context (the newest chat; a new one after the quiet time)"}
+                  "said": "what you wrote, with the conversation so far",
+                  "provides": "the current chat's context, for cards that read it (dotted): the newest chat, or a new one "
+                              "after the quiet time"}
     page = "chat"
     keeps_data = True
     tags = {"said": "what you wrote in this chat", "stop": "you pressed Stop", "error": "nothing came back"}
@@ -106,8 +107,10 @@ class Chat(Card):
         quiet = timedelta(minutes=float(self.settings.get("new_after") or 20))
         return self.get(chats[0]["id"]) if dt_util.utcnow() - datetime.fromisoformat(chats[0]["updated"]) <= quiet else None
 
-    def held(self, port: str) -> Context:
-        """What a dotted wire from `said` reads: the current chat's context (empty: the next turn starts a new chat)."""
+    def held(self, port: str) -> Context | None:
+        """What a dotted wire from `provides` reads: the current chat's context (empty: the next turn starts a new chat)."""
+        if port != "provides":
+            return None
         chat = self.current()
         return Context(entries=deepcopy(chat["entries"]) if chat else [], origin=self.id, chat_id=chat["id"] if chat else None)
 

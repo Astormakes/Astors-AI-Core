@@ -194,7 +194,7 @@ class MyRelay(Card):
         context.add("chat", "said", "hello")
         await shout.handle(context, "in", None)
         assert context.last("said")["text"] == "HELLO" and CARD_TYPES["relay"].title == "My relay"
-        assert CARD_TYPES["relay"].version == "9.0.0" and CARD_TYPES["chat"].version == "1.0.0"
+        assert CARD_TYPES["relay"].version == "9.0.0" and CARD_TYPES["chat"].version == "1.1.0"
     finally:  # HA's test config folder is shared by every test
         CARD_TYPES["relay"] = builtin_relay
         CARD_TYPES.pop("shout", None)
