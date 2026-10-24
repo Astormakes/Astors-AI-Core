@@ -48,6 +48,10 @@ class Step:
         """The cards wired into one of this card's inputs (e.g. the Pool on a Model's pool input)."""
         return [c for c, _ in self.flow.wired_into(self.card.id, port)]
 
+    def read(self, port: str) -> list[Message]:
+        """What the dotted wires into one of this card's inputs hold now (reading never starts anything)."""
+        return [m for c, p in self.flow.wired_into(self.card.id, port) if (m := c.held(p)) is not None]
+
     def live(self, text: str) -> None:
         """Text that is still growing (a model writing): open panels show it."""
         self.flow.domain.core.notify("delta", domain=self.flow.domain.id, chat_id=self.message.chat_id,
@@ -61,7 +65,8 @@ class Flow:
         """Initialize."""
         self.domain = domain
         self.last: dict[str, dict[str, Any]] = {}  # "card.port" → the newest message that left there
-        self.records: dict[str, list[dict[str, Any]]] = {}  # "card.port" → what passed lately: {time, text}
+        self.records: dict[str, list[dict[str, Any]]] = {}
+        self.held: dict[str, Message] = {}  # "card.port" → a copy of the newest context that left there (dotted wires read it)  # "card.port" → what passed lately: {time, text}
         self._level_at: dict[str, float] = {}
 
     def wired_from(self, card_id: str, port: str) -> list[tuple[Card, str]]:
@@ -88,6 +93,7 @@ class Flow:
         """What left an output: kept for the monitor; open panels pulse the wire."""
         key = f"{card_id}.{port}"
         self.last[key] = {**message.summary(), "time": time.time()}
+        self.held[key] = message.branch()
         newest = next((e for e in reversed(message.entries) if e["kind"] not in ("system", "signal") and e["text"].strip()), None)
         self._keep(key, newest["text"][:400] if newest else "")
         self.domain.core.notify("flow", domain=self.domain.id, wire=key, to=to)  # to: the inputs it went to (a square output picks)

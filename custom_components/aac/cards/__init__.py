@@ -37,6 +37,7 @@ class Card:
     settings_schema: ClassVar[dict[str, dict[str, Any]]] = {}
     tags: ClassVar[dict[str, str]] = {}  # tag (without the card) → what it marks
     functions: ClassVar[dict[str, dict[str, Any]]] = {}  # name → {"help", "args": {name: {"type", "help", "required"}}}
+    ports_help: ClassVar[dict[str, str]] = {}  # port → one sentence: what goes in or comes out there
     values: ClassVar[dict[str, str]] = {}  # name → what it is: read in templates as {{ <card>.<name> }}
     page: ClassVar[str | None] = None  # a page of its own in the sidebar ("chat", "lists")
     keeps_data: ClassVar[bool] = False
@@ -52,6 +53,10 @@ class Card:
     def current(self) -> dict[str, Any]:
         """Its values now (see `values`)."""
         return {}
+
+    def held(self, port: str) -> Message | None:
+        """What a dotted wire from one of its outputs reads: by default the newest context that left there."""
+        return self.domain.flow.held.get(f"{self.id}.{port}")
 
     # ------------------------------------------------------------------ data
     def default_data(self) -> dict[str, Any]:
@@ -103,7 +108,7 @@ class Card:
         """The type: for the node view's palette and the ? helper."""
         return {"type": cls.type, "title": cls.title, "category": cls.category, "help": cls.help,
                 "inputs": cls.inputs, "outputs": cls.outputs, "square": sorted(cls.square),
-                "settings": cls.settings_schema, "tags": cls.tags, "functions": cls.functions, "values": cls.values, "page": cls.page}
+                "settings": cls.settings_schema, "tags": cls.tags, "functions": cls.functions, "values": cls.values, "ports_help": cls.ports_help, "page": cls.page}
 
     def summary(self) -> dict[str, Any]:
         """This card: for the node view."""

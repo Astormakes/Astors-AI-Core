@@ -1,7 +1,6 @@
-"""Audio cards (docs/v2): Microphone → (Noise gate) → Pause cut → Speech to text → Voice chat ⇄ the line, Voice chat
-→ Voice out (speaks at the satellite; its status output tells the Voice chat when it finished: a follow-up window).
-Raw audio flows on `audio` wires as a stream (never a message); a Pause cut makes pieces (`piece` wires); Speech to
-text turns a piece into a message."""
+"""Audio cards (docs/v2): Microphone → (Noise gate) → Pause cut → Speech to text → … → Voice out (speaks at the
+satellite). Raw audio flows on `audio` wires as a stream (never a context); a Pause cut makes pieces (`piece` wires);
+Speech to text turns a piece into a context. When AAC last spoke is the core's (templates: {{ audio.… }})."""
 
 from __future__ import annotations
 
@@ -13,7 +12,6 @@ from homeassistant.util import dt as dt_util
 from ..audio import SAMPLE_RATE, Segmenter, level, make_vad
 from ..message import Message
 from . import Card, register
-from .chat import Chat
 
 SILENT = ("nothing", "nothing.", "")
 
@@ -28,6 +26,7 @@ class Microphone(Card):
     help = "The audio of one satellite (or any): the start of an audio chain. Wire it into a Noise gate or a Pause cut."
     inputs: dict[str, str] = {}
     outputs = {"out": "audio"}
+    ports_help = {"out": "the satellite's live audio (a stream; the wire swells with the loudness)"}
     settings_schema = {"source": {"type": "source", "title": "Listens to", "default": "any",
                                   "help": "One satellite (each its own chain), or any of them."}}
 
@@ -46,6 +45,7 @@ class NoiseGate(Card):
     help = "Lets audio through only above a loudness level (fan hum, a TV far away stay out); below it, silence."
     inputs = {"in": "audio"}
     outputs = {"out": "audio"}
+    ports_help = {"in": "live audio", "out": "the same audio, silence below the level"}
     settings_schema = {"level": {"type": "number", "title": "Opens at (0–100)", "default": 25,
                                  "help": "The Audio page shows each satellite's live level."},
                        "hold": {"type": "number", "title": "Stays open (ms)", "default": 300}}
@@ -72,6 +72,7 @@ class PauseCut(Card):
     help = "Speech detection: a stretch of speech that ends with a pause leaves as one piece. Wire it into Speech to text."
     inputs = {"in": "audio"}
     outputs = {"out": "piece"}
+    ports_help = {"in": "live audio", "out": "one piece per stretch of speech that ends with a pause"}
     settings_schema = {"pause": {"type": "number", "title": "Pause that ends a piece (ms)", "default": 800,
                                  "help": "Shorter: quicker, but a pause mid-sentence cuts it. Longer: whole sentences."},
                        "longest": {"type": "number", "title": "Longest piece (s)", "default": 30}}
@@ -97,10 +98,13 @@ class SpeechToText(Card):
     type = "speech_to_text"
     title = "Speech to text"
     category = "Audio"
-    help = ("Turns each piece of speech into text: a message of its own (the text, the satellite, the time), tagged "
+    help = ("Turns each piece of speech into text: a context of its own (the text, the satellite, the time), tagged "
             "'heard'. The engines and their order are on the Audio page.")
     inputs = {"in": "piece"}
     outputs = {"out": "text"}
+    ports_help = {"in": "pieces of speech (from a Pause cut)",
+                  "out": "round: every wire gets each heard line as a new context (data: mic = the satellite, mic_name, "
+                         "language), e.g. into several Conditionals side by side"}
     tags = {"heard": "what was said (data: the satellite)"}
     settings_schema = {"language": {"type": "text", "title": "Language (empty: detect)", "default": ""}}
 
@@ -116,71 +120,6 @@ class SpeechToText(Card):
 
 
 @register
-class VoiceChat(Chat):
-    """A spoken conversation."""
-
-    type = "voice_chat"
-    title = "Voice chat"
-    category = "In and out"
-    help = ("A spoken conversation: heard lines in (from Speech to text), out at 'said' with the conversation so far; the "
-            "answer back into 'answers' is kept and goes on to 'speak' (Voice out). Wire Voice out's status back into "
-            "'status': lines heard right after AAC spoke are tagged follow_up.")
-    inputs = {"heard": "text", "answers": "text", "status": "text"}
-    outputs = {"said": "text", "speak": "text"}
-    tags = {"heard": "a spoken line", "follow_up": "heard right after AAC spoke"}
-    settings_schema = {
-        "new_after": {"type": "number", "title": "A new chat after quiet (minutes)", "default": 20},
-        "follow_up": {"type": "number", "title": "Follow-up window (s)", "default": 10},
-    }
-
-    def __init__(self, *args: Any) -> None:
-        super().__init__(*args)
-        self._windows: dict[str, datetime] = {}
-        self._sessions: dict[str, str] = {}
-
-    def _session(self, mic: str, name: str) -> dict[str, Any]:
-        current = self.get(self._sessions.get(mic, ""))
-        quiet = timedelta(minutes=float(self.settings.get("new_after") or 20))
-        if current is None or dt_util.utcnow() - datetime.fromisoformat(current["updated"]) > quiet:
-            current = self._new(f"Voice · {name} · {dt_util.now().strftime('%H:%M')}")
-        self._sessions[mic] = current["id"]
-        return current
-
-    async def handle(self, message: Message, port: str, step) -> list[Any] | None:
-        if port == "status":  # Voice out finished: a follow-up window opens at that satellite
-            signal = message.last("signal")
-            if signal and signal["text"] == "finished":
-                self._windows[signal["data"].get("mic", "")] = dt_util.utcnow() + timedelta(seconds=float(self.settings.get("follow_up") or 10))
-            return []
-        if port == "answers":
-            if message.origin != self.id:
-                return []
-            chat = self.get(message.chat_id or "")
-            if chat is not None:
-                chat["entries"] = [e for e in message.entries if e["kind"] != "system"]
-                if message.answer.strip().lower() not in SILENT:
-                    self._add(chat, "aac", message.answer)
-                await self.save()
-                self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=chat["id"])
-            return ["speak"]
-        said = message.last("said")  # a heard line (from Speech to text)
-        if said is None:
-            return []
-        mic = said["data"].get("mic") or ""
-        chat = self._session(mic, said["data"].get("mic_name") or mic)
-        tags = [*said["tags"], self.tag("heard")]
-        if dt_util.utcnow() <= self._windows.get(mic, dt_util.utcnow() - timedelta(seconds=1)):
-            tags.append(self.tag("follow_up"))
-        line = {**said, "tags": tags}
-        out = Message(entries=[*[e for e in chat["entries"] if e["kind"] != "system"], line], origin=self.id, chat_id=chat["id"])
-        self._add(chat, "user", said["text"], mic=said["data"].get("mic_name"))
-        await self.save()
-        self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=chat["id"])
-        await self.domain.flow.send(out, self.id, "said")
-        return []
-
-
-@register
 class VoiceOut(Card):
     """Speaks."""
 
@@ -188,32 +127,17 @@ class VoiceOut(Card):
     title = "Voice out"
     category = "Audio"
     help = ("Speaks the newest answer at the satellite the spoken line came from (the voice and volume are on the Audio "
-            "page). Its status output sends 'finished' when it is done (wire it into a Voice chat's status).")
+            "page). An answer 'nothing' stays silent.")
     inputs = {"in": "text"}
-    outputs = {"status": "text"}
-    tags = {"finished": "it stopped speaking (data: the satellite)"}
+    outputs: dict[str, str] = {}
+    ports_help = {"in": "a context: its newest answer is spoken where its newest spoken line came from (or at the set satellite)"}
     settings_schema = {"source": {"type": "source", "title": "Speaks at", "default": "",
                                   "help": "Empty: where the spoken line came from."}}
-
-    def __init__(self, *args: Any) -> None:
-        super().__init__(*args)
-        self._speaking: set[str] = set()
 
     async def handle(self, message: Message, port: str, step) -> list[Any] | None:
         text = message.answer.strip()
         said = next((e for e in reversed(message.entries) if e["kind"] == "said" and e["data"].get("mic")), None)
         mic = self.settings.get("source") or (said["data"].get("mic") if said else None)
         if mic and text and text.lower() not in SILENT:
-            language = (said or {}).get("data", {}).get("language")
-            if await self.core.audio.say(mic, text, language):
-                self._speaking.add(mic)
+            await self.core.audio.say(mic, text, (said or {}).get("data", {}).get("language"))
         return []
-
-    def finished(self, mic: str) -> None:
-        """The satellite finished playing."""
-        if mic not in self._speaking:
-            return
-        self._speaking.discard(mic)
-        message = Message(origin=self.id)
-        message.add(self.id, "signal", "finished", ["finished"], mic=mic)
-        self.hass.async_create_background_task(self.domain.flow.send(message, self.id, "status"), f"aac {self.id} status")

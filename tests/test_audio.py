@@ -25,44 +25,44 @@ def test_pause_cut_cuts_speech():
 
 
 async def test_a_spoken_round_trip(hass: HomeAssistant, hass_client, mock_entry, aioclient_mock):
+    """The default voice chain: "computer, …" is answered aloud and lands in a new chat; a line right after AAC spoke
+    goes to the model as a possible follow-up, and "nothing" stays silent and is not kept."""
+    from custom_components.aac.defaults import FOLLOW_UP, async_voice_chain
+
     await hass.async_add_executor_job(v1_files, hass.config.config_dir)
     core = await setup_aac(hass, mock_entry)
+    core.audio.settings.update({"tts": "tts.test", "volume": 100, "known": [{"id": "pc", "name": "PC"}]})
+    core.data["voice_chain"] = False
+    await async_voice_chain(core)
     d = core.domain
-    for kind, cid, settings in (("microphone", "mic", {"source": "pc"}), ("noise_gate", "gate", {"level": 40, "hold": 100}),
-                                ("pause_cut", "cut", {"pause": 300}), ("speech_to_text", "ears", {}),
-                                ("voice_chat", "voice", {"follow_up": 30}), ("voice_out", "speaker", {})):
-        await d.add_card(kind, cid, settings, card_id=cid)
-    d.set_wires([*d.wires, {"from": "mic.out", "to": "gate.in"}, {"from": "gate.out", "to": "cut.in"},
-                 {"from": "cut.out", "to": "ears.in"}, {"from": "ears.out", "to": "voice.heard"},
-                 {"from": "voice.said", "to": "charter.in"}, {"from": "model.out", "to": "voice.answers"},
-                 {"from": "voice.speak", "to": "speaker.in"}, {"from": "speaker.status", "to": "voice.status"}])
-    core.audio.settings.update({"tts": "tts.test", "volume": 100})
-    asked = model_answers(aioclient_mock, reply("It is five."))
+    asked = model_answers(aioclient_mock, reply("It is five."), reply("nothing"))
+    heard = AsyncMock(side_effect=[{"text": "Computer, what time is it?"}, {"text": "see you in the next video"}])
     client = await hass_client()
     with (patch("custom_components.aac.cards.audio.make_vad", return_value=EnergyVad()),
-          patch.object(core.audio, "stt", AsyncMock(return_value={"text": "What time is it?"})) as stt,
-          patch.object(core.audio, "tts", AsyncMock(return_value=b"RIFFwave"))):
+          patch.object(core.audio, "stt", heard), patch.object(core.audio, "tts", AsyncMock(return_value=b"RIFFwave"))):
         ws = await client.ws_connect("/api/aac/audio")
         await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "rate": 16000})
         assert (await ws.receive_json())["type"] == "welcome"
-        await ws.send_bytes(audio((SILENCE, 0.2), (QUIET, 0.8), (SILENCE, 0.5)))  # below the gate
-        await ws.send_bytes(audio((SILENCE, 0.2), (LOUD, 0.8), (SILENCE, 0.5)))
+        await ws.send_bytes(audio((SILENCE, 0.2), (LOUD, 0.8), (SILENCE, 1.0)))
         play = await asyncio.wait_for(ws.receive_json(), 5)
         assert play == {"type": "play", "format": "wav", "bytes": 8, "text": "It is five."}
         assert await ws.receive_bytes() == b"RIFFwave"
         await ws.send_json({"type": "played"})
         await hass.async_block_till_done(wait_background_tasks=True)
+        assert core.audio.spoken()["satellites"]["pc"]["seconds"] < 10
+        await ws.send_bytes(audio((SILENCE, 0.2), (LOUD, 0.8), (SILENCE, 1.0)))  # right after: a possible follow-up
+        await hass.async_block_till_done(wait_background_tasks=True)
         await ws.close()
-    assert stt.await_count == 1  # the quiet stretch never became a piece
-    assert asked[0]["messages"][-1]["content"].startswith("What time is it?")
-    voice = d.cards["voice"]
-    chat = voice.get(voice.chats()[0]["id"])
-    assert chat["title"].startswith("Voice · PC · ") and [m["text"] for m in chat["messages"]] == ["What time is it?", "It is five."]
-    assert voice._windows.get("pc")  # the follow-up window is open
+    assert asked[0]["messages"][-1]["content"].startswith("Computer, what time is it?")
+    assert asked[1]["messages"][-1]["content"].startswith(FOLLOW_UP)
+    assert "It is five." in str(asked[1]["messages"])  # the follow-up sees the conversation (read from the chat)
+    chat = d.cards["chat"]
+    kept = chat.get(chat.chats()[0]["id"])
+    assert kept["title"].startswith("Voice · PC · ") and [m["text"] for m in kept["messages"]] == ["Computer, what time is it?", "It is five."]
 
 
-async def test_the_default_voice_chain_and_its_wake_word(hass: HomeAssistant, mock_entry):
-    """With satellites known, the default domain gets the voice chain; the Wake word passes 'computer' or a follow-up."""
+async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry):
+    """Stop word, Wake word and Follow-up each get every heard line; only the right one passes it on."""
     from custom_components.aac.defaults import async_voice_chain
     from custom_components.aac.flow import Step
     from custom_components.aac.message import Message
@@ -73,14 +73,43 @@ async def test_the_default_voice_chain_and_its_wake_word(hass: HomeAssistant, mo
     core.data["voice_chain"] = False
     await async_voice_chain(core)
     d = core.domain
-    assert {"mic", "cut", "ears", "voice", "wake", "voice_rules", "speaker"} <= set(d.cards)
-    assert {"from": "voice_rules.out", "to": "charter.in"} in d.wires and {"from": "model.out", "to": "voice.answers"} in d.wires
-    wake = d.cards["wake"]
+    assert {"mic", "cut", "ears", "stop_word", "wake", "follow_up", "spoken", "followed", "answer", "speaker"} <= set(d.cards)
+    assert {"from": "chat.said", "to": "spoken.reads"} in d.wires and {"from": "model.out", "to": "answer.in"} in d.wires
+    assert {"from": "model.out", "to": "chat.answers"} not in d.wires
 
-    async def route(text, tags=()):
+    async def route(card, text):
         m = Message()
-        m.add("ears", "said", text, list(tags))
-        return await wake.handle(m, "in", Step(d.flow, wake, "in", m))
-    assert await route("Computer, lights on") == [("yes", "voice_rules")]
-    assert await route("see you in the next video") == []
-    assert await route("and the kitchen too", ["voice.follow_up"]) == [("yes", "voice_rules")]
+        m.add("ears", "said", text, mic="pc")
+        return await d.cards[card].handle(m, "in", Step(d.flow, d.cards[card], "in", m)), m
+    assert (await route("wake", "Computer, lights on"))[0] == [("yes", "spoken")]
+    assert (await route("wake", "see you in the next video"))[0] == []
+    out, m = await route("stop_word", "stop it")
+    assert out == [("stop", "charter")] and m.stopped
+    assert (await route("follow_up", "and the kitchen too"))[0] == []  # AAC has not spoken
+    core.audio._spoke["pc"] = __import__("time").time()
+    assert (await route("follow_up", "and the kitchen too"))[0] == [("yes", "followed")]
+    assert (await route("follow_up", "computer, and the kitchen"))[0] == []  # the Wake word takes that one
+
+
+async def test_the_old_voice_chain_is_rebuilt(hass: HomeAssistant, mock_entry):
+    """The owner's alpha voice chain (Voice chat card, Wake word with a follow-up tag, Voice rules) becomes the new
+    one once; the voice chats move into the Chat card and the wake words stay."""
+    from custom_components.aac.defaults import async_voice_v2
+
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    for kind, cid in (("microphone", "mic"), ("pause_cut", "cut"), ("speech_to_text", "ears"), ("voice_out", "speaker"),
+                      ("relay", "voice_rules")):
+        await d.add_card(kind, cid, card_id=cid)
+    await d.add_card("conditional", "Wake word", {"outputs": ["yes"], "rules": [
+        {"test": "contains", "value": "assistent", "actions": [{"do": "output", "a": "yes"}]},
+        {"test": "has_tag", "value": "voice.follow_up", "actions": [{"do": "output", "a": "yes"}]}]}, card_id="wake")
+    d._specs["voice"] = {"type": "voice_chat", "title": "Voice chat", "settings": {}}
+    d.wires.append({"from": "model.out", "to": "voice.answers"})
+    await d.save_card_data("voice", {"chats": {"v1": {"id": "v1", "title": "Voice · PC · 20:14", "created": "2026-10-23T18:14:00+00:00",
+                                                      "updated": "2026-10-23T18:14:00+00:00", "entries": [], "messages": []}}})
+    core.data["voice_v2"] = False
+    await async_voice_v2(core)
+    assert "voice" not in d._specs and "voice_rules" not in d.cards and "v1" in d.cards["chat"].data["chats"]
+    assert [r["value"] for r in d.cards["wake"].settings["rules"]] == ["assistent"]
+    assert {"from": "ears.out", "to": "follow_up.in"} in d.wires and not any("voice." in w["from"] + w["to"] for w in d.wires)

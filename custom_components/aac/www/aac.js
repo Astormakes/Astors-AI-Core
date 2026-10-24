@@ -6,7 +6,7 @@ const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+
 const tip = (html) => `<span class="qm" tabindex="0">?<span class="tip">${html}</span></span>`;
 const W = 180, HEAD = 34, ROW = 20;
 const COL = W + 110; // one slot column (v1: a column per step in the flow)
-const KIND_COLOR = { text: "#f5a623", audio: "#4caf50", pool: "#03a9f4", piece: "#9c27b0" };
+const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", pool: "#03a9f4", piece: "#9c27b0" };
 // the Conditional's rules editor: tests and actions with the fields each needs ([field, label, kind])
 const TESTS = { contains: "contains", is: "is exactly", starts: "starts with", ends: "ends with", matches: "matches (regex)",
   has_tag: "has the tag", count_more: "more entries than", empty: "is empty", always: "always", template: "template is true" };
@@ -111,6 +111,8 @@ textarea { resize: vertical; }
 .mon .t b { color: var(--primary-color); font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mon .x { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; white-space: pre-wrap; }
 .mon.flash { animation: monflash .8s; } @keyframes monflash { from { box-shadow: 0 0 14px var(--primary-color); } }
+.fold { margin-top: 8px; font-size: 12px; } .fold > summary { cursor: pointer; color: var(--secondary-text-color); font-weight: 500; }
+.rule details > summary { cursor: pointer; margin-top: 4px; }
 .hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
 @media (max-width: 800px) { nav { position: absolute; z-index: 20; height: 100%; transform: translateX(-100%); } .root.navopen nav { transform: none; }
   .palette, .side { width: 170px; } .grip { display: none; } }
@@ -389,8 +391,17 @@ class AacPanel extends HTMLElement {
   _fnDocs(fns) {
     const list = Object.entries(fns || {});
     if (!list.length) return "";
-    return `<div class="hint" style="margin-top:8px">FUNCTIONS ${tip("A model calls these as tools (this card wired from its output and back); a Conditional card calls them as actions.")}</div>`
-      + list.map(([name, f]) => `<div class="fn"><code>${esc(name)}(${Object.entries(f.args || {}).map(([a, x]) => `${esc(a)}${x.required ? "" : "?"}`).join(", ")})</code> ${esc(f.help || "")}</div>`).join("");
+    return `<details class="fold"><summary>Functions ${tip("A model calls these as tools (this card wired from its output and back); a Conditional card calls them as actions.")}</summary>`
+      + list.map(([name, f]) => `<div class="fn"><code>${esc(name)}(${Object.entries(f.args || {}).map(([a, x]) => `${esc(a)}${x.required ? "" : "?"}`).join(", ")})</code> ${esc(f.help || "")}</div>`).join("") + "</details>";
+  }
+
+  _portDocs(c, t) {
+    const fns = Object.keys(t?.functions || {}).length;
+    const help = { ...(fns ? { in: "used as a tool: wire it from a Model (or Conditional) and back, and its functions are called", out: "back to the card that called it" } : {}), ...(t?.ports_help || {}) };
+    const kind = (k) => (k === "read" ? "dotted, read" : k);
+    const row = (dir, [p, k]) => `<div class="fn"><code>${esc(p)}</code> <span class="hint">${dir} · ${esc(kind(k))}${c.square.includes(p) ? " · square: goes to one wire" : dir === "out" ? " · round: every wire gets it" : ""}</span>${help[p] || help["*"] ? `<br>${esc(help[p] || help["*"])}` : ""}</div>`;
+    const list = [...Object.entries(c.inputs).map((x) => row("in", x)), ...Object.entries(c.outputs).map((x) => row("out", x))];
+    return list.length ? `<details class="fold"><summary>Ports</summary>${list.join("")}</details>` : "";
   }
 
   _side() {
@@ -446,8 +457,9 @@ class AacPanel extends HTMLElement {
       <p class="hint" style="margin-top:8px">${esc(t?.help || "")}</p>
       ${Object.entries(t?.settings || {}).map(field).join("")}
       ${this._fnDocs(t?.functions)}
-      ${Object.keys(t?.values || {}).length ? `<div class="hint" style="margin-top:8px">VALUES (for templates)${Object.entries(t.values).map(([n, h]) => `<div><code>{{ ${esc(/^[A-Za-z_]\w*$/.test(c.id) ? c.id : `cards['${c.id}']`)}.${esc(n)} }}</code> ${esc(h)}</div>`).join("")}</div>` : ""}
-      ${Object.keys(c.tags).length ? `<div class="hint" style="margin-top:8px">TAGS ${Object.keys(c.tags).map((x) => `<code>${esc(x)}</code>`).join(" ")}</div>` : ""}
+      ${this._portDocs(c, t)}
+      ${Object.keys(t?.values || {}).length ? `<details class="fold"><summary>Values (for templates)</summary>${Object.entries(t.values).map(([n, h]) => `<div class="fn"><code>{{ ${esc(/^[A-Za-z_]\w*$/.test(c.id) ? c.id : `cards['${c.id}']`)}.${esc(n)} }}</code> ${esc(h)}</div>`).join("")}</details>` : ""}
+      ${Object.keys(c.tags).length ? `<details class="fold"><summary>Tags</summary>${Object.entries(c.tags).map(([x, w]) => `<div class="fn"><code>${esc(x)}</code> ${esc(w)}</div>`).join("")}</details>` : ""}
       <div style="margin-top:14px;display:flex;gap:8px"><button class="danger" id="remove">Remove card</button></div>
       <p class="hint">Fields save when you leave them.</p>`;
   }
@@ -474,6 +486,7 @@ class AacPanel extends HTMLElement {
       ${rules.map((r, i) => `<div class="rule card" data-rule="${i}">
         <div class="row"><b class="hint">${i + 1}</b><input data-r="name" value="${esc(r.name || "")}" placeholder="Name of the rule">
           <button class="small" data-moverule="${i}" data-dir="-1" ${i ? "" : "disabled"} title="Up">↑</button><button class="small" data-moverule="${i}" data-dir="1" ${i < rules.length - 1 ? "" : "disabled"} title="Down">↓</button><button class="small danger" data-delrule="${i}" title="Remove the rule">×</button></div>
+        <details data-fold="${i}" ${this.openRules?.[c.id]?.has(i) ? "open" : ""}><summary class="hint">${esc(this._ruleLine(r))}</summary>
         <div class="rh">IF</div>
         <div class="rf"><span>look at the</span><select data-r="which">${opt("newest", sel(r).which || "newest", "newest")}${opt("all", sel(r).which, "all")}</select>
           <span>entry by</span><select data-r="by" data-rerender>${["kind", "tag", "card", "any"].map((b) => opt(b, sel(r).by || "kind", b === "any" ? "any entry" : b)).join("")}</select></div>
@@ -483,8 +496,14 @@ class AacPanel extends HTMLElement {
         <div class="rh">THEN</div>
         ${(r.actions || []).map(action).join("")}
         <button class="small" data-addact="${i}">Add an action</button>
-        <label class="check" style="margin-top:6px"><input type="checkbox" data-r="go_on" ${r.go_on ? "checked" : ""}>then go on checking the next rules</label></div>`).join("")}
+        <label class="check" style="margin-top:6px"><input type="checkbox" data-r="go_on" ${r.go_on ? "checked" : ""}>then go on checking the next rules</label></details></div>`).join("")}
       <button class="small" id="addrule">Add a rule</button>`;
+  }
+
+  _ruleLine(r) { // a rule folded to one line: "said contains 'computer' → yes"
+    const s = r.select || {}, what = (s.by || "kind") === "any" ? "any entry" : `${s.value ?? "said"}`;
+    const test = ["always", "empty"].includes(r.test || "always") ? TESTS[r.test || "always"] : r.test === "template" ? `template ${String(r.value || "").slice(0, 40)}` : `${TESTS[r.test] || r.test} '${r.value ?? ""}'`;
+    return `${what} ${test} → ${(r.actions || []).map((a) => (a.do === "output" ? a.a : ACTIONS[a.do]?.[0] || a.do)).join(", ") || "nothing"}${r.go_on ? " (then go on)" : ""}`;
   }
 
   _collectRules() {
@@ -525,7 +544,7 @@ class AacPanel extends HTMLElement {
     const routes = this._routes(wires, port);
     this.shadowRoot.querySelector("#wires").innerHTML = wires.map((w) => {
       const path = routes[w.key], sel = this.selWire && `${this.selWire.from}|${this.selWire.to}` === w.key;
-      return `<path class="wire ${w.kind === "pool" ? "pool" : ""} ${w.loop ? "loop" : ""} ${sel ? "sel" : ""}" data-from="${esc(`${w.a.id}.${w.ap}`)}" data-to="${esc(`${w.b.id}.${w.bp}`)}" d="${path}" stroke="${KIND_COLOR[w.kind] || "#999"}"></path>
+      return `<path class="wire ${w.kind === "pool" || w.read ? "pool" : ""} ${w.loop ? "loop" : ""} ${sel ? "sel" : ""}" data-from="${esc(`${w.a.id}.${w.ap}`)}" data-to="${esc(`${w.b.id}.${w.bp}`)}" d="${path}" stroke="${KIND_COLOR[w.kind] || "#999"}"></path>
         <path class="hit" data-wire="${esc(w.key)}" d="${path}"><title>${esc(w.a.title)}.${esc(w.ap)} → ${esc(w.b.title)}.${esc(w.bp)} (${esc(w.kind)})</title></path>`;
     }).join("");
     this._view();
@@ -538,7 +557,7 @@ class AacPanel extends HTMLElement {
     const byId = Object.fromEntries(this.state.domain.cards.map((c) => [c.id, c]));
     const wires = this.state.domain.wires.map((w) => {
       const [a, ap] = w.from.split("."), [b, bp] = w.to.split(".");
-      return byId[a] && byId[b] ? { a: byId[a], ap, b: byId[b], bp, kind: byId[a].outputs[ap], key: `${w.from}|${w.to}` } : null;
+      return byId[a] && byId[b] ? { a: byId[a], ap, b: byId[b], bp, kind: byId[a].outputs[ap], read: byId[b].inputs[bp] === "read", key: `${w.from}|${w.to}` } : null;
     }).filter(Boolean);
     // a loop: wired both ways between two cards (a card and its tool); the host is the card with more loops (then more wires)
     const has = new Set(wires.map((w) => `${w.a.id}>${w.b.id}`)), partners = {}, degree = {};
@@ -874,7 +893,7 @@ class AacPanel extends HTMLElement {
       if (d.kind === "wire") {
         this.shadowRoot.querySelector("#tmpwire")?.remove();
         const el = this.shadowRoot.elementFromPoint(e.clientX, e.clientY), node = el?.closest?.(".node"), inp = el?.dataset?.in;
-        if (node && inp && el.dataset.kind === d.type) {
+        if (node && inp && (el.dataset.kind === d.type || (el.dataset.kind === "read" && d.type === "text"))) { // text → a dotted read input too
           await this.ws("aac/wires", { wires: [...this.state.domain.wires, { from: d.from, to: `${node.dataset.node}.${inp}` }] });
           await this._load(); this.render();
         }
@@ -992,8 +1011,9 @@ class AacPanel extends HTMLElement {
     $$("[data-entry] input, [data-entry] textarea").forEach((el) => el.addEventListener("change", () => saveList("entries", collect("[data-entry]", "data-e"))));
     $$("[data-watch] input, [data-watch] textarea").forEach((el) => el.addEventListener("change", () => saveList("watches", collect("[data-watch]", "data-w"))));
     // Conditional rules: the whole list is saved on any change
+    $$("[data-fold]").forEach((el) => el.addEventListener("toggle", () => { const set = ((this.openRules ||= {})[this.sel] ||= new Set()); if (el.open) set.add(Number(el.dataset.fold)); else set.delete(Number(el.dataset.fold)); }));
     $$("[data-rule] input, [data-rule] select").forEach((el) => el.addEventListener("change", () => saveList("rules", this._collectRules())));
-    $("#addrule")?.addEventListener("click", () => saveList("rules", [...this._collectRules(), { name: "", select: { by: "kind", value: "said", which: "newest" }, test: "contains", value: "", actions: [{ do: "output", a: "out" }] }]));
+    $("#addrule")?.addEventListener("click", () => { const rules = this._collectRules(); ((this.openRules ||= {})[this.sel] ||= new Set()).add(rules.length); saveList("rules", [...rules, { name: "", select: { by: "kind", value: "said", which: "newest" }, test: "contains", value: "", actions: [{ do: "output", a: "out" }] }]); });
     $$("[data-delrule]").forEach((el) => el.addEventListener("click", () => { if (confirm("Remove this rule?")) saveList("rules", this._collectRules().filter((_, i) => i !== Number(el.dataset.delrule))); }));
     $$("[data-moverule]").forEach((el) => el.addEventListener("click", () => { const r = this._collectRules(), i = Number(el.dataset.moverule), j = i + Number(el.dataset.dir); [r[i], r[j]] = [r[j], r[i]]; saveList("rules", r); }));
     $$("[data-addact]").forEach((el) => el.addEventListener("click", () => { const r = this._collectRules(); r[Number(el.dataset.addact)].actions.push({ do: "tag", a: "" }); saveList("rules", r); }));

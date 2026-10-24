@@ -173,8 +173,8 @@ class Domain:
             src, dst = self.cards.get(a), self.cards.get(b)
             if not src or not dst:
                 continue
-            kind = src.ports()[1].get(ap)
-            if kind and kind == dst.ports()[0].get(bp) and {"from": w["from"], "to": w["to"]} not in found:
+            kind, takes = src.ports()[1].get(ap), dst.ports()[0].get(bp)
+            if kind and (kind == takes or (takes == "read" and kind == "text")) and {"from": w["from"], "to": w["to"]} not in found:
                 found.append({"from": w["from"], "to": w["to"]})
         self._remember()
         self.wires = found
@@ -290,11 +290,12 @@ class Core:
             self.data["domains"] = [{"id": "assistant", "name": "Assistant"}]
         self.data.setdefault("active", self.data["domains"][0]["id"])
         await self.switch(self.data["active"])
-        from .defaults import async_assist_card, async_calendar_card, async_upgrade, async_voice_chain  # noqa: PLC0415
+        from .defaults import async_assist_card, async_calendar_card, async_upgrade, async_voice_chain, async_voice_v2  # noqa: PLC0415
         await async_upgrade(self)
         await async_voice_chain(self)
         await async_assist_card(self)
         await async_calendar_card(self)
+        await async_voice_v2(self)
 
     def save(self) -> None:
         """Keep the core."""

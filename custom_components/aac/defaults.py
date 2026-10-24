@@ -124,47 +124,94 @@ async def async_upgrade(core: Core) -> None:
     LOGGER.info("AAC: %s v1 time trigger(s) became the Schedule card", len(entries))
 
 
+VOICE_RULES = "You are heard and answer aloud: one or two short sentences, plain words, no lists."
+FOLLOW_UP = "(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) "
+
+
 async def async_voice_chain(core: Core) -> None:
-    """One-time: when satellites are known (v1 had voice), the default domain gets the voice chain as ordinary cards:
-    Microphone → Pause cut → Speech to text → Voice chat → Wake word (a Conditional: "computer", or a follow-up)
-    → Voice rules (a Relay after the turn) → the line; the model's answer → Voice chat → Voice out → status back."""
+    """One-time: when satellites are known (v1 had voice), the default domain gets the voice chain as ordinary cards."""
     if core.data.get("voice_chain"):
         return
-    core.data["voice_chain"] = True
+    core.data["voice_chain"] = core.data["voice_v2"] = True
     core.save()
     domain = core.domain
     if not core.audio.settings.get("known") or any(c.type == "microphone" for c in domain.cards.values()):
         return
-    names = ["computer"]
     v1 = await core.hass.async_add_executor_job(_read, core, "aac.config")
-    names = ((v1 or {}).get("audio") or {}).get("names") or names
     add = domain.add_card
     await add("microphone", "Microphone", {"source": "any"}, card_id="mic", at={"x": -720, "y": 420})
     await add("pause_cut", "Pause cut", {"pause": 800}, card_id="cut", at={"x": -480, "y": 420})
     await add("speech_to_text", "Speech to text", card_id="ears", at={"x": -240, "y": 420})
-    await add("voice_chat", "Voice chat", card_id="voice", at={"x": 0, "y": 420})
-    rules = [{"name": f"says {n}", "select": {"by": "kind", "value": "said", "which": "newest"}, "test": "contains",
-              "value": n, "actions": [{"do": "output", "a": "yes"}]} for n in names]
-    rules.append({"name": "follow-up", "select": {"by": "kind", "value": "said", "which": "newest"}, "test": "has_tag",
-                  "value": "voice.follow_up", "actions": [{"do": "output", "a": "yes"}]})
-    await add("conditional", "Wake word", {"outputs": ["yes"], "rules": rules}, card_id="wake", at={"x": 240, "y": 420})
-    await add("relay", "Voice rules", {"position": "after", "replace": False,
-                                       "text": "You are heard and answer aloud: one or two short sentences, plain words, no lists."},
-              card_id="voice_rules", at={"x": 480, "y": 420})
     await add("voice_out", "Voice out", card_id="speaker", at={"x": 240, "y": 600})
-    first = "charter" if "charter" in domain.cards else None
-    model = next((c.id for c in domain.cards.values() if c.type == "model"), None)
-    wires = [*domain.wires, {"from": "mic.out", "to": "cut.in"}, {"from": "cut.out", "to": "ears.in"},
-             {"from": "ears.out", "to": "voice.heard"}, {"from": "voice.said", "to": "wake.in"},
-             {"from": "wake.yes", "to": "voice_rules.in"}, {"from": "voice.speak", "to": "speaker.in"},
-             {"from": "speaker.status", "to": "voice.status"}]
-    if first:
-        wires.append({"from": "voice_rules.out", "to": f"{first}.in"})
-    if model:
-        wires.append({"from": f"{model}.out", "to": "voice.answers"})
-    domain.set_wires(wires)
+    domain.set_wires([*domain.wires, {"from": "mic.out", "to": "cut.in"}, {"from": "cut.out", "to": "ears.in"}])
+    await _voice_cards(domain, ((v1 or {}).get("audio") or {}).get("names") or ["computer"])
     domain.undo = []
     LOGGER.info("AAC: the voice chain was added to the default domain")
+
+
+async def async_voice_v2(core: Core) -> None:
+    """One-time: the voice chain without the Voice chat card (owner, 2026-10-24): Speech to text feeds three
+    Conditionals side by side (Stop word, Wake word, Follow-up); Relays put the line on top of the Chat's conversation
+    (a dotted wire reads it); the answer goes through a Relay to the Chat and to Voice out. The voice chats move into
+    the Chat card."""
+    if core.data.get("voice_v2"):
+        return
+    core.data["voice_v2"] = True
+    core.save()
+    domain = core.domain
+    if (domain._specs.get("voice") or {}).get("type") != "voice_chat":  # the type is gone: read what it stored
+        return
+    chat = domain.cards.get("chat")
+    old = await domain.load_card_data("voice") or {}
+    if chat is not None and chat.type == "chat":
+        chat.data["chats"].update({k: {kk: vv for kk, vv in v.items() if kk != "messages"} for k, v in old.get("chats", {}).items()})
+        await chat.save()
+    wake = domain.cards.get("wake")
+    names = [r["value"] for r in (wake.settings.get("rules") or []) if wake and r.get("test") == "contains"] if wake else []
+    for card_id in ("voice", "wake", "voice_rules"):
+        if card_id in domain._specs:  # "voice" is in the setup but no longer loads
+            await domain.remove_card(card_id)
+    await _voice_cards(domain, names or ["computer"])
+    domain.undo = []
+    LOGGER.info("AAC: the voice chain was rebuilt without the Voice chat card")
+
+
+async def _voice_cards(domain, names: list[str]) -> None:
+    """The voice cards after Speech to text (`ears`) and their wires (Voice out is `speaker`)."""
+    said = {"by": "kind", "value": "said", "which": "newest"}
+    words = "|".join(["stop", *names])
+    add = domain.add_card
+    await add("conditional", "Stop word", {"outputs": ["stop"], "rules": [
+        {"name": "says stop", "select": said, "test": "contains", "value": "stop", "actions": [{"do": "stop"}, {"do": "output", "a": "stop"}]}]},
+        card_id="stop_word", at={"x": 0, "y": 300})
+    await add("conditional", "Wake word", {"outputs": ["yes"], "rules": [
+        {"name": f"says {n}", "select": said, "test": "contains", "value": n, "actions": [{"do": "output", "a": "yes"}]} for n in names]},
+        card_id="wake", at={"x": 0, "y": 420})
+    await add("conditional", "Follow-up", {"outputs": ["yes"], "rules": [
+        {"name": "AAC spoke there less than 10 s ago", "select": said, "test": "template",
+         "value": "{{ entry is not none and audio.satellites.get(entry.data.mic, {}).get('seconds', 999999) < 10 "
+                  f"and not (entry.text | lower is search('{words}')) }}}}", "actions": [{"do": "output", "a": "yes"}]}]},
+        card_id="follow_up", at={"x": 0, "y": 540})
+    await add("relay", "Spoken turn", {"position": "after", "replace": False, "text": VOICE_RULES}, card_id="spoken", at={"x": 240, "y": 420})
+    await add("relay", "Follow-up turn", {"position": "after", "replace": False, "text": VOICE_RULES, "add_tag": "ears.heard",
+                                          "add_text": FOLLOW_UP, "add_where": "start"}, card_id="followed", at={"x": 240, "y": 540})
+    await add("relay", "Answer", {}, card_id="answer", at={"x": 1200, "y": 420})
+    first = "charter" if "charter" in domain.cards else None
+    model = next((c.id for c in domain.cards.values() if c.type == "model"), None)
+    chat = "chat" if "chat" in domain.cards else None
+    wires = [w for w in domain.wires if not (model and chat and w == {"from": f"{model}.out", "to": f"{chat}.answers"})]
+    wires += [{"from": "ears.out", "to": "stop_word.in"}, {"from": "ears.out", "to": "wake.in"}, {"from": "ears.out", "to": "follow_up.in"},
+              {"from": "wake.yes", "to": "spoken.in"}, {"from": "follow_up.yes", "to": "followed.in"},
+              {"from": "answer.out", "to": "speaker.in"}]
+    if first:
+        wires += [{"from": "stop_word.stop", "to": f"{first}.in"}, {"from": "spoken.out", "to": f"{first}.in"},
+                  {"from": "followed.out", "to": f"{first}.in"}]
+    if chat:
+        wires += [{"from": f"{chat}.said", "to": "spoken.reads"}, {"from": f"{chat}.said", "to": "followed.reads"},
+                  {"from": "answer.out", "to": f"{chat}.answers"}]
+    if model:
+        wires.append({"from": f"{model}.out", "to": "answer.in"})
+    domain.set_wires(wires)
 
 
 def _read(core: Core, key: str):

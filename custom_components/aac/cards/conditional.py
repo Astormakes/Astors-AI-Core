@@ -61,6 +61,9 @@ class Conditional(Card):
     category = "Logic"
     help = ("If … then … without a model: checks the message, edits it (replace, cut, split …), tags it, calls a function "
             "of a card wired to it, stops, or sends it to one of its outputs.")
+    ports_help = {"in": "a context arrives: the rules are checked from the top",
+                  "out": "where the context goes when no rule picked an output (leave it unwired to drop those)",
+                  "*": "an output a rule can pick (Outputs setting)"}
     tags = {"split": "entries made by splitting", "call": "its function calls", "match": "which rule matched",
             "stop": "a stop it sent"}
     settings_schema = {

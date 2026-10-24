@@ -247,10 +247,6 @@ class AudioHub:
         source.playing = False
         source.meter.reset()
         self.core.notify("audio")
-        if self.core.domain:
-            for card in list(self.core.domain.cards.values()):
-                if card.type == "voice_out":
-                    card.finished(source.id)
 
     # ------------------------------------------------------------------ speech to text
     async def stt(self, pcm: bytes, language: str | None = None) -> dict[str, Any] | None:

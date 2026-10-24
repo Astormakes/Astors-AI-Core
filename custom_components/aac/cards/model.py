@@ -73,6 +73,10 @@ class Model(Card):
     outputs = {"out": "text"}
     square = {"out"}
     tags = {"answer": "its answers", "call": "its tool calls", "stop": "it was stopped (its answer is cut off)"}
+    ports_help = {"in": "a context arrives: the model reads all of it and answers (a stop while it writes cuts the answer)",
+                  "pool": "dotted: which models to use, in order (a Pool card)",
+                  "out": "square: the answer goes back to the card the context started at if that is wired, else to "
+                         "every wired card that is not one of its tools. Cards wired from here and back are its tools"}
     settings_schema = {
         "temperature": {"type": "number", "title": "Temperature", "default": 0.7, "help": "0 = always the same, higher = more varied."},
         "max_tokens": {"type": "number", "title": "Longest answer (tokens)", "default": 1024},

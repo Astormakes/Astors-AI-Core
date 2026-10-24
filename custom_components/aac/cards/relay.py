@@ -22,8 +22,14 @@ class Relay(Card):
     type = "relay"
     title = "Relay"
     category = "Text"
-    help = ("Passes the message on to every wire. With a text it also adds it: at the start (the system prompt, e.g. a "
-            "charter), as a note before the turn, or after the turn (read last, e.g. the time).")
+    help = ("Passes the context on to every wire. With a text it also adds it: at the start (the system prompt, e.g. a "
+            "charter), as a note before the turn, or after the turn (read last, e.g. the time). With a dotted wire into "
+            "'reads' it starts from what it reads (e.g. a chat's conversation) and puts the arriving lines on top.")
+    inputs = {"in": "text", "reads": "read"}
+    ports_help = {"in": "a context arrives: the Relay runs",
+                  "reads": "dotted: read when a context arrives, never starts anything. Wired from a Chat's 'said': the "
+                           "arriving lines go on top of that chat's conversation, and the answer files into that chat",
+                  "out": "the context, with its text added"}
     tags = {"text": "its text"}
     settings_schema = {
         "text": {"type": "longtext", "title": "Text", "default": "",
@@ -36,7 +42,7 @@ class Relay(Card):
                     "help": "Ticked: one entry, replaced each time. Unticked: a new one each time. At the start keep it "
                             "ticked, after the turn unticked: then the conversation only grows at the end (the server's "
                             "cache keeps working, answers stay fast)."},
-        "add_tag": {"type": "tag", "title": "Also add text to entries tagged", "default": ""},
+        "add_tag": {"type": "tag", "title": "Also add text to the newest entry tagged", "default": ""},
         "add_where": {"type": "select", "title": "… at", "default": "end", "options": [["start", "their start"], ["end", "their end"]]},
         "add_text": {"type": "text", "title": "… this text", "default": ""},
     }
@@ -53,11 +59,17 @@ class Relay(Card):
             return f"{text}\n[template error: {err}]"
 
     async def handle(self, message: Message, port: str, step) -> list[Any] | None:
+        if port != "in":
+            return []
+        if step and (read := step.read("reads")):  # start from what it reads (a chat's context), the new lines on top
+            base, new = read[0], [e for e in message.entries if e["kind"] not in ("system", "signal")]
+            message.entries[:] = [*base.entries, *new]
+            message.origin, message.chat_id = base.origin, base.chat_id
         position = self.settings.get("position") or "nothing"
         if position in KIND:
             message.put(self.id, KIND[position], self.render(), "text", replace_it=bool(self.settings.get("replace")))
         if (tag := self.settings.get("add_tag")) and (extra := self.settings.get("add_text")):
-            for e in message.tagged(tag):
+            for e in message.tagged(tag)[-1:]:  # the newest one (earlier turns stay as they were)
                 e["text"] = f"{extra}{e['text']}" if self.settings.get("add_where") == "start" else f"{e['text']}{extra}"
         return None
 
