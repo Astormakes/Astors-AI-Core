@@ -4,7 +4,9 @@ Speech to text turns a clip into a context. When AAC last spoke is the core's (t
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
+import re
 from typing import Any
 
 from homeassistant.util import dt as dt_util
@@ -12,9 +14,10 @@ from homeassistant.util import dt as dt_util
 from custom_components.aac.api import (LOGGER, SAMPLE_RATE, Card, Context, Segmenter, level, make_vad, pcm_to_wav, register,
                                       resample, wav_to_pcm)
 
-VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
+SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 STREAM_PIECE = 2  # seconds of a live stream the Speaker plays at a time
 
 
@@ -140,13 +143,13 @@ class TextToSpeech(Card):
     type = "text_to_speech"
     title = "Text to speech"
     category = "Audio"
-    help = ("Turns the newest answer into an audio clip, in a voice per language (the language it was spoken to in). The "
-            "clip remembers the satellite the spoken line came from; wire it into a Speaker. An answer 'nothing' stays "
-            "silent; a stop arriving here goes on to the Speaker as a stop.")
+    help = ("Turns the answers of a turn into audio clips, sentence by sentence as they are written, in a voice per "
+            "language (the language it was spoken to in). A clip remembers the satellite the spoken line came from; wire "
+            "it into a Speaker. An answer 'nothing' stays silent; a stop arriving here goes on to the Speaker as a stop.")
     inputs = {"in": "text"}
     outputs = {"out": "clip"}
-    ports_help = {"in": "a context: its newest answer is spoken",
-                  "out": "the spoken answer as a clip (data: the satellite it was heard at, the text, the language); a stop "
+    ports_help = {"in": "a context: the answers of its newest turn are spoken (while they are written: each finished sentence)",
+                  "out": "each spoken sentence as a clip (data: the satellite it was heard at, the text, the language); a stop "
                          "goes out as a stop clip"}
     settings_schema = {"engine": {"type": "tts_engine", "title": "Voice engine", "default": "",
                                   "help": "A Home Assistant text-to-speech engine. Empty: the default on the Audio page."},
@@ -160,21 +163,59 @@ class TextToSpeech(Card):
                                          "required": True}}},
     }
 
-    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
-        text = context.answer.strip()
-        if not text or text.lower() in SILENT:
-            return []
-        said = next((e for e in reversed(context.entries) if e["kind"] == "said" and e["data"].get("mic")), None)
-        data = (said or {}).get("data", {})
-        wav = await self.core.audio.tts(text, data.get("language"), self.settings.get("engine") or None, self.settings.get("voices"))
-        if not wav:
-            return []
-        pcm, rate = wav_to_pcm(wav)
-        self.domain.flow.clip(self.id, "out", {"pcm": pcm, "rate": rate, "seconds": round(len(pcm) / 2 / rate, 1), "text": text,
-                                               "source": data.get("mic"), "name": data.get("mic_name"), "language": data.get("language")})
+    def __init__(self, *args: Any) -> None:
+        super().__init__(*args)
+        self._spoken: dict[str, int] = {}  # answer entry → how much of its text is spoken
+        self._last: asyncio.Future | None = None  # the newest sentence on its way (they go out in order)
+        self._round = 0  # a stop starts a new round: sentences of the old one are dropped
+
+    async def progress(self, context: Context, port: str) -> list[Any] | None:
+        self._speak(context, finished=False)
         return []
 
+    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
+        self._speak(context, finished=True)
+        if self._last:
+            await self._last
+        return []
+
+    def _speak(self, context: Context, finished: bool) -> None:
+        """Queue what is newly finished in the answers of the newest turn (all of it once the turn is finished)."""
+        said = max((i for i, e in enumerate(context.entries) if e["kind"] == "said"), default=-1)
+        heard = (context.entries[said]["data"] if said >= 0 else {})
+        for e in context.entries[said + 1:]:
+            if e["kind"] != "answer" or e.get("state") == "cut":
+                continue
+            text, upto = e["text"], self._spoken.get(e["id"], 0)
+            if finished or e.get("state") == "closed":
+                end = len(text)
+            else:
+                ends = [m.end() for m in SENTENCE.finditer(text)]
+                end = ends[-1] if ends else 0
+            if end <= upto:
+                continue
+            self._spoken[e["id"]] = end
+            if text.strip().lower() not in SILENT and (part := text[upto:end].strip()):
+                self._queue(part, heard)
+        while len(self._spoken) > 50:  # only recent turns matter
+            self._spoken.pop(next(iter(self._spoken)))
+
+    def _queue(self, text: str, heard: dict[str, Any]) -> None:
+        before, round_ = self._last, self._round
+
+        async def in_order() -> None:
+            wav = await self.core.audio.tts(text, heard.get("language"), self.settings.get("engine") or None, self.settings.get("voices"))
+            if before:
+                await before
+            if not wav or round_ != self._round:
+                return
+            pcm, rate = wav_to_pcm(wav)
+            self.domain.flow.clip(self.id, "out", {"pcm": pcm, "rate": rate, "seconds": round(len(pcm) / 2 / rate, 1), "text": text,
+                                                   "source": heard.get("mic"), "name": heard.get("mic_name"), "language": heard.get("language")})
+        self._last = asyncio.ensure_future(in_order())
+
     async def stop(self, stop: dict[str, Any] | None = None) -> bool:
+        self._round += 1  # sentences still being made are dropped
         self.domain.flow.clip(self.id, "out", {"stop": True})  # the Speaker stops what it plays
         return False
 
@@ -230,7 +271,7 @@ class Speaker(Card):
         where = self.settings.get("source") or clip.get("source")
         if not where or not clip.get("pcm"):
             return
-        await self._play(where, pcm_to_wav(clip["pcm"], int(clip.get("rate") or SAMPLE_RATE)), clip.get("text", ""))
+        await self._play(where, pcm_to_wav(clip["pcm"], int(clip.get("rate") or SAMPLE_RATE)), clip.get("text", ""), queue=True)
 
     def stream(self, port: str, chunk: bytes, meta: dict[str, Any]) -> None:
         """A live stream: played in short pieces (satellites take whole clips)."""
@@ -243,10 +284,10 @@ class Speaker(Card):
             wav, buf[:] = pcm_to_wav(bytes(buf)), b""
             self.hass.async_create_background_task(self._play(where, wav, ""), f"aac {self.id} stream")
 
-    async def _play(self, where: str, wav: bytes, text: str) -> None:
+    async def _play(self, where: str, wav: bytes, text: str, queue: bool = False) -> None:
         self._played_at.add(where)
         if not where.startswith("media_player."):
-            await self.core.audio.play(where, wav, text)
+            await self.core.audio.play(where, wav, text, queue=queue)  # clips one after another, a stream at once
             return
         try:
             await self.hass.services.async_call("media_player", "play_media", {

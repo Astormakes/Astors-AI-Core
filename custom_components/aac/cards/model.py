@@ -5,15 +5,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 
 from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import LOGGER, Card, Client, Context, entry, is_stop, ModelError, ModelUnreachable, register, tool_spec
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 MAX_ROUNDS = 8  # model → tool → model … per context
+SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 KEEP_REQUESTS = 30  # chats whose last request is kept for the panel
 
 
@@ -67,7 +69,8 @@ class Model(Card):
     title = "Model"
     category = "Models"
     help = ("Reads the whole context and answers, with the first free model of its list. Cards wired from its output "
-            "and back into it are its tools.")
+            "and back into it are its tools. While it works, every finished sentence and tool call goes out at once (a "
+            "Chat shows it, Text to speech speaks it); the finished answer follows.")
     outputs = {"out": "text"}
     square = {"out"}
     tags = {"answer": "its answers", "call": "its tool calls", "stop": "it was stopped (its answer is cut off)"}
@@ -89,6 +92,8 @@ class Model(Card):
         super().__init__(*args)
         self._task: asyncio.Task | None = None
         self._stop: dict[str, Any] | None = None
+        self._sent: asyncio.Future | None = None  # the newest snapshot on its way (they go out in order)
+        self._upto: dict[str, int] = {}  # answer entry → how far its text has gone out
         self.requests: dict[str, dict[str, Any]] = {}
 
     async def handle(self, context: Context, port: str, step) -> list[Any] | None:
@@ -107,12 +112,29 @@ class Model(Card):
             context.entries.append({**stop, "data": {**stop["data"], "done": True}})  # visible history, no longer a running stop
         finally:
             self._task = None
-        # the answer goes back where the context started (if wired), else to every card that is not a tool
+            if self._sent:  # the snapshots first, then the finished turn
+                await self._sent
+            self._sent, self._upto = None, {}
+        return self._routes(context, step)
+
+    @staticmethod
+    def _routes(context: Context, step) -> list[Any]:
+        """The answer goes back where the context started (if wired), else to every card that is not a tool."""
         tools = {c.id for c in step.tool_cards()}
         nexts = [c.id for c, _ in step.targets("out") if c.id not in tools]
         if context.origin in nexts:
             return [("out", context.origin)]
         return [("out", n) for n in nexts]
+
+    def _snapshot(self, context: Context, step) -> None:
+        """Send what it has so far (after the snapshots before it)."""
+        before, send = self._sent, step.progress(self._routes(context, step))
+
+        async def in_order() -> None:
+            if before:
+                await before
+            await send
+        self._sent = asyncio.ensure_future(in_order())
 
     async def _answer(self, context: Context, step) -> None:
         tools = {}
@@ -167,6 +189,10 @@ class Model(Card):
             if not reply["tool_calls"]:
                 answer["text"] = reply["content"].strip()
                 break
+            if reply["content"].strip():  # it said something before its calls ("let me check"): that stays, finished
+                answer["text"], answer["state"] = reply["content"].strip(), "closed"
+                answer = context.add(self.id, "answer", "", ["answer"])
+                answer["state"] = "open"
             context.entries.remove(answer)  # the call comes first, the answer after it
             for call in reply["tool_calls"]:
                 fname = call["function"]["name"]
@@ -184,6 +210,7 @@ class Model(Card):
                 text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
                 context.add(card.id if card else self.id, "result", text[:8000], call_id=call_id, model=self.id)
             context.entries.append(answer)
+            self._snapshot(context, step)  # what it said and did so far goes out
         answer["state"] = "closed"
 
     def _keep(self, context: Context, shown: list[dict[str, Any]], specs: list[dict[str, Any]], params: dict[str, Any]) -> None:
@@ -198,6 +225,10 @@ class Model(Card):
     def _live(self, answer: dict[str, Any], text: str, step) -> None:
         answer["text"] = text
         step.live(text)
+        ends = [m.end() for m in SENTENCE.finditer(text)]
+        if ends and ends[-1] > self._upto.get(answer["id"], 0):  # a sentence was finished: it goes out
+            self._upto[answer["id"]] = ends[-1]
+            self._snapshot(step.context, step)
 
     async def stop(self, stop: dict[str, Any] | None = None) -> bool:
         if not self._task or self._task.done():

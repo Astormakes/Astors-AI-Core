@@ -46,6 +46,12 @@ class Shout(Card):
         return await super().call(function, args, context)
 ```
 
+While a card works on a turn it may send snapshots of it: `await step.progress(picks)` (taken when called). A snapshot
+(`context.progress`) passes each card's `async progress(context, port)`, which by default sends it straight on (like
+`handle` returning None); cards that show or speak things as they come answer it (Chat holds the turn, Text to speech
+speaks each newly finished sentence). The finished turn always follows through `handle()`. A Model sends one after
+every finished sentence and every tool result.
+
 More a card may define: `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
 self.save()`), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop(stop_entry) -> bool` (a stop
 arrived: True when it was busy and sent its own context on), `held(port)` (what a dotted wire from that read output

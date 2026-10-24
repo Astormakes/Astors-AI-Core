@@ -50,6 +50,7 @@ if TYPE_CHECKING:
 
 SAMPLE_RATE = 16000
 CLIP_SECONDS = 300  # how long a clip for a media player stays fetchable
+QUEUE_WAIT = 120  # seconds a queued clip waits for the one before it at most
 FRAME_BYTES = 320  # 10 ms of 16-bit mono
 PREROLL_FRAMES = 50  # 500 ms before speech starts (the detector reacts late)
 START_FRAMES = 3
@@ -214,6 +215,9 @@ class AudioHub:
         self.core, self.hass = core, core.hass
         self.sources: dict[str, Source] = {}
         self._spoke: dict[str, float] = {}  # satellite → when AAC last finished speaking there (time.time())
+        self._queues: dict[str, asyncio.Lock] = {}  # clips waiting to play at a satellite, one after another
+        self._idle: dict[str, asyncio.Event] = {}  # set when a satellite finished playing (or was stopped)
+        self._turns: dict[str, int] = {}  # counts the stops at a satellite (a queued clip of an older turn is dropped)
 
     @property
     def settings(self) -> dict[str, Any]:
@@ -275,6 +279,8 @@ class AudioHub:
         """The satellite finished playing AAC's voice."""
         self._spoke[source.id] = time.time()
         source.playing = False
+        if idle := self._idle.get(source.id):
+            idle.set()
         source.meter.reset()
         self.core.notify("audio")
 
@@ -392,12 +398,29 @@ class AudioHub:
             return False
         return await self.play(source_id, audio, text)
 
-    async def play(self, source_id: str, audio: bytes, text: str = "") -> bool:
-        """Play a 16-bit WAV at a satellite, at the set volume (its media player and the Speaker card use this)."""
+    async def play(self, source_id: str, audio: bytes, text: str = "", queue: bool = False) -> bool:
+        """Play a 16-bit WAV at a satellite, at the set volume (its media player and the Speaker card use this).
+        queue: after what is playing there (sentence by sentence); else it cuts in. A stop drops the queue."""
         source = self.sources.get(source_id)
         volume = int(self.settings.get("volume", 40))
         if source is None or volume <= 0:
             return False
+        if queue:
+            turn = self._turns.setdefault(source_id, 0)
+            async with self._queues.setdefault(source_id, asyncio.Lock()):
+                idle = self._idle.setdefault(source_id, asyncio.Event())
+                while source.playing and turn == self._turns[source_id]:
+                    idle.clear()
+                    try:
+                        await asyncio.wait_for(idle.wait(), QUEUE_WAIT)
+                    except TimeoutError:
+                        break
+                if turn != self._turns[source_id] or source_id not in self.sources:  # stopped meanwhile
+                    return False
+                return await self._send_play(source, audio, text, volume)
+        return await self._send_play(source, audio, text, volume)
+
+    async def _send_play(self, source: Source, audio: bytes, text: str, volume: int) -> bool:
         if volume < 100:
             audio = await self.hass.async_add_executor_job(scale_wav, audio, volume / 100)
         source.playing = True
@@ -417,7 +440,10 @@ class AudioHub:
         return f"{get_url(self.hass, prefer_external=False)}{ClipView.url.replace('{key}', key)}"
 
     async def stop(self, source_id: str) -> bool:
-        """Stop what a satellite is playing (True if it was playing)."""
+        """Stop what a satellite is playing and drop what waits to play there (True if it was playing)."""
+        self._turns[source_id] = self._turns.get(source_id, 0) + 1
+        if idle := self._idle.get(source_id):
+            idle.set()
         source = self.sources.get(source_id)
         if source is None or not source.playing:
             return False

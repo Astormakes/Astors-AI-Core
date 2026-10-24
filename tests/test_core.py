@@ -212,3 +212,38 @@ class MyRelay(Card):
             (folder / f"{name}.py").unlink(missing_ok=True)
             for cached in (folder / "__pycache__").glob(f"{name}.*"):
                 cached.unlink()
+
+
+async def test_a_model_talks_while_it_works(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """What a model says before its tool calls stays and goes out at once; each finished sentence goes out while it
+    writes (snapshots): Text to speech speaks sentence by sentence, the Chat shows the turn, the others pass it on."""
+    from unittest.mock import AsyncMock, patch
+
+    from custom_components.aac.audio import pcm_to_wav
+
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    voice = await d.add_card("text_to_speech", "Text to speech")
+    relay = await d.add_card("relay", "Answer")  # as in the voice chain: model → Answer → Chat and Text to speech
+    d.set_wires([*[w for w in d.wires if w != {"from": "model.out", "to": "chat.answers"}], {"from": "model.out", "to": f"{relay.id}.in"},
+                 {"from": f"{relay.id}.out", "to": "chat.answers"}, {"from": f"{relay.id}.out", "to": f"{voice.id}.in"}])
+    model_answers(aioclient_mock, reply("Let me check.", [("lists__lists", {})]), reply("You have no lists yet. Shall I make one?"))
+    spoken, clips = [], []
+
+    async def tts(text, *args):
+        spoken.append(text)
+        return pcm_to_wav(b"\x00\x00" * 160)
+    shown = []
+    chat = d.cards["chat"]
+    real = chat.progress
+
+    async def watch(context, port):
+        shown.append([e["text"] for e in context.entries if e["kind"] == "answer" and e.get("state") == "closed"])
+        return await real(context, port)
+    with patch.object(core.audio, "tts", AsyncMock(side_effect=tts)), patch.object(chat, "progress", watch), \
+            patch.object(d.flow, "clip", lambda card, port, clip: clips.append(clip["text"])):
+        _, answer = await chat.send("what lists do I have?")
+        await hass.async_block_till_done()
+    assert answer == "You have no lists yet. Shall I make one?"
+    assert spoken == clips == ["Let me check.", "You have no lists yet.", "Shall I make one?"]
+    assert ["Let me check."] in shown  # the chat showed it while the model went on

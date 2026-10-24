@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, is_stop, new_id, register
 
-VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NO_ANSWER = "(no answer came back: is a model wired back into this chat?)"
@@ -171,6 +171,24 @@ class Chat(Card):
         context.add(self.id, "signal", "stop", ["stop"])
         self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "said"), f"aac {self.id} stop")
 
+    async def progress(self, context: Context, port: str) -> list[Any] | None:
+        """A turn still being worked on: once it has something finished (a sentence said, a tool called), the chat
+        shows it; a turn that ends in "nothing" stays out (nothing finished before it)."""
+        if context.origin != self.id or port != "answers":
+            return []
+        said = max((i for i, e in enumerate(context.entries) if e["kind"] == "said"), default=-1)
+        if any(e["kind"] == "call" or (e["kind"] == "answer" and e.get("state") == "closed") for e in context.entries[said + 1:]):
+            await self._keep_turn(context)
+        return []
+
+    async def _keep_turn(self, context: Context) -> None:
+        chat = self.get(context.chat_id or context.id)  # a turn without a chat gets one named after it (snapshots too)
+        if chat is None:  # a turn built on an empty read (quiet for long): a new chat
+            said = context.last("said") or {}
+            name = said.get("data", {}).get("mic_name")
+            chat = self._new(f"Voice · {name} · {dt_util.now().strftime('%H:%M')}" if name else said.get("text", ""), context.chat_id or context.id)
+        await self._hold(chat, context.entries)
+
     async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         """A context came in: it replaces what the chat holds (a new chat if it belongs to none yet)."""
         cut = (context.last("answer") or {}).get("state") == "cut"
@@ -178,12 +196,7 @@ class Chat(Card):
             return []
         text = context.answer or ("" if cut else "(no answer)")
         if context.origin == self.id and text.strip().lower() not in SILENT:
-            chat = self.get(context.chat_id or "")
-            if chat is None:  # a turn built on an empty read (quiet for long): a new chat
-                said = context.last("said") or {}
-                name = said.get("data", {}).get("mic_name")
-                chat = self._new(f"Voice · {name} · {dt_util.now().strftime('%H:%M')}" if name else said.get("text", ""), context.chat_id)
-            await self._hold(chat, context.entries)
+            await self._keep_turn(context)
         if (future := self._waiting.get(context.id)) and not future.done():
             future.set_result(text)
         return []

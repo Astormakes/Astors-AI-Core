@@ -1,12 +1,15 @@
 """How a context moves (docs/v2): from a card's output along the wires into the next cards.
 
-A round output gives every wire a copy; on a square one the card picks the wire. A card's tools are the cards wired
+A round output gives every wire a copy; on a square one the card picks the wire. While a card works on a turn it may
+send snapshots of it (`Step.progress`): they pass every card's `progress()` (by default straight on), and the finished
+turn follows through `handle()`. A card's tools are the cards wired
 from its output and back into it (a loop): it calls their functions directly, the call and its result are written
 into the context. What passed each output is kept for the monitor, and open panels hear about it (live wires).
 """
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -51,6 +54,13 @@ class Step:
     def read(self, port: str) -> list[Context]:
         """What the dotted wires into one of this card's inputs hold now (reading never starts anything)."""
         return [m for c, p in self.flow.wired_into(self.card.id, port) if (m := c.held(p)) is not None]
+
+    def progress(self, picks: list[Any]) -> Awaitable[None]:
+        """A snapshot of this context (still being worked on), taken now, for the card's outputs (picks as handle
+        returns): await what it returns to send it."""
+        snap = self.context.branch()
+        snap.progress = True
+        return self.flow._out(self.card, snap, picks)
 
     def live(self, text: str) -> None:
         """Text that is still growing (a model writing): open panels show it."""
@@ -138,6 +148,14 @@ class Flow:
         context.way.append(card.id)
         if len(context.way) > MAX_STEPS:
             LOGGER.warning("AAC: a context visited %s cards; the wiring may loop (stopped at %s)", MAX_STEPS, card.id)
+            return
+        if context.progress:  # a snapshot: cards that show or speak as things come answer it, the others pass it on
+            try:
+                result = await card.progress(context, port)
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("AAC: card %s failed on a snapshot", card.id)
+                return
+            await self._out(card, context, result)
             return
         if context.stopped:  # a stop runs forward: a busy card cuts and sends its own context on, the stop ends there
             if await card.stop(context.entries[-1]):

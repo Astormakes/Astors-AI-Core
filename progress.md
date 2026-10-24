@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.0.0-alpha.37, live on the owner's HA
+## Current state (2026-10-24) – 2.0.0-alpha.38, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -155,14 +155,12 @@ the owner wires them (no automatic wiring), the message is a document of entries
 
 ## Next (owner's list, 2026-10-24; talk each through first, then build, one at a time)
 
-1. **A model that talks while it works** (owner: "it ends its own little runs with that; it could never check a tool,
-   answer in between and keep going"). Found: text a model writes next to tool calls is dropped today
-   (`model.py`: `reply["content"]` is only kept without tool calls), and its live writing goes only to the panel.
-   Proposal (keeps the push system): the Model pushes the same turn again whenever an entry is finished (a sentence,
-   a "let me check", a tool result), as a snapshot of the context; a growing entry is `state: "open"`. Cards that say
-   `live = True` (Chat, Text to speech) get every snapshot; all others get only the final one, so no card has to
-   handle both. Text to speech speaks each newly finished sentence (also less delay).
-2. **Cards with a view** (owner: spectrum, waveform, level bars, maybe bigger cards): a card declares a view; the
+1. ~~A model that talks while it works~~ **done (alpha.38):** what a model says before its tool calls stays; the Model
+   sends a snapshot after every finished sentence and tool result (`Step.progress`, `Card.progress()`: passes on by
+   default; Chat holds the turn once something is finished; Text to speech speaks each finished sentence, in order);
+   the Speaker queues clips per satellite (`core.audio.play(queue=True)`, a stop drops the queue).
+2. **Cards with a view** (owner: spectrum, waveform, level bars, maybe bigger cards; all in the card's files, and a
+   card may become a folder when it has more than one or two files): a card declares a view; the
    panel draws it inside the card (canvas); the card sends small frames (`core.notify("view", card=…, data=…)`) only
    while a panel shows it. Python/numpy is fast enough (an FFT of 16 kHz audio at 20 frames/s is tiny); the browser
    draws. Then Gain / Compressor cards (stream in, stream out, numpy).
@@ -172,8 +170,13 @@ the owner wires them (no automatic wiring), the message is a document of entries
    plays a stream instead of whole WAVs; sentence-wise speech (item 1); the Audio clipper's pause. Found: the
    Microphone → Speaker loop sounded broken because AAC ignores a satellite's microphone while it plays (no talking
    to itself) and the Speaker plays a stream in separate 2 s pieces; needs echo cancellation (best in the satellite)
-   and stream playback.
+   and stream playback. Owner: muting while playing becomes a Microphone setting (a stop word must work while AAC
+   speaks); look at echo cancellation (the speaker's own sound filtered out of the microphone: WebRTC AEC in the
+   satellite; the Poly may do it in hardware); Bluetooth may add delay.
 5. **Editable instructions for models**: each card's text that a wired model gets (its functions' help) gets an
    override/extra text in the card's settings: a fold at the bottom that explains it, with a text box.
 6. **Relay and Conditional UI** (later).
+7. **Card folders**: a card with more than one or two files (Python, page, view …) becomes a folder.
+8. **Card files reload while AAC runs** (owner): AAC notices a card file whose VERSION went up and loads it again, and
+   remakes that type's cards when they are not busy (no restart). Changes to the core still need one.
 - Presets; docs/v2 page 2 details for the remaining cards.

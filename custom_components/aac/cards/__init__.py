@@ -107,6 +107,12 @@ class Card:
         the outputs (or the one wire) it takes."""
         return None
 
+    async def progress(self, context: Context, port: str) -> list[Any] | None:
+        """A snapshot of a turn still being worked on (a model wrote a sentence, called a tool): the same turn comes
+        again, and finished, to handle(). By default it passes on unchanged to the round outputs; a card that shows or
+        speaks things as they come (Chat, Text to speech) answers it. Returns like handle()."""
+        return None
+
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         """One of its functions (a model's tool call, a Conditional's action)."""
         raise ValueError(f"{self.name} has no function {function}")

@@ -44,6 +44,7 @@ class Context:
     chat_id: str | None = None  # the chat it belongs to (a Chat card keeps the conversation)
     id: str = field(default_factory=new_id)
     way: list[str] = field(default_factory=list)  # the cards it passed
+    progress: bool = False  # a snapshot of a turn still being worked on (the same turn comes again, finished)
 
     def add(self, by: str, kind: str, text: str = "", tags: list[str] | None = None, **data: Any) -> dict[str, Any]:
         """Append an entry."""
