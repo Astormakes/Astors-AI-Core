@@ -57,7 +57,8 @@ class Conditional(Card):
     category = "Logic"
     help = ("If … then … without a model: checks the message, edits it (replace, cut, split …), tags it, calls a function "
             "of a card wired to it, stops, or sends it to one of its outputs.")
-    tags = {"split": "entries made by splitting", "call": "its function calls", "match": "which rule matched"}
+    tags = {"split": "entries made by splitting", "call": "its function calls", "match": "which rule matched",
+            "stop": "a stop it sent"}
     settings_schema = {
         "outputs": {"type": "list", "title": "Outputs", "default": [],
                     "help": "Names of extra outputs a rule can send the message to ('out' is always there)."},
@@ -125,7 +126,7 @@ class Conditional(Card):
                 message.add(self.id, "call", "", ["call"], function=f"{card.id}.{action.get('function')}", args=args)
                 message.add(card.id, "result", str(result)[:4000])
         elif do == "stop":
-            message.add(self.id, "signal", "stop")
+            message.add(self.id, "signal", "stop", [self.tag("stop")])
         elif do == "signal" and a:
             message.add(self.id, "signal", a, [a if "." in a else f"user.{a}"])
         elif do == "output" and a:

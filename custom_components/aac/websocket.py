@@ -246,6 +246,13 @@ async def ws_chat_request(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"requests": sorted(found, key=lambda r: r["at"])})
 
 
+@command({vol.Required("type"): "aac/chat/stop", vol.Required("card"): str, vol.Required("chat_id"): str})
+async def ws_chat_stop(hass, connection, msg) -> None:
+    """A chat's Stop button: its context goes out with a stop."""
+    await _chat_card(hass, msg["card"]).stop_chat(msg["chat_id"])
+    connection.send_result(msg["id"], {})
+
+
 @command({vol.Required("type"): "aac/chat/delete", vol.Required("card"): str, vol.Required("chat_id"): str})
 async def ws_chat_delete(hass, connection, msg) -> None:
     """Delete a chat."""

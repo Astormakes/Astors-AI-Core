@@ -86,8 +86,10 @@ class Card:
         """One of its functions (a model's tool call, a Conditional's action)."""
         raise ValueError(f"{self.name} has no function {function}")
 
-    async def stop(self) -> None:
-        """A stop arrived: drop what it is doing."""
+    async def stop(self, stop: dict[str, Any] | None = None) -> bool:
+        """A stop arrived (`stop`: its entry; None: the Send stop button). A busy card closes its open block as cut
+        off, appends the stop and sends its own context on; it says True. Not busy: False (the stop goes on)."""
+        return False
 
     async def start(self) -> None:
         """The card is in a running domain: start its timers and listeners."""

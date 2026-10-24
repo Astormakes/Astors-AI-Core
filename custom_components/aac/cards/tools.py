@@ -131,9 +131,10 @@ class Timer(Card):
             self._waits.discard(task)
         return None
 
-    async def stop(self) -> None:
-        for task in list(self._waits):
+    async def stop(self, stop: dict[str, Any] | None = None) -> bool:
+        for task in list(self._waits):  # what it held is dropped; the stop goes on
             task.cancel()
+        return False
 
 
 TAG = re.compile(r"<[^>]+>")

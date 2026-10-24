@@ -18,6 +18,11 @@ from homeassistant.util import dt as dt_util
 KINDS = ("system", "note", "trailer", "said", "answer", "call", "result", "signal")
 
 
+def is_stop(e: dict[str, Any]) -> bool:
+    """A stop signal entry."""
+    return e["kind"] == "signal" and e["text"] == "stop"
+
+
 def new_id() -> str:
     """A short id."""
     return uuid.uuid4().hex[:10]
@@ -91,8 +96,8 @@ class Message:
 
     @property
     def stopped(self) -> bool:
-        """A stop signal is in it."""
-        return any(e["kind"] == "signal" and e["text"] == "stop" for e in self.entries)
+        """It is a stop: its newest entry is a stop signal (an old stop further up is only history)."""
+        return bool(self.entries) and is_stop(self.entries[-1]) and not self.entries[-1]["data"].get("done")
 
     def branch(self) -> Message:
         """A copy for one of several wires."""

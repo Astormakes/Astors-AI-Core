@@ -26,7 +26,7 @@ class Chat(Card):
     outputs = {"said": "text"}
     page = "chat"
     keeps_data = True
-    tags = {"said": "what you wrote in this chat"}
+    tags = {"said": "what you wrote in this chat", "stop": "you pressed Stop"}
     settings_schema = {
         "turns": {"type": "number", "title": "Conversation that goes along (turns)", "default": 0,
                   "help": "0 = the whole chat; otherwise only the last turns."},
@@ -100,14 +100,25 @@ class Chat(Card):
         self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=chat["id"])
         return chat["id"], answer
 
+    async def stop_chat(self, chat_id: str) -> None:
+        """The chat's Stop button: its context goes out with a stop at the end (a busy model cuts its answer)."""
+        chat = self.get(chat_id)
+        if chat is None:
+            return
+        message = Message(entries=[e for e in chat["entries"] if e["kind"] != "system"], origin=self.id, chat_id=chat_id)
+        message.add(self.id, "signal", "stop", ["stop"])
+        self.hass.async_create_background_task(self.domain.flow.send(message, self.id, "said"), f"aac {self.id} stop")
+
     async def handle(self, message: Message, port: str, step) -> list[Any] | None:
         """An answer came back: shown and kept (the chat is the conversation as it now is)."""
+        cut = (message.last("answer") or {}).get("state") == "cut"
+        if message.stopped and not cut:  # a stop came through and nothing was busy: nothing to keep
+            return []
         chat = self.get(message.chat_id or "")
-        text = message.answer or "(no answer)"
+        text = message.answer or ("" if cut else "(no answer)")
         if chat is not None and message.origin == self.id:
             # system parts come again from their cards; the rest only grows at the end (the server's cache)
             chat["entries"] = [e for e in message.entries if e["kind"] != "system"]
-            cut = (message.last("answer") or {}).get("state") == "cut"
             self._add(chat, "aac", text, cut=cut or None)
             await self.save()
             self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=chat["id"])

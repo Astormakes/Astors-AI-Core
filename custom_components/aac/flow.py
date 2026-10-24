@@ -132,8 +132,11 @@ class Flow:
         if len(message.way) > MAX_STEPS:
             LOGGER.warning("AAC: a message visited %s cards; the wiring may loop (stopped at %s)", MAX_STEPS, card.id)
             return
-        if message.stopped:
-            await card.stop()
+        if message.stopped:  # a stop runs forward: a busy card cuts and sends its own context on, the stop ends there
+            if await card.stop(message.entries[-1]):
+                return
+            await self._out(card, message, None)
+            return
         try:
             result = await card.handle(message, port, Step(self, card, port, message))
         except Exception:  # noqa: BLE001 - one broken card must not stop the domain

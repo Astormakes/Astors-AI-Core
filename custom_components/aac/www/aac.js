@@ -254,7 +254,7 @@ class AacPanel extends HTMLElement {
         || `<div class="hint" style="margin:auto">${esc(card.title)}: ask anything.</div>`;
     const busy = this.busy ? `<div class="bubble aac" id="live">${md(this.live.text || "…")}</div>` : "";
     return `<div class="chat">${this._header(this.chat?.title || `New chat · ${card.title}`,
-      `${this.chat ? `<button class="small" data-mode="" ${!this.expert ? "disabled" : ""}>Chat</button><button class="small" data-mode="doc" title="The document: every entry with its card, kind and tags" ${this.expert === "doc" ? "disabled" : ""}>Document</button><button class="small" data-mode="request" title="What the model got for the newest turn: each message with the cards its text came from, and the tools it had" ${this.expert === "request" ? "disabled" : ""}>Request</button><button class="small danger" id="delchat">Delete</button>` : ""}<button class="small" id="stop" title="Stop everything that is working">Stop</button>`)}
+      `${this.chat ? `<button class="small" data-mode="" ${!this.expert ? "disabled" : ""}>Chat</button><button class="small" data-mode="doc" title="The document: every entry with its card, kind and tags" ${this.expert === "doc" ? "disabled" : ""}>Document</button><button class="small" data-mode="request" title="What the model got for the newest turn: each message with the cards its text came from, and the tools it had" ${this.expert === "request" ? "disabled" : ""}>Request</button><button class="small danger" id="delchat">Delete</button>` : ""}<button class="small" id="chatstop" title="Stop: sends this chat's context with a stop; a model still writing cuts its answer">Stop</button>`)}
       <div class="log">${log}${busy}</div>
       <div class="composer"><textarea id="input" placeholder="Message AAC…" ${this.busy ? "disabled" : ""}></textarea><button class="primary" id="send" ${this.busy ? "disabled" : ""}>Send</button></div></div>`;
   }
@@ -910,6 +910,7 @@ class AacPanel extends HTMLElement {
     $$("[data-mode]").forEach((el) => el.addEventListener("click", async () => { this.expert = el.dataset.mode; if (this.expert === "request") this.requests = (await this.ws("aac/chat/request", { chat_id: this.view.id })).requests; this.render(); }));
     $("#delchat")?.addEventListener("click", async () => { if (confirm("Delete this chat?")) { await this.ws("aac/chat/delete", { card: this.view.card, chat_id: this.view.id }); await this._openChats(this.view.card); this.go("chat", this.view.card, null); } });
     $$("#stop").forEach((el) => el.addEventListener("click", () => this.ws("aac/stop")));
+    $("#chatstop")?.addEventListener("click", () => (this.view.id ? this.ws("aac/chat/stop", { card: this.view.card, chat_id: this.view.id }) : this.ws("aac/stop")));
     // lists
     $$("[data-done]").forEach((el) => el.addEventListener("change", () => this._listCall("update_item", { list: el.dataset.list, item: el.dataset.done, done: el.checked })));
     $$("[data-edit]").forEach((el) => el.addEventListener("click", () => { const t = prompt("Entry", el.textContent); if (t && t.trim()) this._listCall("update_item", { list: el.dataset.list, item: el.dataset.edit, text: t }); }));

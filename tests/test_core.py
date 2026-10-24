@@ -121,3 +121,35 @@ async def test_setup_file_round_trip(hass: HomeAssistant, mock_entry, aioclient_
     await domain.import_setup(saved)
     assert "time" in domain.cards and domain.wires == saved["wires"]
     assert await domain.undo_last() and "time" not in domain.cards and domain.wires == changed["wires"]
+
+
+async def test_stop_cuts_the_answer_and_stays_visible(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """The chat's Stop while the model writes: the answer is cut, the stop is the context's last entry, and the next
+    turn tells the model it was stopped (an old stop does not stop the next turn)."""
+    import asyncio
+
+    from custom_components.aac.message import is_stop
+
+    from .conftest import BASE_URL
+
+    core = await setup_aac(hass, mock_entry)
+    chat, started, asked = core.domain.cards["chat"], asyncio.Event(), []
+
+    async def slow(method, url, data):
+        from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
+        asked.append(data)
+        if len(asked) == 1:
+            started.set()
+            await asyncio.sleep(3600)
+        return AiohttpClientMockResponse(method, url, json=reply("Fine."))
+
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=slow)
+    sending = hass.async_create_task(chat.send("tell me a long story"))
+    await started.wait()
+    chat_id = chat.chats()[0]["id"]
+    await chat.stop_chat(chat_id)
+    _, answer = await sending
+    kept = chat.get(chat_id)
+    assert answer == "" and kept["messages"][-1]["cut"] and is_stop(kept["entries"][-1])
+    _, answer = await chat.send("go on", chat_id)
+    assert answer == "Fine." and any(m["content"] == "[stopped]" or "[stopped]" in str(m["content"]) for m in asked[-1]["messages"])

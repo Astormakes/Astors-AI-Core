@@ -10,7 +10,7 @@ from typing import Any
 from homeassistant.util import dt as dt_util
 
 from ..const import LOGGER
-from ..message import Message
+from ..message import Message, entry, is_stop
 from ..models import Client, ModelError, ModelUnreachable
 from . import Card, register, tool_spec
 
@@ -27,6 +27,9 @@ def conversation(message: Message, me: str, names: dict[str, str]) -> tuple[str,
     results: dict[str, str] = {}
     for e in message.entries:
         kind, by, data = e["kind"], e["by"], e["data"]
+        if kind == "signal" and is_stop(e):  # it was stopped here: the model knows next time
+            chat.append({"role": "user", "content": "[stopped]", "_from": [by]})
+            continue
         if kind in ("system", "signal") or e.get("state") == "open":  # an answer still being written is not read back
             continue
         if kind == "call" and data.get("model") == me:
@@ -69,7 +72,7 @@ class Model(Card):
     inputs = {"in": "text", "pool": "pool"}
     outputs = {"out": "text"}
     square = {"out"}
-    tags = {"answer": "its answers", "call": "its tool calls"}
+    tags = {"answer": "its answers", "call": "its tool calls", "stop": "it was stopped (its answer is cut off)"}
     settings_schema = {
         "temperature": {"type": "number", "title": "Temperature", "default": 0.7, "help": "0 = always the same, higher = more varied."},
         "max_tokens": {"type": "number", "title": "Longest answer (tokens)", "default": 1024},
@@ -83,6 +86,7 @@ class Model(Card):
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
         self._task: asyncio.Task | None = None
+        self._stop: dict[str, Any] | None = None
         self.requests: dict[str, dict[str, Any]] = {}
 
     def _models(self, step) -> list[dict[str, Any]]:
@@ -91,14 +95,19 @@ class Model(Card):
         return [m for i in ids if (m := self.core.pool.get(i))]
 
     async def handle(self, message: Message, port: str, step) -> list[Any] | None:
-        if port != "in" or message.stopped:
-            return [] if port != "in" else None
-        self._task = asyncio.current_task()
+        if port != "in":
+            return []
+        self._stop = None
+        self._task = asyncio.create_task(self._answer(message, step))  # its own task: a stop cancels only the writing
         try:
-            await self._answer(message, step)
+            await self._task
         except asyncio.CancelledError:
+            if not self._task.cancelled():  # the whole chain is being cancelled, not a stop
+                raise
             if (last := message.last("answer")) and last["by"] == self.id:
                 last["state"] = "cut"
+            stop = self._stop or entry(self.id, "signal", "stop", [self.tag("stop")])
+            message.entries.append({**stop, "data": {**stop["data"], "done": True}})  # visible history, no longer a running stop
         finally:
             self._task = None
         # the answer goes back where the message started (if wired), else to every card that is not a tool
@@ -183,9 +192,12 @@ class Model(Card):
         answer["text"] = text
         step.live(text)
 
-    async def stop(self) -> None:
-        if self._task and not self._task.done():
-            self._task.cancel()
+    async def stop(self, stop: dict[str, Any] | None = None) -> bool:
+        if not self._task or self._task.done():
+            return False
+        self._stop = dict(stop) if stop else None
+        self._task.cancel()
+        return True
 
     async def call(self, function: str, args: dict[str, Any], message: Message | None = None) -> Any:
         if function == "ask":
