@@ -14,3 +14,10 @@ Some devices need a nudge; their plugins live in `devices/`:
 - **Plantronics/Poly BT600 dongle with a Calisto speaker**: the dongle only opens the Bluetooth audio after an
   "off-hook" HID command. The app sends it at start, after a replug and when the microphone delivers only silence,
   and hangs up when it stops.
+
+## Echo cancellation
+The option `echo_cancel` switches on PulseAudio's echo canceller between the microphone and the speaker (WebRTC, as in
+video calls, where PulseAudio has it; Home Assistant's audio system has Speex): AAC's own voice is taken out of what the microphone hears. Then AAC can keep listening while it
+speaks (a stop word works mid-answer): set the Microphone card in AAC to "keep listening". Speakerphones often cancel
+their echo in hardware already. The microphone is always streamed; AAC's Microphone card decides what to do with it
+while AAC speaks.

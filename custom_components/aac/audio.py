@@ -276,11 +276,10 @@ class AudioHub:
 
     @callback
     def feed(self, source: Source, chunk: bytes) -> None:
-        """Raw audio: to every card on the core's "audio" channel (not while AAC speaks there)."""
+        """Raw audio: to every card on the core's "audio" channel, marked while AAC speaks there (meta "speaking": a
+        Microphone card mutes it or keeps listening)."""
         source.meter.feed(chunk)
-        if source.playing:
-            return
-        meta = {"source": source.id, "name": source.name, "area": source.area}
+        meta = {"source": source.id, "name": source.name, "area": source.area, "speaking": source.playing}
         for _, handler in self.core.subscribers("audio"):
             handler(chunk, meta)
 

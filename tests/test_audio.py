@@ -291,3 +291,18 @@ async def test_undo_with_phrases_makes_every_card(hass, mock_entry):
     await hass.async_block_till_done()
     assert set(d.export()["cards"]) == set(d.cards)  # every card made
     assert [c.id for c in d.cards.values() if c.type == "phrase_joiner"] == joiners and d.cards["follow_up"].settings["rules"]
+
+
+async def test_microphone_mutes_or_keeps_listening_while_aac_speaks(hass, mock_entry):
+    """The core passes a satellite's audio on, marked while AAC speaks there; the Microphone card mutes it, or keeps
+    listening (with echo cancellation a stop word works mid-answer)."""
+    core = await setup_aac(hass, mock_entry)
+    mic = await core.domain.add_card("microphone", "Mic")
+    sent = []
+    with patch.object(core.domain.flow, "stream", lambda card, port, chunk, meta: sent.append(meta.get("speaking"))):
+        mic.hear(b"\x00\x00", {"source": "pc", "speaking": False})
+        mic.hear(b"\x00\x00", {"source": "pc", "speaking": True})
+        assert sent == [False]  # muted while AAC speaks
+        await core.domain.update_card(mic.id, settings={"speaking": "listen"})
+        core.domain.cards[mic.id].hear(b"\x00\x00", {"source": "pc", "speaking": True})
+    assert sent == [False, True]

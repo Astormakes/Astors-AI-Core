@@ -108,6 +108,7 @@ class Satellite:
         """Start the devices, connect, stream, reconnect with backoff; hang the devices up at the end."""
         for plugin in self.devices:
             await plugin.start()
+        echo = await self._echo_cancel() if self.args.echo_cancel else None
         ticker = asyncio.create_task(self._tick())
         delay = 1
         try:
@@ -121,8 +122,33 @@ class Satellite:
                 delay = min(delay * 2, 30)
         finally:
             ticker.cancel()
+            if echo:
+                await (await asyncio.create_subprocess_exec("pactl", "unload-module", echo)).wait()
             for plugin in self.devices:
                 await plugin.stop()
+
+    async def _echo_cancel(self) -> str | None:
+        """PulseAudio's echo canceller between the microphone and the speaker: AAC's own voice is taken out of what the
+        microphone hears (WebRTC if this PulseAudio has it, else Speex: HA's audio system has only Speex). Records from
+        its source and plays to its sink from then on; None if not possible."""
+        if not shutil.which("pactl"):
+            LOG.warning("Echo cancellation needs PulseAudio (pactl); going on without")
+            return None
+        masters = [*([f"source_master={self.args.mic}"] if self.args.mic else []),
+                   *([f"sink_master={self.args.speaker}"] if self.args.speaker else [])]
+        error = ""
+        for method in ("webrtc", "speex"):
+            cmd = ["pactl", "load-module", "module-echo-cancel", f"aec_method={method}", f"rate={RATE}", "channels=1",
+                   "source_name=aac_ec_mic", "sink_name=aac_ec_speaker", *masters]
+            proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            out, err = await proc.communicate()
+            if proc.returncode == 0:
+                self.args.mic, self.args.speaker = "aac_ec_mic", "aac_ec_speaker"
+                LOG.info("Echo cancellation on (%s, PulseAudio module %s)", method, out.decode().strip())
+                return out.decode().strip()
+            error = err.decode().strip()
+        LOG.warning("Echo cancellation could not start (%s); going on without", error)
+        return None
 
     async def _tick(self) -> None:
         while True:
@@ -171,7 +197,7 @@ class Satellite:
                 rms = (sum(x * x for x in samples) / len(samples)) ** 0.5 if samples else 0.0
                 for plugin in self.devices:
                     plugin.on_audio(rms)
-            if not self.playing and not ws.closed:  # don't send AAC's own voice back
+            if not ws.closed:  # also while AAC speaks here: AAC decides (its Microphone card mutes or keeps listening)
                 await ws.send_bytes(chunk)
         LOG.error("Microphone stopped (wrong --mic?)")
         await ws.close()
@@ -238,6 +264,8 @@ def main() -> None:
     parser.add_argument("--list", action="store_true", help="List microphones and speakers")
     parser.add_argument("--input-file", type=Path, help="Testing: stream this recording instead of a mic (needs ffmpeg)")
     parser.add_argument("--output-dir", type=Path, help="Testing: save answers as WAV files instead of playing them")
+    parser.add_argument("--echo-cancel", action="store_true",
+                        help="PulseAudio's echo canceller: AAC's own voice is taken out of the microphone (so AAC can keep listening while it speaks)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(message)s")

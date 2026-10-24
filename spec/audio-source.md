@@ -14,8 +14,9 @@ Assistant access token (`Authorization: Bearer …`).
 | AAC → source | `{"type": "stop"}`: stop playing now (a stop reached the Speaker card, or HA's stop on its media player) |
 
 Rules:
-- While a source plays AAC's answer, AAC ignores its microphone (no talking to itself).
-  The source may stop sending meanwhile.
+- A source keeps sending while it plays AAC's answer. AAC passes the audio on marked `speaking`; the Microphone card
+  mutes it (default) or keeps listening (with echo cancellation: the satellite's `echo_cancel` option runs PulseAudio's
+  WebRTC echo canceller, or a speakerphone does it in hardware).
 - `id` is stable per source (a reconnect replaces the old connection); AAC remembers sources
   that connected once.
 - Each source is also a Home Assistant media player (`media_player.aac_satellite_<name>`): HA can play

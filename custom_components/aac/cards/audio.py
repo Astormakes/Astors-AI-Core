@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 from custom_components.aac.api import (CARD_TYPES, LOGGER, SAMPLE_RATE, Card, Context, Segmenter, level, make_vad, new_id, pcm_to_wav,
                                       register, resample, wav_to_pcm)
 
-VERSION = "2.7.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.8.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -35,13 +35,20 @@ class Microphone(Card):
     outputs = {"out": "audio"}
     ports_help = {"out": "the satellite's live audio (a stream; the wire swells with the loudness)"}
     settings_schema = {"source": {"type": "source", "title": "Listens to", "default": "any",
-                                  "help": "One satellite (each its own chain), or any of them."}}
+                                  "help": "One satellite (each its own chain), or any of them."},
+                       "speaking": {"type": "select", "title": "While AAC speaks there", "default": "mute",
+                                    "options": [["mute", "mute (it would hear itself)"], ["listen", "keep listening"]],
+                                    "help": "Keep listening only with echo cancellation (the satellite's echo_cancel, or a "
+                                            "speakerphone that does it itself): then a stop word works while AAC speaks."}}
 
     async def start(self) -> None:
         self.core.subscribe("audio", self, self.hear)
 
     def hear(self, chunk: bytes, meta: dict[str, Any]) -> None:
-        """Audio from the core's "audio" channel (only the satellite it listens to)."""
+        """Audio from the core's "audio" channel (only the satellite it listens to; muted while AAC speaks there unless
+        it keeps listening)."""
+        if meta.get("speaking") and (self.settings.get("speaking") or "mute") == "mute":
+            return
         if self.settings.get("source") in ("any", meta["source"], None, ""):
             self.domain.flow.stream(self.id, "out", chunk, meta)
 
