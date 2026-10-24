@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.1.28, live on the owner's HA
+## Current state (2026-10-24) – 2.1.29, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -144,6 +144,9 @@ Z.Y.X: X = changes the backup survives (fixes and new features alike), Y = a bac
 (and `upgrade()` for their saved settings). Bump the manifest version with every deploy (the browser caches the panel
 by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2.1.2; from 2.1.3 on as above.
 
+- 2.1.29: "keep listening" made AAC answer its own voice (Speex leaves too much: an endless thanking loop): speech
+  that began while AAC spoke there is marked (`aac_spoke`, clipper → Speech to text → joiner); the Follow-up ignores it,
+  the Stop word (owner: wired straight behind Speech to text) still gets it.
 - 2.1.28 + satellite 0.2.1: muting while AAC speaks moved into the Microphone card ("While AAC speaks there: mute /
   keep listening"); the core passes audio on marked `speaking`; the satellite always streams. Satellite option
   `echo_cancel`: PulseAudio's module-echo-cancel (WebRTC where available; HA's audio plugin has only Speex: on on the

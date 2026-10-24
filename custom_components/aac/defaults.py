@@ -92,7 +92,7 @@ async def _voice_cards(domain, names: list[str]) -> None:
         card_id="wake", at={"x": 0, "y": 420})
     await add("conditional", "Follow-up", {"outputs": ["yes"], "rules": [
         {"name": "you started talking less than 6 s after AAC spoke there", "select": said, "test": "template",  # long answers too
-         "value": "{{ entry is not none and audio.satellites.get(entry.data.mic, {}).get('seconds', 999999) - (entry.data.seconds or 0) < 6 "
+         "value": "{{ entry is not none and not entry.data.aac_spoke and audio.satellites.get(entry.data.mic, {}).get('seconds', 999999) - (entry.data.seconds or 0) < 6 "
                   f"and not (entry.text | lower is search('{words}')) }}}}", "actions": [{"do": "output", "a": "yes"}]}]},
         card_id="follow_up", at={"x": 0, "y": 540})
     await add("relay", "Spoken turn", {"position": "after", "replace": False, "text": VOICE_RULES}, card_id="spoken", at={"x": 240, "y": 420})

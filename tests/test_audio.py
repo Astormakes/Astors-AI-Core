@@ -93,6 +93,10 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
         core.audio._spoke["pc"] = __import__("time").time() - 25
         assert (await route("follow_up", "a long answer", seconds=22))[0] == [("yes", "followed")]  # began 3 s after
         assert (await route("follow_up", "something later", seconds=2))[0] == []  # began 23 s after
+        core.audio._spoke["pc"] = __import__("time").time()
+        m = Context()
+        m.add("ears", "said", "thank you", mic="pc", seconds=1.0, aac_spoke=True)  # began while AAC spoke: its own voice
+        assert await d.cards["follow_up"].handle(m, "in", Step(d.flow, d.cards["follow_up"], "in", m)) == []
 
 
 async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, mock_entry, aioclient_mock):

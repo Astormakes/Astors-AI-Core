@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 from custom_components.aac.api import (CARD_TYPES, LOGGER, SAMPLE_RATE, Card, Context, Segmenter, level, make_vad, new_id, pcm_to_wav,
                                       register, resample, wav_to_pcm)
 
-VERSION = "2.8.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.9.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -116,6 +116,7 @@ class PauseCut(Card):
         super().__init__(*args)
         self._cuts: dict[str, Segmenter] = {}
         self._utterance: dict[str, str] = {}  # satellite → the sentence its phrases belong to
+        self._aac_spoke: dict[str, bool] = {}  # satellite → AAC was speaking there when this speech began
         self._parts: dict[str, int] = {}  # sentence → phrases sent
 
     async def start(self) -> None:
@@ -172,8 +173,9 @@ class PauseCut(Card):
             seg = self._cuts[key] = Segmenter(make_vad(), int(self.settings.get("pause") or 800), int(self.settings.get("longest") or 30),
                                               int(self.settings.get("phrase") or 0))
         for kind, audio in seg.feed_parts(chunk):
-            if kind == "start":  # speech began (`audio` frames ago)
+            if kind == "start":  # speech began (`audio` frames ago); while AAC spoke there it is mostly AAC's own voice
                 self._utterance[key] = utterance = new_id()
+                self._aac_spoke[key] = bool(meta.get("speaking"))
                 self._cut("start", meta, utterance=utterance, ago=audio / 100)
                 continue
             utterance = self._utterance.get(key)
@@ -183,7 +185,8 @@ class PauseCut(Card):
                 self._cut("end", meta, utterance=self._utterance.pop(key, None), parts=audio)
                 continue
             pcm = b"".join(audio) if kind == "piece" else audio
-            clip = {**meta, "pcm": pcm, "seconds": round(len(pcm) / (SAMPLE_RATE * 2), 1), "end": dt_util.utcnow().isoformat()}
+            clip = {**meta, "pcm": pcm, "seconds": round(len(pcm) / (SAMPLE_RATE * 2), 1), "end": dt_util.utcnow().isoformat(),
+                    "aac_spoke": self._aac_spoke.get(key, False)}
             if kind == "phrase":
                 self._parts[utterance] = self._parts.get(utterance, 0) + 1
                 clip |= {"utterance": utterance, "part": self._parts[utterance]}
@@ -204,7 +207,8 @@ class SpeechToText(Card):
     outputs = {"out": "text"}
     ports_help = {"in": "audio clips (e.g. speech from an Audio clipper)",
                   "out": "round: every wire gets each heard line as a new context (data: mic = the satellite, mic_name, "
-                         "language), e.g. into several Conditionals side by side"}
+                         "language, aac_spoke = it began while AAC spoke there: mostly AAC's own voice), e.g. into several "
+                         "Conditionals side by side"}
     tags = {"heard": "what was said (data: the satellite)"}
     settings_schema = {"language": {"type": "text", "title": "Language (empty: the home's)", "default": "",
                                     "help": "A code like de. Empty: the home's languages from the Audio page (one: that one; "
@@ -225,7 +229,7 @@ class SpeechToText(Card):
             self.core.audio.mark(clip.get("source"), "text ready")
         context = Context(origin=self.id)
         context.add(self.id, "said", text, ["heard"], mic=clip.get("source"), mic_name=clip.get("name"),
-                    utterance=clip.get("utterance"), part=clip.get("part"),
+                    utterance=clip.get("utterance"), part=clip.get("part"), aac_spoke=bool(clip.get("aac_spoke")),
                     area=clip.get("area"), seconds=clip.get("seconds"), language=(heard or {}).get("language"))
         await self.domain.flow.send(context, self.id, "out")
 
@@ -466,7 +470,7 @@ class PhraseJoiner(Card):
         first = parts[0]["data"]
         context = Context(origin=self.id)
         context.add(self.id, "said", " ".join(p["text"].strip() for p in parts), ["heard"],
-                    **{k: first.get(k) for k in ("mic", "mic_name", "area", "language")},
+                    **{k: first.get(k) for k in ("mic", "mic_name", "area", "language", "aac_spoke")},
                     seconds=round(sum(float(p["data"].get("seconds") or 0) for p in parts), 1), phrases=len(parts))
         self.core.audio.mark(first.get("mic"), "text ready")
         await self.domain.flow.send(context, self.id, "out")
