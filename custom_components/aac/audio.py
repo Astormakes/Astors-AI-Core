@@ -127,14 +127,17 @@ def make_vad() -> Callable[[bytes], float]:
 class Segmenter:
     """Cuts a PCM stream into pieces of speech that end with a pause; keeps a live meter."""
 
-    def __init__(self, vad: Callable[[bytes], float], pause_ms: int = 800, longest_s: int = 30) -> None:
-        """Initialize."""
+    def __init__(self, vad: Callable[[bytes], float], pause_ms: int = 800, longest_s: int = 30, phrase_ms: int = 0) -> None:
+        """Initialize. phrase_ms: a shorter pause inside the speech that already hands out what came so far (a phrase);
+        0: only whole pieces (up to the pause)."""
         self._vad = vad
         self._pending = b""
         self._preroll: deque[bytes] = deque(maxlen=PREROLL_FRAMES)
         self._segment: list[bytes] | None = None
         self._run = self._silence = self._speech = 0
         self.end_silence = max(10, pause_ms // 10)
+        self.phrase_silence = phrase_ms // 10 if 0 < phrase_ms < pause_ms else 0
+        self._cut = self._cut_speech = 0  # where the current phrase began (frame index), the speech in it
         self.longest = max(100, longest_s * 100)
         self.meter: deque[tuple[int, float, bool]] = deque(maxlen=METER_POINTS)
         self._acc = [0, 0, 0]
@@ -157,8 +160,13 @@ class Segmenter:
             self._acc = [0, 0, 0]
 
     def feed(self, chunk: bytes) -> list[bytes]:
-        """Add audio; returns finished pieces."""
-        done: list[bytes] = []
+        """Add audio; returns finished pieces (whole ones, up to the pause)."""
+        return [b"".join(audio) for kind, audio in self.feed_parts(chunk) if kind == "piece"]
+
+    def feed_parts(self, chunk: bytes) -> list[tuple[str, Any]]:
+        """Add audio; returns what is finished, in order: ("phrase", pcm) at a short pause inside the speech (only with
+        phrase_ms), ("piece", frames or pcm) for a whole piece without phrases, ("end", phrases) when the pause came."""
+        done: list[tuple[str, Any]] = []
         data = self._pending + chunk
         usable = len(data) - len(data) % FRAME_BYTES
         self._pending = data[usable:]
@@ -171,16 +179,26 @@ class Segmenter:
                 self._run = self._run + 1 if speech else 0
                 if self._run >= START_FRAMES:
                     self._segment, self._speech, self._silence = list(self._preroll), self._run, 0
+                    self._cut, self._cut_speech, self._phrases = 0, self._run, 0
                     self._preroll.clear()
                 continue
             self._segment.append(frame)
             if speech:
-                self._speech, self._silence = self._speech + 1, 0
+                self._speech, self._silence, self._cut_speech = self._speech + 1, 0, self._cut_speech + 1
             else:
                 self._silence += 1
+            if self.phrase_silence and self._silence == self.phrase_silence and self._cut_speech >= MIN_SPEECH_FRAMES:
+                done.append(("phrase", b"".join(self._segment[self._cut:])))  # a short pause: what came so far goes
+                self._cut, self._cut_speech, self._phrases = len(self._segment), 0, self._phrases + 1
             if self._silence >= self.end_silence or len(self._segment) >= self.longest:
-                if self._speech >= MIN_SPEECH_FRAMES:
-                    done.append(b"".join(self._segment))
+                if self.phrase_silence:
+                    if self._cut_speech >= MIN_SPEECH_FRAMES:  # cut off by the longest: the rest is a phrase too
+                        done.append(("phrase", b"".join(self._segment[self._cut:])))
+                        self._phrases += 1
+                    if self._phrases:
+                        done.append(("end", self._phrases))
+                elif self._speech >= MIN_SPEECH_FRAMES:
+                    done.append(("piece", self._segment))
                 self._segment, self._run = None, 0
         return done
 

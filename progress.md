@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.1.4, live on the owner's HA
+## Current state (2026-10-24) – 2.1.5, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -144,6 +144,11 @@ Z.Y.X: X = changes the backup survives (fixes and new features alike), Y = a bac
 (and `upgrade()` for their saved settings). Bump the manifest version with every deploy (the browser caches the panel
 by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2.1.2; from 2.1.3 on as above.
 
+- 2.1.5: phrases (owner's design): the Audio clipper's "Phrase pause" sends each phrase at a short pause inside
+  the speech (tagged with its sentence and number) and says at its new output `ends` when the sentence is done;
+  Speech to text stays as it is (passes the tags on); the new Phrase joiner puts the sentence together. Setting a
+  phrase pause adds the joiner after Speech to text and wires it. Measured before: Whisper ~0.8 s after the 0.8 s
+  pause, model's first sentence ~1 s, Piper ~0.3 s.
 - 2.1.4: timing of spoken turns (`core.audio.mark`; speech ended → text ready → first sentence → voice ready →
   playing), shown on the Audio page. Owner: tapping the mic shows in a Level card near instantly (the way in is fast).
 - 2.1.3: the version numbers follow Z.Y.X.

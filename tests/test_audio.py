@@ -209,3 +209,40 @@ async def test_spoken_turn_timing(hass, mock_entry):
     a.mark("pc", "playing")
     (turn,) = a.timing()
     assert turn["source"] == "pc" and list(turn["stages"]) == ["text ready", "first sentence", "playing"]
+
+
+def test_phrases_inside_the_speech():
+    """With a phrase pause, a short pause inside the speech hands out the phrase so far; the long pause ends it."""
+    seg = Segmenter(EnergyVad(), pause_ms=600, phrase_ms=200)
+    got = seg.feed_parts(audio((SILENCE, 0.2), (LOUD, 0.6), (SILENCE, 0.3), (LOUD, 0.6), (SILENCE, 0.8)))
+    assert [k for k, _ in got] == ["phrase", "phrase", "end"] and got[-1][1] == 2
+    whole = Segmenter(EnergyVad(), pause_ms=600)  # without: one piece, as before
+    assert len(whole.feed(audio((SILENCE, 0.2), (LOUD, 0.6), (SILENCE, 0.3), (LOUD, 0.6), (SILENCE, 0.8)))) == 1
+
+
+async def test_phrase_joiner_and_its_wiring(hass, mock_entry):
+    """Setting a phrase pause adds a Phrase joiner after Speech to text (it takes over its wires); the joiner sends the
+    sentence once all its phrases are heard, in order."""
+    from custom_components.aac.context import Context
+    from custom_components.aac.defaults import async_voice_chain
+
+    core = await setup_aac(hass, mock_entry)
+    core.audio.settings["known"] = [{"id": "pc", "name": "PC"}]
+    core.data["voice_chain"] = False
+    await async_voice_chain(core)
+    d = core.domain
+    await d.update_card("cut", settings={"phrase": 250})
+    await hass.async_block_till_done()
+    joiner = next(c for c in d.cards.values() if c.type == "phrase_joiner")
+    assert {"from": "cut.ends", "to": f"{joiner.id}.ends"} in d.wires and {"from": "ears.out", "to": f"{joiner.id}.lines"} in d.wires
+    assert {"from": f"{joiner.id}.out", "to": "wake.in"} in d.wires and {"from": "ears.out", "to": "wake.in"} not in d.wires
+    sent = []
+    with patch.object(d.flow, "send", AsyncMock(side_effect=lambda ctx, card, port: sent.append(ctx))):
+        for part, text in ((2, "what time is it?"), (1, "computer,")):  # out of order
+            c = Context()
+            c.add("ears", "said", text, ["heard"], mic="pc", utterance="u1", part=part, seconds=0.6)
+            assert await joiner.handle(c, "lines", None) == []
+        assert sent == []
+        await joiner.clip("ends", {"utterance": "u1", "parts": 2})
+    (whole,) = sent
+    assert whole.last("said")["text"] == "computer, what time is it?" and whole.last("said")["data"]["mic"] == "pc"
