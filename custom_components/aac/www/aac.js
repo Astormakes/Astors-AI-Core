@@ -6,6 +6,7 @@ const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+
 const tip = (html) => `<span class="qm" tabindex="0">?<span class="tip">${html}</span></span>`;
 const W = 180, HEAD = 34, ROW = 20;
 const COL = W + 110; // one slot column (v1: a column per step in the flow)
+const KIND_NAME = { text: "context", read: "read (dotted)", audio: "audio stream", clip: "audio clip" };
 const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", clip: "#9c27b0" };
 // the Conditional's rules editor: tests and actions with the fields each needs ([field, label, kind])
 const TESTS = { contains: "contains", is: "is exactly", starts: "starts with", ends: "ends with", matches: "matches (regex)",
@@ -42,7 +43,7 @@ header h2 { margin: 0; font-size: 18px; font-weight: 500; margin-right: auto; }
 button, select, input, textarea { font: inherit; color: inherit; }
 button { background: none; border: 1px solid var(--divider-color); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 button:hover { border-color: var(--primary-color); } button.primary { background: var(--primary-color); color: #fff; border-color: var(--primary-color); }
-button.small { padding: 1px 7px; font-size: 12px; } button.danger { color: var(--error-color, #db4437); }
+button.small { padding: 1px 7px; font-size: 12px; } button.danger { color: var(--error-color, #db4437); } button.on { background: rgba(3,169,244,.15); color: var(--primary-color); }
 button:disabled { opacity: .4; cursor: default; }
 input, select, textarea { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 6px; padding: 6px 8px; width: 100%; }
 textarea { resize: vertical; }
@@ -402,11 +403,12 @@ class AacPanel extends HTMLElement {
       return types.length ? `<h4>${esc(c.toUpperCase())}</h4>${types.map((t) => `<div class="item ${this.selType === t.type ? "on" : ""}" data-pick="${esc(t.type)}">${esc(t.title)}</div>`).join("")}` : "";
     }).join("");
     const t = this.selType && this._type(this.selType);
-    const info = t ? `<b>${esc(t.title)}</b> <span class="hint">v${esc(t.version)}</span><p style="margin:6px 0">${esc(t.help)}</p>${this._fnDocs(t.functions)}<p class="hint">Click in the grid to place it.</p>`
+    const ports = (title, list) => (Object.keys(list).length ? `<label>${title}</label>${Object.entries(list).map(([p, k]) => `<div class="fn"><code>${esc(p)}</code> <span class="hint">${esc(KIND_NAME[k] || k)}</span>${t.ports_help?.[p] ? `<br>${esc(t.ports_help[p])}` : ""}</div>`).join("")}` : "");
+    const info = t ? `<b>${esc(t.title)}</b> <span class="hint">v${esc(t.version)}</span><p style="margin:6px 0">${esc(t.help)}</p>${ports("Takes", t.inputs)}${ports("Outputs", t.outputs)}${this._fnDocs(t.functions)}<p class="hint">Click in the grid to place it.</p>`
       : '<span class="hint">Pick a card type above, then click in the grid to place it.</span>';
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
     return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it.")}
-        <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="fit">Fit</button><button class="small" id="export" title="Save this setup as a file (cards, settings, wires, positions; the cards' own data such as lists stays here)">Save file</button><button class="small" id="import" title="Load a setup file into this domain (Undo goes back)">Load file</button><input type="file" id="importfile" accept=".json,application/json" hidden><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
+        <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="fit">Fit</button><button class="small" id="export" title="Save this setup as a file (cards, settings, wires, positions; the cards' own data such as lists stays here)">Save file</button><button class="small" id="import" title="Load a setup file into this domain (Undo goes back)">Load file</button><input type="file" id="importfile" accept=".json,application/json" hidden><button class="small ${this.showValues ? "on" : ""}" id="values" title="The value pool: what templates can use now ({{ card.value }}), live">Values</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
       <div class="nodes"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
         <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
         <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}</div>
@@ -445,14 +447,39 @@ class AacPanel extends HTMLElement {
   _portDocs(c, t) {
     const fns = Object.keys(t?.functions || {}).length;
     const help = { ...(fns ? { in: "used as a tool: wire it from a Model (or Conditional) and back, and its functions are called", out: "back to the card that called it" } : {}), ...(t?.ports_help || {}) };
-    const kind = (k) => (k === "read" ? "dotted, read" : k);
+    const kind = (k) => KIND_NAME[k] || k;
     const row = (dir, [p, k]) => `<div class="fn"><code>${esc(p)}</code> <span class="hint">${dir} · ${esc(kind(k))}${c.square.includes(p) ? " · square: goes to one wire" : dir === "out" ? " · round: every wire gets it" : ""}</span>${help[p] || help["*"] ? `<br>${esc(help[p] || help["*"])}` : ""}</div>`;
     const list = [...Object.entries(c.inputs).map((x) => row("in", x)), ...Object.entries(c.outputs).map((x) => row("out", x))];
     return list.length ? `<details class="fold"><summary>Ports</summary>${list.join("")}</details>` : "";
   }
 
+  _valuesSide() { // the value pool: every card's values and the core's, as templates name them
+    const v = this.values;
+    if (!v) return '<p class="hint">Loading…</p>';
+    const flat = (pre, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.entries(x).flatMap(([k, y]) => flat(/^[A-Za-z_]\w*$/.test(k) ? `${pre}.${k}` : `${pre}['${k}']`, y)) : [[pre, x]]);
+    const what = (id, key) => this._type(this._card(id)?.type)?.values?.[key] || "";
+    const groups = Object.entries(v.cards || {}).map(([id, vals]) => `<label>${esc(this._card(id)?.title || id)}</label>${flat(/^[A-Za-z_]\w*$/.test(id) ? id : `cards['${id}']`, vals).map(([k, x]) => `<div class="fn"><code>{{ ${esc(k)} }}</code> <span class="hint">${esc(what(id, k.split(/[.[]/)[1]))}</span><br>${esc(JSON.stringify(x)).slice(0, 300)}</div>`).join("")}`);
+    const audio = flat("audio", v.audio || {}).map(([k, x]) => `<div class="fn"><code>{{ ${esc(k)} }}</code><br>${esc(JSON.stringify(x)).slice(0, 300)}</div>`).join("");
+    return `<b>Values</b>${tip("What templates (Relays, Conditionals) can use right now. Cards offer them; they change as the cards work. Home Assistant's own (states, now, …) work too.")}
+      <div class="row" style="margin:6px 0;gap:6px"><button class="small" id="valrefresh">Refresh</button><button class="small" id="valclose">Close</button></div>
+      ${groups.join("") || '<p class="hint">No card offers values.</p>'}<label>The core: when AAC last spoke</label>${audio}`;
+  }
+
+  async _removeCard() { // no question: Undo brings it back
+    const card = this.sel;
+    this.sel = null;
+    await this.ws("aac/card/remove", { card });
+    await this._load(); this.render();
+  }
+
+  async _loadValues() {
+    try { this.values = (await this.ws("aac/values", {})).values; } catch (e) { this.values = { cards: {}, audio: {} }; }
+    if (this.showValues) this.render();
+  }
+
   _side() {
     const d = this.state.domain;
+    if (this.showValues) return this._valuesSide();
     if (this.selMon) return this._monitorSide(this.selMon);
     if (this.selWire) {
       const key = `${this.selWire.from}|${this.selWire.to}`, on = this._monitors().includes(key);
@@ -914,7 +941,7 @@ class AacPanel extends HTMLElement {
       const node = e.target.closest(".node"), out = e.target.dataset?.out, hit = e.target.dataset?.wire;
       svg.setPointerCapture(e.pointerId);
       if (node && out) { drag = { kind: "wire", from: `${node.dataset.node}.${out}`, type: e.target.dataset.kind }; return; }
-      if (hit) { const [from, to] = hit.split("|"); this.selWire = { from, to }; this.sel = null; this.selMon = null; this.render(); return; }
+      if (hit) { const [from, to] = hit.split("|"); this.selWire = { from, to }; this.sel = null; this.selMon = null; this.showValues = false; this.render(); return; }
       if (node) {
         const id = node.dataset.node, p = this.state.domain.positions[id] || (this.state.domain.positions[id] = { x: 0, y: 0 }), w = this._world(e);
         drag = { kind: "move", id, dx: w.x - p.x, dy: w.y - p.y, moved: false };
@@ -944,7 +971,7 @@ class AacPanel extends HTMLElement {
       if (!d) return;
       if (d.kind === "move") {
         if (d.moved) { this._snap(d.id); this._drawGrid(); await this._savePositions(); }
-        else { this.sel = d.id; this.selWire = null; this.selMon = null; this.render(); }
+        else { this.sel = d.id; this.selWire = null; this.selMon = null; this.showValues = false; this.render(); }
       }
       if (d.kind === "wire") {
         this.shadowRoot.querySelector("#tmpwire")?.remove();
@@ -1025,6 +1052,9 @@ class AacPanel extends HTMLElement {
     $$("[data-pick]").forEach((el) => el.addEventListener("click", () => { this.selType = this.selType === el.dataset.pick ? null : el.dataset.pick; this.render(); }));
     $("#undo")?.addEventListener("click", async () => { await this.ws("aac/undo"); await this._load(); this.render(); });
     $("#fit")?.addEventListener("click", () => this._fit());
+    $("#values")?.addEventListener("click", () => { this.showValues = !this.showValues; this.values = null; this.render(); if (this.showValues) this._loadValues(); });
+    $("#valrefresh")?.addEventListener("click", () => this._loadValues());
+    $("#valclose")?.addEventListener("click", () => { this.showValues = false; this.render(); });
     $("#arrange")?.addEventListener("click", () => this._doArrange());
     $("#export")?.addEventListener("click", async () => {
       const { setup } = await this.ws("aac/setup/export"), a = document.createElement("a");
@@ -1063,7 +1093,7 @@ class AacPanel extends HTMLElement {
       const key = el.dataset.tag, tags = [...$$(`[data-tag="${key}"]`)].filter((x) => x.checked).map((x) => x.value);
       await this.ws("aac/card/update", { card: this.sel, settings: { [key]: tags } }); await this._load(); this.render();
     }));
-    $("#remove")?.addEventListener("click", async () => { if (confirm("Remove this card? (Undo brings it back)")) { await this.ws("aac/card/remove", { card: this.sel }); this.sel = null; await this._load(); this.render(); } });
+    $("#remove")?.addEventListener("click", () => this._removeCard());
     $("#unwire")?.addEventListener("click", () => this._unwire());
     // schedule entries and watches: the whole list is saved on any change
     const collect = (sel, attr) => [...$$(sel)].map((box) => {
@@ -1112,7 +1142,11 @@ class AacPanel extends HTMLElement {
     this._bindMonitorSide();
     if (!this._keys) {
       this._keys = true;
-      window.addEventListener("keydown", (e) => { if (this.view.kind === "nodes" && this.selWire && (e.key === "Delete" || e.key === "Backspace") && !/INPUT|TEXTAREA/.test(e.composedPath()[0]?.tagName)) this._unwire(); });
+      window.addEventListener("keydown", (e) => { // Delete: the selected wire or card goes (Undo brings it back)
+        if (this.view.kind !== "nodes" || !(e.key === "Delete" || e.key === "Backspace") || /INPUT|TEXTAREA|SELECT/.test(e.composedPath()[0]?.tagName)) return;
+        if (this.selWire) this._unwire();
+        else if (this.sel) this._removeCard();
+      });
     }
     if (this.view.kind === "nodes") { this._gridEvents(); if (!this._fitted) { this._fitted = true; requestAnimationFrame(() => this._fit()); } }
   }

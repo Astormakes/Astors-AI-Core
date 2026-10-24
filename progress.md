@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.0.0-alpha.27, live on the owner's HA
+## Current state (2026-10-24) – 2.0.0-alpha.29, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -24,9 +24,9 @@ the owner wires them (no automatic wiring), the message is a document of entries
   Builder (a model changes cards and wires, within its settings).
 - **Audio (alpha.3, `audio.py` + `cards/audio.py`):** satellites on `/api/aac/audio` (same protocol: the add-on works
   unchanged, its HA user taken over from v1), STT in the order on the Audio page (Whisper on the PC, then HA's),
-  TTS (Piper, voices per language), volume; cards Microphone, Noise gate, Pause cut, Speech to text, Voice chat
+  TTS (Piper, voices per language), volume; cards Microphone, Noise gate, Audio clipper, Speech to text, Voice chat
   (sessions per satellite, follow-up window after Voice out's "finished"), Voice out. Audio wires carry a stream
-  (thickness = loudness), Pause cut makes audio clips (`clip` wires; a clip is any finished bit of audio).
+  (thickness = loudness), the Audio clipper (type pause_cut) makes audio clips (`clip` wires; a clip is any finished bit of audio).
 - **Calendar (alpha.4, `cards/calendar.py` + `calendar.py`):** its own entries plus the open entries of Lists cards
   with a field when/date/due; HA shows them as `calendar.aac_calendar` (v1's unique id kept; create/change/delete from
   HA work); functions calendar/add/change/remove; one-time: a Calendar card as the default model's tool.
@@ -61,6 +61,9 @@ the owner wires them (no automatic wiring), the message is a document of entries
   `{{ audio.satellites[id]… }}`); Conditional has a template test.
   Read ports are triangles (alpha.25): a read input takes only a read output; the Chat provides its current context
   at `provides`.
+- **Panel (alpha.28–29):** the palette shows a card type's Takes / Outputs (ports_help); Delete removes the selected
+  card or wire (no question, Undo brings it back); Values button: the value pool (`aac/values`), live, with each
+  card's descriptions. Pause cut is titled Audio clipper (type `pause_cut` kept).
 - **Voice chain (alpha.16):** Speech to text → three Conditionals side by side: Stop word (sends stop forward), Wake
   word ("computer"/"assistent" → Spoken turn), Follow-up (AAC spoke there < 10 s ago → Follow-up turn: a note "maybe not
   meant for you, then answer nothing"); both Relays read the Chat dotted and go to the Charter; Model → Answer (Relay) →

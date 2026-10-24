@@ -1,5 +1,5 @@
-"""Audio cards (docs/v2): Microphone → (Noise gate) → Pause cut → Speech to text → … → Voice out (speaks at the
-satellite). Raw audio flows on `audio` wires as a stream (never a context); a Pause cut makes clips (`clip` wires);
+"""Audio cards (docs/v2): Microphone → (Noise gate) → Audio clipper → Speech to text → … → Voice out (speaks at the
+satellite). Raw audio flows on `audio` wires as a stream (never a context); an Audio clipper makes clips (`clip` wires);
 Speech to text turns a clip into a context. When AAC last spoke is the core's (templates: {{ audio.… }})."""
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import LOGGER, SAMPLE_RATE, Card, Context, level, make_vad, register, Segmenter
 
-VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
 
@@ -23,7 +23,7 @@ class Microphone(Card):
     type = "microphone"
     title = "Microphone"
     category = "Audio"
-    help = "The audio of one satellite (or any): the start of an audio chain. Wire it into a Noise gate or a Pause cut."
+    help = "The audio of one satellite (or any): the start of an audio chain. Wire it into a Noise gate or an Audio clipper."
     inputs: dict[str, str] = {}
     outputs = {"out": "audio"}
     ports_help = {"out": "the satellite's live audio (a stream; the wire swells with the loudness)"}
@@ -71,7 +71,7 @@ class PauseCut(Card):
     """Speech detection."""
 
     type = "pause_cut"
-    title = "Pause cut"
+    title = "Audio clipper"
     category = "Audio"
     help = "Speech detection: a stretch of speech that ends with a pause leaves as one clip. Wire it into Speech to text."
     inputs = {"in": "audio"}
@@ -106,7 +106,7 @@ class SpeechToText(Card):
             "'heard'. The engines and their order are on the Audio page.")
     inputs = {"in": "clip"}
     outputs = {"out": "text"}
-    ports_help = {"in": "audio clips (e.g. speech from a Pause cut)",
+    ports_help = {"in": "audio clips (e.g. speech from an Audio clipper)",
                   "out": "round: every wire gets each heard line as a new context (data: mic = the satellite, mic_name, "
                          "language), e.g. into several Conditionals side by side"}
     tags = {"heard": "what was said (data: the satellite)"}

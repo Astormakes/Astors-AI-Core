@@ -68,7 +68,7 @@ async def async_voice_chain(core: Core) -> None:
         return
     add = domain.add_card
     await add("microphone", "Microphone", {"source": "any"}, card_id="mic", at={"x": -720, "y": 420})
-    await add("pause_cut", "Pause cut", {"pause": 800}, card_id="cut", at={"x": -480, "y": 420})
+    await add("pause_cut", "Audio clipper", {"pause": 800}, card_id="cut", at={"x": -480, "y": 420})
     await add("speech_to_text", "Speech to text", card_id="ears", at={"x": -240, "y": 420})
     await add("voice_out", "Voice out", card_id="speaker", at={"x": 240, "y": 600})
     domain.set_wires([*domain.wires, {"from": "mic.out", "to": "cut.in"}, {"from": "cut.out", "to": "ears.in"}])

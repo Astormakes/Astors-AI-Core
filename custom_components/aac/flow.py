@@ -120,7 +120,7 @@ class Flow:
                     LOGGER.exception("AAC: %s failed on audio", target.id)
 
     def clip(self, card_id: str, port: str, clip: dict[str, Any]) -> None:
-        """An audio clip (e.g. a Pause cut's stretch of speech): to every wired card that takes clips, in the background."""
+        """An audio clip (e.g. an Audio clipper's stretch of speech): to every wired card that takes clips, in the background."""
         self.last[f"{card_id}.{port}"] = {"clip": f"{clip.get('seconds')} s of audio", "source": clip.get("name"), "time": time.time()}
         self._keep(f"{card_id}.{port}", f"{clip.get('seconds')} s of audio from {clip.get('name') or clip.get('source')}")
         self.domain.core.notify("flow", domain=self.domain.id, wire=f"{card_id}.{port}")

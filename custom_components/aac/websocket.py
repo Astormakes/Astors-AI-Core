@@ -91,6 +91,14 @@ async def ws_card_remove(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {})
 
 
+@command({vol.Required("type"): "aac/values"})
+async def ws_values(hass, connection, msg) -> None:
+    """The value pool: what templates can use now ({{ <card>.<value> }}, {{ audio.… }}), as plain JSON."""
+    import json  # noqa: PLC0415
+
+    connection.send_result(msg["id"], {"values": json.loads(json.dumps(_core(hass).domain.template_values(), default=str))})
+
+
 @command({vol.Required("type"): "aac/card/update", vol.Required("card"): str, vol.Optional("title"): str,
           vol.Optional("settings"): dict})
 async def ws_card_update(hass, connection, msg) -> None:

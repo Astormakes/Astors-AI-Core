@@ -23,7 +23,7 @@ Rules:
 - Raw audio stays in RAM, never on disk.
 
 What AAC does with it is up to the cards: the core hands every chunk to whoever takes the `audio` channel (the
-Microphone card), and the audio cards wired after it (Noise gate, Pause cut, Speech to text, …) turn it into contexts
+Microphone card), and the audio cards wired after it (Noise gate, Audio clipper, Speech to text, …) turn it into contexts
 (spec/cards.md). Voice out speaks through `core.audio.say()` / `play()` and stops with `core.audio.stop()`.
 
 ## The satellite program and its device plugins
