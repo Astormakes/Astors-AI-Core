@@ -14,12 +14,6 @@ ssh_opts=(-o ConnectTimeout=5)
 cd "$(dirname "$0")/../custom_components"
 version=$(python3 -c 'import json;print(json.load(open("aac/manifest.json"))["version"])')
 
-# v1 is built next to the running v0: it reaches the owner's HA only on purpose (the switch, with a backup)
-if [[ "$version" == 1.* && -z "${AAC_ALLOW_V1:-}" ]]; then
-  echo "Refusing: $version is v1. The real HA runs v0 until the switch (set AAC_ALLOW_V1=1 to deploy anyway)." >&2
-  exit 1
-fi
-
 echo "Deploying aac $version ($(git rev-parse --short HEAD)$(git diff --quiet -- . || echo '+dirty')) to $AAC_HA_SSH"
 tar --exclude=__pycache__ -cf - aac | ssh "${ssh_opts[@]}" "$AAC_HA_SSH" \
   'rm -rf /config/custom_components/aac && tar -C /config/custom_components -xf - && chown -R root:root /config/custom_components/aac'

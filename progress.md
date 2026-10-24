@@ -1,9 +1,9 @@
 # AAC – progress
 
-Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`, its progress file `docs/progress-v1.md` (private).
+Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-23) – 2.0.0-alpha.24, live on the owner's HA
+## Current state (2026-10-24) – 2.0.0-alpha.25, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -59,6 +59,8 @@ the owner wires them (no automatic wiring), the message is a document of entries
   Relay with a dotted wire into `reads` starts from what it reads (a Chat's current conversation; new after the quiet
   time) and puts the arriving lines on top. Core: when AAC last spoke (`{{ audio.last… }}`, per satellite
   `{{ audio.satellites[id]… }}`); Conditional has a template test.
+  Read ports are triangles (alpha.25): a read input takes only a read output; the Chat provides its current context
+  at `provides`.
 - **Voice chain (alpha.16):** Speech to text → three Conditionals side by side: Stop word (sends stop forward), Wake
   word ("computer"/"assistent" → Spoken turn), Follow-up (AAC spoke there < 10 s ago → Follow-up turn: a note "maybe not
   meant for you, then answer nothing"); both Relays read the Chat dotted and go to the Charter; Model → Answer (Relay) →
@@ -109,12 +111,13 @@ the owner wires them (no automatic wiring), the message is a document of entries
 
 ## Owner's data
 
-- Lists exported before v2: `docs/aac-lists-2026-10-23.md` and `docs/aac-lists-2026-10-23-v1.json`; they live in the
-  default domain's Lists card now (Open Issues 4, Project Portfolio 10).
-- v1 storage on the HA is untouched (`/config/.storage/aac.*`), backup `/config/aac/bak-before-v2-20261023/`.
-- HA's own Assist pipeline uses `conversation.qwen3_8b` (not AAC). Backups of v2 storage: `/config/aac/bak-v2-alpha2/`,
-  `/config/aac/bak-v2-alpha3/`, `/config/aac/bak-v2-alpha15/` (before the voice rebuild), `/config/aac/bak-v2-alpha16/`; add-on 0.1.1 files in
-  `/config/aac/bak-addon-0.1.1`.
+- The lists (Open Issues, Project Portfolio) live in the default domain's Lists card.
+- HA's own Assist pipeline uses `conversation.qwen3_8b` (not AAC).
+- The one backup of v2 storage: `/config/aac/bak-v2-alpha21/`. The older backups and v1's storage go with the cleanup
+  below.
+- Docs cleanup (2026-10-24): v0/v1 docs deleted (history, v1 progress, the old framework and UI design, the lists
+  export, the Calisto handoff: built into the satellite's plugin), v1 contracts removed from spec/ (tag `v1-final`).
+  One backup of docs/ and spec/ before that: `~/cluade/AAC/docs-backup-2026-10-24.tar.gz`.
 
 ## Cleanup waiting for the owner (2026-10-24)
 

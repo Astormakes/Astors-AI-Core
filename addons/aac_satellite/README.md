@@ -13,7 +13,7 @@ python -m venv ~/.aac-sat && ~/.aac-sat/bin/pip install aiohttp
 
 `~/.aac_token` holds a Home Assistant long-lived access token (your profile →
 Security). The satellite reconnects on its own; AAC shows it under
-SETTINGS → Audio pipeline.
+the Audio page.
 
 Testing without speaking: `--input-file talk.wav` streams a recording as the
 microphone (needs ffmpeg), `--output-dir answers/` saves the answers instead of

@@ -1,69 +1,47 @@
 # AAC – Astor's AI Core
 
-An open, modular AI core for Home Assistant. Home Assistant stays the connection
-to the world (devices, sensors, calendars …); AAC is meant to grow into the brain
-on top: memory, initiative, agents and modules.
+An AI core for Home Assistant, built from cards you wire together. Home Assistant stays the connection to the world
+(devices, sensors, calendars …); AAC is the brain on top: chats, voice, memory, lists, and whatever you wire in.
 
-> **Status: early (v0.15.0).** AAC has its own panel, a master agent that talks to
-> any OpenAI-compatible model server and can control Home Assistant through the
-> Assist API, a memory (text memories + structured facts), triggers (heartbeat,
-> state, time), planning for itself, and it helps you set itself up in a chat.
-> The audio pipeline, MCP and modules are still being designed.
+> **Status: v2 alpha.** AAC was rebuilt from scratch; v1 is in git under the tag `v1-final`.
 
 ## Install (HACS)
 
 1. HACS → ⋮ → **Custom repositories** → add `https://github.com/Astormakes/Astors-AI-Core`, type **Integration**
 2. Install **AAC – Astor's AI Core**, restart Home Assistant
 3. Settings → Devices & services → **Add integration** → *AAC* (one click, no questions)
-4. Open **AAC** in the sidebar and follow the **SETUP** segment: connect a model, choose the master model.
-   From then on **Set up with AAC** lets the master walk you through the rest in a chat
+4. Open **AAC** in the sidebar, add a model server on the **Models** page, and start chatting
 
-Everything is configured in the AAC panel, nowhere else. AAC never changes Home
-Assistant's own voice assistants or AI settings; it only uses HA's AI pieces as
-optional tools.
+Everything is configured in the AAC panel. AAC never changes Home Assistant's own voice assistants or AI settings.
+It can be picked as the conversation agent in an Assist pipeline (`conversation.aac`); those conversations show up
+as chats.
 
 Manual install: copy `custom_components/aac` into your HA `config/custom_components/` and restart.
 
+## Cards and wires
+
+The **Nodes** page is a grid of cards: a Chat, a Model, a Relay, a Conditional, Lists, Memory, a Calendar, Home
+Assistant, the audio cards and more. A solid wire pushes a context (a document of entries) from one card to the next;
+a dotted wire with triangles lets a card read what another one provides. Every card is a Python file in
+`<config>/aac/cards/`, AAC's own ones included, so any card can be replaced or added: see
+[`spec/cards.md`](spec/cards.md).
+
 ## Model servers
 
-Anything that speaks the OpenAI chat completions API, for example:
-
-| Server | Base URL example |
-|---|---|
-| llama.cpp (`llama-server --jinja`) | `http://192.168.1.20:8080/v1` |
-| Ollama | `http://192.168.1.20:11434/v1` |
-| vLLM / LM Studio | `http://host:8000/v1` |
-
-Servers already set up in Home Assistant (llama.cpp and Ollama integrations) are
-found automatically and show up under **SETTINGS → Models**. Others can be added
-there by hand, or by telling AAC in a chat.
-
-Tool use (controlling HA) needs a model and server with function calling
-(for llama.cpp start it with `--jinja`).
-
-## The panel
-
-- **Domain switcher** under "AAC": several whole setups (e.g. Assistant, Work), each with its own charter, memory, chats and triggers; models and pools are shared
-- **MODULES**: Lists (lists of anything, with sub-entries and fields) and Calendar (one agenda over lists, AAC's plans and your HA calendars)
-- **SETUP**: the workflow; hides itself when nothing is open (the eye at the top shows all segments)
-- **WORKERS**: your chats with the master, "From AAC" (when it speaks up on its own) and the automatic runs (folded, with every step visible)
-- **SETTINGS**: charter (your values, first in every prompt), appearance (skins: Neon, Home Assistant, own CSS files), master agent, triggers, pools (which model or engine serves which role, with fallback) and models, AAC's own audio pipeline (separate from HA's Assist), MCP (planned), memory
-
-Works on phones, tablets, desktops and TVs (scales with the screen, touch and keyboard friendly).
+Anything that speaks the OpenAI chat completions API: llama.cpp (`llama-server --jinja`, e.g.
+`http://192.168.1.20:8080/v1`), Ollama (`…:11434/v1`), vLLM, LM Studio, cloud APIs. Each model gets tags for what it
+can do (text, tools, embeddings, speech to text, …), and each card picks its list of models, with queues.
 
 ## Microphones and speakers
 
-AAC listens through its own satellite program (no wake word; it reacts to its name):
+AAC listens through its own satellite program, and each satellite is also a Home Assistant media player:
 - **On a PC:** `addons/aac_satellite/aac_satellite.py` (see its README).
 - **On the Home Assistant machine** (USB, or Bluetooth through a dongle): add this repository as an app repository
-  in Home Assistant and install **AAC satellite**, then in the AAC panel: SETTINGS → Audio pipeline → Sources →
-  *Set up the Home Assistant app*. Device quirks (e.g. Poly BT600 + Calisto) are handled by plugins.
+  in Home Assistant and install **AAC satellite**. Device quirks (e.g. Poly BT600 + Calisto) are handled by plugins.
 
 ## Contracts
 
-The interfaces AAC is built around (runs, triggers, context recipes, agent
-templates, memory, model providers, events, modules, domains) are written down
-in [`spec/`](spec/README.md), with the status of each.
+The interfaces AAC is built around are in [`spec/`](spec/README.md).
 
 ## Development
 
@@ -71,5 +49,4 @@ in [`spec/`](spec/README.md), with the status of each.
 python -m venv .venv
 .venv/bin/pip install -r requirements_test.txt
 .venv/bin/pytest                # mocked tests
-.venv/bin/pytest -m live -s     # against a real server (AAC_LIVE_URL, AAC_LIVE_KEY)
 ```

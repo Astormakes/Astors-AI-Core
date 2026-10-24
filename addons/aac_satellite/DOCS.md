@@ -4,8 +4,8 @@ Makes a microphone and speaker that are attached to the Home Assistant machine (
 USB dongle) available to AAC. It streams the microphone continuously to AAC; AAC detects speech, turns it into
 text and answers when you say its name (no wake word needed). The audio only lives in memory.
 
-1. In the AAC panel: SETTINGS → Audio pipeline → Sources → **Set up the Home Assistant app** (AAC makes a local-only
-   user "AAC satellite" for this app and writes its access to `config/aac/satellite.json`).
+1. Install AAC first: when it starts, it makes a local-only user "AAC satellite" for this app and writes its access
+   to `config/aac/satellite.json`.
 2. Start this app. It picks the microphone/speaker of a known device by itself (see below), otherwise HA's default
    audio device; the options `mic` / `speaker` take a name from the app's log.
 
