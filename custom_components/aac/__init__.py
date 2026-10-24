@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 import re
 
@@ -39,6 +40,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
         hass.http.register_view(CardUiView(hass.config.path("aac", "cards")))
         hass.data[f"{DOMAIN}_audio_view"] = True
     entry.async_create_background_task(hass, async_satellite_access(core), "aac satellite access")
+    # it never ends by itself: a plain task (not one HA waits for), cancelled when AAC unloads
+    watcher = asyncio.get_running_loop().create_task(core.watch_cards(hass.config.path("aac", "cards")), name="aac card files")
+    entry.async_on_unload(watcher.cancel)
     version = (await async_get_integration(hass, DOMAIN)).version
     if not hass.data.get(f"{DOMAIN}_static"):
         skins = user_dir(hass)

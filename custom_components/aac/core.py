@@ -5,6 +5,7 @@ positions, Undo history and three save slots, all kept on the server.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from copy import deepcopy
 import re
@@ -30,6 +31,7 @@ def slug(text: str) -> str:
 
 
 WATCH_SECONDS = 15  # an open Nodes page says every few seconds which views it shows
+CARD_FILES_EVERY = 5  # seconds between looks at the cards folder (a card file whose VERSION went up)
 
 class Domain:
     """One setup of cards and wires."""
@@ -160,6 +162,10 @@ class Domain:
         self.positions.pop(card_id, None)
         self.save()
         self.core.notify("setup", domain=self.id)
+
+    async def remake(self, card_id: str) -> Card | None:
+        """The card made again from its saved setup (a newer version of its file: settings upgraded, data kept)."""
+        return await self._make(card_id, self._specs[card_id]) if card_id in self._specs else None
 
     async def update_card(self, card_id: str, title: str | None = None, settings: dict[str, Any] | None = None) -> Card:
         """New name or settings: the card is made again with the same data."""
@@ -314,6 +320,25 @@ class Core:
     async def save_now(self) -> None:
         """Keep the core now."""
         await self._store.async_save(self.data)
+
+    async def watch_cards(self, folder: str) -> None:
+        """While AAC runs: card files whose VERSION went up are loaded again, and their running cards are made again
+        (with their settings and data) as soon as they are not busy; new card types show in the palette."""
+        from .cards import reload_changed  # noqa: PLC0415
+
+        waiting: set[str] = set()  # card types made again once their cards are idle
+        while True:
+            await asyncio.sleep(CARD_FILES_EVERY)
+            changed = await self.hass.async_add_executor_job(reload_changed, folder)
+            waiting |= {t for t in changed if t in CARD_TYPES}  # a deleted type's cards stay as they are
+            if self.domain is None or not waiting:
+                continue
+            for card in [c for c in self.domain.cards.values() if c.type in waiting]:
+                if not card.busy:
+                    await self.domain.remake(card.id)
+            waiting = {t for t in waiting if any(c.type == t and type(c) is not CARD_TYPES.get(t) for c in self.domain.cards.values())}
+            if changed:
+                self.notify("setup", domain=self.domain.id)
 
     def watch(self, cards: list[str]) -> None:
         """An open Nodes page shows these cards' views (it says so again every few seconds)."""

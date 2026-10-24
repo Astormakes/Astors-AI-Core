@@ -1,7 +1,10 @@
 # Cards (v2)
 
 Every behaviour of AAC is a card. A card type is a Python file in `<config>/aac/cards/`, and every card is loaded
-from there when AAC starts (and when the integration is reloaded). AAC ships its own card files and copies them there,
+from there when AAC starts (and when the integration is reloaded). While AAC runs it looks at the folder every few
+seconds: a file whose `VERSION` went up (or a new one) is loaded again, and its running cards are made again (settings
+upgraded, data kept) as soon as they are not `busy`; a deleted file's card types leave the palette. A card's page or
+view changes after the AAC page is reloaded. AAC ships its own card files and copies them there,
 unless a newer version of the same file is already there (a download, or one made for you). Each file has a
 `VERSION`; a saved card remembers the version it was made with, and a newer one can update its settings
 (`upgrade(settings, made_with)`). There is no difference between AAC's cards and any other: none may use anything but
@@ -62,7 +65,8 @@ Relays). Each card with functions has a tick "Offers its functions to models in 
 `offers = True` on the class; a Relay's is off). Tool names are `<card id>__<function>`, so two cards of one type stay
 apart. A card wired straight out and back only attaches a tool: no answer goes there.
 
-More a card may define: `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
+More a card may define: `busy` (a property: True while it works on something; a newer version of its file waits),
+`default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
 self.save()`), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop(stop_entry) -> bool` (a stop
 arrived: True when it was busy and sent its own context on), `held(port)` (what a dotted wire from that read output
 reads), `current()` (its values), `ui = True` (a page of its own, see below). A setting of type `modellist` with a

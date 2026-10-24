@@ -10,7 +10,6 @@ public interface (`custom_components.aac.api`), never each other's types.
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 import re
 import shutil
@@ -26,6 +25,7 @@ if TYPE_CHECKING:
     from ..context import Context
 
 CARD_TYPES: dict[str, type[Card]] = {}
+LOADED: dict[str, tuple[int, ...]] = {}  # card module → the VERSION it was loaded with
 UI_URL = "/aac_cards"  # a card file's UI (<stem>.js next to it) is served here
 INSTRUCTIONS = {"type": "longtext", "title": "Instructions for models", "default": "", "fold": "For models",
                 "help": "A model that has this card as a tool reads its functions with their descriptions (below) and "
@@ -148,6 +148,11 @@ class Card:
     async def start(self) -> None:
         """The card is in a running domain: start its timers and listeners."""
 
+    @property
+    def busy(self) -> bool:
+        """Working on something now (a newer version of its file waits until it is done)."""
+        return False
+
     async def unload(self) -> None:
         """The card goes away (removed, changed, another domain runs): end its timers and listeners."""
 
@@ -232,21 +237,39 @@ def load_all(folder: str) -> None:
                 shutil.copytree(shipped, there, ignore=shutil.ignore_patterns("__pycache__"))
     package = sys.modules.setdefault("aac_cards", types.ModuleType("aac_cards"))  # card files can import each other
     package.__path__ = [str(cards)]
+    for name, file in _card_files(cards):
+        _load(name, file)
+
+
+def reload_changed(folder: str) -> set[str]:
+    """While AAC runs: card files whose VERSION went up, and new ones, are loaded again; a deleted one's card types go
+    (running cards stay until AAC restarts). Returns the card types that changed. Runs in the executor."""
+    changed: set[str] = set()
+    files = _card_files(Path(folder))
+    for gone in set(LOADED) - {name for name, _ in files}:
+        LOGGER.info("AAC: card file of %s was deleted", gone)
+        LOADED.pop(gone)
+        for t in [t for t, cls in CARD_TYPES.items() if cls.__module__ == gone]:
+            CARD_TYPES.pop(t)
+            changed.add(t)
+    for name, file in files:
+        if name in LOADED and _version(file) <= LOADED[name]:
+            continue
+        LOGGER.info("AAC: card file %s %s", file, "changed" if name in LOADED else "is new")
+        if _load(name, file):
+            changed |= {t for t, cls in CARD_TYPES.items() if cls.__module__ == name}
+    return changed
+
+
+def _card_files(cards: Path) -> list[tuple[str, Path]]:
+    """Every card in the folder: (module name, its Python file): a file, or a folder's card.py."""
+    found = []
     for path in sorted(cards.iterdir()):
         if path.suffix == ".py":
-            name, file = f"aac_cards.{path.stem}", path
+            found.append((f"aac_cards.{path.stem}", path))
         elif (path / "card.py").exists():
-            name, file = f"aac_cards.{path.name}", path / "card.py"
-        else:
-            continue
-
-        def load(name=name, file=file):
-            spec = importlib.util.spec_from_file_location(name, file, submodule_search_locations=[str(file.parent)]
-                                                          if file.name == "card.py" else None)
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[spec.name] = module
-            spec.loader.exec_module(module)
-        _load(load, str(file))
+            found.append((f"aac_cards.{path.name}", path / "card.py"))
+    return found
 
 
 def _files(folder: Path) -> dict[str, bytes]:
@@ -260,8 +283,17 @@ def _version(path: Path) -> tuple[int, ...]:
     return tuple(int(x) for x in found.group(1).split(".") if x) if found else (0,)
 
 
-def _load(load, name: str) -> None:
-    try:
-        load()
+def _load(name: str, file: Path) -> bool:
+    """Run a card file (its @register cards replace those of the same type); remembers its VERSION."""
+    LOADED[name] = _version(file)  # also when it fails: a broken file is tried again when its VERSION goes up
+    try:  # compiled fresh each time (no cached bytecode: a file changed within the same second must not run old code)
+        module = types.ModuleType(name)
+        module.__file__ = str(file)
+        if file.name == "card.py":  # a folder: its other Python files can be imported relative to it
+            module.__path__ = [str(file.parent)]
+        sys.modules[name] = module
+        exec(compile(file.read_text(encoding="utf-8"), str(file), "exec"), module.__dict__)  # noqa: S102 - the cards folder is the owner's
     except Exception:  # noqa: BLE001 - one broken card file must not stop the others
-        LOGGER.exception("AAC: the card file %s could not be loaded", name)
+        LOGGER.exception("AAC: the card file %s could not be loaded", file)
+        return False
+    return True

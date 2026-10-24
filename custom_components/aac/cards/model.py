@@ -12,7 +12,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import LOGGER, Card, Client, Context, entry, is_stop, ModelError, ModelUnreachable, register, tool_spec
 
-VERSION = "1.4.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.5.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 MAX_ROUNDS = 8  # model → tool → model … per context
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -98,6 +98,10 @@ class Model(Card):
         self._sent: asyncio.Future | None = None  # the newest snapshot on its way (they go out in order)
         self._upto: dict[str, int] = {}  # answer entry → how far its text has gone out
         self.requests: dict[str, dict[str, Any]] = {}
+
+    @property
+    def busy(self) -> bool:
+        return self._task is not None and not self._task.done()
 
     async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         if port != "in":

@@ -354,3 +354,53 @@ async def test_instructions_for_models_and_short_card_lists(hass: HomeAssistant,
     assert home["settings"]["levels"] == "(40 entries: see card)" and "chat.said -> charter.in" in listed["wires"]
     assert listed["count"] == len(d.cards)
     assert len((await editor.call("card", {"card": "home"}))["settings"]["levels"]) == 40
+
+
+async def test_a_card_file_with_a_new_version_loads_while_aac_runs(hass: HomeAssistant, mock_entry):
+    """A card file whose VERSION went up is loaded again while AAC runs; its running cards are made again (settings
+    and data kept); saving it without a new VERSION does nothing."""
+    import asyncio
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from custom_components.aac.cards import CARD_TYPES
+
+    folder = Path(hass.config.path("aac", "cards"))
+    folder.mkdir(parents=True, exist_ok=True)
+    file = folder / "echo_test.py"
+    source = """from custom_components.aac.api import Card, register
+
+VERSION = "{v}"
+
+
+@register
+class EchoTest(Card):
+    type = "echo_test"
+    title = "{title}"
+    settings_schema = {{"word": {{"type": "text", "title": "Word", "default": ""}}}}
+"""
+    file.write_text(source.format(v="1.0.0", title="Echo one"))
+    try:
+        core = await setup_aac(hass, mock_entry)
+        card = await core.domain.add_card("echo_test", "Echo", {"word": "kept"})
+        with patch("custom_components.aac.core.CARD_FILES_EVERY", 0):
+            task = hass.async_create_task(core.watch_cards(str(folder)))
+            file.write_text(source.format(v="1.0.0", title="Echo saved"))  # no new VERSION: nothing happens
+            await asyncio.sleep(0.2)
+            assert CARD_TYPES["echo_test"].title == "Echo one" and core.domain.cards[card.id] is card
+            file.write_text(source.format(v="1.1.0", title="Echo two"))
+            for _ in range(50):
+                if core.domain.cards[card.id] is not card:
+                    break
+                await asyncio.sleep(0.05)
+            task.cancel()
+        new = core.domain.cards[card.id]
+        assert new is not card and type(new).title == "Echo two" and new.settings["word"] == "kept"
+        from custom_components.aac.cards import reload_changed
+        file.unlink()
+        assert await hass.async_add_executor_job(reload_changed, str(folder)) == {"echo_test"} and "echo_test" not in CARD_TYPES
+    finally:  # HA's test config folder is shared by every test
+        CARD_TYPES.pop("echo_test", None)
+        file.unlink(missing_ok=True)
+        for cached in (folder / "__pycache__").glob("echo_test.*"):
+            cached.unlink()

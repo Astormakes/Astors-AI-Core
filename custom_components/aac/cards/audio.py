@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 from custom_components.aac.api import (LOGGER, SAMPLE_RATE, Card, Context, Segmenter, level, make_vad, new_id, pcm_to_wav,
                                       register, resample, wav_to_pcm)
 
-VERSION = "2.5.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.6.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -250,6 +250,10 @@ class TextToSpeech(Card):
         self._spoken: dict[str, int] = {}  # answer entry → how much of its text is spoken
         self._last: asyncio.Future | None = None  # the newest sentence on its way (they go out in order)
         self._round = 0  # a stop starts a new round: sentences of the old one are dropped
+
+    @property
+    def busy(self) -> bool:
+        return self._last is not None and not self._last.done()
 
     async def progress(self, context: Context, port: str) -> list[Any] | None:
         self._speak(context, finished=False)
