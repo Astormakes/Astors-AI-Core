@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.1.17, live on the owner's HA
+## Current state (2026-10-24) – 2.1.18, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -144,6 +144,10 @@ Z.Y.X: X = changes the backup survives (fixes and new features alike), Y = a bac
 (and `upgrade()` for their saved settings). Bump the manifest version with every deploy (the browser caches the panel
 by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2.1.2; from 2.1.3 on as above.
 
+- 2.1.18: point 5 done: every card with functions has "Instructions for models" (fold "For models"); a model
+  reads them under "About your tools". The Node editor's list of cards counts long settings (an access list had cut
+  the 8000-character result: the model said "6 cards"), `card` gives one in full. Voice rule: "call the tool first,
+  then answer" (the voice turns had promised "I'll check" without calling). Owner raised the pause to 1.5 s.
 - 2.1.17 (owner): a model that does not answer is flagged until it answers again (`pool.failing`, event
   "models"): a red line above the chat's input, SETTINGS blinks red, Models gets a red !, the Models page says so.
   The PC's NVIDIA driver refused a second process after Whisper's crash loop (OOM: the 35B's --fit took the card;
@@ -229,8 +233,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
    and stream playback. Owner: muting while playing becomes a Microphone setting (a stop word must work while AAC
    speaks); look at echo cancellation (the speaker's own sound filtered out of the microphone: WebRTC AEC in the
    satellite; the Poly may do it in hardware); Bluetooth may add delay.
-5. **Editable instructions for models**: each card's text that a wired model gets (its functions' help) gets an
-   override/extra text in the card's settings: a fold at the bottom that explains it, with a text box.
+5. ~~Editable instructions for models~~ **done (2.1.18).**
 6. **Relay and Conditional UI** (later).
 7. ~~Card folders~~ **done (2.1.1):** `chat/card.py` + `page.js` (+ `view.js`); old flat files go when AAC starts.
 8. **Card files reload while AAC runs** (owner): AAC notices a card file whose VERSION went up and loads it again, and

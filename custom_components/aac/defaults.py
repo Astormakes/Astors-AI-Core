@@ -53,7 +53,8 @@ async def build_default(domain) -> None:
     ])
 
 
-VOICE_RULES = "You are heard and answer aloud: one or two short sentences, plain words, no lists."
+VOICE_RULES = ("You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look "
+               "something up or do something, call the tool first, then answer.")
 FOLLOW_UP = "(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) "
 
 

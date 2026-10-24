@@ -336,3 +336,20 @@ async def test_a_model_that_does_not_answer_is_flagged_until_it_does(hass: HomeA
     core.pool.mark_up("m_big")
     assert not next(m for m in core.pool.summary() if m["id"] == "m_big")["failing"] and told.count("models") == 2
     unsub()
+
+
+async def test_instructions_for_models_and_short_card_lists(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """A card's instructions reach every model that has it as a tool; the Node editor's list of cards counts long
+    settings instead of listing them (so every card fits), and gives one card in full."""
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    await d.update_card("lists", settings={"instructions": "Look here before saying you do not know."})
+    await d.update_card("home", settings={"levels": {f"light.l{i}": "read" for i in range(40)}})
+    asked = model_answers(aioclient_mock, reply("Fine."))
+    await d.cards["chat"].send("hi")
+    assert "About your tools:\n- Lists (lists): Look here before saying you do not know." in asked[0]["messages"][0]["content"]
+    editor = await d.add_card("builder", "Node editor")
+    listed = await editor.call("cards", {})
+    home = next(c for c in listed["cards"] if c["id"] == "home")
+    assert home["settings"]["levels"] == "(40 entries: see card)"
+    assert len((await editor.call("card", {"card": "home"}))["settings"]["levels"]) == 40

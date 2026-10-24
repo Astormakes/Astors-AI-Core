@@ -710,10 +710,12 @@ class AacPanel extends HTMLElement {
     const field = (e) => this._field(c, e);
     return `<label>Name</label><input id="title" value="${esc(c.title)}">
       <p class="hint" style="margin-top:8px">${esc(t?.help || "")} <span title="The version of its card file">· ${esc(t?.title || c.type)} v${esc(t?.version || "?")}</span></p>
-      ${Object.entries(t?.settings || {}).map(field).join("")}
+      ${Object.entries(t?.settings || {}).filter(([, f]) => !f.fold).map(field).join("")}
       ${c.tools ? `<label>Its tools ${tip("The cards in its loop (on a way from its output back into it, straight or through other cards) that offer functions. A card's tick \"Offers its functions to models in its loop\" takes it out.")}</label>
         <div class="row" style="flex-wrap:wrap;gap:4px">${c.tools.map((id) => `<button class="small" data-selcard="${esc(id)}" title="Select it">${esc(this._card(id)?.title || id)}</button>`).join("") || '<span class="hint">none: wire cards with functions into its loop</span>'}</div>` : ""}
       ${this._fnDocs(t?.functions)}
+      ${Object.entries(Object.entries(t?.settings || {}).filter(([, f]) => f.fold).reduce((g, e) => ({ ...g, [e[1].fold]: [...(g[e[1].fold] || []), e] }), {}))
+        .map(([name, fs]) => `<details class="fold" ${fs.some(([k]) => c.settings[k]) ? "open" : ""}><summary>${esc(name)}</summary>${fs.map(field).join("")}</details>`).join("")}
       ${this._portDocs(c, t)}
       ${Object.keys(t?.values || {}).length ? `<details class="fold"><summary>Values (for templates)</summary>${Object.entries(t.values).map(([n, h]) => `<div class="fn"><code>{{ ${esc(/^[A-Za-z_]\w*$/.test(c.id) ? c.id : `cards['${c.id}']`)}.${esc(n)} }}</code> ${esc(h)}</div>`).join("")}</details>` : ""}
       ${Object.keys(c.tags).length ? `<details class="fold"><summary>Tags</summary>${Object.entries(c.tags).map(([x, w]) => `<div class="fn"><code>${esc(x)}</code> ${esc(w)}</div>`).join("")}</details>` : ""}

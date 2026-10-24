@@ -7,8 +7,10 @@ from typing import Any
 
 from custom_components.aac.api import CARD_TYPES, Card, Context, register
 
-VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
+
+SHORT = 12  # settings with more entries are only counted in the list of cards
 
 @register
 class Builder(Card):
@@ -24,7 +26,9 @@ class Builder(Card):
         "may_remove": {"type": "bool", "title": "May remove cards", "default": False, "permission": True},
     }
     functions = {
-        "cards": {"help": "The cards of this domain: id, type, name, settings, inputs and outputs, and the wires."},
+        "cards": {"help": "The cards of this domain: id, type, name, settings (long ones shortened: see card), inputs and "
+                          "outputs, and the wires."},
+        "card": {"help": "One card with all its settings.", "args": {"card": {"type": "string", "help": "Its id.", "required": True}}},
         "types": {"help": "The card types that can be added, with what they do and their settings."},
         "add_card": {"help": "Add a card.", "args": {"type": {"type": "string", "help": "A type from types.", "required": True},
                                                      "name": {"type": "string", "help": "Its name."},
@@ -41,8 +45,13 @@ class Builder(Card):
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         domain = self.domain
-        if function == "cards":
-            return {"cards": [c.summary() for c in domain.cards.values()], "wires": domain.wires}
+        if function == "cards":  # long settings (an access list) only counted, so every card fits
+            short = lambda v: f"({len(v)} entries: see card)" if isinstance(v, (dict, list)) and len(v) > SHORT else v  # noqa: E731
+            return {"cards": [{**c.summary(), "settings": {k: short(v) for k, v in c.settings.items()}} for c in domain.cards.values()],
+                    "wires": domain.wires}
+        if function == "card":
+            card = domain.cards.get(str(args.get("card") or ""))
+            return card.summary() if card else {"error": "no such card (see cards)"}
         if function == "types":
             return [{"type": t.type, "title": t.title, "help": t.help, "settings": {k: f.get("title") for k, f in t.settings_schema.items()},
                      "inputs": t.inputs, "outputs": t.outputs} for t in CARD_TYPES.values()]

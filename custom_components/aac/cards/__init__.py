@@ -27,6 +27,10 @@ if TYPE_CHECKING:
 
 CARD_TYPES: dict[str, type[Card]] = {}
 UI_URL = "/aac_cards"  # a card file's UI (<stem>.js next to it) is served here
+INSTRUCTIONS = {"type": "longtext", "title": "Instructions for models", "default": "", "fold": "For models",
+                "help": "A model that has this card as a tool reads its functions with their descriptions (below) and "
+                        "this text, under 'About your tools'. Say when and how to use it, e.g. 'Look here before you "
+                        "say you do not know something.'"}
 OFFERS = {"type": "bool", "title": "Offers its functions to models in its loop", "default": True, "permission": True,
           "help": "A Model (or a Conditional's call action) whose output comes back to it through this card, straight or "
                   "through other cards, can use these functions, with their descriptions and this card's id. Off: it "
@@ -46,8 +50,8 @@ def register(cls: type[Card]) -> type[Card]:
     cls.ui_url = f"{UI_URL}/{where}?v={cls.version}" if cls.ui and page.exists() else None
     has_view = cls.view and file.name == "card.py" and (file.parent / "view.js").exists()
     cls.view_url = f"{UI_URL}/{file.parent.name}/view.js?v={cls.version}" if has_view else None
-    if cls.functions and "offers" not in cls.settings_schema:  # every card with functions can be kept out of a loop's tools
-        cls.settings_schema = {**cls.settings_schema, "offers": {**OFFERS, "default": cls.offers}}
+    if cls.functions and "offers" not in cls.settings_schema:  # every card with functions: kept out of tools, told about
+        cls.settings_schema = {**cls.settings_schema, "offers": {**OFFERS, "default": cls.offers}, "instructions": INSTRUCTIONS}
     CARD_TYPES[cls.type] = cls
     return cls
 

@@ -12,7 +12,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import LOGGER, Card, Client, Context, entry, is_stop, ModelError, ModelUnreachable, register, tool_spec
 
-VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.4.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 MAX_ROUNDS = 8  # model → tool → model … per context
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -159,9 +159,12 @@ class Model(Card):
             return
         answer = context.add(self.id, "answer", "", ["answer"])
         answer["state"] = "open"
+        told = [c for c in step.tool_cards() if (c.settings.get("instructions") or "").strip()]  # what its tools ask of it
+        about = "About your tools:\n" + "\n".join(f"- {c.name} ({c.id}): {c.settings['instructions'].strip()}" for c in told) if told else ""
         for _ in range(MAX_ROUNDS):
             system, chat = conversation(context, self.id, names)
-            sources = [e["by"] for e in context.entries if e["kind"] == "system" and e["text"].strip()]
+            system = "\n\n".join(x for x in (system, about) if x)
+            sources = [e["by"] for e in context.entries if e["kind"] == "system" and e["text"].strip()] + [c.id for c in told]
             shown = ([{"role": "system", "content": system, "_from": sources}] if system else []) + chat
             payload = [{k: v for k, v in item.items() if not k.startswith("_")} for item in shown]
             self._keep(context, shown, specs, params)

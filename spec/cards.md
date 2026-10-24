@@ -52,6 +52,10 @@ While a card works on a turn it may send snapshots of it: `await step.progress(p
 speaks each newly finished sentence). The finished turn always follows through `handle()`. A Model sends one after
 every finished sentence and every tool result.
 
+**Instructions.** Every card with functions also has the setting `instructions` ("Instructions for models", in a fold
+"For models"): a model that has the card as a tool reads it under "About your tools" in its system text. A setting
+may say `fold` to sit in a fold at the bottom of the card's settings.
+
 **Tools.** A card that uses tools (`uses_tools = True`: a Model, a Conditional's call action) gets the functions of
 every card in its loop: on a way from its outputs back into its inputs, straight or through other cards (a Chat,
 Relays). Each card with functions has a tick "Offers its functions to models in its loop" (setting `offers`, default
