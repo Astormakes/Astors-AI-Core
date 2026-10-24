@@ -1,17 +1,21 @@
-"""Log: writes down whatever reaches its one input, of any kind: a context (its newest entry), a clip, audio starting
-and stopping, and on a dotted wire what is new in what is provided there. Its page in the sidebar shows the log."""
+"""Log: writes down whatever reaches its one input, of any kind: a context (its newest entry), a clip (kept as audio to
+listen to), audio starting and stopping, and on a dotted wire what is new in what is provided there. Its page in the
+sidebar shows the log."""
 
 from __future__ import annotations
 
 import asyncio
+import base64
+from pathlib import Path
+import re
 import time
 from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.api import Card, Context, register
+from custom_components.aac.api import SAMPLE_RATE, Card, Context, new_id, pcm_to_wav, register
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 READ_EVERY = 2  # seconds between looks at what dotted wires provide
 QUIET = 1.5  # seconds without audio from a satellite: it stopped
@@ -30,7 +34,11 @@ class Log(Card):
     inputs = {"in": "any"}
     outputs: dict[str, str] = {}
     ports_help = {"in": "anything: contexts, clips, audio, a dotted wire from what a card provides"}
-    settings_schema = {"keep": {"type": "number", "title": "Entries kept", "default": 300, "min": 10}}
+    settings_schema = {"keep": {"type": "number", "title": "Entries kept", "default": 300, "min": 10},
+                       "audio": {"type": "bool", "title": "Keep clips as audio", "default": True,
+                                 "help": "Each clip is saved as a WAV file (config/aac/log/) and can be played on its page."},
+                       "audio_kept": {"type": "number", "title": "Clips kept", "default": 50, "min": 1,
+                                      "help": "Older clips' audio is deleted."}}
     keeps_data = True
     ui = True
 
@@ -50,9 +58,13 @@ class Log(Card):
         if self._task:
             self._task.cancel()
 
-    def _write(self, what: str, came_from: str, text: str) -> None:
+    @property
+    def _folder(self) -> Path:
+        return Path(self.hass.config.path("aac", "log", f"{self.domain.id}.{self.id}"))
+
+    def _write(self, what: str, came_from: str, text: str, **extra: Any) -> None:
         log = self.data.setdefault("log", [])
-        log.append({"time": dt_util.utcnow().isoformat(), "what": what, "from": came_from, "text": text[:600]})
+        log.append({"time": dt_util.utcnow().isoformat(), "what": what, "from": came_from, "text": text[:600], **extra})
         del log[:-max(10, int(self.settings.get("keep") or 300))]
         self.hass.async_create_task(self.save())
         self.core.notify("card", domain=self.domain.id, card=self.id)
@@ -79,7 +91,20 @@ class Log(Card):
             return
         part = f", phrase {clip['part']}" if clip.get("part") else ""
         said = f": {clip['text']}" if clip.get("text") else ""
-        self._write("clip", clip.get("name") or clip.get("source") or "", f"{clip.get('seconds')} s{part}{said}")
+        extra = {}
+        if self.settings.get("audio", True) and clip.get("pcm"):  # kept to listen to
+            extra["audio"] = f"{new_id()}.wav"
+            await self.hass.async_add_executor_job(self._keep_audio, extra["audio"], pcm_to_wav(clip["pcm"], int(clip.get("rate") or SAMPLE_RATE)))
+        self._write("clip", clip.get("name") or clip.get("source") or "", f"{clip.get('seconds')} s{part}{said}", **extra)
+
+    def _keep_audio(self, name: str, wav: bytes) -> None:
+        """Save a clip; only the newest ones stay (their log entries lose the file)."""
+        folder = self._folder
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_bytes(wav)
+        files = sorted(folder.glob("*.wav"), key=lambda p: p.stat().st_mtime)
+        for old in files[:-max(1, int(self.settings.get("audio_kept") or 50))]:
+            old.unlink(missing_ok=True)
 
     def stream(self, port: str, chunk: bytes, meta: dict[str, Any]) -> None:
         source, now = meta.get("name") or meta.get("source") or "audio", time.monotonic()
@@ -116,7 +141,14 @@ class Log(Card):
         return card.name if card else card_id
 
     async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
+        if action == "audio":  # one kept clip, to play
+            name = str(args.get("file") or "")
+            path = self._folder / name
+            if not re.fullmatch(r"[0-9a-f]+\.wav", name) or not path.is_file():
+                raise ValueError("that clip is no longer kept")
+            return base64.b64encode(await self.hass.async_add_executor_job(path.read_bytes)).decode()
         if action == "clear":
+            await self.hass.async_add_executor_job(lambda: [p.unlink() for p in self._folder.glob("*.wav")] if self._folder.is_dir() else None)
             self.data["log"] = []
             await self.save()
             self.core.notify("card", domain=self.domain.id, card=self.id)

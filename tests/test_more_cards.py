@@ -241,7 +241,7 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
     c.way = ["model", log.id]
     c.add("model", "answer", "Hello there", ["answer"])
     await log.handle(c, "in", None)
-    await log.clip("in", {"pcm": b"", "seconds": 1.4, "name": "PC", "part": 2})
+    await log.clip("in", {"pcm": b"\x01\x00" * 160, "seconds": 1.4, "name": "PC", "part": 2})
     log.stream("in", b"\x00\x00", {"source": "pc", "name": "PC"})
     log._audio["PC"] = [time_mod.monotonic() - 5, time_mod.monotonic() - 3]  # quiet for a while
     with patch(f"{type(log).__module__}.READ_EVERY", 0):
@@ -252,6 +252,12 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
         await asyncio.sleep(0.05)
         task.cancel()
     texts = [(x["what"], x["text"]) for x in log.data["log"]]
+    kept = next(x for x in log.data["log"] if x["what"] == "clip")
+    assert kept["audio"].endswith(".wav") and (await log.ui_call("audio", {"file": kept["audio"]}))  # playable
+    await log.ui_call("clear", {})
+    assert not list(log._folder.glob("*.wav"))  # cleared with the log
+    import shutil
+    shutil.rmtree(log._folder.parent, ignore_errors=True)  # HA's test config folder is shared: leave nothing behind
     assert ("context", "answer #model.answer: Hello there  [1 entries]") in texts
     assert ("clip", "1.4 s, phrase 2") in texts and ("audio", "started") in texts
     assert any(w == "audio" and t.startswith("stopped") for w, t in texts) and ("read", "said : a new line") in texts
