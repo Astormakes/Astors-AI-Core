@@ -119,14 +119,14 @@ class Flow:
                 except Exception:  # noqa: BLE001 - one card must not stop the audio
                     LOGGER.exception("AAC: %s failed on audio", target.id)
 
-    def piece(self, card_id: str, port: str, piece: dict[str, Any]) -> None:
-        """A piece of speech (a Pause cut's): to every wired card that takes pieces, in the background."""
-        self.last[f"{card_id}.{port}"] = {"piece": f"{piece.get('seconds')} s of speech", "source": piece.get("name"), "time": time.time()}
-        self._keep(f"{card_id}.{port}", f"{piece.get('seconds')} s of speech from {piece.get('name') or piece.get('source')}")
+    def clip(self, card_id: str, port: str, clip: dict[str, Any]) -> None:
+        """An audio clip (e.g. a Pause cut's stretch of speech): to every wired card that takes clips, in the background."""
+        self.last[f"{card_id}.{port}"] = {"clip": f"{clip.get('seconds')} s of audio", "source": clip.get("name"), "time": time.time()}
+        self._keep(f"{card_id}.{port}", f"{clip.get('seconds')} s of audio from {clip.get('name') or clip.get('source')}")
         self.domain.core.notify("flow", domain=self.domain.id, wire=f"{card_id}.{port}")
         for target, in_port in self.wired_from(card_id, port):
-            if hasattr(target, "piece"):
-                self.domain.hass.async_create_background_task(target.piece(in_port, piece), f"aac {target.id} piece")
+            if hasattr(target, "clip"):
+                self.domain.hass.async_create_background_task(target.clip(in_port, clip), f"aac {target.id} clip")
 
     async def send(self, context: Context, card_id: str, port: str = "out") -> None:
         """A card sends a context from one of its outputs."""

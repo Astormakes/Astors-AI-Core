@@ -1,6 +1,6 @@
 """Audio cards (docs/v2): Microphone → (Noise gate) → Pause cut → Speech to text → … → Voice out (speaks at the
-satellite). Raw audio flows on `audio` wires as a stream (never a context); a Pause cut makes pieces (`piece` wires);
-Speech to text turns a piece into a context. When AAC last spoke is the core's (templates: {{ audio.… }})."""
+satellite). Raw audio flows on `audio` wires as a stream (never a context); a Pause cut makes clips (`clip` wires);
+Speech to text turns a clip into a context. When AAC last spoke is the core's (templates: {{ audio.… }})."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import LOGGER, SAMPLE_RATE, Card, Context, level, make_vad, register, Segmenter
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
 
@@ -73,13 +73,13 @@ class PauseCut(Card):
     type = "pause_cut"
     title = "Pause cut"
     category = "Audio"
-    help = "Speech detection: a stretch of speech that ends with a pause leaves as one piece. Wire it into Speech to text."
+    help = "Speech detection: a stretch of speech that ends with a pause leaves as one clip. Wire it into Speech to text."
     inputs = {"in": "audio"}
-    outputs = {"out": "piece"}
-    ports_help = {"in": "live audio", "out": "one piece per stretch of speech that ends with a pause"}
-    settings_schema = {"pause": {"type": "number", "title": "Pause that ends a piece (ms)", "default": 800,
+    outputs = {"out": "clip"}
+    ports_help = {"in": "live audio", "out": "one clip per stretch of speech that ends with a pause"}
+    settings_schema = {"pause": {"type": "number", "title": "Pause that ends a clip (ms)", "default": 800,
                                  "help": "Shorter: quicker, but a pause mid-sentence cuts it. Longer: whole sentences."},
-                       "longest": {"type": "number", "title": "Longest piece (s)", "default": 30}}
+                       "longest": {"type": "number", "title": "Longest clip (s)", "default": 30}}
 
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
@@ -92,21 +92,21 @@ class PauseCut(Card):
             seg = self._cuts[key] = Segmenter(make_vad(), int(self.settings.get("pause") or 800), int(self.settings.get("longest") or 30))
         for pcm in seg.feed(chunk):
             seconds = round(len(pcm) / (SAMPLE_RATE * 2), 1)
-            self.domain.flow.piece(self.id, "out", {**meta, "pcm": pcm, "seconds": seconds, "end": dt_util.utcnow().isoformat()})
+            self.domain.flow.clip(self.id, "out", {**meta, "pcm": pcm, "seconds": seconds, "end": dt_util.utcnow().isoformat()})
 
 
 @register
 class SpeechToText(Card):
-    """A piece becomes text."""
+    """A clip becomes text."""
 
     type = "speech_to_text"
     title = "Speech to text"
     category = "Audio"
-    help = ("Turns each piece of speech into text: a context of its own (the text, the satellite, the time), tagged "
+    help = ("Turns each audio clip into text: a context of its own (the text, the satellite, the time), tagged "
             "'heard'. The engines and their order are on the Audio page.")
-    inputs = {"in": "piece"}
+    inputs = {"in": "clip"}
     outputs = {"out": "text"}
-    ports_help = {"in": "pieces of speech (from a Pause cut)",
+    ports_help = {"in": "audio clips (e.g. speech from a Pause cut)",
                   "out": "round: every wire gets each heard line as a new context (data: mic = the satellite, mic_name, "
                          "language), e.g. into several Conditionals side by side"}
     tags = {"heard": "what was said (data: the satellite)"}
@@ -114,15 +114,15 @@ class SpeechToText(Card):
                        "models": {"type": "modellist", "tag": "speech to text", "title": "Models (in order)", "default": [],
                                   "help": "The list is run through from the top: a free model takes it; a busy one queues it if its Queue is ticked, then the next is tried. Empty: every model with the tag, queued. HA's engines on the Audio page come after."}}
 
-    async def piece(self, port: str, piece: dict[str, Any]) -> None:
+    async def clip(self, port: str, clip: dict[str, Any]) -> None:
         entries = self.core.pool.entries(self.settings.get("models"), "speech to text")
-        heard = await self.core.audio.stt(piece["pcm"], self.settings.get("language") or None, entries)
+        heard = await self.core.audio.stt(clip["pcm"], self.settings.get("language") or None, entries)
         text = ((heard or {}).get("text") or "").strip()
         if not text:
             return
         context = Context(origin=self.id)
-        context.add(self.id, "said", text, ["heard"], mic=piece.get("source"), mic_name=piece.get("name"),
-                    area=piece.get("area"), seconds=piece.get("seconds"), language=(heard or {}).get("language"))
+        context.add(self.id, "said", text, ["heard"], mic=clip.get("source"), mic_name=clip.get("name"),
+                    area=clip.get("area"), seconds=clip.get("seconds"), language=(heard or {}).get("language"))
         await self.domain.flow.send(context, self.id, "out")
 
 

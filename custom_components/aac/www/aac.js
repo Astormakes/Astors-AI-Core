@@ -6,7 +6,7 @@ const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+
 const tip = (html) => `<span class="qm" tabindex="0">?<span class="tip">${html}</span></span>`;
 const W = 180, HEAD = 34, ROW = 20;
 const COL = W + 110; // one slot column (v1: a column per step in the flow)
-const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", piece: "#9c27b0" };
+const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", clip: "#9c27b0" };
 // the Conditional's rules editor: tests and actions with the fields each needs ([field, label, kind])
 const TESTS = { contains: "contains", is: "is exactly", starts: "starts with", ends: "ends with", matches: "matches (regex)",
   has_tag: "has the tag", count_more: "more entries than", empty: "is empty", always: "always", template: "template is true" };
@@ -417,8 +417,8 @@ class AacPanel extends HTMLElement {
     return `<div class="legend">
       <div title="A context arrives and the card runs (the wire swells when one passes)">${line(KIND_COLOR.text)} context</div>
       <div title="Read when the card runs; starts nothing (triangles: what a card provides, into what reads it)">${line(KIND_COLOR.text, "3 3")} read</div>
-      <div title="Live sound (thicker when louder)">${line(KIND_COLOR.audio, "", 3)} sound</div>
-      <div title="A piece of speech">${line(KIND_COLOR.piece)} speech</div></div>`;
+      <div title="Live audio, flowing all the time (thicker when louder)">${line(KIND_COLOR.audio, "", 3)} audio stream</div>
+      <div title="A finished bit of audio: speech cut out of a stream, a sound file, …">${line(KIND_COLOR.clip)} audio clip</div></div>`;
   }
 
   _fnDocs(fns) {
@@ -861,7 +861,7 @@ class AacPanel extends HTMLElement {
     return `<b>Monitor</b><p class="hint">${esc(name(from))}.${esc(from.split(".")[1])} › ${esc(name(to))}.${esc(to.split(".")[1])} · live</p>
       <button class="small" data-monoff="${esc(key)}">Stop monitoring</button>
       ${msg?.entries ? `<label>NEWEST CONTEXT · ${esc(new Date(msg.time * 1000).toLocaleTimeString())}</label><p class="hint">Way: ${esc((msg.way || []).map(name).join(" › "))}</p>${entries}`
-        : msg?.piece ? `<label>NEWEST</label><p>${esc(msg.piece)} from ${esc(msg.source)}</p>` : ""}
+        : msg?.clip ? `<label>NEWEST</label><p>${esc(msg.clip)} from ${esc(msg.source)}</p>` : ""}
       <label>PASSED LATELY</label>${recs || '<p class="hint">Nothing yet (kept 10 minutes).</p>'}`;
   }
 

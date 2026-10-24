@@ -26,7 +26,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
   unchanged, its HA user taken over from v1), STT in the order on the Audio page (Whisper on the PC, then HA's),
   TTS (Piper, voices per language), volume; cards Microphone, Noise gate, Pause cut, Speech to text, Voice chat
   (sessions per satellite, follow-up window after Voice out's "finished"), Voice out. Audio wires carry a stream
-  (thickness = loudness), Pause cut makes pieces (`piece` wires).
+  (thickness = loudness), Pause cut makes audio clips (`clip` wires; a clip is any finished bit of audio).
 - **Calendar (alpha.4, `cards/calendar.py` + `calendar.py`):** its own entries plus the open entries of Lists cards
   with a field when/date/due; HA shows them as `calendar.aac_calendar` (v1's unique id kept; create/change/delete from
   HA work); functions calendar/add/change/remove; one-time: a Calendar card as the default model's tool.
