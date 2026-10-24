@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`, its progress file `docs/progress-v1.md` (private).
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-23) – 2.0.0-alpha.22, live on the owner's HA
+## Current state (2026-10-23) – 2.0.0-alpha.24, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -84,6 +84,10 @@ the owner wires them (no automatic wiring), the message is a document of entries
   ticked: a red warning, and a context is dropped when all are busy. The card shows its first model in the grid.
   Speech to text: its models, then HA's engines from the Audio page. On the HA: Model 35B → qwen3-8b, Memory card
   (bge-m3 on CT 110, a tool of the Model), Speech to text Whisper.
+- **Card files (alpha.24, owner 2026-10-24):** every card type is a file in `<config>/aac/cards/`, loaded from there;
+  AAC's own card files are copied there at each start unless a newer VERSION of the file is there (a download later).
+  Cards import only `custom_components.aac.api`; a saved card remembers its version (`upgrade(settings, made_with)`
+  for newer ones); the panel shows card versions. Contract for card authors (people and models): spec/cards.md.
 - **Interchangeable cards (alpha.22, owner design rule, docs/v2 rule 10):** the core never checks a card's type.
   Incoming: channels a card subscribes to (`core.subscribe(channel, card, handler)`: `audio` → Microphone,
   `ha_conversation` → a Chat with "Takes Home Assistant's conversations", `ha_calendar` → Calendar); outgoing: core
@@ -101,7 +105,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
   lists, Nodes, Models), chat (live answer, document view, stop), lists page, models page (find a server's models),
   node view (types left with info, click in the grid to place, drag to wire, Delete/button to unwire, settings right
   with functions and tags, Undo, slots 1–3 (Shift-click loads), Send stop, monitor on a wire).
-- Tests: 27 (`../.venv/bin/python -m pytest -q -p no:logging`).
+- Tests: 28 (`../.venv/bin/python -m pytest -q -p no:logging`).
 
 ## Owner's data
 

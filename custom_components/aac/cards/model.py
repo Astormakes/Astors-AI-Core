@@ -9,10 +9,9 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from ..const import LOGGER
-from ..context import Context, entry, is_stop
-from ..models import Client, ModelError, ModelUnreachable
-from . import Card, register, tool_spec
+from custom_components.aac.api import LOGGER, Card, Client, Context, entry, is_stop, ModelError, ModelUnreachable, register, tool_spec
+
+VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 MAX_ROUNDS = 8  # model → tool → model … per context
 KEEP_REQUESTS = 30  # chats whose last request is kept for the panel

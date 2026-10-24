@@ -22,7 +22,7 @@ PLATFORMS = ["calendar", "conversation", "media_player"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     """Start the core, its running domain and the panel."""
-    load_all()
+    await hass.async_add_executor_job(load_all, hass.config.path("aac", "cards"))  # AAC's cards, then yours
     core = Core(hass)
     await core.load()
     entry.runtime_data = core

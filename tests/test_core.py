@@ -146,3 +146,59 @@ async def test_stop_cuts_the_answer_and_stays_visible(hass: HomeAssistant, mock_
     assert answer == "" and kept["messages"][-1]["cut"] and is_stop(kept["entries"][-1])
     _, answer = await chat.send("go on", chat_id)
     assert answer == "Fine." and any(m["content"] == "[stopped]" or "[stopped]" in str(m["content"]) for m in asked[-1]["messages"])
+
+
+async def test_card_files_in_your_folder(hass: HomeAssistant, mock_entry):
+    """A card file in <config>/aac/cards/ is a card type like AAC's own; AAC's files are copied there, but a newer file
+    of the same name stays (it replaces AAC's card); a broken file does not stop the others."""
+    from pathlib import Path
+
+    from custom_components.aac.cards import CARD_TYPES
+
+    folder = Path(hass.config.path("aac", "cards"))
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "shout.py").write_text('''from custom_components.aac.api import Card, register
+
+
+@register
+class Shout(Card):
+    """Upper case."""
+
+    type = "shout"
+    title = "Shout"
+    help = "Makes the newest line upper case."
+
+    async def handle(self, context, port, step):
+        said = context.last("said")
+        if said:
+            said["text"] = said["text"].upper()
+        return None
+''')
+    (folder / "broken.py").write_text("this is not python")
+    builtin_relay = CARD_TYPES["relay"]
+    (folder / "relay.py").write_text('''from custom_components.aac.api import Card, register
+
+VERSION = "9.0.0"
+
+
+@register
+class MyRelay(Card):
+    type = "relay"
+    title = "My relay"
+''')
+    try:
+        core = await setup_aac(hass, mock_entry)
+        shout = await core.domain.add_card("shout", "Shout")
+        from custom_components.aac.context import Context
+        context = Context()
+        context.add("chat", "said", "hello")
+        await shout.handle(context, "in", None)
+        assert context.last("said")["text"] == "HELLO" and CARD_TYPES["relay"].title == "My relay"
+        assert CARD_TYPES["relay"].version == "9.0.0" and CARD_TYPES["chat"].version == "1.0.0"
+    finally:  # HA's test config folder is shared by every test
+        CARD_TYPES["relay"] = builtin_relay
+        CARD_TYPES.pop("shout", None)
+        for name in ("shout", "broken", "relay"):  # AAC's relay.py comes back at the next start
+            (folder / f"{name}.py").unlink(missing_ok=True)
+            for cached in (folder / "__pycache__").glob(f"{name}.*"):
+                cached.unlink()

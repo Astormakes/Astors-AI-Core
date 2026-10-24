@@ -15,8 +15,9 @@ import aiohttp
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
-from ..context import Context
-from . import Card, register
+from custom_components.aac.api import Card, Context, register
+
+VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register

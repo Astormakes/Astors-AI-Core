@@ -2,12 +2,23 @@
 
 A card type declares its ports, settings, the tags it writes and its functions (exactly documented: models call
 them as tools, a Conditional card calls them as actions). A card instance lives in one domain and owns its data.
-New card types are registered here; adding one needs no restart of anything else.
+
+Every card type is a file in `<config>/aac/cards/` (spec/cards.md). AAC's own card files (next to this one) are
+copied there unless a newer version of the file is there (each file has a VERSION). Cards only use the core's
+public interface (`custom_components.aac.api`), never each other's types.
 """
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+import re
+import shutil
+import sys
+import types
 from typing import TYPE_CHECKING, Any, ClassVar
+
+from ..const import LOGGER
 
 if TYPE_CHECKING:
     from ..core import Domain
@@ -19,7 +30,10 @@ CATEGORIES = ["In and out", "Text", "Logic", "Models", "Data", "Home Assistant",
 
 
 def register(cls: type[Card]) -> type[Card]:
-    """Make a card type available (decorator)."""
+    """Make a card type available (decorator); a later one with the same type replaces it (your folder after AAC's)."""
+    if (old := CARD_TYPES.get(cls.type)) is not None and old.__module__ != cls.__module__:
+        LOGGER.info("AAC: card type %s from %s replaces the one from %s", cls.type, cls.__module__, old.__module__)
+    cls.version = str(getattr(sys.modules.get(cls.__module__), "VERSION", cls.version))
     CARD_TYPES[cls.type] = cls
     return cls
 
@@ -41,6 +55,7 @@ class Card:
     values: ClassVar[dict[str, str]] = {}  # name → what it is: read in templates as {{ <card>.<name> }}
     page: ClassVar[str | None] = None  # a page of its own in the sidebar ("chat", "lists")
     keeps_data: ClassVar[bool] = False
+    version: ClassVar[str] = "0"  # its file's VERSION
 
     def __init__(self, domain: Domain, card_id: str, title: str, settings: dict[str, Any] | None) -> None:
         """Initialize."""
@@ -96,6 +111,11 @@ class Card:
         off, appends the stop and sends its own context on; it says True. Not busy: False (the stop goes on)."""
         return False
 
+    @classmethod
+    def upgrade(cls, settings: dict[str, Any], made_with: str) -> dict[str, Any]:
+        """A card was saved by another version of its file (`made_with`): its settings as this version wants them."""
+        return settings
+
     async def start(self) -> None:
         """The card is in a running domain: start its timers and listeners."""
 
@@ -108,7 +128,8 @@ class Card:
         """The type: for the node view's palette and the ? helper."""
         return {"type": cls.type, "title": cls.title, "category": cls.category, "help": cls.help,
                 "inputs": cls.inputs, "outputs": cls.outputs, "square": sorted(cls.square),
-                "settings": cls.settings_schema, "tags": cls.tags, "functions": cls.functions, "values": cls.values, "ports_help": cls.ports_help, "page": cls.page}
+                "settings": cls.settings_schema, "tags": cls.tags, "functions": cls.functions, "values": cls.values, "ports_help": cls.ports_help, "page": cls.page,
+                "version": cls.version}
 
     def summary(self) -> dict[str, Any]:
         """This card: for the node view."""
@@ -133,7 +154,38 @@ def tool_spec(card: Card, name: str, spec: dict[str, Any]) -> dict[str, Any]:
         "parameters": {"type": "object", "properties": props, **({"required": required} if required else {})}}}
 
 
-def load_all() -> None:
-    """Import the built-in card types (each registers itself)."""
-    from . import (  # noqa: F401, PLC0415
-        audio, auto, buffer, builder, calendar, chat, conditional, decide, homeassistant, lists, memory, model, relay, tools)
+def load_all(folder: str) -> None:
+    """Load every card type from the cards folder (`<config>/aac/cards/`). AAC's own card files are copied there first
+    unless a newer version of the file is there (a download); runs in the executor (it reads and writes files). A file
+    that fails is logged; the others load."""
+    cards = Path(folder)
+    cards.mkdir(parents=True, exist_ok=True)
+    for shipped in sorted(Path(__file__).parent.glob("*.py")):
+        if shipped.name == "__init__.py":
+            continue
+        there = cards / shipped.name
+        if not there.exists() or (_version(there) <= _version(shipped) and there.read_bytes() != shipped.read_bytes()):
+            LOGGER.info("AAC: card file %s %s", shipped.name, "updated" if there.exists() else "added")
+            shutil.copyfile(shipped, there)
+    package = sys.modules.setdefault("aac_cards", types.ModuleType("aac_cards"))  # card files can import each other
+    package.__path__ = [str(cards)]
+    for path in sorted(cards.glob("*.py")):
+        def load(path=path):
+            spec = importlib.util.spec_from_file_location(f"aac_cards.{path.stem}", path)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+        _load(load, str(path))
+
+
+def _version(path: Path) -> tuple[int, ...]:
+    """A card file's VERSION ("1.2.0" → (1, 2, 0); none: (0,))."""
+    found = re.search(r"""^VERSION\s*=\s*["']([\d.]+)["']""", path.read_text(encoding="utf-8"), re.M)
+    return tuple(int(x) for x in found.group(1).split(".") if x) if found else (0,)
+
+
+def _load(load, name: str) -> None:
+    try:
+        load()
+    except Exception:  # noqa: BLE001 - one broken card file must not stop the others
+        LOGGER.exception("AAC: the card file %s could not be loaded", name)

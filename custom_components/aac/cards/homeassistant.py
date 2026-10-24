@@ -8,8 +8,9 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 
-from ..context import Context
-from . import Card, register
+from custom_components.aac.api import Card, Context, register
+
+VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 LEVELS = ["hidden", "read", "full"]
 MAX_FOUND = 60

@@ -9,8 +9,9 @@ from typing import Any
 from homeassistant.exceptions import TemplateError
 from homeassistant.helpers.template import Template
 
-from ..context import Context
-from . import Card, register
+from custom_components.aac.api import Card, Context, register
+
+VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 KIND = {"start": "system", "note": "note", "after": "trailer"}
 

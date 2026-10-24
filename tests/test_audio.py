@@ -36,7 +36,7 @@ async def test_a_spoken_round_trip(hass: HomeAssistant, hass_client, mock_entry,
     asked = model_answers(aioclient_mock, reply("It is five."), reply("nothing"))
     heard = AsyncMock(side_effect=[{"text": "Computer, what time is it?"}, {"text": "see you in the next video"}])
     client = await hass_client()
-    with (patch("custom_components.aac.cards.audio.make_vad", return_value=EnergyVad()),
+    with (patch("aac_cards.audio.make_vad", return_value=EnergyVad()),
           patch.object(core.audio, "stt", heard), patch.object(core.audio, "tts", AsyncMock(return_value=b"RIFFwave"))):
         ws = await client.ws_connect("/api/aac/audio")
         await ws.send_json({"type": "hello", "id": "pc", "name": "PC", "rate": 16000})

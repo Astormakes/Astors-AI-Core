@@ -82,6 +82,9 @@ class Domain:
         if kind is None:
             LOGGER.warning("AAC: card type %s is not available (card %s)", spec.get("type"), card_id)
             return None
+        if spec.get("version") != kind.version:  # saved by another version of the card's file
+            spec["settings"] = kind.upgrade(dict(spec.get("settings") or {}), spec.get("version") or "0")
+            spec["version"] = kind.version
         card = kind(self, card_id, spec.get("title", ""), spec.get("settings"))
         await card.load()
         if old := self.cards.get(card_id):

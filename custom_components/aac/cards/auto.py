@@ -12,9 +12,9 @@ from homeassistant.core import Event, callback
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change
 from homeassistant.util import dt as dt_util
 
-from ..const import LOGGER
-from ..context import Context
-from . import Card, register
+from custom_components.aac.api import LOGGER, Card, Context, register
+
+VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 SILENT = ("nothing", "nothing.", "")

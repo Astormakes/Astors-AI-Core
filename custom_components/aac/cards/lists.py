@@ -7,8 +7,9 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from ..context import Context, new_id
-from . import Card, register
+from custom_components.aac.api import Card, Context, new_id, register
+
+VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 ARG_LIST = {"type": "string", "help": "The list's name.", "required": True}
 

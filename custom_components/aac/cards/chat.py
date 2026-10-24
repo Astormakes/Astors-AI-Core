@@ -12,8 +12,9 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from ..context import Context, is_stop, new_id
-from . import Card, register
+from custom_components.aac.api import Card, Context, is_stop, new_id, register
+
+VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NO_ANSWER = "(no answer came back: is a model wired back into this chat?)"

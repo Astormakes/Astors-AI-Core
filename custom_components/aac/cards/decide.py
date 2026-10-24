@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..context import Context
-from ..models import Client, run
-from . import Card, register
+from custom_components.aac.api import Card, Client, Context, register, run
+
+VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 LOOK_BACK = 8  # entries the deciding model reads
 

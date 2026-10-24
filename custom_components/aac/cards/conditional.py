@@ -10,9 +10,9 @@ from typing import Any
 from homeassistant.exceptions import TemplateError
 from homeassistant.helpers.template import Template
 
-from ..const import LOGGER
-from ..context import Context, entry
-from . import Card, register
+from custom_components.aac.api import LOGGER, Card, Context, entry, register
+
+VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 TESTS = ["contains", "is", "starts", "ends", "matches", "has_tag", "count_more", "empty", "always", "template"]
 ACTIONS = ["replace", "insert", "remove", "remove_entries", "cut", "split", "join", "case", "trim", "tag", "call",

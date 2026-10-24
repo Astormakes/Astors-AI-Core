@@ -388,7 +388,7 @@ class AacPanel extends HTMLElement {
       return types.length ? `<h4>${esc(c.toUpperCase())}</h4>${types.map((t) => `<div class="item ${this.selType === t.type ? "on" : ""}" data-pick="${esc(t.type)}">${esc(t.title)}</div>`).join("")}` : "";
     }).join("");
     const t = this.selType && this._type(this.selType);
-    const info = t ? `<b>${esc(t.title)}</b><p style="margin:6px 0">${esc(t.help)}</p>${this._fnDocs(t.functions)}<p class="hint">Click in the grid to place it.</p>`
+    const info = t ? `<b>${esc(t.title)}</b> <span class="hint">v${esc(t.version)}</span><p style="margin:6px 0">${esc(t.help)}</p>${this._fnDocs(t.functions)}<p class="hint">Click in the grid to place it.</p>`
       : '<span class="hint">Pick a card type above, then click in the grid to place it.</span>';
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
     return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it.")}
@@ -496,7 +496,7 @@ class AacPanel extends HTMLElement {
       return `<label>${esc(f.title)}${h}</label><input data-set="${esc(key)}" value="${esc(v)}">`;
     };
     return `<label>Name</label><input id="title" value="${esc(c.title)}">
-      <p class="hint" style="margin-top:8px">${esc(t?.help || "")}</p>
+      <p class="hint" style="margin-top:8px">${esc(t?.help || "")} <span title="The version of its card file">· ${esc(t?.title || c.type)} v${esc(t?.version || "?")}</span></p>
       ${Object.entries(t?.settings || {}).map(field).join("")}
       ${this._fnDocs(t?.functions)}
       ${this._portDocs(c, t)}

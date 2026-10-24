@@ -5,8 +5,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..context import Context
-from . import CARD_TYPES, Card, register
+from custom_components.aac.api import CARD_TYPES, Card, Context, register
+
+VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register

@@ -9,10 +9,9 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from ..audio import SAMPLE_RATE, Segmenter, level, make_vad
-from ..const import LOGGER
-from ..context import Context
-from . import Card, register
+from custom_components.aac.api import LOGGER, SAMPLE_RATE, Card, Context, level, make_vad, register, Segmenter
+
+VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
 
