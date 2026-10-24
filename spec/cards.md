@@ -23,7 +23,7 @@ class Shout(Card):
     title = "Shout"
     category = "Text"                   # palette group: In and out, Text, Logic, Models, Data, Home Assistant, Audio, Other
     help = "Makes the newest line upper case."
-    inputs = {"in": "text"}             # port → kind: text (a context), read (dotted: read, never starts), audio (a live stream), clip (a finished bit of audio); "audio|clip": either
+    inputs = {"in": "text"}             # port → kind: text (a context), read (dotted: read, never starts), audio (a live stream), clip (a finished bit of audio); "audio|clip": either; "any": every kind
     outputs = {"out": "text"}           # same kinds; a read output (a triangle) is what held(port) provides, wired only into read inputs
     square = set()                      # outputs where the card picks one wire (else every wire gets a copy)
     ports_help = {"in": "a context arrives", "out": "the same context, louder"}

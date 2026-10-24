@@ -223,3 +223,35 @@ async def test_home_access_list(hass: HomeAssistant, mock_entry):
     assert {"id": "light.desk", "name": "Desk", "area": "", "group": "light"} in items
     assert home.level("light.desk") == "hidden"
     assert type(home).upgrade({"default": "read", "levels": {"light.desk": "full"}}, "1.1.0") == {"levels": {"light.desk": "full"}}
+
+
+async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
+    """The Log card's input takes every kind; it writes down contexts, clips, audio start and stop, and what is new on
+    a dotted wire (a Chat's provides)."""
+    import asyncio
+    import time as time_mod
+    from unittest.mock import patch
+
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    log = await d.add_card("log", "Log")
+    d.set_wires([*d.wires, {"from": "chat.provides", "to": f"{log.id}.in"}, {"from": "model.out", "to": f"{log.id}.in"}])
+    assert {"from": "chat.provides", "to": f"{log.id}.in"} in d.wires and {"from": "model.out", "to": f"{log.id}.in"} in d.wires
+    c = Context(origin="chat")
+    c.way = ["model", log.id]
+    c.add("model", "answer", "Hello there", ["answer"])
+    await log.handle(c, "in", None)
+    await log.clip("in", {"pcm": b"", "seconds": 1.4, "name": "PC", "part": 2})
+    log.stream("in", b"\x00\x00", {"source": "pc", "name": "PC"})
+    log._audio["PC"] = [time_mod.monotonic() - 5, time_mod.monotonic() - 3]  # quiet for a while
+    with patch(f"{type(log).__module__}.READ_EVERY", 0):
+        task = hass.async_create_task(log._watch())
+        await asyncio.sleep(0.05)
+        chat = d.cards["chat"]
+        chat._new("Talk")["entries"].append({"id": "n1", "by": "chat", "kind": "said", "text": "a new line", "tags": [], "time": "", "data": {}, "state": "closed"})
+        await asyncio.sleep(0.05)
+        task.cancel()
+    texts = [(x["what"], x["text"]) for x in log.data["log"]]
+    assert ("context", "answer #model.answer: Hello there  [1 entries]") in texts
+    assert ("clip", "1.4 s, phrase 2") in texts and ("audio", "started") in texts
+    assert any(w == "audio" and t.startswith("stopped") for w, t in texts) and ("read", "said : a new line") in texts

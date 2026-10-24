@@ -7,9 +7,9 @@ const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+
 const tip = (html) => `<span class="qm" tabindex="0">?<span class="tip">${html}</span></span>`;
 const W = 180, HEAD = 34, ROW = 20;
 const COL = W + 110; // one slot column (v1: a column per step in the flow)
-const KIND_NAMES = { text: "context", read: "read (dotted)", audio: "audio stream", clip: "audio clip" };
+const KIND_NAMES = { text: "context", read: "read (dotted)", audio: "audio stream", clip: "audio clip", any: "anything" };
 const KIND_NAME = new Proxy(KIND_NAMES, { get: (t, k) => String(k).split("|").map((x) => t[x] || x).join(" or ") }); // "audio|clip": either
-const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", clip: "#9c27b0" };
+const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", clip: "#9c27b0", any: "#ffffff" };
 // the Conditional's rules editor: tests and actions with the fields each needs ([field, label, kind])
 const TESTS = { contains: "contains", is: "is exactly", starts: "starts with", ends: "ends with", matches: "matches (regex)",
   has_tag: "has the tag", count_more: "more entries than", empty: "is empty", always: "always", template: "template is true" };
@@ -44,6 +44,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .dom { position: relative; } .dbtn { width: 100%; text-align: left; font-weight: 600; padding: 6px 10px; }
 .dmenu { position: absolute; left: 0; right: 0; top: 100%; z-index: 50; background: var(--card-background-color); border: 1px solid var(--divider-color);
   border-radius: 8px; padding: 4px 0; box-shadow: 0 4px 16px rgba(0,0,0,.25); } .dmenu hr { border: 0; border-top: 1px solid var(--divider-color); margin: 4px 0; }
+.dot[data-kind="any"] { stroke: #888; stroke-width: 1.5; } /* takes anything: white, with a rim to show on light themes */
 .permhead { margin: 0; cursor: pointer; user-select: none; } .card .permhead + * { margin-top: 10px; }
 .access .acclist { max-height: 420px; overflow-y: auto; border: 1px solid var(--divider-color); border-radius: 8px; }
 .accrow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--divider-color); }
@@ -826,7 +827,7 @@ class AacPanel extends HTMLElement {
     const byId = Object.fromEntries(this.state.domain.cards.map((c) => [c.id, c]));
     const wires = this.state.domain.wires.map((w) => {
       const [a, ap] = w.from.split("."), [b, bp] = w.to.split(".");
-      return byId[a] && byId[b] ? { a: byId[a], ap, b: byId[b], bp, kind: byId[a].outputs[ap], read: byId[b].inputs[bp] === "read", key: `${w.from}|${w.to}` } : null;
+      return byId[a] && byId[b] ? { a: byId[a], ap, b: byId[b], bp, kind: byId[a].outputs[ap], read: byId[b].inputs[bp] === "read" || byId[a].outputs[ap] === "read", key: `${w.from}|${w.to}` } : null;
     }).filter(Boolean);
     // a loop: wired both ways between two cards (a card and its tool); the host is the card with more loops (then more wires)
     const has = new Set(wires.map((w) => `${w.a.id}>${w.b.id}`)), partners = {}, degree = {};
@@ -1166,7 +1167,7 @@ class AacPanel extends HTMLElement {
       if (d.kind === "wire") {
         this.shadowRoot.querySelector("#tmpwire")?.remove();
         const el = this.shadowRoot.elementFromPoint(e.clientX, e.clientY), node = el?.closest?.(".node"), inp = el?.dataset?.in;
-        if (node && inp && el.dataset.kind.split("|").includes(d.type)) { // a kind the input takes (a read output only into a read input)
+        if (node && inp && (el.dataset.kind === "any" || el.dataset.kind.split("|").includes(d.type))) { // a kind the input takes (a read output only into a read input; "any" takes all)
           await this.ws("aac/wires", { wires: [...this.state.domain.wires, { from: d.from, to: `${node.dataset.node}.${inp}` }] });
           await this._load(); this.render();
         }
