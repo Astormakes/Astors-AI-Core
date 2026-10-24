@@ -306,6 +306,10 @@ class Core:
         """Keep the core."""
         self._store.async_delay_save(lambda: self.data, 1)
 
+    async def save_now(self) -> None:
+        """Keep the core now."""
+        await self._store.async_save(self.data)
+
     # ------------------------------------------------------------------ channels (design rule: the core never asks for a card type)
     @callback
     def subscribe(self, channel: str, card: Card, handler: Callable[..., Any]) -> None:

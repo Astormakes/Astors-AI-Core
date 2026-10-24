@@ -6,17 +6,14 @@ raise the major number, then `AAC_SAVE_BACKUP=1 pytest tests/test_backups.py` re
 
 from __future__ import annotations
 
-from datetime import timedelta
 import json
 import os
 from pathlib import Path
 import shutil
 
 import pytest
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from homeassistant.core import HomeAssistant
-from homeassistant.util import dt as dt_util
 
 from .conftest import model_answers, reply, setup_aac
 
@@ -46,9 +43,7 @@ async def test_the_backup_is_of_this_major_version(hass: HomeAssistant, mock_ent
     await d.cards["lists"].call("add_items", {"list": "Shopping", "items": ["Oat milk", "Coffee"]})
     await d.cards["calendar"].call("add", {"summary": "Dentist", "start": "2026-11-02T10:00"})
     await d.save_now()
-    core.save()
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=10))  # the delayed saves happen
-    await hass.async_block_till_done()
+    await core.save_now()
     if SAVED:
         shutil.rmtree(SAVED)  # only the newest major version's backup is kept
     folder = BACKUPS / VERSION
@@ -64,6 +59,7 @@ async def test_the_backup_still_loads(hass: HomeAssistant, mock_entry, aioclient
     hass_storage.update(json.loads((SAVED / "storage.json").read_text()))
     core = await setup_aac(hass, mock_entry)
     d = core.domain
+    assert [k["id"] for k in core.audio.settings.get("known", [])] == ["pc"]  # the core's own store came back
     setup = json.loads((SAVED / "setup.json").read_text())
     assert set(setup["cards"]) <= set(d.cards), f"cards of {SAVED.name} that do not load: {set(setup['cards']) - set(d.cards)}"
     chat = d.cards["chat"]
