@@ -318,4 +318,4 @@ async def test_domains_new_rename_delete(hass: HomeAssistant, mock_entry, hass_s
     with pytest.raises(ValueError):
         await core.delete(first)  # the last one stays
     perms = [k for c in core.domain.cards.values() for k, f in c.settings_schema.items() if f.get("permission")]
-    assert {"offers", "default", "levels"} <= set(perms)
+    assert {"offers", "levels"} <= set(perms) and "default" not in perms

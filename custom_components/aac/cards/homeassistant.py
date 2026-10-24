@@ -1,5 +1,6 @@
 """Home Assistant: the world through its own access list. Per entity: hidden, read-only (see its state) or full
-(switch it too); everything else gets the default. Anyone can build other HA integration cards."""
+(switch it too); anything not in the list is hidden, so it only reaches what was allowed. Anyone can build other HA
+integration cards."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from homeassistant.helpers import area_registry as ar, device_registry as dr, en
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 LEVELS = ["hidden", "read", "full"]
 MAX_FOUND = 60
@@ -35,10 +36,9 @@ class HomeAssistantCard(Card):
     help = ("Home Assistant for a model or a Conditional card: find entities, read their state, switch them; only what "
             "its access list allows (hidden, read-only, full).")
     settings_schema = {
-        "default": {"type": "select", "title": "Everything else is", "default": "hidden", "permission": True,
-                    "options": [["hidden", "hidden"], ["read", "read-only"], ["full", "full (may switch)"]]},
         "levels": {"type": "access", "title": "Access per entity", "default": {}, "permission": True,
-                   "help": "hidden: not there for AAC · read-only: it sees the state · full: it may switch it."},
+                   "help": "hidden: not there for AAC (anything not set is hidden) · read-only: it sees the state · full: "
+                           "it may switch it. The buttons set every entity shown (search first to set only some)."},
     }
     functions = {
         "find": {"help": "Entities AAC may see: id, name, area, state (if readable), access.",
@@ -53,9 +53,22 @@ class HomeAssistantCard(Card):
                                   "data": {"type": "object", "help": "Extra service data (e.g. brightness_pct)."}}},
     }
 
+    @classmethod
+    def upgrade(cls, settings: dict[str, Any], made_with: str) -> dict[str, Any]:
+        settings.pop("default", None)  # before 1.2.0 an "everything else" level; now anything not listed is hidden
+        return settings
+
+    async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
+        """For its access list (the panel's "access" field): every entity, with its name, area and domain."""
+        if action != "access_items":
+            return await super().ui_call(action, args)
+        return sorted(({"id": st.entity_id, "name": st.attributes.get("friendly_name") or st.entity_id,
+                        "area": _area(self.hass, st.entity_id) or "", "group": st.domain} for st in self.hass.states.async_all()),
+                      key=lambda x: (x["area"] or "~", x["group"], x["name"].lower()))
+
     def level(self, entity_id: str) -> str:
         """hidden, read or full."""
-        return (self.settings.get("levels") or {}).get(entity_id) or self.settings.get("default") or "hidden"
+        return (self.settings.get("levels") or {}).get(entity_id) or "hidden"
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         hass = self.hass

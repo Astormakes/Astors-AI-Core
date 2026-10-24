@@ -211,3 +211,15 @@ async def test_chat_finds_and_switches_to_old_chats(hass: HomeAssistant, mock_en
     assert card.current()["id"] == old["id"]
     assert {c["id"] for c in card.chats()} == before  # the asking chat is gone
     assert [e["text"] for e in card.get(old["id"])["entries"]] == ["the LoRa mast drone"]  # the switch is not kept
+
+
+async def test_home_access_list(hass: HomeAssistant, mock_entry):
+    """The Home card's access list: its entries come from HA, anything not set is hidden; an old 'everything else'
+    level is dropped when the card is loaded."""
+    core = await setup_aac(hass, mock_entry)
+    hass.states.async_set("light.desk", "on", {"friendly_name": "Desk"})
+    home = core.domain.cards["home"]
+    items = await home.ui_call("access_items", {})
+    assert {"id": "light.desk", "name": "Desk", "area": "", "group": "light"} in items
+    assert home.level("light.desk") == "hidden"
+    assert type(home).upgrade({"default": "read", "levels": {"light.desk": "full"}}, "1.1.0") == {"levels": {"light.desk": "full"}}

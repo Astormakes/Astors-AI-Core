@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.1.13, live on the owner's HA
+## Current state (2026-10-24) – 2.1.14, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -144,6 +144,10 @@ Z.Y.X: X = changes the backup survives (fixes and new features alike), Y = a bac
 (and `upgrade()` for their saved settings). Bump the manifest version with every deploy (the browser caches the panel
 by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2.1.2; from 2.1.3 on as above.
 
+- 2.1.14: access lists (owner): a setting of type `access` shows the card's own entries (`ui_call("access_items")`,
+  Home: every HA entity with name and area) with hidden / read-only / full per row, a search, and Hide / Read-only /
+  Full all (shown); anything not set is hidden (the Home card's "everything else" level is gone, `upgrade()` drops
+  it). The Permissions page folds its cards, one open at a time, each with a short summary.
 - 2.1.12: the domain menu (owner, as in v1): switch, New domain (empty), Copy, Rename, Permissions, Save to a file,
   Load a file, Delete; a card setting marked `permission` shows on the domain's Permissions page (Home: access,
   Node editor: may change / remove, every card with functions: offers to models). Save/Load file left the Nodes header.

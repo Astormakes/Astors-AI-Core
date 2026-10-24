@@ -64,7 +64,9 @@ arrived: True when it was busy and sent its own context on), `held(port)` (what 
 reads), `current()` (its values), `ui = True` (a page of its own, see below). A setting of type `modellist` with a
 `tag` gives it a list of models with queues. A setting may say `min` (and `off`, the value that turns it off),
 and `confirm` (a question the panel asks before it is first turned on, for a setting that changes more than itself). A setting marked
-`permission` also shows on the domain's Permissions page (what the domain's cards may do, all in one place).
+`permission` also shows on the domain's Permissions page (what the domain's cards may do, all in one place). A
+setting of type `access` is a list of the card's own entries, each hidden / read-only / full (not set: hidden):
+the card returns them from `ui_call("access_items")` as `[{id, name, area, group}]`; the value is `{id: level}`.
 
 ## A card folder
 

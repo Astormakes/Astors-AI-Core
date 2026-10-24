@@ -44,6 +44,10 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .dom { position: relative; } .dbtn { width: 100%; text-align: left; font-weight: 600; padding: 6px 10px; }
 .dmenu { position: absolute; left: 0; right: 0; top: 100%; z-index: 50; background: var(--card-background-color); border: 1px solid var(--divider-color);
   border-radius: 8px; padding: 4px 0; box-shadow: 0 4px 16px rgba(0,0,0,.25); } .dmenu hr { border: 0; border-top: 1px solid var(--divider-color); margin: 4px 0; }
+.permhead { margin: 0; cursor: pointer; user-select: none; } .card .permhead + * { margin-top: 10px; }
+.access .acclist { max-height: 420px; overflow-y: auto; border: 1px solid var(--divider-color); border-radius: 8px; }
+.accrow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--divider-color); }
+.accrow .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; } .accrow .seg { display: flex; gap: 2px; flex: 0 0 auto; }
 .dmenu .item.danger { color: var(--error-color, #db4437); }
 h4.fold { cursor: pointer; user-select: none; border-radius: 6px; } h4.fold:hover { background: rgba(127,127,127,.1); }
 h4.fold.lit { color: var(--primary-color); background: rgba(3,169,244,.12); } h4.fold .arrow { display: inline-block; width: 12px; }
@@ -156,13 +160,27 @@ class AacPanel extends HTMLElement {
     this.shadowRoot.addEventListener("mouseout", hide);
     this.shadowRoot.addEventListener("focusout", hide);
     this.shadowRoot.addEventListener("change", (e) => { if (e.target.id === "importfile") { this._loadFile(e.target.files[0]); e.target.value = ""; } });
+    this.shadowRoot.addEventListener("input", (e) => { // an access list's search: only its rows are drawn again
+      const box = e.target.dataset?.accsearch;
+      if (!box) return;
+      (this._accFilter ||= {})[box] = e.target.value;
+      const [cardId, key] = box.split("|"), rows = this.shadowRoot.querySelector(`[data-accbox="${CSS.escape(box)}"]`);
+      if (rows) rows.innerHTML = this._accessRows(this._card(cardId), key);
+    });
     // one listener for what is drawn by others or redrawn often: the sidebar, a card page's ☰, the Audio page's meters
     this.shadowRoot.addEventListener("click", (e) => {
-      const t = e.target.closest?.("[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],#dombtn,#navbtn");
+      const t = e.target.closest?.("[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],[data-acclevel],[data-accall],[data-permopen],#dombtn,#navbtn");
       if (!t) return;
       const d = t.dataset;
       if (d.say) this.ws("aac/audio/say", { source: d.say, text: "This is how I sound." });
       else if (t.id === "dombtn") { this.domOpen = !this.domOpen; this.render(); }
+      else if (d.acclevel) this._setAccess(d.acc, [d.accid], d.acclevel);
+      else if (d.accall) {
+        const [cardId] = d.acc.split("|"), q = ((this._accFilter || {})[d.acc] || "").toLowerCase();
+        const shown = (this._accItems?.[cardId] || []).filter((x) => !q || `${x.name} ${x.id} ${x.area} ${x.group}`.toLowerCase().includes(q));
+        if (shown.length > 20 && !confirm(`Set ${shown.length} entries to ${d.accall === "read" ? "read-only" : d.accall}?`)) return;
+        this._setAccess(d.acc, shown.map((x) => x.id), d.accall);
+      } else if (d.permopen) { this.permOpen = this.permOpen === d.permopen ? null : d.permopen; this.render(); }
       else if (d.domact) this._domainAction(d.domact);
       else if (d.domgo) { this.domOpen = false; this.ws("aac/domain/switch", { domain_id: d.domgo }).then(async () => { this._els = {}; await this._load(); this.go("card", null, null); }); }
       else if (d.navadd) { e.stopPropagation(); const el = this._els[d.navadd]; if (el?.add) { this.go("card", d.navadd, this.view.card === d.navadd ? this.view.id : null).then(() => el.add()); } else this.go("card", d.navadd, null); }
@@ -341,10 +359,17 @@ class AacPanel extends HTMLElement {
     this.sel = null; this._els = {}; await this._load(); this.go("nodes");
   }
 
+  _permSummary(c, fs) { // a folded card's permissions in a few words
+    return fs.map(([k, f]) => { const v = c.settings[k] ?? f.default;
+      if (f.type === "bool") return `${v ? "✓" : "✗"} ${f.title.toLowerCase()}`;
+      if (f.type === "access") { const n = Object.values(v || {}); return `${n.filter((x) => x === "read").length} read-only, ${n.filter((x) => x === "full").length} full`; }
+      return `${f.title}: ${v}`; }).join(" · ");
+  }
+
   _permissionsView() { // every setting a card marks as a permission, all cards of this domain on one page
     const cards = this.state.domain.cards.map((c) => [c, Object.entries(this._type(c.type)?.settings || {}).filter(([, f]) => f.permission)]).filter(([, fs]) => fs.length);
     return `${this._header(`Permissions of "${this.state.domain.name}"`, tip("What this domain's cards may do, gathered from their settings (the same fields as in Nodes): which entities AAC may see or switch, what the Node editor may change, which cards models may use as tools."))}
-      <div class="content">${cards.map(([c, fs]) => `<div class="card"><h3 style="margin-top:0">${esc(c.title)} <span class="hint">${esc(this._type(c.type)?.title || c.type)}</span></h3>${fs.map((e) => this._field(c, e)).join("")}</div>`).join("") || '<p class="hint">No card here has permissions.</p>'}
+      <div class="content">${cards.map(([c, fs]) => { const open = this.permOpen === c.id; return `<div class="card"><h3 class="permhead" data-permopen="${esc(c.id)}">${open ? "▾" : "▸"} ${esc(c.title)} <span class="hint">${esc(this._type(c.type)?.title || c.type)} · ${esc(this._permSummary(c, fs))}</span></h3>${open ? fs.map((e) => this._field(c, e)).join("") : ""}</div>`; }).join("") || '<p class="hint">No card here has permissions.</p>'}
       <p class="hint">Fields save when you leave them.</p></div>`;
   }
 
@@ -558,6 +583,37 @@ class AacPanel extends HTMLElement {
     if (this.showValues) this.render();
   }
 
+  _accessField(c, key) { // an access list: the card's own entries, each hidden / read-only / full (not set: hidden)
+    const box = `${c.id}|${key}`, items = (this._accItems ||= {})[c.id];
+    if (!items) {
+      this._accItems[c.id] = "loading";
+      this.ws("aac/card/ui", { card: c.id, action: "access_items" }).then((r) => { this._accItems[c.id] = r.result || []; this.render(); })
+        .catch(() => { this._accItems[c.id] = []; this.render(); });
+    }
+    return `<div class="access"><input data-accsearch="${esc(box)}" placeholder="Search: name, id, area, kind (e.g. light.)" value="${esc((this._accFilter || {})[box] || "")}">
+      <div data-accbox="${esc(box)}">${this._accessRows(c, key)}</div></div>`;
+  }
+
+  _accessRows(c, key) {
+    const box = `${c.id}|${key}`, items = this._accItems?.[c.id], levels = c.settings[key] || {};
+    if (!Array.isArray(items)) return '<p class="hint">Loading…</p>';
+    const q = ((this._accFilter || {})[box] || "").toLowerCase();
+    const shown = items.filter((x) => !q || `${x.name} ${x.id} ${x.area} ${x.group}`.toLowerCase().includes(q));
+    const seg = (x) => ["hidden", "read", "full"].map((l) => `<button class="small ${(levels[x.id] || "hidden") === l ? "on" : ""}" data-acclevel="${l}" data-accid="${esc(x.id)}" data-acc="${esc(box)}">${{ hidden: "hidden", read: "read-only", full: "full" }[l]}</button>`).join("");
+    const counts = ["read", "full"].map((l) => Object.values(levels).filter((v) => v === l).length);
+    return `<div class="row" style="flex-wrap:wrap;gap:4px;margin:6px 0">${[["hidden", "Hide"], ["read", "Read-only"], ["full", "Full"]].map(([l, t]) => `<button class="small" data-accall="${l}" data-acc="${esc(box)}" title="Every entry shown">${t} all${q ? " shown" : ""}</button>`).join("")}
+        <span class="hint" style="margin-left:auto">${shown.length} shown · ${counts[0]} read-only · ${counts[1]} full</span></div>
+      <div class="acclist">${shown.slice(0, 400).map((x) => `<div class="accrow"><span class="t">${esc(x.name)}<div class="hint">${esc(x.id)}${x.area ? ` · ${esc(x.area)}` : ""}</div></span><span class="seg">${seg(x)}</span></div>`).join("")}
+        ${shown.length > 400 ? `<p class="hint">${shown.length - 400} more: search to narrow it down.</p>` : ""}</div>`;
+  }
+
+  async _setAccess(box, ids, level) {
+    const [cardId, key] = box.split("|"), c = this._card(cardId), levels = { ...(c.settings[key] || {}) };
+    for (const id of ids) { if (level === "hidden") delete levels[id]; else levels[id] = level; }
+    await this.ws("aac/card/update", { card: cardId, settings: { [key]: levels } });
+    await this._load(); this.render();
+  }
+
   _field(c, entry) { // one setting of a card, as its schema says; its inputs say which card (a page may show several)
     return this._fieldHtml(c, entry).replace(/data-set="/g, `data-card="${esc(c.id)}" data-set="`);
   }
@@ -581,7 +637,7 @@ class AacPanel extends HTMLElement {
     if (f.type === "tag") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">—</option>${d.tags.map((x) => `<option ${x.tag === v ? "selected" : ""}>${esc(x.tag)}</option>`).join("")}</select>`;
     if (f.type === "tags") return `<label>${esc(f.title)}${h}</label>${d.tags.map((x) => `<label class="check"><input type="checkbox" data-tag="${esc(key)}" value="${esc(x.tag)}" ${(v || []).includes(x.tag) ? "checked" : ""}>${esc(x.tag)}</label>`).join("") || '<p class="hint">No tags yet.</p>'}`;
     if (f.type === "list") return `<label>${esc(f.title)}${h}</label><input data-set="${esc(key)}" data-list value="${esc((v || []).join(", "))}">`;
-    if (f.type === "access") return `<label>${esc(f.title)}${h}</label><textarea rows="6" data-set="${esc(key)}" data-access placeholder="switch.lamp: full">${esc(Object.entries(v || {}).map(([e, l]) => `${e}: ${l}`).join("\n"))}</textarea>`;
+    if (f.type === "access") return `<label>${esc(f.title)}${h}</label>${this._accessField(c, key)}`;
     if (f.type === "model") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">—</option>${this.state.models.map((m) => `<option value="${esc(m.id)}" ${m.id === v ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>`;
     if (f.type === "tts_engine") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">the Audio page's default${this.audio?.settings?.tts ? ` (${esc(this.audio.settings.tts)})` : ""}</option>${(this.audio?.tts_entities || []).map((e) => `<option ${e === v ? "selected" : ""}>${esc(e)}</option>`).join("")}</select>`;
     if (f.type === "voices") { // a voice per home language, from the card's engine
@@ -1143,7 +1199,6 @@ class AacPanel extends HTMLElement {
     let value = el.type === "checkbox" ? el.checked : el.value;
     if (el.dataset.num !== undefined) value = Number(value);
     if (el.dataset.list !== undefined) value = value.split(",").map((x) => x.trim()).filter(Boolean);
-    if (el.dataset.access !== undefined) value = Object.fromEntries(value.split("\n").map((l) => l.split(":").map((x) => x.trim())).filter(([e, l]) => e && ["hidden", "read", "full"].includes(l)));
     if (el.dataset.outputs !== undefined) value = value.split("\n").map((l) => { const [n, ...r] = l.split(":"); return { name: n.trim().replace(/[^\w-]/g, "_"), description: r.join(":").trim() }; }).filter((o) => o.name);
     if (el.dataset.json !== undefined) { try { value = JSON.parse(value || "[]"); } catch (err) { alert(`Not valid: ${err.message}`); return; } }
     const f = this._type(c.type)?.settings?.[key] || {}, old = c.settings[key] ?? f.default;
