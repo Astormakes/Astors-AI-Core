@@ -640,7 +640,9 @@ class AacPanel extends HTMLElement {
       const act = (a, label, cls = "") => `<button class="small ${cls}" data-ract="${a}" data-rmodel="${esc(first)}" data-rname="${esc(m.id)}">${label}</button>`;
       const uses = s.uses.filter((u) => u.model !== m.id && !u.follow).map((u) => `<button class="small" data-ract="use" data-rmodel="${esc(u.id)}" data-rname="${esc(m.id)}" title="${esc(u.name)} asks for this model from now on (it is loaded at once)">Use for ${esc(u.name)}</button>`).join(" ");
       const buttons = st === "downloading" ? act("unload", "Pause") : st === "incomplete" ? act("download", "Resume") + " " + act("delete", "Delete", "danger")
-        : `${st === "loaded" || st === "sleeping" ? act("unload", "Unload") : st === "loading" ? "" : act("load", "Load")} ${uses}${m.can_remove && st !== "loaded" ? " " + act("delete", "Delete", "danger") : ""}`;
+        : `${st === "loaded" || st === "sleeping" ? act("unload", "Unload") : st === "loading" ? "" : act("load", "Load")} ${uses} ${
+          !m.can_remove ? `<button class="small" disabled title="Set up on the server itself (its preset file or models folder): it can't be deleted from here, only downloaded models can">Delete</button>`
+          : st === "loaded" ? '<button class="small" disabled title="Unload it first">Delete</button>' : act("delete", "Delete", "danger")}`;
       const b = m.bench, benching = (this._benching || new Set()).has(`${s.address} ${m.id}`);
       const benchLine = b ? `<div class="hint">Bench ${esc(new Date(b.at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }))}: reads <b>${esc(b.read)}</b> · writes <b>${esc(b.write)}</b> tokens/s <span title="tokens read, tokens written, seconds">(${esc(b.prompt)} in, ${esc(b.written)} out, ${esc(b.seconds)} s)</span></div>` : "";
       const bench = st === "loaded" || st === "sleeping" ? (benching ? '<button class="small" disabled>Benching …</button> ' : `<button class="small" data-ract="bench" data-rmodel="${esc(first)}" data-rname="${esc(m.id)}" title="A short fixed test: reads ~1,500 tokens, writes 256; the result is kept">Bench</button> `) : "";
