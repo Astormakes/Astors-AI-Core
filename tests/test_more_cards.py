@@ -299,7 +299,7 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
         {"id": "slow", "status": {"value": "loading"}, "can_remove": False, "source": "preset"}]})
     aioclient_mock.get(f"{root}/models/sse", text='data: {"model": "user/new-GGUF:Q4_K_M", "event": "download_progress", '
                        '"data": {"progress": {"https://x/a.gguf": {"done": 25, "total": 100}}}}\n\n'
-                       'data: {"model": "slow", "event": "model_status", "data": {"status": "loading", "progress": '
+                       'data: {"model": "slow", "event": "status_change", "data": {"status": "loading", "progress": '
                        '{"stages": ["text_model", "mmproj_model"], "current": "mmproj_model", "value": 0.5}}}\n\n')  # the list has no progress
     aioclient_mock.get(f"{root}/v1/models", json={"data": [{"id": "big", "meta": {"n_params": 11.9e9, "size": 6.7e9, "ftype": "Q4_0", "n_ctx": 16384}}]})
     aioclient_mock.get(f"{root}/props", json={"chat_template_caps": {"supports_tools": True}, "build_info": "b1-test"})

@@ -204,7 +204,7 @@ class Client:
                     data = event.get("data") or {}
                     if event.get("event") == "download_progress":
                         out[event["model"]] = _percent(data.get("progress") or {})
-                    elif event.get("event") == "model_status" and data.get("status") == "loading" and (load := data.get("progress")):
+                    elif event.get("event") in ("status_change", "model_status") and data.get("status") == "loading" and (load := data.get("progress")):
                         stages = load.get("stages") or [load.get("current")]  # each stage counts the same
                         done = stages.index(load.get("current")) if load.get("current") in stages else 0
                         out[event["model"]] = round(100 * (done + float(load.get("value") or 0)) / len(stages))
