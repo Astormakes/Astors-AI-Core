@@ -295,8 +295,9 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     aioclient_mock.get(f"{root}/models", json={"data": [
         {"id": "big", "status": {"value": "loaded", "args": ["llama-server", "--ctx-size", "16384"]}, "can_remove": False,
          "source": "preset", "context_length": 262144, "architecture": {"input_modalities": ["text"]}},
-        {"id": "user/new-GGUF:Q4_K_M", "status": {"value": "downloading", "progress": {"a": {"done": 25, "total": 100}}},
-         "can_remove": True, "source": "cache"}]})
+        {"id": "user/new-GGUF:Q4_K_M", "status": {"value": "downloading"}, "can_remove": True, "source": "cache"}]})
+    aioclient_mock.get(f"{root}/models/sse", text='data: {"model": "user/new-GGUF:Q4_K_M", "event": "download_progress", '
+                       '"data": {"progress": {"https://x/a.gguf": {"done": 25, "total": 100}}}}\n\n')  # the list has no progress
     aioclient_mock.get(f"{root}/v1/models", json={"data": [{"id": "big", "meta": {"n_params": 11.9e9, "size": 6.7e9, "ftype": "Q4_0", "n_ctx": 16384}}]})
     aioclient_mock.get(f"{root}/props", json={"chat_template_caps": {"supports_tools": True}, "build_info": "b1-test"})
     aioclient_mock.get(f"{root}/metrics", text="# HELP x\nllamacpp:prompt_tokens_seconds 1043.8\nllamacpp:predicted_tokens_seconds 45.2\n")

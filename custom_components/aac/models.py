@@ -144,6 +144,8 @@ class Client:
         meta = {}
         if loaded:
             meta = {m["id"]: m.get("meta") or {} for m in (await self._request("GET", "/v1/models")).get("data", [])}
+        downloading = {m["id"] for m in found if m["status"].get("value") == "downloading" and not m["status"].get("progress")}
+        progress = await self._download_progress(downloading) if downloading else {}
         out = []
         for m in found:
             status, args = m["status"], m["status"].get("args") or []
@@ -151,9 +153,10 @@ class Client:
                      "can_remove": bool(m.get("can_remove")), "source": m.get("source"),
                      "context_max": m.get("context_length"), "inputs": (m.get("architecture") or {}).get("input_modalities") or [],
                      "context": int(args[args.index("--ctx-size") + 1]) if "--ctx-size" in args else None}
-            if progress := status.get("progress"):
-                done, total = sum(f.get("done", 0) for f in progress.values()), sum(f.get("total", 0) for f in progress.values())
-                entry["progress"] = round(100 * done / total) if total else 0
+            if files := status.get("progress"):
+                entry["progress"] = _percent(files)
+            elif m["id"] in progress:
+                entry["progress"] = progress[m["id"]]
             if m["id"] in loaded:
                 info = meta.get(m["id"], {})
                 entry.update(params=info.get("n_params"), size=info.get("size"), quant=info.get("ftype"), context=info.get("n_ctx") or entry["context"])
@@ -170,6 +173,25 @@ class Client:
             out.append(entry)
         return out
 
+    async def _download_progress(self, models: set[str]) -> dict[str, int]:
+        """How far downloads are, from the router's live events (its list has no progress): read for a moment."""
+        out: dict[str, int] = {}
+        try:
+            async with self.session.get(f"{self.root}/models/sse", headers=self._headers(),
+                                        timeout=aiohttp.ClientTimeout(total=1.5)) as resp:
+                async for raw in resp.content:
+                    line = raw.decode("utf-8", "ignore").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    event = json.loads(line[5:])
+                    if event.get("event") == "download_progress" and event.get("model") in models:
+                        out[event["model"]] = _percent((event.get("data") or {}).get("progress") or {})
+                        if set(out) >= models:
+                            break
+        except (aiohttp.ClientError, TimeoutError, ValueError):
+            pass
+        return out
+
     async def router_do(self, action: str, name: str, sidecars: list[str] | None = None) -> None:
         """load / unload one of the router's models, download one from Hugging Face ("user/repo:quant", sidecars like
         "mmproj", "mtp"), or delete a downloaded one."""
@@ -181,6 +203,12 @@ class Client:
             await self._request("DELETE", "/models", params={"model": name})
         else:
             raise ModelError(f"unknown action {action}")
+
+
+def _percent(files: dict[str, Any]) -> int:
+    """A download's progress over its files ({url: {done, total}})."""
+    done, total = sum(f.get("done", 0) for f in files.values()), sum(f.get("total", 0) for f in files.values())
+    return round(100 * done / total) if total else 0
 
 
 MODEL_TAGS = ["text", "tools", "images", "audio in", "audio out", "video", "embeddings", "speech to text", "sound tags",
