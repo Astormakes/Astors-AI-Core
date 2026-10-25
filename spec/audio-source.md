@@ -6,7 +6,7 @@ Assistant access token (`Authorization: Bearer …`).
 
 | Direction | Message |
 |---|---|
-| source → AAC | `{"type": "hello", "id": "pc", "name": "PC", "area": "Office", "rate": 16000}` (first message) |
+| source → AAC | `{"type": "hello", "id": "pc", "name": "PC", "area": "Office", "rate": 16000, "channels": 1}` (first message; `channels` 2: each frame is interleaved, the microphone and what the source's speaker plays at the same moment, for the Microphone card's echo subtraction) |
 | AAC → source | `{"type": "welcome", "source_id": "pc"}` |
 | source → AAC | binary: raw PCM, 16-bit little endian, 16 kHz, mono, any chunk size (20 ms recommended), continuously |
 | AAC → source | `{"type": "play", "format": "wav", "bytes": n, "text": "…"}`, then one binary message of n bytes |

@@ -5,8 +5,9 @@ WebSocket. The hub hands each source's audio to the running domain's Microphone 
 (the order in the audio settings: Whisper-like model servers, HA's STT engines) and text to speech (an HA TTS
 engine) at a source. It does not listen while AAC speaks there. Raw audio stays in RAM.
 
-Protocol: satellite → {"type": "hello", "id", "name", "area", "rate": 16000}; AAC → {"type": "welcome",
-"source_id"}; satellite → binary PCM; AAC → {"type": "play", "format": "wav", "bytes", "text"} + the WAV;
+Protocol: satellite → {"type": "hello", "id", "name", "area", "rate": 16000, "channels": 1 or 2}; AAC → {"type":
+"welcome", "source_id"}; satellite → binary PCM (2 channels: interleaved, the microphone and what its speaker plays, for
+the Microphone card's echo subtraction); AAC → {"type": "play", "format": "wav", "bytes", "text"} + the WAV;
 satellite → {"type": "played"}; AAC → {"type": "stop"} cuts what it plays (it answers "played"). Each satellite is
 also an HA media player (`media_player.py`): anything in HA can play on it. Auth: an HA access token (the add-on's comes from `<config>/aac/satellite.json`).
 """
@@ -53,6 +54,7 @@ CLIP_SECONDS = 300  # how long a clip for a media player stays fetchable
 QUEUE_WAIT = 120  # seconds a queued clip waits for the one before it at most
 TIMING_START, TIMING_KEEP = "speech ended", 8  # the step that starts a spoken turn; turns kept for the Audio page
 FRAME_BYTES = 320  # 10 ms of 16-bit mono
+RECENT_SECONDS = 5  # kept only for the Microphone's waveform view (the subtraction itself keeps the delay plus one chunk)
 PREROLL_FRAMES = 50  # 500 ms before speech starts (the detector reacts late)
 START_FRAMES = 3
 MIN_SPEECH_FRAMES = 30
@@ -222,11 +224,13 @@ class Source:
     meter: Segmenter = field(default_factory=lambda: Segmenter(EnergyVad()))
     connected: str = field(default_factory=lambda: dt_util.utcnow().isoformat())
     playing: bool = False
+    reference: bool = False  # it also sends what its speaker plays
+    recent: bytearray = field(default_factory=bytearray)  # the last seconds as it came (interleaved when 2 channels)
 
     def summary(self) -> dict[str, Any]:
         """For the panel."""
         return {"id": self.id, "name": self.name, "area": self.area, "connected": self.connected, "playing": self.playing,
-                "meter": list(self.meter.meter)[-40:], "peak_db": self.meter.peak_db}
+                "meter": list(self.meter.meter)[-40:], "peak_db": self.meter.peak_db, "reference": self.reference}
 
 
 class AudioHub:
@@ -249,9 +253,9 @@ class AudioHub:
 
     # ------------------------------------------------------------------ sources
     @callback
-    def connect(self, source_id: str, name: str, area: str | None, send) -> Source:
-        """A satellite came online."""
-        source = Source(source_id, name, area, send)
+    def connect(self, source_id: str, name: str, area: str | None, send, reference: bool = False) -> Source:
+        """A satellite came online (reference: it also sends what its speaker plays)."""
+        source = Source(source_id, name, area, send, reference=reference)
         self.sources[source_id] = source
         known = [k for k in self.settings.setdefault("known", []) if k["id"] != source_id]
         self.settings["known"] = [*known, {"id": source_id, "name": name}]
@@ -277,11 +281,29 @@ class AudioHub:
     @callback
     def feed(self, source: Source, chunk: bytes) -> None:
         """Raw audio: to every card on the core's "audio" channel, marked while AAC speaks there (meta "speaking": a
-        Microphone card mutes it or keeps listening)."""
-        source.meter.feed(chunk)
+        Microphone card mutes it or keeps listening). From a satellite that sends what its speaker plays, the
+        microphone goes on and that comes along in meta "reference" (as many samples)."""
+        source.recent += chunk
+        del source.recent[: max(0, len(source.recent) - RECENT_SECONDS * SAMPLE_RATE * 2 * (2 if source.reference else 1))]
         meta = {"source": source.id, "name": source.name, "area": source.area, "speaking": source.playing}
+        if source.reference:
+            both = array("h", chunk[: len(chunk) // 4 * 4])
+            chunk, meta["reference"] = both[0::2].tobytes(), both[1::2].tobytes()
+        source.meter.feed(chunk)
         for _, handler in self.core.subscribers("audio"):
             handler(chunk, meta)
+
+    def recent(self, source_id: str, seconds: float = RECENT_SECONDS) -> dict[str, bytes] | None:
+        """A satellite's last seconds: {"mic"} and, if it sends it, {"reference"} (what its speaker played), 16 kHz PCM."""
+        source = self.sources.get(source_id)
+        if source is None:
+            return None
+        width = 4 if source.reference else 2
+        data = bytes(source.recent[-int(seconds * SAMPLE_RATE) * width:])
+        if not source.reference:
+            return {"mic": data}
+        both = array("h", data[: len(data) // 4 * 4])
+        return {"mic": both[0::2].tobytes(), "reference": both[1::2].tobytes()}
 
     def mark(self, source_id: str | None, stage: str) -> None:
         """A step of a spoken turn at a satellite, for the Audio page's timing table: "speech ended" starts a turn,
@@ -568,8 +590,8 @@ class AudioView(HomeAssistantView):
         except (TimeoutError, TypeError, ValueError):
             await ws.close(message=b"expected hello")
             return ws
-        if hello.get("type") != "hello" or int(hello.get("rate", SAMPLE_RATE)) != SAMPLE_RATE:
-            await ws.close(message=b"hello with rate 16000 expected")
+        if hello.get("type") != "hello" or int(hello.get("rate", SAMPLE_RATE)) != SAMPLE_RATE or int(hello.get("channels", 1)) not in (1, 2):
+            await ws.close(message=b"hello with rate 16000 (and 1 or 2 channels) expected")
             return ws
         lock = asyncio.Lock()
 
@@ -583,7 +605,7 @@ class AudioView(HomeAssistantView):
                     await ws.send_json(item)
 
         name = str(hello.get("name") or "Microphone")[:60]
-        source = hub.connect(_slug(str(hello.get("id") or name)), name, hello.get("area"), send)
+        source = hub.connect(_slug(str(hello.get("id") or name)), name, hello.get("area"), send, reference=int(hello.get("channels", 1)) == 2)
         LOGGER.info("AAC audio: %s connected", name)
         await send({"type": "welcome", "source_id": source.id})
         try:

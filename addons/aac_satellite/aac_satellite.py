@@ -49,6 +49,13 @@ def capture_cmd(device: str | None) -> list[str]:
     raise SystemExit("Neither parec (PulseAudio/PipeWire) nor arecord (ALSA) found")
 
 
+def monitor_cmd(speaker: str | None) -> list[str]:
+    """Command that records what the speaker plays (its PulseAudio monitor), like capture_cmd: the reference for AAC's
+    echo subtraction."""
+    return ["parec", "--raw", "--format=s16le", f"--rate={RATE}", "--channels=1", "--latency-msec=20",
+            f"--device={speaker}.monitor" if speaker else "--device=@DEFAULT_MONITOR@"]
+
+
 def play_cmd(path: str, device: str | None) -> list[str]:
     """Command that plays a WAV file."""
     if shutil.which("paplay"):
@@ -164,21 +171,22 @@ class Satellite:
         async with aiohttp.ClientSession(headers=headers) as http, http.ws_connect(
             self.ws_url, heartbeat=30, max_msg_size=16 * 1024 * 1024
         ) as ws:
-            await ws.send_json({"type": "hello", "id": self.args.id, "name": self.args.name,
-                                "area": self.args.area, "rate": RATE})
+            reference = self.args.reference and not self.args.input_file
+            await ws.send_json({"type": "hello", "id": self.args.id, "name": self.args.name, "area": self.args.area,
+                                "rate": RATE, **({"channels": 2} if reference else {})})
             welcome = await ws.receive_json(timeout=10)
-            LOG.info("Connected to AAC as %s", welcome.get("source_id"))
-            mic = await asyncio.create_subprocess_exec(
-                *self._mic_cmd(), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
-            )
-            sender = asyncio.create_task(self._send_mic(ws, mic))
+            LOG.info("Connected to AAC as %s%s", welcome.get("source_id"), " (with what the speaker plays)" if reference else "")
+            procs = [await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+                     for cmd in (self._mic_cmd(), *([monitor_cmd(self.args.speaker)] if reference else []))]
+            sender = asyncio.create_task(self._send_mic(ws, *procs))
             try:
                 await self._receive(ws)
             finally:
                 sender.cancel()
-                with contextlib.suppress(ProcessLookupError):
-                    mic.kill()
-                await mic.wait()
+                for proc in procs:
+                    with contextlib.suppress(ProcessLookupError):
+                        proc.kill()
+                    await proc.wait()
             LOG.info("Disconnected")
 
     def _mic_cmd(self) -> list[str]:
@@ -189,14 +197,42 @@ class Satellite:
                 f"-f s16le -ac 1 -ar {RATE} -; ffmpeg -loglevel error -re -f lavfi -i anullsrc=r={RATE}:cl=mono "
                 f"-f s16le -"]
 
-    async def _send_mic(self, ws: aiohttp.ClientWebSocketResponse, mic: asyncio.subprocess.Process) -> None:
+    async def _send_mic(self, ws: aiohttp.ClientWebSocketResponse, mic: asyncio.subprocess.Process,
+                        speaker: asyncio.subprocess.Process | None = None) -> None:
+        """The microphone to AAC; with the speaker's monitor as a second channel (stereo: microphone left, what the
+        speaker plays right, sample by sample as they came)."""
+        assert mic.stdout
+        played = bytearray()
+        reader = asyncio.create_task(self._read_into(speaker, played)) if speaker else None
+        try:
+            await self._pump(ws, mic, played if speaker else None)
+        finally:
+            if reader:
+                reader.cancel()
+
+    @staticmethod
+    async def _read_into(proc: asyncio.subprocess.Process, into: bytearray) -> None:
+        assert proc.stdout
+        while chunk := await proc.stdout.read(CHUNK):
+            into += chunk
+            if len(into) > RATE:  # more than half a second ahead of the microphone: drop the oldest
+                del into[: len(into) - RATE]
+
+    async def _pump(self, ws: aiohttp.ClientWebSocketResponse, mic: asyncio.subprocess.Process, played: bytearray | None) -> None:
         assert mic.stdout
         while chunk := await mic.stdout.read(CHUNK):
+            chunk = chunk[: len(chunk) // 2 * 2]
             if self.devices:
-                samples = array("h", chunk[: len(chunk) // 2 * 2])
+                samples = array("h", chunk)
                 rms = (sum(x * x for x in samples) / len(samples)) ** 0.5 if samples else 0.0
                 for plugin in self.devices:
                     plugin.on_audio(rms)
+            if played is not None:  # the same number of samples of what the speaker played, silence if it lags
+                ref = bytes(played[: len(chunk)]).ljust(len(chunk), b"\0")
+                del played[: len(chunk)]
+                both = array("h", bytes(len(chunk) * 2))
+                both[0::2], both[1::2] = array("h", chunk), array("h", ref)
+                chunk = both.tobytes()
             if not ws.closed:  # also while AAC speaks here: AAC decides (its Microphone card mutes or keeps listening)
                 await ws.send_bytes(chunk)
         LOG.error("Microphone stopped (wrong --mic?)")
@@ -266,6 +302,8 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, help="Testing: save answers as WAV files instead of playing them")
     parser.add_argument("--echo-cancel", action="store_true",
                         help="PulseAudio's echo canceller: AAC's own voice is taken out of the microphone (so AAC can keep listening while it speaks)")
+    parser.add_argument("--reference", action="store_true",
+                        help="Also send what the speaker plays (its PulseAudio monitor) as a second channel: AAC's Microphone subtracts it (AAC's own voice out of the microphone)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(message)s")

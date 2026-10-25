@@ -320,3 +320,53 @@ async def test_microphone_mutes_or_keeps_listening_while_aac_speaks(hass, mock_e
         await core.domain.update_card(mic.id, settings={"speaking": "listen"})
         core.domain.cards[mic.id].hear(b"\x00\x00", {"source": "pc", "speaking": True})
     assert sent == [False, True]
+
+
+async def test_echo_subtraction(hass: HomeAssistant, mock_entry):
+    """A satellite that sends what its speaker plays (2 channels): the hub splits them, the Microphone takes that sound
+    out (delayed, scaled, maybe inverted; a negative delay delays the microphone), the waveforms view gets both."""
+    import base64
+    from array import array
+    core = await setup_aac(hass, mock_entry)
+    hub = core.audio
+
+    async def send(item):
+        return None
+    source = hub.connect("box", "Box", None, send, reference=True)
+    mic_card = await core.domain.add_card("microphone", "Box mic", {"source": "box", "speaking": "listen", "echo": True,
+                                                                     "echo_delay": 1.0, "echo_gain": 0.5})
+    heard = []
+    mic_card.domain.flow.stream = lambda card_id, port, chunk, meta: heard.append(chunk) if card_id == mic_card.id else None
+    speaker = array("h", (int(8000 * ((i * 37) % 101 - 50) / 50) for i in range(3200)))  # what the speaker plays
+    echo = array("h", [0] * 16) + array("h", (v // 2 for v in speaker[:-16]))  # it reaches the mic 1 ms later, half as loud
+    for at in range(0, 3200, 320):  # 20 ms chunks, interleaved as the satellite sends them
+        both = array("h", [0] * 640)
+        both[0::2], both[1::2] = echo[at:at + 320], speaker[at:at + 320]
+        hub.feed(source, both.tobytes())
+    out = array("h", b"".join(heard))
+    assert len(out) == 3200 and max(abs(v) for v in out) <= 1  # the echo is gone (rounding aside)
+    assert max(abs(v) for v in echo) > 3000
+
+    mic_card._history.clear()
+    mic_card.settings.update(echo_invert=True)  # an inverted path: the same sound added back
+    inverted = array("h", (-v for v in echo))
+    heard.clear()
+    for at in range(0, 3200, 320):
+        both = array("h", [0] * 640)
+        both[0::2], both[1::2] = inverted[at:at + 320], speaker[at:at + 320]
+        hub.feed(source, both.tobytes())
+    assert max(abs(v) for v in array("h", b"".join(heard))) <= 1
+
+    mic_card._history.clear()
+    mic_card.settings.update(echo_invert=False, echo_delay=-1.0, echo_gain=2)  # the speaker's sound comes 1 ms late
+    late_ref = array("h", [0] * 16) + array("h", (v // 2 for v in echo[:-16]))
+    heard.clear()
+    for at in range(0, 3200, 320):
+        both = array("h", [0] * 640)
+        both[0::2], both[1::2] = echo[at:at + 320], late_ref[at:at + 320]
+        hub.feed(source, both.tobytes())
+    tail = array("h", b"".join(heard))[64:]  # the microphone runs 1 ms late now; the start was silence
+    assert max(abs(v) for v in tail) <= 2
+
+    got = await mic_card.ui_call("recent", {"seconds": 0.1})
+    assert got["source"] == "box" and len(base64.b64decode(got["mic"])) == 3200 and len(base64.b64decode(got["reference"])) == 3200

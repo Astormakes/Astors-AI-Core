@@ -21,3 +21,9 @@ video calls, where PulseAudio has it; Home Assistant's audio system has Speex): 
 speaks (a stop word works mid-answer): set the Microphone card in AAC to "keep listening". Speakerphones often cancel
 their echo in hardware already. The microphone is always streamed; AAC's Microphone card decides what to do with it
 while AAC speaks.
+
+## What the speaker plays (`reference`)
+The option `reference` also sends what the speaker plays (PulseAudio's monitor of it) as a second channel, sample by
+sample next to the microphone. AAC's Microphone card can then subtract it with a delay, a gain and an invert (its
+"Waveforms…" view lines them up): for a microphone and speaker in one housing, where the speaker's sound reaches the
+microphone directly. It does not need `echo_cancel`.

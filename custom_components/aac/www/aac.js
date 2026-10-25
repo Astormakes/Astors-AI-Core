@@ -49,6 +49,10 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 h4[data-alarm] { color: var(--error-color, #db4437); animation: alarm 2s ease-in-out infinite; }
 @keyframes alarm { 50% { opacity: .45; } }
 .warnline { color: var(--error-color, #db4437); font-size: 12px; padding: 4px 16px 0; }
+#wave { position: fixed; inset: 0; z-index: 1500; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 12px; }
+#wave .wavebox { background: var(--card-background-color, #fff); color: var(--primary-text-color); border-radius: 10px; width: min(1300px, 100%); max-height: 100%; overflow: auto; padding: 12px 14px; box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+#wave canvas { width: 100%; height: 340px; display: block; border: 1px solid var(--divider-color); border-radius: 6px; touch-action: none; cursor: grab; background: var(--primary-background-color); }
+#wave .row { flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; } #wave input[type=number] { width: 90px; } #wave input[type=range] { width: 200px; }
 #dlg { position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 16px; }
 .dlgbox { background: var(--card-background-color, #fff); color: var(--primary-text-color); border-radius: 12px; padding: 18px 20px; width: min(440px, 100%);
   box-shadow: 0 8px 32px rgba(0,0,0,.35); } .dlgbox h3 { margin: 0 0 8px; } .dlgbox p { margin: 0 0 8px; white-space: normal; }
@@ -203,6 +207,8 @@ class AacPanel extends HTMLElement {
       if (e.target.id === "dlg") { this._closeDialog("cancel"); return; } // a click beside the dialog
       const dlg = e.target.closest?.("[data-dlg]");
       if (dlg) { this._closeDialog(dlg.dataset.dlg); return; }
+      const wave = e.target.closest?.("[data-wave]");
+      if (wave) { this._openWave(wave.dataset.wave); return; }
       const m = e.target.closest?.("[data-rload],[data-ract],[data-rdl],[data-srvadd],[data-srvsave],[data-srvedit],[data-srvdel],[data-srvcancel],[data-amadd],[data-amsave],[data-amedit],[data-amdel],[data-amcancel]");
       if (m) { this._modelsClick(m); return; }
       const t = e.target.closest?.("[data-navact],[data-navmore],[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],[data-acclevel],[data-accall],[data-permopen],#dombtn,#navbtn");
@@ -399,10 +405,145 @@ class AacPanel extends HTMLElement {
     this._page = page;
     if (scrolled) this.shadowRoot.querySelector("main .content")?.scrollTo(0, scrolled);
     this._bind();
+    if (this._wave) this._drawWave(); // and the waveforms view
     if (this._dialog) this._drawDialog(); // a redraw keeps an open dialog
     if (v.kind === "nodes") this._drawGrid();
     const el = v.kind === "card" && this._els[v.card];
     if (el) this.shadowRoot.querySelector("#cardhost")?.replaceChildren(el); // a redraw keeps the page as it is
+  }
+
+  // ------------------------------------------------------------------ waveforms (a Microphone's echo subtraction)
+  _openWave(cardId) {
+    const c = this._card(cardId), st = c.settings || {};
+    this._wave = { card: cardId, mic: null, ref: null, delay: Number(st.echo_delay) || 0, gain: st.echo_gain ?? 1, invert: !!st.echo_invert,
+      start: 0, spp: 40, show: { mic: true, ref: true, res: true }, info: "Play the test sound (or take the last seconds while AAC spoke)." };
+    this._drawWave();
+  }
+
+  async _waveFetch(action) {
+    const w = this._wave;
+    w.info = action === "test" ? "Playing the test sound …" : "Taking the last seconds …"; this._drawWave();
+    try {
+      const r = (await this.ws("aac/card/ui", { card: w.card, action, args: { seconds: 5 } })).result;
+      const pcm = (b64) => { if (!b64) return null; const b = atob(b64), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return new Int16Array(u.buffer); };
+      w.mic = pcm(r.mic); w.ref = pcm(r.reference);
+      w.start = 0; w.spp = Math.max(1, (w.mic?.length || 1) / 1200);
+      w.info = w.ref ? `${(w.mic.length / r.rate).toFixed(1)} s from ${r.source}` : "This satellite sends no reference (turn on its reference option).";
+    } catch (e) { w.info = e.message || String(e); }
+    this._drawWave();
+  }
+
+  _waveAuto() { // the delay with the strongest match (coarse on every 4th sample, then exact), the gain by least squares
+    const w = this._wave, mic = w.mic, ref = w.ref;
+    if (!mic || !ref) return;
+    const best = (lo, hi, step) => {
+      let top = -1, at = 0;
+      for (let d = lo; d <= hi; d += step) {
+        let num = 0, den = 1e-9;
+        for (let i = Math.max(0, d); i < mic.length && i - d < ref.length; i += step) { const r = ref[i - d]; num += mic[i] * r; den += r * r; }
+        const score = Math.abs(num) / Math.sqrt(den);
+        if (score > top) { top = score; at = d; }
+      }
+      return at;
+    };
+    const coarse = best(-1600, 3200, 4), d = best(coarse - 8, coarse + 8, 1);
+    let num = 0, den = 1e-9;
+    for (let i = Math.max(0, d); i < mic.length && i - d < ref.length; i++) { const r = ref[i - d]; num += mic[i] * r; den += r * r; }
+    const g = num / den;
+    w.delay = d / 16; w.gain = Math.round(Math.abs(g) * 1000) / 1000; w.invert = g < 0;
+    w.info = `Lined up: ${w.delay} ms, gain ${w.gain}${w.invert ? ", inverted" : ""}`;
+    this._drawWave();
+  }
+
+  _drawWave() {
+    const w = this._wave;
+    this.shadowRoot.querySelector("#wave")?.remove();
+    if (!w) return;
+    const box = document.createElement("div");
+    box.id = "wave";
+    const sw = (k, color, label) => `<label class="check"><input type="checkbox" data-wvshow="${k}" ${w.show[k] ? "checked" : ""}><span style="color:${color}">■</span> ${label}</label>`;
+    box.innerHTML = `<div class="wavebox"><div class="row" style="margin:0"><h3 style="margin:0">Waveforms · ${esc(this._card(w.card)?.title || "")}</h3><span style="flex:1"></span><button class="small" data-wv="close">✕</button></div>
+      <canvas id="wavecv"></canvas>
+      <div class="row">${sw("mic", "#2196f3", "microphone")}${sw("ref", "#ff9800", "what the speaker played (shifted, scaled: what is subtracted)")}${sw("res", "#4caf50", "after the subtraction")}</div>
+      <div class="row"><label>Delay</label><input type="range" min="-100" max="200" step="0.0625" data-wvin="delay" value="${w.delay}"><input type="number" step="0.0625" data-wvin="delay" value="${w.delay}"> ms
+        <label>Gain</label><input type="range" min="0" max="4" step="0.005" data-wvin="gain" value="${w.gain}"><input type="number" step="0.005" min="0" data-wvin="gain" value="${w.gain}">
+        <label class="check"><input type="checkbox" data-wvin="invert" ${w.invert ? "checked" : ""}>inverted</label></div>
+      <div class="row"><button class="small" data-wv="test">Play test sound & record</button><button class="small" data-wv="recent">Take the last 5 s</button><button class="small" data-wv="auto" ${w.ref ? "" : "disabled"}>Line up automatically</button>
+        <span class="hint" id="wvinfo">${esc(w.info)}</span><span style="flex:1"></span><button class="primary small" data-wv="save">Save to the card</button></div>
+      <p class="hint" style="margin:6px 0 0">Wheel or pinch: zoom · drag: move · one step of the delay is one sample (1/16 ms)</p></div>`;
+    this.shadowRoot.appendChild(box);
+    box.addEventListener("click", async (e) => {
+      if (e.target === box) { this._wave = null; box.remove(); return; }
+      const a = e.target.closest("[data-wv]")?.dataset.wv;
+      if (a === "close") { this._wave = null; box.remove(); }
+      else if (a === "test" || a === "recent") this._waveFetch(a);
+      else if (a === "auto") this._waveAuto();
+      else if (a === "save") {
+        await this.ws("aac/card/update", { card: w.card, settings: { echo: true, echo_delay: w.delay, echo_gain: w.gain, echo_invert: w.invert } });
+        w.info = "Saved: the card subtracts with these values now."; await this._load(); this.render();
+      }
+    });
+    box.querySelectorAll("[data-wvshow]").forEach((el) => el.addEventListener("change", () => { w.show[el.dataset.wvshow] = el.checked; this._waveCanvas(); }));
+    box.querySelectorAll("[data-wvin]").forEach((el) => el.addEventListener("input", () => {
+      const k = el.dataset.wvin;
+      if (k === "invert") w.invert = el.checked;
+      else { w[k] = Number(el.value) || 0; box.querySelectorAll(`[data-wvin="${k}"]`).forEach((o) => { if (o !== el) o.value = el.value; }); }
+      this._waveCanvas();
+    }));
+    const cv = box.querySelector("#wavecv"), fingers = new Map();
+    let drag = null, pinch = null;
+    const zoom = (px, f) => { const at = w.start + px * w.spp; w.spp = Math.min(Math.max(0.05, w.spp * f), Math.max(1, (w.mic?.length || 1000) / 100)); w.start = at - px * w.spp; this._waveCanvas(); };
+    cv.addEventListener("wheel", (e) => { e.preventDefault(); zoom(e.offsetX, e.deltaY < 0 ? 0.8 : 1.25); }, { passive: false });
+    cv.addEventListener("pointerdown", (e) => {
+      cv.setPointerCapture(e.pointerId); fingers.set(e.pointerId, e.offsetX);
+      if (fingers.size === 2) { const [a, b] = [...fingers.values()]; pinch = { d: Math.abs(a - b) || 1, mid: (a + b) / 2, spp: w.spp, start: w.start }; drag = null; }
+      else drag = { x: e.offsetX, start: w.start };
+    });
+    cv.addEventListener("pointermove", (e) => {
+      if (!fingers.has(e.pointerId)) return;
+      fingers.set(e.pointerId, e.offsetX);
+      if (pinch && fingers.size === 2) { const [a, b] = [...fingers.values()], at = pinch.start + pinch.mid * pinch.spp; w.spp = Math.max(0.05, pinch.spp * pinch.d / (Math.abs(a - b) || 1)); w.start = at - (a + b) / 2 * w.spp; this._waveCanvas(); }
+      else if (drag) { w.start = drag.start - (e.offsetX - drag.x) * w.spp; this._waveCanvas(); }
+    });
+    const up = (e) => { fingers.delete(e.pointerId); if (fingers.size < 2) pinch = null; if (!fingers.size) drag = null; };
+    cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+    this._waveCanvas();
+  }
+
+  _waveCanvas() { // three traces over the visible samples: min/max per pixel when zoomed out, lines when zoomed in
+    const w = this._wave, cv = this.shadowRoot.querySelector("#wavecv");
+    if (!w || !cv) return;
+    const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    g.strokeStyle = "rgba(127,127,127,.4)"; g.beginPath(); g.moveTo(0, H / 2); g.lineTo(W, H / 2); g.stroke();
+    if (!w.mic) return;
+    const mic = w.mic, ref = w.ref, d = Math.round(w.delay * 16), k = (w.invert ? -1 : 1) * w.gain;
+    const echo = (i) => (ref && i - d >= 0 && i - d < ref.length ? k * ref[i - d] : 0);
+    const traces = [["mic", "#2196f3", (i) => mic[i]], ["ref", "#ff9800", echo], ["res", "#4caf50", (i) => mic[i] - echo(i)]].filter(([key]) => w.show[key] && (key === "mic" || ref));
+    let peak = 1000;
+    for (let i = 0; i < mic.length; i += 7) peak = Math.max(peak, Math.abs(mic[i]));
+    const y = (v) => H / 2 - (v / peak) * (H / 2 - 6);
+    for (const [, color, val] of traces) {
+      g.strokeStyle = color; g.globalAlpha = 0.85; g.lineWidth = 1; g.beginPath();
+      if (w.spp >= 1) {
+        for (let x = 0; x < W; x++) {
+          const a = Math.floor(w.start + x * w.spp), b = Math.floor(w.start + (x + 1) * w.spp);
+          let lo = Infinity, hi = -Infinity;
+          for (let i = Math.max(0, a); i < Math.min(mic.length, Math.max(b, a + 1)); i++) { const v = val(i); if (v < lo) lo = v; if (v > hi) hi = v; }
+          if (hi >= lo) { g.moveTo(x + 0.5, y(hi)); g.lineTo(x + 0.5, y(lo) + 0.5); }
+        }
+      } else {
+        let first = true;
+        for (let i = Math.max(0, Math.floor(w.start)); i < Math.min(mic.length, Math.ceil(w.start + W * w.spp) + 1); i++) {
+          const x = (i - w.start) / w.spp;
+          if (first) { g.moveTo(x, y(val(i))); first = false; } else g.lineTo(x, y(val(i)));
+        }
+      }
+      g.stroke();
+    }
+    g.globalAlpha = 1; g.fillStyle = "rgba(127,127,127,.9)"; g.font = "11px sans-serif";
+    g.fillText(`${(Math.max(0, w.start) / 16000).toFixed(3)} s · ${(w.spp * 1000 / 16).toFixed(2)} ms per pixel`, 6, 14);
   }
 
   // ------------------------------------------------------------------ dialogs (AAC's own, not the browser's)
@@ -901,6 +1042,7 @@ class AacPanel extends HTMLElement {
   _fieldHtml(c, [key, f]) {
     const d = this.state.domain, t = this._type(c.type);
     const v = c.settings[key] ?? f.default, h = f.help ? tip(esc(f.help)) : "";
+    if (f.type === "waveforms") return `<button class="small" data-wave="${esc(c.id)}" style="margin-top:8px" title="Line up the microphone and what the speaker played">Waveforms …</button>`;
     if (f.type === "bool") return `<label class="check"><input type="checkbox" data-set="${esc(key)}" ${v ? "checked" : ""}>${esc(f.title)}${h}</label>`;
     if (f.type === "select") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}">${f.options.map(([o, l]) => `<option value="${esc(o)}" ${o === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
     if (f.type === "longtext") return `<label>${esc(f.title)}${h}</label><textarea rows="5" data-set="${esc(key)}">${esc(v)}</textarea>`;
