@@ -346,7 +346,11 @@ class AacPanel extends HTMLElement {
       : v.kind === "appearance" ? this._appearanceView() : v.kind === "permissions" ? this._permissionsView() : v.card ? '<div id="cardhost"></div>'
       : `${this._header("AAC")}<div class="content"><p>No card with a page in this domain (a Chat, Lists …). Add one in Nodes.</p></div>`;
     const skin = this.look?.skins.find((k) => k.id && k.id === this.look.skin);
+    const page = `${v.kind}/${v.card || ""}`, before = this.shadowRoot.querySelector("main .content");
+    const scrolled = before && this._page === page ? before.scrollTop : 0; // a redraw of the same page stays where it was
     this.shadowRoot.innerHTML = `<style>${STYLE}</style>${skin ? `<link rel="stylesheet" href="${esc(skin.url)}?v=${esc(this.state.version)}">` : ""}<div class="root ${this.navOpen ? "navopen" : ""}">${this._nav()}<div class="scrim" id="scrim"></div><div class="grip" data-grip="nav" data-target="nav" title="Drag: width of the sidebar (double-click: back to normal)"></div><main>${main}</main></div>`;
+    this._page = page;
+    if (scrolled) this.shadowRoot.querySelector("main .content")?.scrollTo(0, scrolled);
     this._bind();
     if (this._dialog) this._drawDialog(); // a redraw keeps an open dialog
     if (v.kind === "nodes") this._drawGrid();
@@ -621,18 +625,19 @@ class AacPanel extends HTMLElement {
       <h4 style="margin:12px 0 4px">AAC's models here ${tip("What AAC uses from this server: each with its name in AAC, the server's model it asks for (or, on a router, whatever is loaded), what it can do (its tags; cards pick models by them) and how many requests it runs at once.")}</h4>
       ${s.uses.map((u) => (this.amForm === u.id ? this._amForm(s, u) : `<div class="row"><b>${esc(u.name)}</b><span class="hint">${u.follow ? `follows what is loaded · now ${esc(u.model)}` : esc(u.model)} · ${u.tags.map((t) => `<code>${esc(t)}</code>`).join(" ")} · runs ${esc(u.parallel)}</span>
         <span style="margin-left:auto"></span><button class="small" data-amedit="${esc(u.id)}">Edit</button><button class="small danger" data-amdel="${esc(u.id)}">Remove</button></div>`)).join("") || '<p class="hint">None yet.</p>'}
-      ${this.amForm === `new:${s.id}` ? this._amForm(s, null) : `<button class="small" data-amadd="${esc(s.id)}" title="Add one of this server's models to AAC (or type one it does not list)">+ model</button>`}
-      ${s.router ? `<div class="row" style="margin-top:10px"><input id="dl-${esc(s.id)}" placeholder="Download: user/repo:quant, e.g. unsloth/gemma-4-12B-it-qat-GGUF:Q4_K_XL">
-        <label class="check" style="font-size:13px" title="The image part, for models that see"><input type="checkbox" id="dlmm-${esc(s.id)}">vision</label>
-        <label class="check" style="font-size:13px" title="A draft head that makes writing faster (MTP), if the repo has one"><input type="checkbox" id="dlmtp-${esc(s.id)}">mtp</label>
-        <button class="small" data-rdl="${esc(s.id)}">Download</button></div>` : ""}</div>`).join("");
+      ${this.amForm === `new:${s.id}` ? this._amForm(s, null) : `<button class="small" data-amadd="${esc(s.id)}" title="Add one of this server's models to AAC (or type one it does not list${s.router ? ", or download one" : ""})">+ model</button>`}</div>`).join("");
   }
 
   _amForm(s, m) { // one of AAC's models on server s (m null: a new one)
     const key = m ? m.id : `new:${s.id}`, f = m || { follow: !!s.router, parallel: 1, tags: [] };
     const names = s.router ? (s.models || []).map((x) => x.id) : (s.offered || []);
     const opts = [...new Set([...names, ...(f.model ? [f.model] : [])])];
-    return `<div class="card" data-amform="${esc(key)}" style="margin:6px 0">
+    const download = !m && s.router ? `<label class="hint">Download one to the server ${tip("From Hugging Face: user/repo:quant. It appears above when it is done (progress there); then add it here.")}</label>
+      <div class="row"><input id="dl-${esc(s.id)}" placeholder="user/repo:quant, e.g. unsloth/gemma-4-12B-it-qat-GGUF:Q4_K_XL">
+        <label class="check" style="font-size:13px" title="The image part, for models that see"><input type="checkbox" id="dlmm-${esc(s.id)}">vision</label>
+        <label class="check" style="font-size:13px" title="A draft head that makes writing faster (MTP), if the repo has one"><input type="checkbox" id="dlmtp-${esc(s.id)}">mtp</label>
+        <button class="small" data-rdl="${esc(s.id)}">Download</button></div><hr style="border:none;border-top:1px solid var(--divider-color);margin:10px 0">` : "";
+    return `<div class="card" data-amform="${esc(key)}" style="margin:6px 0">${download}
       <label class="hint">Name in AAC</label><input data-am="name" value="${esc(f.name || "")}" placeholder="e.g. Main PC">
       ${s.router ? `<label class="check" style="font-size:13px"><input type="checkbox" data-am="follow" ${f.follow ? "checked" : ""}>Follows what is loaded ${tip("AAC asks for whatever model the router has loaded now (tick another one as loaded above and AAC uses it); with none loaded, the one it used last.")}</label>` : ""}
       <label class="hint">The server's model ${s.router ? "(when nothing is loaded, or without follow)" : ""}</label><input data-am="model" list="ml-${esc(key)}" value="${esc(f.model || "")}" placeholder="pick or type"><datalist id="ml-${esc(key)}">${opts.map((o) => `<option value="${esc(o)}">`).join("")}</datalist>
