@@ -196,10 +196,16 @@ class AacPanel extends HTMLElement {
       if (e.target.id === "dlg") { this._closeDialog("cancel"); return; } // a click beside the dialog
       const dlg = e.target.closest?.("[data-dlg]");
       if (dlg) { this._closeDialog(dlg.dataset.dlg); return; }
-      const t = e.target.closest?.("[data-navact],[data-navmore],[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],[data-acclevel],[data-accall],[data-permopen],#dombtn,#navbtn");
+      const t = e.target.closest?.("[data-ract],[data-rdl],[data-navact],[data-navmore],[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],[data-acclevel],[data-accall],[data-permopen],#dombtn,#navbtn");
       if (!t) return;
       const d = t.dataset;
-      if (d.say) this.ws("aac/audio/say", { source: d.say, text: "This is how I sound." });
+      if (d.ract) this._router(d.rmodel, d.ract, d.rname);
+      else if (d.rdl) {
+        const i = d.rdl, name = this.shadowRoot.querySelector(`#dl${i}`).value.trim(), q = (id) => this.shadowRoot.querySelector(id).checked;
+        if (!name) { this.alert("Type a Hugging Face model: user/repo:quant"); return; }
+        this._router(this.servers[Number(i)].uses[0].id, "download", name, [...(q(`#dlmm${i}`) ? ["mmproj"] : []), ...(q(`#dlmtp${i}`) ? ["mtp"] : [])]);
+        this.shadowRoot.querySelector(`#dl${i}`).value = "";
+      } else if (d.say) this.ws("aac/audio/say", { source: d.say, text: "This is how I sound." });
       else if (t.id === "dombtn") { this.domOpen = !this.domOpen; this.render(); }
       else if (d.navmore) { e.stopPropagation(); this.navMenu = this.navMenu === d.navmore ? null : d.navmore; this._redrawNav(); }
       else if (d.navact) { e.stopPropagation(); this._navAction(d.entry, d.navact); }
@@ -291,6 +297,7 @@ class AacPanel extends HTMLElement {
     this.navOpen = false; // on a phone the sidebar closes when a page is picked
     if (kind === "nodes") this._watchIds = null; // say at once which views it shows
     if (kind === "card" && !this.nav.some((n) => n.card === card)) this.view.card = this.nav[0]?.card || null;
+    if (kind === "models") { this.servers = null; this._loadServers(); clearInterval(this._srvLive); this._srvLive = setInterval(() => { if (this.view.kind !== "models") { clearInterval(this._srvLive); return; } this._loadServers(); }, 3000); }
     if (kind === "audio") { this.audio = await this.ws("aac/audio"); clearInterval(this._live); this._live = setInterval(async () => { if (this.view.kind !== "audio") { clearInterval(this._live); return; } this.audio = await this.ws("aac/audio"); const b = this.shadowRoot.querySelector("#meters"); if (b) b.innerHTML = this._meters(); }, 700); }
     this.render();
     if (kind === "card") await this._showCard();
@@ -603,7 +610,54 @@ class AacPanel extends HTMLElement {
         <label class="hint">Runs at once ${tip("How many requests the server works on side by side (llama-server: its slots, --parallel). More wait in the queue of cards that allow it.")}</label><input id="m_parallel" type="number" min="1" value="${esc(f.parallel || 1)}" style="width:80px">
         <label class="hint">What it can do ${tip("Cards use only models with the tag they need: a Model text, Memory embeddings, Speech to text speech to text. None ticked: guessed from the name.")}</label>
         <div class="row" style="flex-wrap:wrap;gap:4px 12px">${(this.state.model_tags || []).map((t) => `<label class="check" style="font-size:13px"><input type="checkbox" data-mtag="${esc(t)}" ${(f.tags || []).includes(t) ? "checked" : ""}>${esc(t)}</label>`).join("")}</div>
-        <div style="margin-top:10px;display:flex;gap:8px"><button class="primary" id="savemodel">Save</button>${f.id ? '<button id="cancelmodel">Cancel</button>' : ""}</div></div></div>`;
+        <div style="margin-top:10px;display:flex;gap:8px"><button class="primary" id="savemodel">Save</button>${f.id ? '<button id="cancelmodel">Cancel</button>' : ""}</div></div>
+      ${this._servers()}</div>`;
+  }
+
+  _servers() { // the servers behind the models; a llama-server router lists, loads, downloads and deletes its models
+    if (!this.servers) return '<div class="card"><h3 style="margin-top:0">Servers</h3><p class="hint">Asking the servers …</p></div>';
+    return this.servers.map((s, i) => `<div class="card"><h3 style="margin-top:0">${esc(s.address)} ${tip("A llama-server in router mode (llama-server --models-preset … or --models-dir …) offers many models and loads them when asked; with --models-max 1 one at a time. Load, Use, Unload and Delete act on the server; Use also lets that AAC model ask for it from now on.")}</h3>
+      <div class="hint">AAC's models here: ${s.uses.map((u) => `<b>${esc(u.name)}</b> (${esc(u.model)})`).join(", ")}</div>
+      <div data-srvlist="${i}">${this._serverRows(s)}</div>
+      ${s.router ? `<div class="row" style="margin-top:10px"><input id="dl${i}" placeholder="Download: user/repo:quant, e.g. unsloth/gemma-4-12B-it-qat-GGUF:Q4_K_XL">
+        <label class="check" style="font-size:13px" title="The image part, for models that see"><input type="checkbox" id="dlmm${i}">vision</label>
+        <label class="check" style="font-size:13px" title="A draft head that makes writing faster (MTP), if the repo has one"><input type="checkbox" id="dlmtp${i}">mtp</label>
+        <button class="small" data-rdl="${i}">Download</button></div>` : ""}</div>`).join("");
+  }
+
+  _serverRows(s) {
+    if (s.error) return `<p style="color:var(--error-color,#db4437)">Not answering: ${esc(s.error)}</p>`;
+    if (!s.router) return '<p class="hint">One fixed model (not a llama-server router).</p>';
+    const gb = (b) => (b ? `${(b / 1e9).toFixed(1)} GB` : ""), first = s.uses[0].id;
+    const rows = (s.models || []).map((m) => {
+      const users = s.uses.filter((u) => u.model === m.id), st = m.status;
+      const facts = [st === "downloading" ? `downloading ${m.progress ?? 0} %` : st + (m.failed ? " (failed to start)" : ""),
+        m.quant, m.params ? `${(m.params / 1e9).toFixed(1)} B` : "", gb(m.size),
+        m.context ? `context ${m.context.toLocaleString()}${m.context_max ? ` of ${m.context_max.toLocaleString()}` : ""}` : "",
+        m.tools ? "tools" : "", (m.inputs || []).filter((x) => x !== "text").join(", "),
+        m.speed && (m.speed.read || m.speed.write) ? `reads ${m.speed.read} · writes ${m.speed.write} tokens/s` : ""].filter(Boolean).join(" · ");
+      const act = (a, label, cls = "") => `<button class="small ${cls}" data-ract="${a}" data-rmodel="${esc(first)}" data-rname="${esc(m.id)}">${label}</button>`;
+      const uses = s.uses.filter((u) => u.model !== m.id).map((u) => `<button class="small" data-ract="use" data-rmodel="${esc(u.id)}" data-rname="${esc(m.id)}" title="${esc(u.name)} asks for this model from now on (it is loaded at once)">Use for ${esc(u.name)}</button>`).join(" ");
+      const buttons = st === "downloading" ? act("unload", "Pause") : st === "incomplete" ? act("download", "Resume") + " " + act("delete", "Delete", "danger")
+        : `${st === "loaded" || st === "sleeping" ? act("unload", "Unload") : st === "loading" ? "" : act("load", "Load")} ${uses}${m.can_remove && st !== "loaded" ? " " + act("delete", "Delete", "danger") : ""}`;
+      return `<tr><td><b>${esc(m.id)}</b>${users.length ? ` <span class="hint">← ${users.map((u) => esc(u.name)).join(", ")}</span>` : ""}<div class="hint">${esc(facts)}</div></td><td style="text-align:right;white-space:nowrap">${buttons}</td></tr>`;
+    }).join("");
+    return `<table style="width:100%;border-collapse:collapse">${rows || '<tr><td class="hint">It offers no models.</td></tr>'}</table>`;
+  }
+
+  async _loadServers() {
+    try { this.servers = (await this.ws("aac/models/servers")).servers; } catch (e) { this.servers = []; }
+    const lists = this.shadowRoot.querySelectorAll("[data-srvlist]");
+    if (lists.length !== this.servers.length) { if (this.view.kind === "models") this.render(); return; }
+    lists.forEach((el) => { el.innerHTML = this._serverRows(this.servers[Number(el.dataset.srvlist)]); });
+  }
+
+  async _router(model_id, action, name, sidecars) {
+    if (action === "delete" && !(await this.confirm(`Delete ${name} from the server's disk?`))) return;
+    try { await this.ws("aac/models/router", { model_id, action, name, ...(sidecars ? { sidecars } : {}) }); }
+    catch (e) { this.alert(`${action}: ${e.message || e}`); }
+    if (action === "use") await this._load();
+    await this._loadServers();
   }
 
   // ------------------------------------------------------------------ nodes

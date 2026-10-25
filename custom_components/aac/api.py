@@ -4,7 +4,7 @@ from here and nothing else of AAC:
     from custom_components.aac.api import Card, Context, register
 
 Through `self.core` a card reaches the core's services: `subscribe(channel, card, handler)` (channels: "audio",
-"ha_conversation", "ha_calendar"), `pool` (models: `entries`, `slot`, `tags`; with `run` and `Client` below),
+"ha_conversation", "ha_calendar"), `pool` (models: `entries`, `slot`, `tags`, `find`, `offers`; with `run` and `Client` below), `save_model`,
 `audio` (`say`, `play`, `stop`, `spoken`), `notify`. Through `self.domain` it reaches the flow (`flow.send`) and the
 other cards only by what they offer (functions, values, `held()`). AAC's own cards use only this too.
 """

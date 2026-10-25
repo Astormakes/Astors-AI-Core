@@ -277,7 +277,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     the rest (only the text changes) / Cancel. Editing an answer only changes the text.
 12. ~~Own dialogs~~ **done (2.1.21).**
 13. ~~Archive for chats~~ **done (2.1.21).**
-14. **Switchable models** (owner, 2026-10-25; as planned in v1): AAC asks each llama-server which models it offers
+14. **Switchable models** (owner, 2026-10-25; as planned in v1) **done for CT 110 (2.1.31):** Models page → Servers (each server behind the pool: a router lists its models with state, quant, size, context, tools, tokens/s; Load, Unload, Use for <AAC model>, Delete, Download user/repo:quant with vision/mtp; live every 3 s), card *Model servers* (`servers`, `use`, `load`, `unload`), `Client.router()/router_do()`, `pool.offers()/find()`. CT 110 runs llama-server as a router (`/etc/llama-models.ini`, `--models-max 1`, fit 2 GB margin, downloads in /opt/models/cache; preset `qwen3-8b` = Gemma 4 12B for HA's GLaDOS pipeline). **Still open:** the PC's aac-llm in router mode. The idea: AAC asks each llama-server which models it offers
     and shows them; the owner picks one on the fly (Models page) or a card does it (a function: load / unload, so a
     model or a Conditional can switch too). That way the owner tests models on their own. Even better: AAC downloads
     a model (a Hugging Face repo + file) to the machine. Base: llama-server's router mode (`--models-dir ~/models

@@ -119,8 +119,11 @@ Through `self.core`:
   `ha_calendar` (handler `events(start, end)`: Home Assistant's calendar entity). Subscriptions end when the card
   unloads.
 - `pool`: the models. `pool.entries(list, tag)` (a card's list of models doing a job), `async with pool.slot(entries)
-  as model_id` (a free model, else the queues), `pool.tags(model_id)`; `run(pool, entries, job)` and `Client(hass,
-  model).chat(...)` from the api.
+  as model_id` (a free model, else the queues), `pool.tags(model_id)`, `pool.find(name)` (a model by id or name),
+  `await pool.offers()` (every server behind the pool and what it offers: a llama-server router lists its models and
+  their state); `run(pool, entries, job)` and `Client(hass, model)` from the api: `chat(...)`, and on a router
+  `router()` (its models) and `router_do(action, name)` (`load`, `unload`, `download`, `delete`).
+- `save_model({"id", ...})` then `save()`: change one of the pool's models (e.g. which server model it uses).
 - `audio`: `say(satellite, text, language, engine=None, voices=None)` (a card's engine and its voice per language
   `{code: {language: locale, voice}}`; else the Audio page's default engine), `voices(engine)` (an engine's voices per
   home language), `play(satellite, wav)`, `stop(satellite)`, `spoken()` (when AAC last spoke), `stt(pcm, language,

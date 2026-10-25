@@ -106,6 +106,82 @@ class Client:
             raise ModelError(str(err)) from err
         return {"content": content, "tool_calls": [calls[i] for i in sorted(calls)]}
 
+    # -------------------------------------------------- llama-server's router (one server, many models, see spec)
+    @property
+    def root(self) -> str:
+        """The server's own address: the router's endpoints sit beside /v1."""
+        return self.base[:-3] if self.base.endswith("/v1") else self.base
+
+    async def _request(self, method: str, path: str, text_only: bool = False, **kwargs: Any) -> Any:
+        try:
+            async with self.session.request(method, f"{self.root}{path}", headers=self._headers(),
+                                            timeout=aiohttp.ClientTimeout(total=10), **kwargs) as resp:
+                text = await resp.text()
+                if resp.status >= 400:
+                    try:
+                        text = json.loads(text)["error"]["message"]
+                    except (ValueError, KeyError, TypeError):
+                        pass
+                    raise ModelError(f"HTTP {resp.status}: {str(text)[:300]}")
+                if text_only:
+                    return text
+                return json.loads(text) if text.strip() else {}
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise ModelUnreachable(str(err) or type(err).__name__) from err
+
+    async def router(self) -> list[dict[str, Any]] | None:
+        """What a llama-server router offers, each with its state and, once loaded, what it is and how fast it ran.
+        None: the server is no router (one fixed model)."""
+        try:
+            found = (await self._request("GET", "/models")).get("data") or []
+        except ModelError as err:
+            if str(err).startswith("HTTP 404"):  # a server without the list (whisper.cpp and the like)
+                return None
+            raise
+        if not found or "status" not in found[0]:
+            return None
+        loaded = [m["id"] for m in found if m["status"].get("value") == "loaded"]
+        meta = {}
+        if loaded:
+            meta = {m["id"]: m.get("meta") or {} for m in (await self._request("GET", "/v1/models")).get("data", [])}
+        out = []
+        for m in found:
+            status, args = m["status"], m["status"].get("args") or []
+            entry = {"id": m["id"], "status": status.get("value"), "failed": bool(status.get("failed")),
+                     "can_remove": bool(m.get("can_remove")), "source": m.get("source"),
+                     "context_max": m.get("context_length"), "inputs": (m.get("architecture") or {}).get("input_modalities") or [],
+                     "context": int(args[args.index("--ctx-size") + 1]) if "--ctx-size" in args else None}
+            if progress := status.get("progress"):
+                done, total = sum(f.get("done", 0) for f in progress.values()), sum(f.get("total", 0) for f in progress.values())
+                entry["progress"] = round(100 * done / total) if total else 0
+            if m["id"] in loaded:
+                info = meta.get(m["id"], {})
+                entry.update(params=info.get("n_params"), size=info.get("size"), quant=info.get("ftype"), context=info.get("n_ctx") or entry["context"])
+                try:
+                    props = await self._request("GET", "/props", params={"model": m["id"]})
+                    entry["tools"] = bool((props.get("chat_template_caps") or {}).get("supports_tools"))
+                    entry["build"] = props.get("build_info")
+                    metrics = await self._request("GET", "/metrics", text_only=True, params={"model": m["id"]})
+                except (ModelError, ValueError):
+                    metrics = ""
+                numbers = dict(line.split()[:2] for line in metrics.splitlines() if line.startswith("llamacpp:") and len(line.split()) >= 2)
+                entry["speed"] = {"read": round(float(numbers.get("llamacpp:prompt_tokens_seconds", 0))),
+                                  "write": round(float(numbers.get("llamacpp:predicted_tokens_seconds", 0)))}
+            out.append(entry)
+        return out
+
+    async def router_do(self, action: str, name: str, sidecars: list[str] | None = None) -> None:
+        """load / unload one of the router's models, download one from Hugging Face ("user/repo:quant", sidecars like
+        "mmproj", "mtp"), or delete a downloaded one."""
+        if action in ("load", "unload"):
+            await self._request("POST", f"/models/{action}", json={"model": name})
+        elif action == "download":
+            await self._request("POST", "/models", json={"model": name, "sidecars": sidecars or []})
+        elif action == "delete":
+            await self._request("DELETE", "/models", params={"model": name})
+        else:
+            raise ModelError(f"unknown action {action}")
+
 
 MODEL_TAGS = ["text", "tools", "images", "audio in", "audio out", "video", "embeddings", "speech to text", "sound tags",
               "voice prints"]  # what a model can do; a card offers only the models with the tag it needs
@@ -237,6 +313,34 @@ class ModelPool:
         return [{**{k: v for k, v in m.items() if k != "api_key"}, "has_key": bool(m.get("api_key")),
                  "up": self.usable(m["id"]), "failing": m["id"] in self.failing, "tags": self.tags(m["id"]), "busy": self._busy.get(m["id"], 0),
                  "waiting": len(self._queues.get(m["id"], []))} for m in self.models]
+
+    def servers(self) -> list[dict[str, Any]]:
+        """The servers behind the pool: one per address and key, each with the pool's models on it (a router serves
+        many models on one address)."""
+        found: dict[tuple[str, str], dict[str, Any]] = {}
+        for m in self.models:
+            client = Client(self.hass, m)
+            server = found.setdefault((client.root, m.get("api_key") or ""), {"address": client.root, "client": client, "uses": []})
+            server["uses"].append(m)
+        return list(found.values())
+
+    def find(self, name: str) -> dict[str, Any] | None:
+        """A pool model by id or name (as a model or a Conditional writes it)."""
+        name = (name or "").strip().lower()
+        return next((m for m in self.models if name in (m["id"].lower(), m["name"].lower())), None)
+
+    async def offers(self) -> list[dict[str, Any]]:
+        """Every server with what it offers right now (a router: its models and their state; else only the pool's
+        models on it). For the panel and the Models card; no keys."""
+        async def one(server: dict[str, Any]) -> dict[str, Any]:
+            out = {"address": server["address"], "uses": [{"id": m["id"], "name": m["name"], "model": m["model"]} for m in server["uses"]]}
+            try:
+                out["models"] = await server["client"].router()
+                out["router"] = out["models"] is not None
+            except ModelError as err:
+                out.update(router=False, models=None, error=str(err))
+            return out
+        return list(await asyncio.gather(*(one(s) for s in self.servers())))
 
 
 async def run(pool: ModelPool, entries: list[dict[str, Any]], job: Callable[[dict[str, Any]], Any]) -> tuple[Any, bool]:

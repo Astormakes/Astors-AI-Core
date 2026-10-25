@@ -285,3 +285,51 @@ async def test_chat_archive(hass: HomeAssistant, mock_entry):
     assert next(e for e in card.nav()["entries"] if e["id"] == chat["id"])["title"] == "Renamed"
     await card.ui_call("nav_action", {"entry": chat["id"], "action": "delete"})
     assert chat["id"] not in [c["id"] for c in card.chats()]
+
+
+async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, hass_ws_client):
+    """A llama-server router behind the pool: the Models page and the Model servers card list its models with their
+    state and numbers; Use lets an AAC model ask for another one (and loads it); download and delete go to the server."""
+    core = await setup_aac(hass, mock_entry)
+    root = "http://llm.local:8080"
+    aioclient_mock.get(f"{root}/models", json={"data": [
+        {"id": "big", "status": {"value": "loaded", "args": ["llama-server", "--ctx-size", "16384"]}, "can_remove": False,
+         "source": "preset", "context_length": 262144, "architecture": {"input_modalities": ["text"]}},
+        {"id": "user/new-GGUF:Q4_K_M", "status": {"value": "downloading", "progress": {"a": {"done": 25, "total": 100}}},
+         "can_remove": True, "source": "cache"}]})
+    aioclient_mock.get(f"{root}/v1/models", json={"data": [{"id": "big", "meta": {"n_params": 11.9e9, "size": 6.7e9, "ftype": "Q4_0", "n_ctx": 16384}}]})
+    aioclient_mock.get(f"{root}/props", json={"chat_template_caps": {"supports_tools": True}, "build_info": "b1-test"})
+    aioclient_mock.get(f"{root}/metrics", text="# HELP x\nllamacpp:prompt_tokens_seconds 1043.8\nllamacpp:predicted_tokens_seconds 45.2\n")
+    for path in ("/models/load", "/models/unload", "/models"):
+        aioclient_mock.post(f"{root}{path}", json={"success": True})
+    aioclient_mock.delete(f"{root}/models", json={"success": True})
+
+    client = await hass_ws_client(hass)
+    await client.send_json({"id": 1, "type": "aac/models/servers"})
+    (server,) = (await client.receive_json())["result"]["servers"]  # both AAC models are on the one address
+    assert server["router"] and server["address"] == root and [u["name"] for u in server["uses"]] == ["Big", "Small"]
+    big, new = server["models"]
+    assert big["status"] == "loaded" and big["quant"] == "Q4_0" and big["tools"] and big["speed"] == {"read": 1044, "write": 45}
+    assert big["context"] == 16384 and big["context_max"] == 262144
+    assert new["status"] == "downloading" and new["progress"] == 25 and new["can_remove"]
+
+    await client.send_json({"id": 2, "type": "aac/models/router", "model_id": "m_small", "action": "use", "name": "big"})
+    assert (await client.receive_json())["success"]
+    assert core.pool.get("m_small")["model"] == "big"
+    assert any(m[0] == "POST" and str(m[1]).endswith("/models/load") and m[2] == {"model": "big"} for m in aioclient_mock.mock_calls)
+    await client.send_json({"id": 3, "type": "aac/models/router", "model_id": "m_big", "action": "download",
+                            "name": "user/new-GGUF:Q4_K_M", "sidecars": ["mtp"]})
+    assert (await client.receive_json())["success"]
+    assert any(m[0] == "POST" and str(m[1]) == f"{root}/models" and m[2] == {"model": "user/new-GGUF:Q4_K_M", "sidecars": ["mtp"]}
+               for m in aioclient_mock.mock_calls)
+    await client.send_json({"id": 4, "type": "aac/models/router", "model_id": "m_big", "action": "delete", "name": "user/new-GGUF:Q4_K_M"})
+    assert (await client.receive_json())["success"]
+    assert any(m[0] == "DELETE" and m[1].query.get("model") == "user/new-GGUF:Q4_K_M" for m in aioclient_mock.mock_calls)
+
+    card = await core.domain.add_card("model_servers", "Servers")
+    (listed,) = await card.call("servers", {})
+    assert listed["aac_models"] == ["Big (uses big)", "Small (uses big)"]
+    assert listed["offers"][1] == {"model": "user/new-GGUF:Q4_K_M", "state": "downloading", "downloaded": "25 %"}
+    assert await card.call("use", {"aac_model": "big", "model": "user/new-GGUF:Q4_K_M"}) == {"done": "Big uses user/new-GGUF:Q4_K_M"}
+    assert core.pool.get("m_big")["model"] == "user/new-GGUF:Q4_K_M"
+    assert "error" in await card.call("use", {"aac_model": "nobody", "model": "big"})

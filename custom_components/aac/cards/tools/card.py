@@ -1,5 +1,5 @@
 """Small single-purpose cards: File (a Markdown file), Notify (a phone notification through HA), Timer (hold a
-context for a while), Web (search and read pages)."""
+context for a while), Web (search and read pages), Model servers (switch what a llama-server router has loaded)."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ import aiohttp
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.api import Card, Context, register
+from custom_components.aac.api import Card, Client, Context, ModelError, register
 
-VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -184,4 +184,51 @@ class Web(Card):
                 return re.sub(r"\s+", " ", html.unescape(TAG.sub(" ", page))).strip()[:8000]
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
             return {"error": str(err)}
+        return await super().call(function, args, context)
+
+
+@register
+class ModelServers(Card):
+    """What the model servers offer, and switching it."""
+
+    type = "model_servers"
+    title = "Model servers"
+    category = "Models"
+    help = ("The servers behind AAC's models and what they offer now. A llama-server in router mode serves many models "
+            "and loads one at a time: a model or a Conditional card can see them and switch (the same as the Models page).")
+    functions = {
+        "servers": {"help": "Every model server: AAC's models on it (and which server model each uses), and what it offers "
+                            "with each one's state (loaded, unloaded, loading, downloading)."},
+        "use": {"help": "Let one of AAC's models use another model of its server from now on (it is loaded at once, the "
+                        "one before is unloaded).",
+                "args": {"aac_model": {"type": "string", "help": "AAC's model, by its name (as servers lists it).", "required": True},
+                         "model": {"type": "string", "help": "The server's model (as servers lists it).", "required": True}}},
+        "load": {"help": "Load a model on the server of one of AAC's models (without switching what that one uses).",
+                 "args": {"aac_model": {"type": "string", "help": "AAC's model whose server it is.", "required": True},
+                          "model": {"type": "string", "help": "The server's model.", "required": True}}},
+        "unload": {"help": "Unload a model on the server of one of AAC's models (frees its memory).",
+                   "args": {"aac_model": {"type": "string", "help": "AAC's model whose server it is.", "required": True},
+                            "model": {"type": "string", "help": "The server's model.", "required": True}}},
+    }
+
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
+        pool = self.core.pool
+        if function == "servers":
+            return [{"address": s["address"], "aac_models": [f"{u['name']} (uses {u['model']})" for u in s["uses"]],
+                     "offers": [{"model": m["id"], "state": m["status"], **({"downloaded": f"{m['progress']} %"} if "progress" in m else {})}
+                                for m in s["models"]] if s.get("models") else (s.get("error") or "one fixed model (no router)")}
+                    for s in await pool.offers()]
+        if function in ("use", "load", "unload"):
+            model = pool.find(str(args.get("aac_model") or ""))
+            if model is None:
+                return {"error": f"AAC has no model {args.get('aac_model')!r}"}
+            name = str(args.get("model") or "")
+            try:
+                if function == "use":
+                    self.core.save_model({"id": model["id"], "model": name})
+                    self.core.save()
+                await Client(self.hass, model).router_do("unload" if function == "unload" else "load", name)
+            except ModelError as err:
+                return {"error": str(err)}
+            return {"done": f"{model['name']} uses {name}" if function == "use" else f"{function}ed {name}"}
         return await super().call(function, args, context)

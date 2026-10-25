@@ -293,6 +293,34 @@ async def ws_models_probe(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"models": found})
 
 
+@command({vol.Required("type"): "aac/models/servers"})
+async def ws_models_servers(hass, connection, msg) -> None:
+    """Every server behind the pool with what it offers now (a llama-server router: its models, their state, numbers)."""
+    connection.send_result(msg["id"], {"servers": await _core(hass).pool.offers()})
+
+
+@command({vol.Required("type"): "aac/models/router", vol.Required("model_id"): str,
+          vol.Required("action"): vol.In(["load", "unload", "download", "delete", "use"]), vol.Required("name"): str,
+          vol.Optional("sidecars"): [str]})
+async def ws_models_router(hass, connection, msg) -> None:
+    """On the server of a pool model: load, unload, download or delete one of its models, or use one (the pool model
+    asks for it from now on, and it is loaded at once)."""
+    core = _core(hass)
+    model = core.pool.get(msg["model_id"])
+    if model is None:
+        return await _fail(connection, msg, ValueError("no such model"))
+    try:
+        if msg["action"] == "use":
+            core.save_model({"id": model["id"], "model": msg["name"]})
+            core.save()
+            await Client(hass, model).router_do("load", msg["name"])
+        else:
+            await Client(hass, model).router_do(msg["action"], msg["name"], msg.get("sidecars"))
+    except ModelError as err:
+        return await _fail(connection, msg, err)
+    connection.send_result(msg["id"], {"models": core.pool.summary()})
+
+
 @command({vol.Required("type"): "aac/domain/clone", vol.Required("name"): vol.All(str, vol.Length(min=1, max=40))})
 async def ws_domain_clone(hass, connection, msg) -> None:
     """A copy of the running domain."""
