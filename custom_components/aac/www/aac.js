@@ -111,6 +111,10 @@ textarea { resize: vertical; }
 .grid { flex: 1; position: relative; overflow: hidden; background-image: radial-gradient(rgba(127,127,127,.25) 1px, transparent 1px); background-size: 20px 20px; }
 .grid svg { width: 100%; height: 100%; display: block; user-select: none; }
 .side { width: var(--side-w, 300px); flex: none; border-left: 1px solid var(--divider-color); overflow-y: auto; padding: 12px; }
+.nodes { position: relative; } .nodes.nopal .palette, .nodes.nopal [data-grip="pal"], .nodes.noside .side, .nodes.noside [data-grip="side"] { display: none; }
+.edge { position: absolute; top: 50%; transform: translateY(-50%); z-index: 6; width: 22px; height: 56px; padding: 0; font-size: 16px; cursor: pointer;
+  border: 1px solid var(--divider-color); background: var(--card-background-color, #fff); color: var(--primary-text-color); opacity: .85; }
+.edge.left { left: 0; border-left: none; border-radius: 0 8px 8px 0; } .edge.right { right: 0; border-right: none; border-radius: 8px 0 0 8px; }
 .side label { display: block; font-size: 12px; color: var(--secondary-text-color); margin: 10px 0 3px; }
 .side .check, .content .check { display: flex; gap: 6px; align-items: center; color: var(--primary-text-color); font-size: 14px; } .content .check input { width: auto; flex: 0 0 auto; }
 .side .check input { width: auto; }
@@ -151,7 +155,10 @@ textarea { resize: vertical; }
 .scrim { display: none; }
 @media (max-width: 800px) { nav { position: absolute; z-index: 20; height: 100%; transform: translateX(-100%); transition: transform .2s; } .root.navopen nav { transform: none; }
   .menu { display: inline-block; } .root.navopen .scrim { display: block; position: absolute; inset: 0; z-index: 15; background: rgba(0,0,0,.3); }
-  .palette, .side { width: 170px; } .grip { display: none; } }
+  .grip { display: none; }
+  .nodes .palette, .nodes .side { position: absolute; top: 0; bottom: 0; z-index: 8; width: min(85vw, 320px); background: var(--primary-background-color); box-shadow: 0 0 12px rgba(0,0,0,.3); }
+  .nodes .palette { left: 0; } .nodes .side { right: 0; }
+  .nodes:not(.nopal) .edge.left { left: min(85vw, 320px); } .nodes:not(.noside) .edge.right { right: min(85vw, 320px); } }
 `;
 
 class AacPanel extends HTMLElement {
@@ -288,7 +295,39 @@ class AacPanel extends HTMLElement {
     }
   }
 
+  // the Nodes page's side panels (card types left, settings right): arrows at the edges; on a phone they lie over the
+  // grid, each open one is an entry in the history, so Back closes the right one, then the left, then goes to the last chat
+  _phone() { return matchMedia("(max-width: 800px)").matches; }
+
+  _panel(which, open) {
+    const key = which === "pal" ? "palOpen" : "sideOpen";
+    if (!!this[key] === open) return;
+    if (this._phone()) {
+      if (open) { history.pushState({ aac: which }, ""); this[key] = true; this.render(); }
+      else history.back(); // the Back handler closes it
+      return;
+    }
+    this[key] = open; this.render();
+  }
+
+  _onBack() {
+    if (this.view.kind !== "nodes") return;
+    if (this.sideOpen) this.sideOpen = false;
+    else if (this.palOpen) this.palOpen = false;
+    else { const last = this._lastCard || {}; this.go("card", last.card || null, last.id || null); return; }
+    this.render();
+  }
+
+  connectedCallback() { this._back ||= () => this._onBack(); window.addEventListener("popstate", this._back); }
+  disconnectedCallback() { window.removeEventListener("popstate", this._back); }
+
   async go(kind, card = null, id = null) {
+    if (kind === "card") this._lastCard = { card, id }; // Back from the Nodes page on a phone goes here
+    if (kind === "nodes" && this.view.kind !== "nodes") {
+      const phone = this._phone();
+      this.palOpen = this.sideOpen = !phone;
+      if (phone) history.pushState({ aac: "nodes" }, ""); // Back with both panels closed leaves the page
+    }
     this.view = { kind, card, id };
     this.navOpen = false; // on a phone the sidebar closes when a page is picked
     if (kind === "nodes") this._watchIds = null; // say at once which views it shows
@@ -741,9 +780,11 @@ class AacPanel extends HTMLElement {
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
     return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it.")}
         <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="redo" ${d.redo ? "" : "disabled"} title="What the last Undo took back">Redo</button><button class="small" id="fit">Fit</button><button class="small ${this.showValues ? "on" : ""}" id="values" title="The value pool: what templates can use now ({{ card.value }}), live">Values</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
-      <div class="nodes"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
+      <div class="nodes ${this.palOpen ? "" : "nopal"} ${this.sideOpen ? "" : "noside"}"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
         <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
-        <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}</div>
+        <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}
+          <button class="edge left" id="paltog" title="${this.palOpen ? "Hide" : "Show"} the card types">${this.palOpen ? "‹" : "›"}</button>
+          <button class="edge right" id="sidetog" title="${this.sideOpen ? "Hide" : "Show"} the settings">${this.sideOpen ? "›" : "‹"}</button></div>
         <div class="grip" data-grip="side" data-target=".side" data-side="left" title="Drag: width (double-click: back to normal)"></div>
         <div class="side">${this._side()}</div></div></div>`;
   }
@@ -1394,7 +1435,7 @@ class AacPanel extends HTMLElement {
       }
       if (d.kind === "move") {
         if (d.moved) { this._snap(d.id); this._drawGrid(); await this._savePositions(); }
-        else { this.sel = d.id; this.selWire = null; this.selMon = null; this.showValues = false; this.render(); }
+        else { this.sel = d.id; this.selWire = null; this.selMon = null; this.showValues = false; if (!this.sideOpen) this._panel("side", true); else this.render(); }
       }
       if (d.kind === "wire") {
         this.shadowRoot.querySelector("#tmpwire")?.remove();
@@ -1450,7 +1491,9 @@ class AacPanel extends HTMLElement {
     $("#scrim")?.addEventListener("click", () => { this.navOpen = false; this.shadowRoot.querySelector(".root").classList.remove("navopen"); });
     $("#habtn")?.addEventListener("click", () => this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true })));
     // nodes
-    $$("[data-pick]").forEach((el) => el.addEventListener("click", () => { this.selType = this.selType === el.dataset.pick ? null : el.dataset.pick; this.render(); }));
+    $$("[data-pick]").forEach((el) => el.addEventListener("click", () => { this.selType = this.selType === el.dataset.pick ? null : el.dataset.pick; if (this.selType && this._phone()) this._panel("pal", false); else this.render(); }));
+    $("#paltog")?.addEventListener("click", () => this._panel("pal", !this.palOpen));
+    $("#sidetog")?.addEventListener("click", () => this._panel("side", !this.sideOpen));
     $("#undo")?.addEventListener("click", async () => { await this.ws("aac/undo"); await this._load(); this.render(); });
     $("#redo")?.addEventListener("click", async () => { await this.ws("aac/redo"); await this._load(); this.render(); });
     $("#fit")?.addEventListener("click", () => this._fit());

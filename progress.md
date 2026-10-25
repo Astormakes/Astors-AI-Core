@@ -258,7 +258,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
    speaks); look at echo cancellation (the speaker's own sound filtered out of the microphone: WebRTC AEC in the
    satellite; the Poly may do it in hardware); Bluetooth may add delay.
 5. ~~Editable instructions for models~~ **done (2.1.18).**
-6. **Relay and Conditional UI** (later).
+6. **Relay and Conditional UI** (later). (2.1.40, owner: the Nodes page's side panels fold away: arrows at the grid's edges, a click on a card opens the settings; on a phone they lie over the grid, Back closes the right one, then the left, then goes to the last opened chat.)
 7. ~~Card folders~~ **done (2.1.1):** `chat/card.py` + `page.js` (+ `view.js`); old flat files go when AAC starts.
 8. ~~Card files reload while AAC runs~~ **done (2.1.23).**
 9. **Tool menus (v0's idea)** (owner): instead of every function at once, a model sees one entry per card and opens it
