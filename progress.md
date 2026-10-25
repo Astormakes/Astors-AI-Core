@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-25) – 2.2.0 (Relay scripts), being deployed to the owner's HA
+## Current state (2026-10-25) – 2.2.0 (Relay scripts), live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -26,8 +26,10 @@ the owner wires them (no automatic wiring), the message is a document of entries
   the core only got a generic setting type `element` (a card brings its own editor; spec/cards.md). Editor: colours,
   line numbers, suggestions, Wide, ? panel (reference with examples, cache and stream notes, the domain's tags,
   values, functions), Last run, Simple view (rows that write the code). The Node editor's `types` now shows each
-  setting's help (models read the script reference there). Old Relay settings and Conditionals were converted once
-  by a scratchpad script on the stored setup (no converter in AAC); the test backup is now 2.2.0. docs/v2 page 2 was
+  setting's help (models read the script reference there). The owner's Relays got their scripts and the two Conditionals
+  became Relays once, through AAC's websocket (card update / remove / add / wires; Wake word is now `wake_word`), by a
+  scratchpad script (no converter in AAC); `conditional.py` removed from `<config>/aac/cards`; backup before:
+  `/config/aac/bak-v2-2.1.48/` (the 2.1.35 one removed). Test turn: Charter and Time ran, the answer had the time; the test backup is now 2.2.0. docs/v2 page 2 was
   corrected against the code (no Voice chat, Pool or Conditional cards any more; every card listed).
 
 - **Core** (`core.py`): the model pool (shared by all domains, `models.py`: OpenAI-compatible client, streaming, tool
