@@ -159,8 +159,8 @@ class Client:
         meta = {}
         if loaded:
             meta = {m["id"]: m.get("meta") or {} for m in (await self._request("GET", "/v1/models")).get("data", [])}
-        downloading = {m["id"] for m in found if m["status"].get("value") == "downloading" and not m["status"].get("progress")}
-        progress = await self._download_progress(downloading) if downloading else {}
+        busy = {m["id"] for m in found if m["status"].get("value") in ("downloading", "loading") and not m["status"].get("progress")}
+        progress = await self._live_progress(busy) if busy else {}
         out = []
         for m in found:
             status, args = m["status"], m["status"].get("args") or []
@@ -188,8 +188,8 @@ class Client:
             out.append(entry)
         return out
 
-    async def _download_progress(self, models: set[str]) -> dict[str, int]:
-        """How far downloads are, from the router's live events (its list has no progress): read for a moment."""
+    async def _live_progress(self, models: set[str]) -> dict[str, int]:
+        """How far downloads and loads are, from the router's live events (its list has no progress): read a moment."""
         out: dict[str, int] = {}
         try:
             async with self.session.get(f"{self.root}/models/sse", headers=self._headers(),
@@ -199,10 +199,17 @@ class Client:
                     if not line.startswith("data:"):
                         continue
                     event = json.loads(line[5:])
-                    if event.get("event") == "download_progress" and event.get("model") in models:
-                        out[event["model"]] = _percent((event.get("data") or {}).get("progress") or {})
-                        if set(out) >= models:
-                            break
+                    if event.get("model") not in models:
+                        continue
+                    data = event.get("data") or {}
+                    if event.get("event") == "download_progress":
+                        out[event["model"]] = _percent(data.get("progress") or {})
+                    elif event.get("event") == "model_status" and data.get("status") == "loading" and (load := data.get("progress")):
+                        stages = load.get("stages") or [load.get("current")]  # each stage counts the same
+                        done = stages.index(load.get("current")) if load.get("current") in stages else 0
+                        out[event["model"]] = round(100 * (done + float(load.get("value") or 0)) / len(stages))
+                    if set(out) >= models:
+                        break
         except (aiohttp.ClientError, TimeoutError, ValueError):
             pass
         return out

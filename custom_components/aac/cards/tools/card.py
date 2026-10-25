@@ -17,7 +17,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Client, Context, ModelError, register
 
-VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -219,7 +219,7 @@ class ModelServers(Card):
         pool = self.core.pool
         if function == "servers":
             return [{"address": s["address"], "aac_models": [f"{u['name']} (uses {u['model']})" for u in s["uses"]],
-                     "offers": [{"model": m["id"], "state": m["status"], **({"downloaded": f"{m['progress']} %"} if "progress" in m else {})}
+                     "offers": [{"model": m["id"], "state": m["status"], **({"progress": f"{m['progress']} %"} if "progress" in m else {})}
                                 for m in s["models"]] if s.get("models") else (s.get("error") or "one fixed model (no router)")}
                     for s in await pool.offers()]
         if function == "bench":

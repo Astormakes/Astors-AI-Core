@@ -295,9 +295,12 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     aioclient_mock.get(f"{root}/models", json={"data": [
         {"id": "big", "status": {"value": "loaded", "args": ["llama-server", "--ctx-size", "16384"]}, "can_remove": False,
          "source": "preset", "context_length": 262144, "architecture": {"input_modalities": ["text"]}},
-        {"id": "user/new-GGUF:Q4_K_M", "status": {"value": "downloading"}, "can_remove": True, "source": "cache"}]})
+        {"id": "user/new-GGUF:Q4_K_M", "status": {"value": "downloading"}, "can_remove": True, "source": "cache"},
+        {"id": "slow", "status": {"value": "loading"}, "can_remove": False, "source": "preset"}]})
     aioclient_mock.get(f"{root}/models/sse", text='data: {"model": "user/new-GGUF:Q4_K_M", "event": "download_progress", '
-                       '"data": {"progress": {"https://x/a.gguf": {"done": 25, "total": 100}}}}\n\n')  # the list has no progress
+                       '"data": {"progress": {"https://x/a.gguf": {"done": 25, "total": 100}}}}\n\n'
+                       'data: {"model": "slow", "event": "model_status", "data": {"status": "loading", "progress": '
+                       '{"stages": ["text_model", "mmproj_model"], "current": "mmproj_model", "value": 0.5}}}\n\n')  # the list has no progress
     aioclient_mock.get(f"{root}/v1/models", json={"data": [{"id": "big", "meta": {"n_params": 11.9e9, "size": 6.7e9, "ftype": "Q4_0", "n_ctx": 16384}}]})
     aioclient_mock.get(f"{root}/props", json={"chat_template_caps": {"supports_tools": True}, "build_info": "b1-test"})
     aioclient_mock.get(f"{root}/metrics", text="# HELP x\nllamacpp:prompt_tokens_seconds 1043.8\nllamacpp:predicted_tokens_seconds 45.2\n")
@@ -311,7 +314,8 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert server["router"] and server["address"] == root and [u["name"] for u in server["uses"]] == ["Big", "Small"]
     sid = server["id"]
     assert core.pool.get("m_big")["server"] == sid and core.pool.get("m_small")["server"] == sid
-    big, new = server["models"]
+    big, new, slow = server["models"]
+    assert slow["status"] == "loading" and slow["progress"] == 75  # the second of two stages, half done
     assert big["status"] == "loaded" and big["quant"] == "Q4_0" and big["tools"] and big["speed"] == {"read": 1044, "write": 45}
     assert big["context"] == 16384 and big["context_max"] == 262144
     assert new["status"] == "downloading" and new["progress"] == 25 and new["can_remove"]
@@ -354,7 +358,7 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert await card.call("bench", {"aac_model": "Small", "model": "big"}) == {"reads": "1044 tokens/s", "writes": "107 tokens/s"}
     (listed,) = await card.call("servers", {})
     assert listed["aac_models"] == ["Big (uses big)", "Small (uses big)"]
-    assert listed["offers"][1] == {"model": "user/new-GGUF:Q4_K_M", "state": "downloading", "downloaded": "25 %"}
+    assert listed["offers"][1] == {"model": "user/new-GGUF:Q4_K_M", "state": "downloading", "progress": "25 %"}
     assert await card.call("use", {"aac_model": "big", "model": "user/new-GGUF:Q4_K_M"}) == {"done": "Big uses user/new-GGUF:Q4_K_M"}
     assert core.pool.get("m_big")["model"] == "user/new-GGUF:Q4_K_M"
     assert "error" in await card.call("use", {"aac_model": "nobody", "model": "big"})

@@ -654,7 +654,7 @@ class AacPanel extends HTMLElement {
     const rows = (s.models || []).map((m) => {
       const st = m.status, on = ["loaded", "loading", "sleeping"].includes(st);
       const users = s.uses.filter((u) => u.model === m.id && (!u.follow || on));
-      const facts = [st === "downloading" ? `downloading ${m.progress ?? 0} %` : st + (m.failed ? " (failed to start)" : ""),
+      const facts = [st === "downloading" || st === "loading" ? `${st} ${m.progress ?? 0} %` : st + (m.failed ? " (failed to start)" : ""),
         m.quant, m.params ? `${(m.params / 1e9).toFixed(1)} B` : "", gb(m.size),
         m.context ? `context ${m.context.toLocaleString()}${m.context_max ? ` of ${m.context_max.toLocaleString()}` : ""}` : "",
         m.tools ? "tools" : "", (m.inputs || []).filter((x) => x !== "text").join(", "),
