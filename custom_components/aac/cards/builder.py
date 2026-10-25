@@ -59,7 +59,7 @@ class Builder(Card):
             card = domain.cards.get(str(args.get("card") or ""))
             return card.summary() if card else {"error": "no such card (see cards)"}
         if function == "types":
-            return [{"type": t.type, "title": t.title, "help": t.help, "settings": {k: f.get("title") for k, f in t.settings_schema.items()},
+            return [{"type": t.type, "title": t.title, "help": t.help, "settings": {k: f"{f.get('title')}: {f['help']}" if f.get("help") else f.get("title") for k, f in t.settings_schema.items()},
                      "inputs": t.inputs, "outputs": t.outputs} for t in CARD_TYPES.values()]
         if function == "remove_card":
             if not self.settings.get("may_remove"):

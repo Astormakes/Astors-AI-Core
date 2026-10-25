@@ -89,24 +89,6 @@ async def test_undo_slots_and_clone(hass: HomeAssistant, mock_entry):
     assert core.domain.id == "test" and "Project Portfolio" in [li["name"] for li in core.domain.cards["lists"].data["lists"]]
 
 
-async def test_relay_positions_and_replace(hass: HomeAssistant, mock_entry):
-    """A Relay's text: start (replaced in place), after the turn (a new line every time), nothing (only passes on)."""
-    core = await setup_aac(hass, mock_entry)
-    domain = core.domain
-    start = await domain.add_card("relay", "Role", {"position": "start", "text": "You are AAC."})
-    after = await domain.add_card("relay", "Note", {"position": "after", "text": "Be short.", "replace": False})
-    context = Context()
-    context.add("chat", "said", "hi")
-    await start.handle(context, "in", None)
-    await start.handle(context, "in", None)
-    await after.handle(context, "in", None)
-    context.add("chat", "said", "and?")
-    await after.handle(context, "in", None)
-    assert [(e["kind"], e["text"]) for e in context.entries] == [
-        ("system", "You are AAC."), ("said", "hi"), ("trailer", "Be short."), ("said", "and?"), ("trailer", "Be short.")]
-    assert all(t.startswith(("role.", "note.", "chat.")) for e in context.entries for t in e["tags"])
-
-
 async def test_setup_file_round_trip(hass: HomeAssistant, mock_entry, aioclient_mock):
     """Save file → change → Load file brings the setup back; Undo goes back to before the load."""
     core = await setup_aac(hass, mock_entry)

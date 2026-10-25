@@ -33,7 +33,7 @@ class Shout(Card):
     settings_schema = {"loud": {"type": "bool", "title": "Really loud", "default": True}}
     tags = {"shouted": "lines it changed"}          # written as shout.shouted
     functions = {"shout": {"help": "Upper-case a text.", "args": {"text": {"type": "string", "required": True}}}}
-    values = {"count": "how many lines it shouted"}  # {{ shout.count }} in templates
+    values = {"count": "how many lines it shouted"}  # shout.count in a Relay's script
 
     async def handle(self, context: Context, port: str, step) -> list | None:
         """A context arrived. None: on to every round output; []: it ends here; ["out"] or [("out", card_id)]: there."""
@@ -43,7 +43,7 @@ class Shout(Card):
         return None
 
     async def call(self, function: str, args: dict, context: Context | None = None):
-        """One of its functions (a model's tool call, a Conditional's action)."""
+        """One of its functions (a model's tool call, a Relay's script)."""
         if function == "shout":
             return args["text"].upper()
         return await super().call(function, args, context)
@@ -59,7 +59,7 @@ every finished sentence and every tool result.
 "For models"): a model that has the card as a tool reads it under "About your tools" in its system text. A setting
 may say `fold` to sit in a fold at the bottom of the card's settings.
 
-**Tools.** A card that uses tools (`uses_tools = True`: a Model, a Conditional's call action) gets the functions of
+**Tools.** A card that uses tools (`uses_tools = True`: a Model, a Relay's script) gets the functions of
 every card in its loop: on a way from its outputs back into its inputs, straight or through other cards (a Chat,
 Relays). Each card with functions has a tick "Offers its functions to models in its loop" (setting `offers`, default
 `offers = True` on the class; a Relay's is off). Tool names are `<card id>__<function>`, so two cards of one type stay
@@ -75,11 +75,15 @@ and `confirm` (a question the panel asks before it is first turned on, for a set
 `permission` also shows on the domain's Permissions page (what the domain's cards may do, all in one place). A
 setting of type `access` is a list of the card's own entries, each hidden / read-only / full (not set: hidden):
 the card returns them from `ui_call("access_items")` as `[{id, name, area, group}]`; the value is `{id: level}`.
+A setting of type `element` (with `element`: a custom element's name, `file`: a .js in the card's folder) is edited
+by the card's own element: the panel imports the file and hands the element `.panel` (as a page's below, with
+`save(settings)` saving and redrawing, `type(t)`, `domain()`, `card()`), calls `setup({card, key, value, settings})`
+after every redraw and `remember()` before one; the element is kept, so typing goes on (the Relay's script editor).
 
 ## A card folder
 
 A card with more than one file is a folder: `chat/card.py` (with `VERSION`), `page.js`, `view.js`. It is copied,
-versioned and loaded as a whole (`aac_cards.chat`); a single-file card stays `relay.py`. Files are served at
+versioned and loaded as a whole (`aac_cards.chat`); a single-file card stays `decide.py`. Files are served at
 `/aac_cards/<folder>/<file>.js`.
 
 ## A card's view
@@ -129,7 +133,7 @@ Through `self.core`:
   home language), `play(satellite, wav)`, `stop(satellite)`, `spoken()` (when AAC last spoke), `stt(pcm, language,
   models)` (no language: the home's).
 - `languages()`: the home's languages, main first (ISO codes; the Audio page, else as Home Assistant describes the
-  home). Templates read `{{ languages }}`.
+  home).
 - Audio helpers from the api: `pcm_to_wav(pcm, rate)`, `wav_to_pcm(wav)`, `resample(pcm, rate, to)`. A clip is
   `{"pcm": 16-bit mono, "rate", "seconds", "source" (a satellite), "text"?, "language"?}`, or `{"stop": True}`. A card
   takes clips with `async clip(port, clip)` and a live stream with `stream(port, chunk, meta)`; it sends them with
@@ -137,8 +141,21 @@ Through `self.core`:
 - `notify(what, **data)`: tell open panels.
 
 Through `self.domain`: `flow.send(context, self.id, port)` (start a context at an output), `cards` (other cards, used
-only through what they offer: `call`, `current()`, `held()`, `dated()`), `template_values()`.
+only through what they offer: `call`, `current()`, `held()`, `dated()`), `template_values()` (every card's values: the Values panel, a Relay's script).
 
 A context (`Context`) is a document of entries `{id, by, kind, text, tags, time, data, state}`; `context.add(...)`,
 `context.put(...)` (a card's standing text), `context.last(kind)`, `context.tagged(tag)`, `context.answer`,
 `context.stopped`. Kinds: system, note, trailer, said, answer, call, result, signal (a stop), error.
+
+## The Relay's script
+
+A Relay card's setting `script` is Python, checked before it runs (`cards/relay/script.py`, `check()`): only the
+parts listed there (no imports, no `while`, nothing starting with `_`). `@new("name", at="start"|"end",
+before=tag, after=tag, replace=)` above a `def` writes an entry of its own (tag `<relay>.<name>`; the start is a
+`system` entry, the end a `trailer`, before / after a `note`); `@on("tag", …, which="last"|"first"|"all",
+kind=, live=)` runs on entries with a tag (`*` = any card, `"context"` = the whole context once). Names: `context`,
+other cards (`chat.said.text`, `lists.total`, `lists.add_items(...)` for cards in its loop), `now()`, `states()`,
+`stop()`, `output("name")` (the Relay gets that output), `signal()`, `between()`, `re`, `audio`. In a snapshot
+(a stream) an open entry a block works on goes on empty until it is closed; `live=True` runs on every piece.
+Side effects (stop, signals, calls) happen once per turn and entry. The full list with examples is `REFERENCE`
+there (the editor's ? panel; models read it in the setting's help).

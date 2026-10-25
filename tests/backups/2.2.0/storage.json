@@ -11,47 +11,41 @@
      "settings": {
       "ha_agent": true
      },
-     "version": "1.5.0"
+     "version": "1.7.0"
     },
     "charter": {
      "type": "relay",
      "title": "Charter",
      "settings": {
-      "position": "start",
-      "text": "Be kind.",
-      "replace": true
+      "script": "@new(\"charter\")\ndef charter(e):\n    e.text = \"\"\"Be kind.\"\"\"\n"
      },
-     "version": "1.2.0"
+     "version": "2.0.0"
     },
     "time": {
      "type": "relay",
      "title": "Time",
      "settings": {
-      "position": "after",
-      "text": "Local time: {{ now().strftime('%A %Y-%m-%d %H:%M') }}",
-      "replace": false
+      "script": "@new(\"time\", at=\"end\", replace=False)\ndef time(e):\n    e.text = f\"Local time: {now():%A %Y-%m-%d %H:%M}\"\n"
      },
-     "version": "1.2.0"
+     "version": "2.0.0"
     },
     "model": {
      "type": "model",
      "title": "Model",
      "settings": {},
-     "version": "1.3.0"
+     "version": "1.5.0"
     },
     "lists": {
      "type": "lists",
      "title": "Lists",
      "settings": {},
-     "version": "1.1.0"
+     "version": "1.2.0"
     },
     "home": {
      "type": "homeassistant",
      "title": "Home",
-     "settings": {
-      "default": "hidden"
-     },
-     "version": "1.0.0"
+     "settings": {},
+     "version": "1.2.0"
     },
     "calendar": {
      "type": "calendar",
@@ -65,7 +59,7 @@
      "settings": {
       "source": "any"
      },
-     "version": "2.2.0"
+     "version": "2.10.0"
     },
     "cut": {
      "type": "pause_cut",
@@ -73,141 +67,71 @@
      "settings": {
       "pause": 800
      },
-     "version": "2.2.0"
+     "version": "2.10.0"
     },
     "ears": {
      "type": "speech_to_text",
      "title": "Speech to text",
      "settings": {},
-     "version": "2.2.0"
+     "version": "2.10.0"
     },
     "voice": {
      "type": "text_to_speech",
      "title": "Text to speech",
      "settings": {},
-     "version": "2.2.0"
+     "version": "2.10.0"
     },
     "speaker": {
      "type": "speaker",
      "title": "Speaker",
      "settings": {},
-     "version": "2.2.0"
+     "version": "2.10.0"
     },
     "stop_word": {
-     "type": "conditional",
+     "type": "relay",
      "title": "Stop word",
      "settings": {
-      "outputs": [
-       "stop"
-      ],
-      "rules": [
-       {
-        "name": "says stop",
-        "select": {
-         "by": "kind",
-         "value": "said",
-         "which": "newest"
-        },
-        "test": "contains",
-        "value": "stop",
-        "actions": [
-         {
-          "do": "stop"
-         },
-         {
-          "do": "output",
-          "a": "stop"
-         }
-        ]
-       }
-      ]
+      "script": "@on(\"*\", kind=\"said\")\ndef says_stop(e):\n    if \"stop\" in e.text.lower():\n        stop()\n        output(\"stop\")\n"
      },
-     "version": "1.1.0"
+     "version": "2.0.0"
     },
     "wake": {
-     "type": "conditional",
+     "type": "relay",
      "title": "Wake word",
      "settings": {
-      "outputs": [
-       "yes"
-      ],
-      "rules": [
-       {
-        "name": "says computer",
-        "select": {
-         "by": "kind",
-         "value": "said",
-         "which": "newest"
-        },
-        "test": "contains",
-        "value": "computer",
-        "actions": [
-         {
-          "do": "output",
-          "a": "yes"
-         }
-        ]
-       }
-      ]
+      "script": "@on(\"*\", kind=\"said\")\ndef wake_word(e):\n    if any(word in e.text.lower() for word in [\"computer\"]):\n        output(\"yes\")\n"
      },
-     "version": "1.1.0"
+     "version": "2.0.0"
     },
     "follow_up": {
-     "type": "conditional",
+     "type": "relay",
      "title": "Follow-up",
      "settings": {
-      "outputs": [
-       "yes"
-      ],
-      "rules": [
-       {
-        "name": "AAC spoke there less than 10 s ago",
-        "select": {
-         "by": "kind",
-         "value": "said",
-         "which": "newest"
-        },
-        "test": "template",
-        "value": "{{ entry is not none and audio.satellites.get(entry.data.mic, {}).get('seconds', 999999) < 10 and not (entry.text | lower is search('stop|computer')) }}",
-        "actions": [
-         {
-          "do": "output",
-          "a": "yes"
-         }
-        ]
-       }
-      ]
+      "script": "@on(\"*\", kind=\"said\")\ndef follow_up(e):\n    # you started talking less than 6 s after AAC spoke at that satellite (long answers too)\n    spoke = audio.satellites.get(e.data.get(\"mic\"), {}).get(\"seconds\", 999999)\n    said_for = e.data.get(\"seconds\") or 0\n    named = any(word in e.text.lower() for word in [\"stop\", \"computer\"])\n    if not e.data.get(\"aac_spoke\") and spoke - said_for < 6 and not named:\n        output(\"yes\")\n"
      },
-     "version": "1.1.0"
+     "version": "2.0.0"
     },
     "spoken": {
      "type": "relay",
      "title": "Spoken turn",
      "settings": {
-      "position": "after",
-      "replace": false,
-      "text": "You are heard and answer aloud: one or two short sentences, plain words, no lists."
+      "script": "@new(\"rules\", at=\"end\", replace=False)\ndef rules(e):\n    e.text = \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\"\n"
      },
-     "version": "1.2.0"
+     "version": "2.0.0"
     },
     "followed": {
      "type": "relay",
      "title": "Follow-up turn",
      "settings": {
-      "position": "after",
-      "replace": false,
-      "text": "You are heard and answer aloud: one or two short sentences, plain words, no lists.",
-      "add_tag": "ears.heard",
-      "add_text": "(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) ",
-      "add_where": "start"
+      "script": "@new(\"rules\", at=\"end\", replace=False)\ndef rules(e):\n    e.text = \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\"\n\n@on(\"ears.heard\")\ndef maybe_not_for_me(e):\n    e.text = \"(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) \" + e.text\n"
      },
-     "version": "1.2.0"
+     "version": "2.0.0"
     },
     "answer": {
      "type": "relay",
      "title": "Answer",
      "settings": {},
-     "version": "1.2.0"
+     "version": "2.0.0"
     }
    },
    "wires": [
@@ -397,45 +321,45 @@
   "key": "aac2.card.assistant.chat",
   "data": {
    "chats": {
-    "84df148aac": {
-     "id": "84df148aac",
+    "88a37ace7b": {
+     "id": "88a37ace7b",
      "title": "what time is it?",
      "created": "2026-01-01T12:00:00+00:00",
      "updated": "2026-01-01T12:00:00+00:00",
      "entries": [
       {
-       "id": "0511e43514",
+       "id": "1840984685",
        "by": "chat",
        "kind": "said",
        "text": "what time is it?",
        "tags": [
         "chat.said"
        ],
-       "time": "2026-10-24T12:59:46.075424+00:00",
+       "time": "2026-10-25T13:42:42.271437+00:00",
        "data": {},
        "state": "closed"
       },
       {
-       "id": "a69fed08cc",
+       "id": "f0b911c1aa",
        "by": "time",
        "kind": "trailer",
-       "text": "Local time: Saturday 2026-10-24 05:59",
+       "text": "Local time: Sunday 2026-10-25 06:42",
        "tags": [
-        "time.text"
+        "time.time"
        ],
-       "time": "2026-10-24T12:59:46.077160+00:00",
+       "time": "2026-10-25T13:42:42.272622+00:00",
        "data": {},
        "state": "closed"
       },
       {
-       "id": "c6cc6a8df9",
+       "id": "347d1ff90b",
        "by": "model",
        "kind": "answer",
        "text": "It is noon.",
        "tags": [
         "model.answer"
        ],
-       "time": "2026-10-24T12:59:46.077634+00:00",
+       "time": "2026-10-25T13:42:42.273194+00:00",
        "data": {},
        "state": "closed"
       }
@@ -444,7 +368,7 @@
       {
        "role": "user",
        "text": "what time is it?",
-       "time": "2026-10-24T12:59:46.075424+00:00"
+       "time": "2026-10-25T13:42:42.271437+00:00"
       }
      ]
     }
@@ -458,27 +382,27 @@
   "data": {
    "lists": [
     {
-     "id": "c4c68abf8f",
+     "id": "4adade65d3",
      "name": "Shopping",
      "view": "checklist",
-     "created": "2026-10-24T12:59:46.079234+00:00",
-     "updated": "2026-10-24T12:59:46.079251+00:00",
+     "created": "2026-10-25T13:42:42.275309+00:00",
+     "updated": "2026-10-25T13:42:42.275326+00:00",
      "items": [
       {
-       "id": "619c2db8ff",
+       "id": "f08b673849",
        "text": "Oat milk",
        "done": false,
        "fields": {},
-       "created": "2026-10-24T12:59:46.079243+00:00",
-       "updated": "2026-10-24T12:59:46.079243+00:00"
+       "created": "2026-10-25T13:42:42.275318+00:00",
+       "updated": "2026-10-25T13:42:42.275318+00:00"
       },
       {
-       "id": "6461e1322f",
+       "id": "988d15a83d",
        "text": "Coffee",
        "done": false,
        "fields": {},
-       "created": "2026-10-24T12:59:46.079248+00:00",
-       "updated": "2026-10-24T12:59:46.079248+00:00"
+       "created": "2026-10-25T13:42:42.275322+00:00",
+       "updated": "2026-10-25T13:42:42.275322+00:00"
       }
      ]
     }
@@ -492,7 +416,7 @@
   "data": {
    "events": [
     {
-     "uid": "8175b83a65",
+     "uid": "d52a3dab68",
      "summary": "Dentist",
      "start": "2026-11-02T10:00",
      "end": null,
@@ -511,13 +435,26 @@
      "id": "m_big",
      "name": "Big",
      "base_url": "http://llm.local:8080/v1",
-     "model": "big"
+     "model": "big",
+     "server": "s_llm_local_8080",
+     "api_key": null
     },
     {
      "id": "m_small",
      "name": "Small",
      "base_url": "http://llm.local:8080/v1",
-     "model": "small"
+     "model": "small",
+     "server": "s_llm_local_8080",
+     "api_key": null
+    }
+   ],
+   "benches": {},
+   "servers": [
+    {
+     "name": "llm.local:8080",
+     "base_url": "http://llm.local:8080/v1",
+     "api_key": null,
+     "id": "s_llm_local_8080"
     }
    ],
    "domains": [
@@ -541,8 +478,8 @@
     ]
    },
    "satellite_app": {
-    "user_id": "e8b6eda8adc746c5b6a6dcc19c999973",
-    "refresh_token_id": "570ef50d62304b05ad1f9ca7b783c0ed"
+    "user_id": "1579159e99444d30880af983b2786844",
+    "refresh_token_id": "e0e2f38430134ae896eff068383bce61"
    }
   }
  }

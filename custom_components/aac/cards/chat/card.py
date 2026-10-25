@@ -286,7 +286,7 @@ class Chat(Card):
                 return {"error": "no such chat (see chats)"}
             if chat.get("archived"):
                 return {"error": "that chat is archived (the owner can restore it)"}
-            if context is None:  # not from a turn (a Conditional's action without one): it is the current chat now
+            if context is None:  # not from a turn (a Relay's script without one): it is the current chat now
                 await self._make_current(chat["id"])
             else:
                 self._switch[context.id] = chat["id"]  # done when this turn comes back finished

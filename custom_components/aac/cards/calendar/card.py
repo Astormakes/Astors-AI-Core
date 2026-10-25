@@ -1,6 +1,6 @@
 """Calendar: its own entries, plus the dated entries of cards that offer them (`dated()`: a Lists card's entries with a
 field when/date/due). Home Assistant shows it as AAC's calendar (`calendar.aac_calendar`, through the core's
-"ha_calendar" channel); a model or a Conditional card uses its functions."""
+"ha_calendar" channel); a model or a Relay's script uses its functions."""
 
 from __future__ import annotations
 

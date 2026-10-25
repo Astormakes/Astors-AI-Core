@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-25) – 2.1.48, live on the owner's HA
+## Current state (2026-10-25) – 2.2.0 (Relay scripts), being deployed to the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -15,6 +15,21 @@ the owner wires them (no automatic wiring), the message is a document of entries
   (RX 7800 XT) Gemma 4 12B as `qwen3-8b`; Qwen and Ornith dropped by the owner. The server froze 4× that day (the
   7800 XT's runtime power management copied VRAM into RAM): fixed with `amdgpu.runpm=0` (CT 110 notes).
 
+- **2026-10-25 (2.2.0): Relay scripts (Next 6).** Relay and Conditional became one card, the Relay, with a script in
+  Python (owner's design, talked through first): `@new("name", at=/before=/after=)` writes an entry of its own,
+  `@on("tag", which=, kind=, live=)` works on entries (`*.said` any card, `"context"` the whole context); `chat.said.text`,
+  `context`, card values and functions of cards in its loop, `now()`, `stop()`, `output("x")` (the output appears).
+  Real Python syntax on purpose (owner: models, small ones too, must edit it naturally); checked with `ast` (no
+  imports / while / `_`), runs in a worker thread, card calls go back to HA's loop. Streams: untouched entries pass,
+  touched ones are held until closed (`live=True`: every piece); side effects once per turn. Everything lives in the
+  card folder `cards/relay/` (card.py, script.py, editor.js: owner: every card can be removed, the core stays light);
+  the core only got a generic setting type `element` (a card brings its own editor; spec/cards.md). Editor: colours,
+  line numbers, suggestions, Wide, ? panel (reference with examples, cache and stream notes, the domain's tags,
+  values, functions), Last run, Simple view (rows that write the code). The Node editor's `types` now shows each
+  setting's help (models read the script reference there). Old Relay settings and Conditionals were converted once
+  by a scratchpad script on the stored setup (no converter in AAC); the test backup is now 2.2.0. docs/v2 page 2 was
+  corrected against the code (no Voice chat, Pool or Conditional cards any more; every card listed).
+
 - **Core** (`core.py`): the model pool (shared by all domains, `models.py`: OpenAI-compatible client, streaming, tool
   calls, a model that does not answer is skipped a minute); domains (one runs at a time; clone, switch); each domain
   keeps its cards, wires, positions, Undo (20 steps) and 3 save slots on the server; each card's data in its own store
@@ -22,8 +37,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
 - **Flow** (`flow.py`): round outputs copy, square ones choose; a card's tools are the cards wired out of it and back
   in (functions called directly, call + result written into the message); the newest message per output is kept for
   the monitor; `flow` events pulse the wires.
-- **Cards** (`cards/`): Chat, Model, Pool, Relay (nothing / start / note / after, replace tick, add text to tagged
-  entries), Conditional (if … then: edit text, tag, call a wired card's function, stop, pick an output), Buffer, Lists
+- **Cards** (`cards/`): Chat, Model, Relay (a Python script, 2.2.0), Buffer, Lists
   (with edit and undo of a removal), Home Assistant (own access list: hidden / read / full).
 - **More cards (alpha.3):** Schedule, HA event, Heartbeat (start a chain, keep a log page; Schedule entries can be
   added by a model), HA Assist (AAC is HA's conversation agent again, entity `conversation.aac_qwen3_8b`), Decide,
@@ -265,7 +279,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
    speaks); look at echo cancellation (the speaker's own sound filtered out of the microphone: WebRTC AEC in the
    satellite; the Poly may do it in hardware); Bluetooth may add delay.
 5. ~~Editable instructions for models~~ **done (2.1.18).**
-6. **Relay and Conditional UI** (later). (2.1.40, owner: the Nodes page's side panels fold away: arrows at the grid's edges, a click on a card opens the settings; on a phone they lie over the grid, Back closes the right one, then the left, then goes to the last opened chat.)
+6. ~~Relay and Conditional UI~~ **done (2.2.0): Relay scripts** (see Current state). (2.1.40, owner: the Nodes page's side panels fold away: arrows at the grid's edges, a click on a card opens the settings; on a phone they lie over the grid, Back closes the right one, then the left, then goes to the last opened chat.)
 7. ~~Card folders~~ **done (2.1.1):** `chat/card.py` + `page.js` (+ `view.js`); old flat files go when AAC starts.
 8. ~~Card files reload while AAC runs~~ **done (2.1.23).**
 9. **Tool menus (v0's idea)** (owner): instead of every function at once, a model sees one entry per card and opens it

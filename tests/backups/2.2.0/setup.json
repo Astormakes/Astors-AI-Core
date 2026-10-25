@@ -8,47 +8,41 @@
    "settings": {
     "ha_agent": true
    },
-   "version": "1.5.0"
+   "version": "1.7.0"
   },
   "charter": {
    "type": "relay",
    "title": "Charter",
    "settings": {
-    "position": "start",
-    "text": "Be kind.",
-    "replace": true
+    "script": "@new(\"charter\")\ndef charter(e):\n    e.text = \"\"\"Be kind.\"\"\"\n"
    },
-   "version": "1.2.0"
+   "version": "2.0.0"
   },
   "time": {
    "type": "relay",
    "title": "Time",
    "settings": {
-    "position": "after",
-    "text": "Local time: {{ now().strftime('%A %Y-%m-%d %H:%M') }}",
-    "replace": false
+    "script": "@new(\"time\", at=\"end\", replace=False)\ndef time(e):\n    e.text = f\"Local time: {now():%A %Y-%m-%d %H:%M}\"\n"
    },
-   "version": "1.2.0"
+   "version": "2.0.0"
   },
   "model": {
    "type": "model",
    "title": "Model",
    "settings": {},
-   "version": "1.3.0"
+   "version": "1.5.0"
   },
   "lists": {
    "type": "lists",
    "title": "Lists",
    "settings": {},
-   "version": "1.1.0"
+   "version": "1.2.0"
   },
   "home": {
    "type": "homeassistant",
    "title": "Home",
-   "settings": {
-    "default": "hidden"
-   },
-   "version": "1.0.0"
+   "settings": {},
+   "version": "1.2.0"
   },
   "calendar": {
    "type": "calendar",
@@ -62,7 +56,7 @@
    "settings": {
     "source": "any"
    },
-   "version": "2.2.0"
+   "version": "2.10.0"
   },
   "cut": {
    "type": "pause_cut",
@@ -70,141 +64,71 @@
    "settings": {
     "pause": 800
    },
-   "version": "2.2.0"
+   "version": "2.10.0"
   },
   "ears": {
    "type": "speech_to_text",
    "title": "Speech to text",
    "settings": {},
-   "version": "2.2.0"
+   "version": "2.10.0"
   },
   "voice": {
    "type": "text_to_speech",
    "title": "Text to speech",
    "settings": {},
-   "version": "2.2.0"
+   "version": "2.10.0"
   },
   "speaker": {
    "type": "speaker",
    "title": "Speaker",
    "settings": {},
-   "version": "2.2.0"
+   "version": "2.10.0"
   },
   "stop_word": {
-   "type": "conditional",
+   "type": "relay",
    "title": "Stop word",
    "settings": {
-    "outputs": [
-     "stop"
-    ],
-    "rules": [
-     {
-      "name": "says stop",
-      "select": {
-       "by": "kind",
-       "value": "said",
-       "which": "newest"
-      },
-      "test": "contains",
-      "value": "stop",
-      "actions": [
-       {
-        "do": "stop"
-       },
-       {
-        "do": "output",
-        "a": "stop"
-       }
-      ]
-     }
-    ]
+    "script": "@on(\"*\", kind=\"said\")\ndef says_stop(e):\n    if \"stop\" in e.text.lower():\n        stop()\n        output(\"stop\")\n"
    },
-   "version": "1.1.0"
+   "version": "2.0.0"
   },
   "wake": {
-   "type": "conditional",
+   "type": "relay",
    "title": "Wake word",
    "settings": {
-    "outputs": [
-     "yes"
-    ],
-    "rules": [
-     {
-      "name": "says computer",
-      "select": {
-       "by": "kind",
-       "value": "said",
-       "which": "newest"
-      },
-      "test": "contains",
-      "value": "computer",
-      "actions": [
-       {
-        "do": "output",
-        "a": "yes"
-       }
-      ]
-     }
-    ]
+    "script": "@on(\"*\", kind=\"said\")\ndef wake_word(e):\n    if any(word in e.text.lower() for word in [\"computer\"]):\n        output(\"yes\")\n"
    },
-   "version": "1.1.0"
+   "version": "2.0.0"
   },
   "follow_up": {
-   "type": "conditional",
+   "type": "relay",
    "title": "Follow-up",
    "settings": {
-    "outputs": [
-     "yes"
-    ],
-    "rules": [
-     {
-      "name": "AAC spoke there less than 10 s ago",
-      "select": {
-       "by": "kind",
-       "value": "said",
-       "which": "newest"
-      },
-      "test": "template",
-      "value": "{{ entry is not none and audio.satellites.get(entry.data.mic, {}).get('seconds', 999999) < 10 and not (entry.text | lower is search('stop|computer')) }}",
-      "actions": [
-       {
-        "do": "output",
-        "a": "yes"
-       }
-      ]
-     }
-    ]
+    "script": "@on(\"*\", kind=\"said\")\ndef follow_up(e):\n    # you started talking less than 6 s after AAC spoke at that satellite (long answers too)\n    spoke = audio.satellites.get(e.data.get(\"mic\"), {}).get(\"seconds\", 999999)\n    said_for = e.data.get(\"seconds\") or 0\n    named = any(word in e.text.lower() for word in [\"stop\", \"computer\"])\n    if not e.data.get(\"aac_spoke\") and spoke - said_for < 6 and not named:\n        output(\"yes\")\n"
    },
-   "version": "1.1.0"
+   "version": "2.0.0"
   },
   "spoken": {
    "type": "relay",
    "title": "Spoken turn",
    "settings": {
-    "position": "after",
-    "replace": false,
-    "text": "You are heard and answer aloud: one or two short sentences, plain words, no lists."
+    "script": "@new(\"rules\", at=\"end\", replace=False)\ndef rules(e):\n    e.text = \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\"\n"
    },
-   "version": "1.2.0"
+   "version": "2.0.0"
   },
   "followed": {
    "type": "relay",
    "title": "Follow-up turn",
    "settings": {
-    "position": "after",
-    "replace": false,
-    "text": "You are heard and answer aloud: one or two short sentences, plain words, no lists.",
-    "add_tag": "ears.heard",
-    "add_text": "(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) ",
-    "add_where": "start"
+    "script": "@new(\"rules\", at=\"end\", replace=False)\ndef rules(e):\n    e.text = \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\"\n\n@on(\"ears.heard\")\ndef maybe_not_for_me(e):\n    e.text = \"(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) \" + e.text\n"
    },
-   "version": "1.2.0"
+   "version": "2.0.0"
   },
   "answer": {
    "type": "relay",
    "title": "Answer",
    "settings": {},
-   "version": "1.2.0"
+   "version": "2.0.0"
   }
  },
  "wires": [

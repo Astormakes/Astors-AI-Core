@@ -307,7 +307,7 @@ class SpeechToText(Card):
     ports_help = {"in": "audio clips (e.g. speech from an Audio clipper)",
                   "out": "round: every wire gets each heard line as a new context (data: mic = the satellite, mic_name, "
                          "language, aac_spoke = it began while AAC spoke there: mostly AAC's own voice), e.g. into several "
-                         "Conditionals side by side"}
+                         "Relays side by side (Stop word, Wake word)"}
     tags = {"heard": "what was said (data: the satellite)"}
     settings_schema = {"language": {"type": "text", "title": "Language (empty: the home's)", "default": "",
                                     "help": "A code like de. Empty: the home's languages from the Audio page (one: that one; "

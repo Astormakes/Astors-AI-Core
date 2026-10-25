@@ -1,7 +1,7 @@
 """Cards (docs/v2 page 2): every behaviour of AAC is a card the owner can see, wire, change and remove.
 
 A card type declares its ports, settings, the tags it writes and its functions (exactly documented: models call
-them as tools, a Conditional card calls them as actions). A card instance lives in one domain and owns its data.
+them as tools, a Relay's script calls them). A card instance lives in one domain and owns its data.
 
 Every card type is a file or a folder in `<config>/aac/cards/` (spec/cards.md). AAC's own cards (next to this file)
 are copied there unless a newer version is there (each has a VERSION). Cards only use the core's
@@ -32,7 +32,7 @@ INSTRUCTIONS = {"type": "longtext", "title": "Instructions for models", "default
                         "this text, under 'About your tools'. Say when and how to use it, e.g. 'Look here before you "
                         "say you do not know something.'"}
 OFFERS = {"type": "bool", "title": "Offers its functions to models in its loop", "default": True, "permission": True,
-          "help": "A Model (or a Conditional's call action) whose output comes back to it through this card, straight or "
+          "help": "A Model (or a Relay's script) whose output comes back to it through this card, straight or "
                   "through other cards, can use these functions, with their descriptions and this card's id. Off: it "
                   "stays out of their tools."}
 CATEGORIES = ["In and out", "Text", "Logic", "Models", "Data", "Home Assistant", "Audio", "Other"]
@@ -50,6 +50,10 @@ def register(cls: type[Card]) -> type[Card]:
     cls.ui_url = f"{UI_URL}/{where}?v={cls.version}" if cls.ui and page.exists() else None
     has_view = cls.view and file.name == "card.py" and (file.parent / "view.js").exists()
     cls.view_url = f"{UI_URL}/{file.parent.name}/view.js?v={cls.version}" if has_view else None
+    if any(f.get("type") == "element" for f in cls.settings_schema.values()):  # a setting with the card's own editor
+        folder = file.parent.name if file.name == "card.py" else None
+        cls.settings_schema = {k: {**f, "url": f"{UI_URL}/{folder}/{f['file']}?v={cls.version}"} if f.get("type") == "element" and folder else f
+                               for k, f in cls.settings_schema.items()}
     if cls.functions and "offers" not in cls.settings_schema:  # every card with functions: kept out of tools, told about
         cls.settings_schema = {**cls.settings_schema, "offers": {**OFFERS, "default": cls.offers}, "instructions": INSTRUCTIONS}
     CARD_TYPES[cls.type] = cls
@@ -132,7 +136,7 @@ class Card:
         return None
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
-        """One of its functions (a model's tool call, a Conditional's action)."""
+        """One of its functions (a model's tool call, a Relay's script)."""
         raise ValueError(f"{self.name} has no function {function}")
 
     async def stop(self, stop: dict[str, Any] | None = None) -> bool:
@@ -212,7 +216,7 @@ def tool_spec(card: Card, name: str, spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_all(folder: str) -> None:
-    """Load every card type from the cards folder (`<config>/aac/cards/`): a card is a file (`relay.py`) or, when it
+    """Load every card type from the cards folder (`<config>/aac/cards/`): a card is a file (`decide.py`) or, when it
     has more files, a folder (`chat/card.py` with `page.js`, `view.js` …). AAC's own cards are copied there first unless
     a newer version is there (a download); runs in the executor (it reads and writes files). One that fails is logged;
     the others load."""

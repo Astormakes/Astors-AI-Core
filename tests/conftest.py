@@ -10,6 +10,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.aac.const import DOMAIN
+from custom_components.aac.defaults import new_text
 from homeassistant.core import HomeAssistant
 
 BASE_URL = "http://llm.local:8080/v1"
@@ -55,7 +56,7 @@ async def setup_aac(hass: HomeAssistant, entry: MockConfigEntry):
     core = entry.runtime_data
     for model_id, name in (("m_big", "big"), ("m_small", "small")):  # two models on the test server, a short charter
         core.save_model({"id": model_id, "name": name.title(), "base_url": BASE_URL, "model": name})
-    await core.domain.update_card("charter", settings={"text": "Be kind."})
+    await core.domain.update_card("charter", settings={"script": new_text("charter", "Be kind.")})
     return core
 
 

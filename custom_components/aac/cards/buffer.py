@@ -1,5 +1,5 @@
 """Buffer: keeps the last N entries of the tags you choose (e.g. the room's last heard lines) and writes them into
-each context as one entry; a model or a Conditional can read and change it through its functions."""
+each context as one entry; a model or a Relay's script can read and change it through its functions."""
 
 from __future__ import annotations
 

@@ -33,7 +33,7 @@ class HomeAssistantCard(Card):
     type = "homeassistant"
     title = "Home Assistant"
     category = "Home Assistant"
-    help = ("Home Assistant for a model or a Conditional card: find entities, read their state, switch them; only what "
+    help = ("Home Assistant for a model or a Relay's script: find entities, read their state, switch them; only what "
             "its access list allows (hidden, read-only, full).")
     settings_schema = {
         "levels": {"type": "access", "title": "Access per entity", "default": {}, "permission": True,

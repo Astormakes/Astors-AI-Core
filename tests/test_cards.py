@@ -8,15 +8,20 @@ from custom_components.aac.context import Context
 from .conftest import setup_aac
 
 
-async def test_conditional_edits_tags_calls_and_routes(hass: HomeAssistant, mock_entry):
+async def test_relay_script_edits_tags_calls_and_routes(hass: HomeAssistant, mock_entry):
     """If the newest said entry contains 'computer': replace, tag, call a wired Buffer, go to output 'aac'."""
     core = await setup_aac(hass, mock_entry)
     domain = core.domain
-    cond = await domain.add_card("conditional", "Check", {"outputs": ["aac"], "rules": [{
-        "name": "for me", "select": {"by": "kind", "value": "said", "which": "newest"}, "test": "contains", "value": "computer",
-        "actions": [{"do": "replace", "a": "computer,", "b": ""}, {"do": "trim"}, {"do": "tag", "a": "addressed"},
-                    {"do": "call", "card": "room", "function": "add", "args": {"text": "{text}"}},
-                    {"do": "output", "a": "aac"}]}]})
+    check = await domain.add_card("relay", "Check", {"script": '''
+@on("*", kind="said")
+def for_me(e):
+    if "computer" in e.text.lower():
+        e.text = e.text.replace("Computer,", "").strip()
+        e.add_tag("addressed")
+        room.add(e.text)
+        output("aac")
+'''})
+    assert check.ports()[1] == {"out": "text", "aac": "text"} and not check.summary()["problems"]
     buffer = await domain.add_card("buffer", "Room", {"position": "nothing"})
     yes = await domain.add_card("relay", "Yes")
     no = await domain.add_card("relay", "No")
@@ -24,13 +29,75 @@ async def test_conditional_edits_tags_calls_and_routes(hass: HomeAssistant, mock
                       {"from": "check.out", "to": "room.in"}, {"from": "room.out", "to": "check.in"}])
     context = Context()
     context.add("chat", "said", "Computer, lights on")
-    route = await cond.handle(context, "in", Step(domain.flow, cond, "in", context))
+    route = await check.handle(context, "in", Step(domain.flow, check, "in", context))
     said = context.last("said")
     assert route == [("aac", "yes")] and said["text"] == "lights on" and "user.addressed" in said["tags"]
-    assert buffer.data["lines"] == ["lights on"]
+    assert buffer.data["lines"] == ["lights on"] and context.last("call")["data"]["function"] == "room.add"
     other = Context()
     other.add("chat", "said", "hello")
-    assert await cond.handle(other, "in", Step(domain.flow, cond, "in", other)) == [("out", "no")]  # the buffer is a tool
+    assert await check.handle(other, "in", Step(domain.flow, check, "in", other)) == [("out", "no")]  # the buffer is a tool
+
+
+async def test_relay_new_texts_and_places(hass: HomeAssistant, mock_entry):
+    """@new at the start (replaced in place), at the end (a new one each turn), before a tag; other tags read."""
+    core = await setup_aac(hass, mock_entry)
+    relay = await core.domain.add_card("relay", "Texts", {"script": '''
+@new("role")
+def role(e):
+    e.text = """You are AAC."""
+
+@new("time", at="end", replace=False)
+def time(e):
+    e.text = f"Asked: {chat.said.text}"
+
+@new("room", before="chat.said")
+def room(e):
+    e.text = "In the kitchen."
+'''})
+    context = Context()
+    context.add("chat", "said", "hi", ["said"])
+    await relay.handle(context, "in", None)
+    context.add("chat", "said", "and?", ["said"])
+    await relay.handle(context, "in", None)
+    assert [(e["kind"], e["text"]) for e in context.entries] == [
+        ("system", "You are AAC."), ("said", "hi"), ("trailer", "Asked: hi"), ("note", "In the kitchen."), ("said", "and?"),
+        ("trailer", "Asked: and?")]
+    assert {"texts.role", "texts.time", "texts.room"} <= {t["tag"] for t in core.domain.tag_pool()}
+    assert await relay.call("text", {}) == "You are AAC.\n\nAsked:"  # as a tool: its texts now
+
+
+async def test_relay_script_problems(hass: HomeAssistant, mock_entry):
+    """What is not allowed is named with its line; a mistake while running leaves the context as it was."""
+    core = await setup_aac(hass, mock_entry)
+    relay = await core.domain.add_card("relay", "Bad", {"script": "import os\n@on(\"*\")\ndef x(e):\n    e.__class__\n"})
+    problems = relay.summary()["problems"]
+    assert any("line 1: import" in p for p in problems) and any("line 4: .__class__" in p for p in problems)
+    relay = await core.domain.update_card(relay.id, settings={"script": '@on("*")\ndef x(e):\n    e.text = 1 / 0\n'})
+    context = Context()
+    context.add("chat", "said", "hi")
+    await relay.handle(context, "in", None)
+    assert context.last("said")["text"] == "hi" and "ZeroDivisionError" in relay.last_run["problems"][0]
+    assert (await relay.ui_call("check", {"script": "while True:\n    pass"}))["problems"] == ["line 1: while (use for) is not allowed here",
+                                                                                         "line 1: at the top only def blocks and x = … (put it inside a def)"]
+
+
+async def test_relay_holds_a_growing_entry(hass: HomeAssistant, mock_entry):
+    """A snapshot: an open entry a block works on is held back (its text empty); others pass; live blocks see it."""
+    core = await setup_aac(hass, mock_entry)
+    relay = await core.domain.add_card("relay", "Clean", {"script": '@on("model.answer")\ndef clean(e):\n    e.text = e.text.upper()\n'})
+    context = Context()
+    context.add("chat", "said", "hi")
+    answer = context.add("model", "answer", "Hel", ["answer"])
+    answer["state"] = "open"
+    await relay.progress(context, "in")
+    assert answer["text"] == "" and context.last("said")["text"] == "hi"
+    answer["text"], answer["state"] = "Hello", "closed"
+    await relay.handle(context, "in", None)
+    assert answer["text"] == "HELLO"
+    live = await core.domain.add_card("relay", "Live", {"script": '@on("model.answer", live=True)\ndef words(e):\n    output("seen")\n'})
+    answer["text"], answer["state"] = "Hel", "open"
+    assert await live.progress(context, "in") == []  # nothing wired to seen; it was picked
+    assert live.ports()[1] == {"out": "text", "seen": "text"}
 
 
 async def test_buffer_keeps_and_writes(hass: HomeAssistant, mock_entry):
@@ -76,28 +143,24 @@ async def test_home_assistant_card_access(hass: HomeAssistant, mock_entry):
     assert "may not be switched" in refused["error"]
 
 
-async def test_card_values_in_templates(hass: HomeAssistant, mock_entry, aioclient_mock):
-    """A Relay's template reads other cards' values: {{ lists.total }}, {{ cards['lists'].lists }}."""
-    core = await setup_aac(hass, mock_entry)
-    lists = core.domain.cards["lists"]
-    await lists.call("add_items", {"list": "Shopping", "items": ["milk", "eggs"]})
-    relay = await core.domain.add_card("relay", "Counts", {"text": "{{ lists.total }} open; {{ cards['lists'].lists | join(',') }}"})
-    assert relay.render() == f"{lists.current()['total']} open; {','.join(lists.current()['lists'])}" and "Shopping" in relay.render()
-
-
-async def test_template_test_reads_when_aac_last_spoke(hass: HomeAssistant, mock_entry, aioclient_mock):
-    """A Conditional's template test sees the core's last-spoke times (overall and per satellite) and the entry."""
+async def test_relay_reads_values_and_when_aac_last_spoke(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """A script reads other cards' values (lists.total) and the core's last-spoke times per satellite."""
     import time
 
     core = await setup_aac(hass, mock_entry)
+    lists = core.domain.cards["lists"]
+    await lists.call("add_items", {"list": "Shopping", "items": ["milk", "eggs"]})
     core.audio.settings["known"] = [{"id": "kitchen", "name": "Kitchen"}, {"id": "office", "name": "Office"}]
     core.audio._spoke = {"kitchen": time.time() - 4, "office": time.time() - 60}
-    card = await core.domain.add_card("conditional", "Follow-up", {"outputs": ["yes"], "rules": [
-        {"select": {"by": "kind", "value": "said"}, "test": "template",
-         "value": "{{ audio.satellites[entry.data.mic].seconds < 10 }}", "actions": [{"do": "output", "a": "yes"}]}]})
-    for mic, port in (("kitchen", "yes"), ("office", "out")):
+    card = await core.domain.add_card("relay", "Follow-up", {"script": '''
+@on("*", kind="said")
+def soon(e):
+    e.text = f"{lists.total} open"
+    if audio.satellites[e.data["mic"]].seconds < 10:
+        output("yes")
+'''})
+    for mic, picked in (("kitchen", True), ("office", False)):
         context = Context(origin="ears")
         context.add("ears", "said", "and tomorrow?", mic=mic)
-        assert await card.handle(context, "in", Step(core.domain.flow, card, "in", context)) == []  # nothing wired
-        assert card._template(card.settings["rules"][0], [context.last("said")], context) == (port == "yes")
-    assert core.audio.spoken()["last"]["satellite"] == "kitchen"
+        await card.handle(context, "in", Step(core.domain.flow, card, "in", context))
+        assert card.last_run["outputs"] == (["yes"] if picked else ["out"]) and context.text == f"{lists.current()['total']} open"

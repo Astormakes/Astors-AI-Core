@@ -20,7 +20,7 @@ Manual install: copy `custom_components/aac` into your HA `config/custom_compone
 
 ## Cards and wires
 
-The **Nodes** page is a grid of cards: a Chat, a Model, a Relay, a Conditional, Lists, Memory, a Calendar, Home
+The **Nodes** page is a grid of cards: a Chat, a Model, a Relay (a small Python script), Lists, Memory, a Calendar, Home
 Assistant, the audio cards and more. A solid wire pushes a context (a document of entries) from one card to the next;
 a dotted wire with triangles lets a card read what another one provides. Every card is a Python file in
 `<config>/aac/cards/`, AAC's own ones included, so any card can be replaced or added: see

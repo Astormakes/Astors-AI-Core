@@ -300,11 +300,11 @@ async def test_undo_with_phrases_makes_every_card(hass, mock_entry):
     await d.update_card("cut", settings={"phrase": 300})
     await hass.async_block_till_done()
     joiners = [c.id for c in d.cards.values() if c.type == "phrase_joiner"]
-    await d.update_card("follow_up", settings={"rules": []})  # one more change, then Undo
+    await d.update_card("follow_up", settings={"script": ""})  # one more change, then Undo
     assert await d.undo_last()
     await hass.async_block_till_done()
     assert set(d.export()["cards"]) == set(d.cards)  # every card made
-    assert [c.id for c in d.cards.values() if c.type == "phrase_joiner"] == joiners and d.cards["follow_up"].settings["rules"]
+    assert [c.id for c in d.cards.values() if c.type == "phrase_joiner"] == joiners and d.cards["follow_up"].settings["script"]
 
 
 async def test_microphone_mutes_or_keeps_listening_while_aac_speaks(hass, mock_entry):

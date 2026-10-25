@@ -1,5 +1,5 @@
 """Lists: its own lists (shopping, projects, ideas …), entries with fields and sub-entries. A page in the sidebar;
-its functions serve models (as tools) and Conditional cards alike."""
+its functions serve models (as tools) and Relay scripts alike."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class Lists(Card):
     type = "lists"
     title = "Lists"
     category = "Data"
-    help = "Lists of anything (shopping, projects, ideas), with a page in the sidebar; a model or a Conditional card uses its functions."
+    help = "Lists of anything (shopping, projects, ideas), with a page in the sidebar; a model or a Relay's script uses its functions."
     ui = True
     keeps_data = True
     values = {"lists": "the names of its lists", "open": "open entries per list (name → count)", "total": "open entries in all lists"}

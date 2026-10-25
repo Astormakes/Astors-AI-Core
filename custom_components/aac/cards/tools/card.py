@@ -148,7 +148,7 @@ class Web(Card):
     type = "web"
     title = "Web"
     category = "Data"
-    help = "Search the web and read pages, for a model (as tools) or a Conditional card."
+    help = "Search the web and read pages, for a model (as tools) or a Relay's script."
     settings_schema = {
         "searx": {"type": "text", "title": "SearXNG address (optional)", "default": "",
                   "help": "e.g. http://192.168.1.20:8888; empty: DuckDuckGo's plain page."},
@@ -195,7 +195,7 @@ class ModelServers(Card):
     title = "Model servers"
     category = "Models"
     help = ("The servers behind AAC's models and what they offer now. A llama-server in router mode serves many models "
-            "and loads one at a time: a model or a Conditional card can see them and switch (the same as the Models page).")
+            "and loads one at a time: a model or a Relay's script can see them and switch (the same as the Models page).")
     functions = {
         "servers": {"help": "Every model server: AAC's models on it (and which server model each uses), and what it offers "
                             "with each one's state (loaded, unloaded, loading, downloading)."},

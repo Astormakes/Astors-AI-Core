@@ -16,7 +16,17 @@ CHARTER = """Charter (the owner's values; you follow it and never change it):
 - My decisions stay mine: you advise, I decide. Ask before anything that cannot be undone or leaves the house.
 - What you learn about me stays private.
 - Limits are not puzzles: if a rule stops you, say so instead of working around it."""
-TIME = "Local time: {{ now().strftime('%A %Y-%m-%d %H:%M') }}"
+TIME = """@new("time", at="end", replace=False)
+def time(e):
+    e.text = f"Local time: {now():%A %Y-%m-%d %H:%M}"
+"""
+
+
+def new_text(name: str, text: str, at: str = "start") -> str:
+    """A Relay script that writes one text."""
+    where = "" if at == "start" else ', at="end", replace=False'
+    return f'@new("{name}"{where})\ndef {name}(e):\n    e.text = """{text}"""\n'
+
 
 
 async def async_first_start(core: Core) -> None:
@@ -39,8 +49,8 @@ async def build_default(domain) -> None:
     Assist conversations land in the Chat (conversation.py)."""
     add = domain.add_card
     await add("chat", "Chat", {"ha_agent": True}, card_id="chat", at={"x": 0, "y": 0})
-    await add("relay", "Charter", {"position": "start", "text": CHARTER, "replace": True}, card_id="charter", at={"x": 290, "y": 0})
-    await add("relay", "Time", {"position": "after", "text": TIME, "replace": False}, card_id="time", at={"x": 580, "y": 0})
+    await add("relay", "Charter", {"script": new_text("charter", CHARTER)}, card_id="charter", at={"x": 290, "y": 0})
+    await add("relay", "Time", {"script": TIME}, card_id="time", at={"x": 580, "y": 0})
     await add("model", "Model", card_id="model", at={"x": 870, "y": 0})
     await add("lists", "Lists", card_id="lists", at={"x": 870, "y": 140})
     await add("homeassistant", "Home", {"default": "hidden"}, card_id="home", at={"x": 870, "y": 260})
@@ -55,7 +65,32 @@ async def build_default(domain) -> None:
 
 VOICE_RULES = ("You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look "
                "something up or do something, call the tool first, then answer.")
+STOP_WORD = """@on("*", kind="said")
+def says_stop(e):
+    if "stop" in e.text.lower():
+        stop()
+        output("stop")
+"""
+WAKE_WORD = """@on("*", kind="said")
+def wake_word(e):
+    if any(word in e.text.lower() for word in [WORDS]):
+        output("yes")
+"""
+FOLLOW_UP_CHECK = """@on("*", kind="said")
+def follow_up(e):
+    # you started talking less than 6 s after AAC spoke at that satellite (long answers too)
+    spoke = audio.satellites.get(e.data.get("mic"), {}).get("seconds", 999999)
+    said_for = e.data.get("seconds") or 0
+    named = any(word in e.text.lower() for word in [WORDS])
+    if not e.data.get("aac_spoke") and spoke - said_for < 6 and not named:
+        output("yes")
+"""
 FOLLOW_UP = "(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) "
+FOLLOW_UP_NOTE = f"""
+@on("ears.heard")
+def maybe_not_for_me(e):
+    e.text = "{FOLLOW_UP}" + e.text
+"""
 
 
 async def async_voice_chain(core: Core) -> None:
@@ -81,23 +116,13 @@ async def async_voice_chain(core: Core) -> None:
 
 async def _voice_cards(domain, names: list[str]) -> None:
     """The voice cards after Speech to text (`ears`) and their wires (Text to speech `voice` → Speaker `speaker`)."""
-    said = {"by": "kind", "value": "said", "which": "newest"}
-    words = "|".join(["stop", *names])
+    words = ", ".join(f'"{n}"' for n in names)
     add = domain.add_card
-    await add("conditional", "Stop word", {"outputs": ["stop"], "rules": [
-        {"name": "says stop", "select": said, "test": "contains", "value": "stop", "actions": [{"do": "stop"}, {"do": "output", "a": "stop"}]}]},
-        card_id="stop_word", at={"x": 0, "y": 300})
-    await add("conditional", "Wake word", {"outputs": ["yes"], "rules": [
-        {"name": f"says {n}", "select": said, "test": "contains", "value": n, "actions": [{"do": "output", "a": "yes"}]} for n in names]},
-        card_id="wake", at={"x": 0, "y": 420})
-    await add("conditional", "Follow-up", {"outputs": ["yes"], "rules": [
-        {"name": "you started talking less than 6 s after AAC spoke there", "select": said, "test": "template",  # long answers too
-         "value": "{{ entry is not none and not entry.data.aac_spoke and audio.satellites.get(entry.data.mic, {}).get('seconds', 999999) - (entry.data.seconds or 0) < 6 "
-                  f"and not (entry.text | lower is search('{words}')) }}}}", "actions": [{"do": "output", "a": "yes"}]}]},
-        card_id="follow_up", at={"x": 0, "y": 540})
-    await add("relay", "Spoken turn", {"position": "after", "replace": False, "text": VOICE_RULES}, card_id="spoken", at={"x": 240, "y": 420})
-    await add("relay", "Follow-up turn", {"position": "after", "replace": False, "text": VOICE_RULES, "add_tag": "ears.heard",
-                                          "add_text": FOLLOW_UP, "add_where": "start"}, card_id="followed", at={"x": 240, "y": 540})
+    await add("relay", "Stop word", {"script": STOP_WORD}, card_id="stop_word", at={"x": 0, "y": 300})
+    await add("relay", "Wake word", {"script": WAKE_WORD.replace("WORDS", words)}, card_id="wake", at={"x": 0, "y": 420})
+    await add("relay", "Follow-up", {"script": FOLLOW_UP_CHECK.replace("WORDS", f'"stop", {words}')}, card_id="follow_up", at={"x": 0, "y": 540})
+    await add("relay", "Spoken turn", {"script": new_text("rules", VOICE_RULES, "end")}, card_id="spoken", at={"x": 240, "y": 420})
+    await add("relay", "Follow-up turn", {"script": new_text("rules", VOICE_RULES, "end") + FOLLOW_UP_NOTE}, card_id="followed", at={"x": 240, "y": 540})
     await add("relay", "Answer", {}, card_id="answer", at={"x": 1200, "y": 420})
     first = "charter" if "charter" in domain.cards else None
     model = next((c.id for c in domain.cards.values() if c.type == "model"), None)

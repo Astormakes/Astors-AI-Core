@@ -403,7 +403,7 @@ class ModelPool:
         return result
 
     def find(self, name: str) -> dict[str, Any] | None:
-        """A pool model by id or name (as a model or a Conditional writes it)."""
+        """A pool model by id or name (as a model or a Relay's script writes it)."""
         name = (name or "").strip().lower()
         return next((m for m in self.models if name in (m["id"].lower(), m["name"].lower())), None)
 
