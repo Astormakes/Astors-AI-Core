@@ -3,10 +3,17 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-24) – 2.1.29, live on the owner's HA
+## Current state (2026-10-25) – 2.1.48, live on the owner's HA
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
+
+- **2026-10-25 (2.1.30–2.1.48):** model servers as records with their models; both machines run llama-server routers
+  (switch, download, delete, Bench, follow what is loaded; Next 14); the Model servers card; a spoken turn shows in
+  the chat at once; the Nodes page works on a phone (folding side panels, touch, pinch, Back); echo subtraction with
+  a Waveforms view (Next 16); the panel keeps its scroll position on a redraw. Models now: PC Gemma 4 26B-A4B, server
+  (RX 7800 XT) Gemma 4 12B as `qwen3-8b`; Qwen and Ornith dropped by the owner. The server froze 4× that day (the
+  7800 XT's runtime power management copied VRAM into RAM): fixed with `amdgpu.runpm=0` (CT 110 notes).
 
 - **Core** (`core.py`): the model pool (shared by all domains, `models.py`: OpenAI-compatible client, streaming, tool
   calls, a model that does not answer is skipped a minute); domains (one runs at a time; clone, switch); each domain
@@ -250,8 +257,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
    sends frames only while a Nodes page shows the card (`aac/view/watch`, said every 8 s). First one: Scope (Audio:
    level bars, waveform, spectrum with numpy; passes the audio on). Next: Gain, Compressor.
 3. ~~Faster lights~~ **done (2.1.1):** wire levels 10×/s, only while a Nodes page is open.
-4. **Echo subtraction** (2.1.44, owner: mic and speaker in one housing, the direct path dominates): satellite option `reference` (add-on 0.3.0, `--reference`) sends the speaker's PulseAudio monitor as a 2nd channel; the Microphone card subtracts it (fold *Echo*: delay in samples, gain, inverted) and has a **Waveforms** view (mic, shifted reference, result; zoom/drag/pinch; test sound, last 5 s, line up automatically by correlation + least squares; save). Next: test with a monitor's mic + speakers on the PC; if the offset between the two recordings drifts, an adaptive filter.
-5. **Audio delay** (2.1.32: a spoken turn shows in the chat at once, the answer grows live there; a turn answered "nothing" goes again): measure each stage first (clip end → text → model → speech → playing), then: the satellite
+4. **Audio delay** (2.1.32: a spoken turn shows in the chat at once, the answer grows live there; a turn answered "nothing" goes again): measure each stage first (clip end → text → model → speech → playing), then: the satellite
    plays a stream instead of whole WAVs; sentence-wise speech (item 1); the Audio clipper's pause. Found: the
    Microphone → Speaker loop sounded broken because AAC ignores a satellite's microphone while it plays (no talking
    to itself) and the Speaker plays a stream in separate 2 s pieces; needs echo cancellation (best in the satellite)
@@ -278,7 +284,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     the rest (only the text changes) / Cancel. Editing an answer only changes the text.
 12. ~~Own dialogs~~ **done (2.1.21).**
 13. ~~Archive for chats~~ **done (2.1.21).**
-14. **Switchable models** (owner, 2026-10-25; as planned in v1) **done (2.1.31–2.1.33), PC and CT 110:** Models page → Servers (each server behind the pool: a router lists its models with state, quant, size, context, tools, tokens/s; Load, Unload, Use for <AAC model>, Delete, Download user/repo:quant with vision/mtp; live every 3 s), card *Model servers* (`servers`, `use`, `load`, `unload`), `Client.router()/router_do()`, `pool.offers()/find()`. CT 110 runs llama-server as a router (`/etc/llama-models.ini`, `--models-max 1`, fit 2 GB margin, downloads in /opt/models/cache; preset `qwen3-8b` = Gemma 4 12B for HA's GLaDOS pipeline). PC: aac-llm is a router too (`~/.config/aac/llm-models.ini`, default Gemma 4 26B-A4B; AAC model "Main PC"). Download progress comes from the router's `/models/sse`. 2.1.34: **Bench** button on a loaded model (reads ~1,500 tokens without cache, writes 256; kept per server and model in core data `benches`, shown under it; also the card's `bench`), an AAC model can **follow the server** (asks for whatever the router has loaded; both routers' models do), and reading a model's numbers no longer loads it again (`autoload=false`). 2.1.36: **servers are records** (core `servers`: name, address, key; every model has `server`, its address and key copied from it; a model saved with only an address gets the server there, so older backups load); the Models page shows only the models on top, then **+ Add a server** and one card per server: its models with a *loaded* tick, Bench, Delete (greyed out for preset models), AAC's models on it with their settings (Edit, Remove, **+ model**), Download. RAM/VRAM: llama-server's API has no memory figures (would need a helper on each machine). Real HA backup before this: `/config/aac/bak-v2-2.1.35/`. The idea: AAC asks each llama-server which models it offers
+14. ~~Switchable models~~ (owner, 2026-10-25; as planned in v1) **done (2.1.31–2.1.39), PC and CT 110:** Models page → Servers (each server behind the pool: a router lists its models with state, quant, size, context, tools, tokens/s; Load, Unload, Use for <AAC model>, Delete, Download user/repo:quant with vision/mtp; live every 3 s), card *Model servers* (`servers`, `use`, `load`, `unload`), `Client.router()/router_do()`, `pool.offers()/find()`. CT 110 runs llama-server as a router (`/etc/llama-models.ini`, `--models-max 1`, fit 2 GB margin, downloads in /opt/models/cache; preset `qwen3-8b` = Gemma 4 12B for HA's GLaDOS pipeline). PC: aac-llm is a router too (`~/.config/aac/llm-models.ini`, default Gemma 4 26B-A4B; AAC model "Main PC"). Download progress comes from the router's `/models/sse`. 2.1.34: **Bench** button on a loaded model (reads ~1,500 tokens without cache, writes 256; kept per server and model in core data `benches`, shown under it; also the card's `bench`), an AAC model can **follow the server** (asks for whatever the router has loaded; both routers' models do), and reading a model's numbers no longer loads it again (`autoload=false`). 2.1.36: **servers are records** (core `servers`: name, address, key; every model has `server`, its address and key copied from it; a model saved with only an address gets the server there, so older backups load); the Models page shows only the models on top, then **+ Add a server** and one card per server: its models with a *loaded* tick, Bench, Delete (greyed out for preset models), AAC's models on it with their settings (Edit, Remove, **+ model**), Download. RAM/VRAM: llama-server's API has no memory figures (would need a helper on each machine). Real HA backup before this: `/config/aac/bak-v2-2.1.35/`. The idea: AAC asks each llama-server which models it offers
     and shows them; the owner picks one on the fly (Models page) or a card does it (a function: load / unload, so a
     model or a Conditional can switch too). That way the owner tests models on their own. Even better: AAC downloads
     a model (a Hugging Face repo + file) to the machine. Base: llama-server's router mode (`--models-dir ~/models
@@ -291,4 +297,15 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     setup (the Home card's access list alone is big), and it is written on every change. Keep changes instead of
     copies, or leave big settings out of the undo steps. Also: a removed card's data stays stored (for Undo); stores of
     cards that are long gone should go (owner's no-dead-weight rule).
+16. ~~Echo subtraction~~ **done (2.1.44–2.1.48)** (owner: mic and speaker in one housing): satellite option `reference`
+    (add-on 0.3.0, `--reference`) sends what its speaker plays (PulseAudio monitor) as a 2nd channel; the Microphone's
+    fold *Echo*: "Subtract the speaker of" (this satellite or another), delay (to 1 s, in samples), gain, inverted, and
+    the **Waveforms** view (microphone + shifted speaker on one lane, the result below; zoom/drag/pinch; test sound =
+    three 1 kHz beeps + a 100–500 Hz sweep, waits until played; last 5 s; line up automatically; save). Test 2026-10-25
+    on the Plantronics: ~250 ms delay (Bluetooth); with the add-on's Speex `echo_cancel` the microphone only gets a
+    processed residue (the sweep gone, beeps ringing; no linear relation), so subtraction can't help there and isn't
+    needed: Speex already stops AAC hearing itself. The add-on runs `echo_cancel` on, `reference` off. For devices that
+    give the raw echo (a cheap USB speakerphone on a Pi).
+17. **Ideas, not started:** AAC's own output as the echo reference, lined up per answer by correlation (any satellite,
+    and another room's speaker); RAM/VRAM on the Models page (llama-server's API has none: a helper on each machine).
 - Presets; docs/v2 page 2 details for the remaining cards.
