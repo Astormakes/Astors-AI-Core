@@ -109,7 +109,7 @@ textarea { resize: vertical; }
 .palette .types { flex: 1; overflow-y: auto; padding-bottom: 8px; }
 .palette .info { border-top: 1px solid var(--divider-color); padding: 10px; font-size: 12px; max-height: 45%; overflow-y: auto; }
 .grid { flex: 1; position: relative; overflow: hidden; background-image: radial-gradient(rgba(127,127,127,.25) 1px, transparent 1px); background-size: 20px 20px; }
-.grid svg { width: 100%; height: 100%; display: block; user-select: none; }
+.grid svg { width: 100%; height: 100%; display: block; user-select: none; touch-action: none; }
 .side { width: var(--side-w, 300px); flex: none; border-left: 1px solid var(--divider-color); overflow-y: auto; padding: 12px; }
 .nodes { position: relative; } .nodes.nopal .palette, .nodes.nopal [data-grip="pal"], .nodes.noside .side, .nodes.noside [data-grip="side"] { display: none; }
 .edge { position: absolute; top: 50%; transform: translateY(-50%); z-index: 6; width: 22px; height: 56px; padding: 0; font-size: 16px; cursor: pointer;
@@ -1390,16 +1390,25 @@ class AacPanel extends HTMLElement {
   _gridEvents() {
     const svg = this.shadowRoot.querySelector("#svg");
     if (!svg) return;
-    let drag = null;
+    let drag = null, pinch = null;
+    const fingers = new Map(); // pointers down now: two make a pinch (zoom around the point between them, and move)
+    const two = () => { const [a, b] = [...fingers.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; };
     svg.addEventListener("wheel", (e) => {
       e.preventDefault();
-      const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, k = Math.min(2.5, Math.max(0.25, this.vp.k * (e.deltaY < 0 ? 1.1 : 0.9)));
+      const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top, k = Math.min(2.5, Math.max(0.05, this.vp.k * (e.deltaY < 0 ? 1.1 : 0.9)));
       this.vp = { k, x: mx - (mx - this.vp.x) * k / this.vp.k, y: my - (my - this.vp.y) * k / this.vp.k };
       this._view();
     }, { passive: false });
     svg.addEventListener("pointerdown", (e) => {
       const node = e.target.closest(".node"), out = e.target.dataset?.out, hit = e.target.dataset?.wire;
       svg.setPointerCapture(e.pointerId);
+      fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (fingers.size >= 2) { // a second finger: whatever the first began becomes a pinch
+        if (drag?.kind === "move" && drag.moved) { this._snap(drag.id); this._savePositions(); }
+        drag = null; this._dragging = false; this.shadowRoot.querySelector("#tmpwire")?.remove();
+        pinch = { ...two(), vp: { ...this.vp } };
+        return;
+      }
       if (node && out) { drag = { kind: "wire", from: `${node.dataset.node}.${out}`, type: e.target.dataset.kind }; return; }
       if (hit) { const [from, to] = hit.split("|"); this.selWire = { from, to }; this.sel = null; this.selMon = null; this.showValues = false; this.render(); return; }
       if (node) {
@@ -1411,6 +1420,15 @@ class AacPanel extends HTMLElement {
       drag = { kind: "pan", x: e.clientX - this.vp.x, y: e.clientY - this.vp.y, at: [e.clientX, e.clientY] };
     });
     svg.addEventListener("pointermove", (e) => {
+      if (fingers.has(e.pointerId)) fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch) {
+        if (fingers.size < 2) return;
+        const now = two(), r = svg.getBoundingClientRect(), k = Math.min(2.5, Math.max(0.05, pinch.vp.k * now.d / pinch.d));
+        const wx = (pinch.x - r.left - pinch.vp.x) / pinch.vp.k, wy = (pinch.y - r.top - pinch.vp.y) / pinch.vp.k; // the spot the pinch began on
+        this.vp = { k, x: now.x - r.left - wx * k, y: now.y - r.top - wy * k };
+        this._view();
+        return;
+      }
       if (!drag) { this._ghost(e); return; }
       if (drag.kind === "pan") { this.vp.x = e.clientX - drag.x; this.vp.y = e.clientY - drag.y; this._view(); }
       if (drag.kind === "move") {
@@ -1427,7 +1445,10 @@ class AacPanel extends HTMLElement {
       }
     });
     svg.addEventListener("pointerleave", () => this.shadowRoot.querySelector("#ghost")?.remove());
+    svg.addEventListener("pointercancel", (e) => { fingers.delete(e.pointerId); if (fingers.size < 2) pinch = null; drag = null; this._dragging = false; });
     svg.addEventListener("pointerup", async (e) => {
+      fingers.delete(e.pointerId);
+      if (pinch) { if (!fingers.size) pinch = null; return; } // a pinch ends when the last finger lifts
       const d = drag; drag = null; this._dragging = false;
       if (!d) return;
       if (d.kind === "pan" && Math.hypot(e.clientX - d.at[0], e.clientY - d.at[1]) < 4 && (this.sel || this.selWire)) { // a click on empty grid lets go
