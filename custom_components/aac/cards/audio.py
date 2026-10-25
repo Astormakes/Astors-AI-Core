@@ -48,6 +48,10 @@ class Microphone(Card):
                                 "help": "For a satellite that sends what its speaker plays (its reference option): that sound, "
                                         "delayed, scaled and maybe inverted, is taken out of the microphone. Line them up in "
                                         "the waveforms."},
+                       "echo_from": {"type": "source", "title": "Subtract the speaker of", "default": "", "fold": "Echo",
+                                     "empty": "the same satellite",
+                                     "help": "Whose speaker it takes out: the satellite it listens to, or another one that sends "
+                                             "what its speaker plays (two devices drift apart a little; one device holds best)."},
                        "echo_delay": {"type": "number", "title": "Delay (ms)", "default": 0, "fold": "Echo",
                                       "help": "How much later the speaker's sound reaches the microphone (negative: earlier). "
                                               "Steps of 1/16 ms (one sample)."},
@@ -60,6 +64,7 @@ class Microphone(Card):
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
         self._history: dict[str, array] = {}  # per satellite: what came before (the delayed side of the subtraction)
+        self._other = bytearray()  # another satellite's speaker, as it came, until the microphone takes it
 
     async def start(self) -> None:
         self.core.subscribe("audio", self, self.hear)
@@ -67,10 +72,19 @@ class Microphone(Card):
     def hear(self, chunk: bytes, meta: dict[str, Any]) -> None:
         """Audio from the core's "audio" channel (only the satellite it listens to; muted while AAC speaks there unless
         it keeps listening); with the subtraction on, what the speaker played is taken out first."""
+        other = self.settings.get("echo_from") or ""
+        if self.settings.get("echo") and other and other == meta["source"] and meta.get("reference"):
+            self._other += meta["reference"]  # the other satellite's speaker, for the microphone's next chunks
+            del self._other[: max(0, len(self._other) - SAMPLE_RATE * 2)]
         if self.settings.get("source") not in ("any", meta["source"], None, ""):
             return
-        if self.settings.get("echo") and meta.get("reference"):
-            chunk = self._subtract(chunk, meta["reference"], meta["source"])
+        if self.settings.get("echo"):
+            if other and other != meta["source"]:
+                reference = bytes(self._other[: len(chunk)]).ljust(len(chunk), b"\0")
+                del self._other[: len(chunk)]
+                chunk = self._subtract(chunk, reference, meta["source"])
+            elif meta.get("reference"):
+                chunk = self._subtract(chunk, meta["reference"], meta["source"])
         if meta.get("speaking") and (self.settings.get("speaking") or "mute") == "mute":
             return
         self.domain.flow.stream(self.id, "out", chunk, meta)
@@ -92,33 +106,45 @@ class Microphone(Card):
     async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
         """The waveforms view: "recent" (the satellite's last seconds: microphone and what its speaker played), "test"
         (play a test sound there and send back the seconds it took)."""
-        source = self.settings.get("source")
-        if source in ("any", None, ""):  # any: the first satellite that sends what its speaker plays
-            source = next((s.id for s in self.core.audio.sources.values() if s.reference), None)
-        if source is None or source not in self.core.audio.sources:
-            raise ValueError("no satellite here sends what its speaker plays (its reference option)")
-        if action == "test":
-            await self.core.audio.play(source, pcm_to_wav(_test_sound()), "")
-            await asyncio.sleep(0.6)  # the tail of the sound reaches the microphone
-            seconds = len(_test_sound()) / 2 / SAMPLE_RATE + 1.2
-        elif action == "recent":
-            seconds = float(args.get("seconds") or 5)
-        else:
+        hub = self.core.audio
+        if action not in ("test", "recent"):
             return await super().ui_call(action, args)
-        got = self.core.audio.recent(source, seconds) or {}
-        return {"source": source, "rate": SAMPLE_RATE, "mic": base64.b64encode(got.get("mic", b"")).decode(),
-                "reference": base64.b64encode(got.get("reference", b"")).decode() if "reference" in got else None}
+        speaker = self.settings.get("echo_from") or ""
+        source = self.settings.get("source")
+        if source in ("any", None, ""):  # any: the speaker's satellite, else the first that sends what its speaker plays
+            source = speaker or next((s.id for s in hub.sources.values() if s.reference), None)
+        speaker = speaker or source
+        if source not in hub.sources:
+            raise ValueError("the satellite it listens to is not connected")
+        if speaker not in hub.sources or not hub.sources[speaker].reference:
+            raise ValueError("that satellite does not send what its speaker plays (its reference option)")
+        if action == "test":
+            sound = _test_sound()
+            await hub.play(speaker, pcm_to_wav(sound), "")
+            for _ in range(120):  # until it has played (at most 6 s)
+                await asyncio.sleep(0.05)
+                if not hub.sources[speaker].playing:
+                    break
+            await asyncio.sleep(0.3)  # the tail of the sound reaches the microphone
+            seconds = len(sound) / 2 / SAMPLE_RATE + 1.0
+        else:
+            seconds = float(args.get("seconds") or 5)
+        mic, ref = hub.recent(source, seconds) or {}, hub.recent(speaker, seconds) or {}
+        return {"source": source, "speaker": speaker, "names": [hub.sources[source].name, hub.sources[speaker].name],
+                "rate": SAMPLE_RATE, "mic": base64.b64encode(mic.get("mic", b"")).decode(),
+                "reference": base64.b64encode(ref.get("reference", b"")).decode()}
 
 
 def _test_sound() -> bytes:
-    """A test sound for lining up: three clicks, then a rising sweep (1.2 s, 16 kHz PCM)."""
+    """A test sound for lining up: three clicks, then a slow sweep from 100 to 500 Hz (its waves can be told apart when
+    zoomed in; 1.4 s, 16 kHz PCM)."""
     out = array("h")
     for _ in range(3):
         out.extend([20000, -20000] + [0] * 3198)  # a click, then 0.2 s of silence
-    phase = 0.0
-    for i in range(int(0.6 * SAMPLE_RATE)):
-        phase += 2 * math.pi * (300 + 3000 * i / (0.6 * SAMPLE_RATE)) / SAMPLE_RATE
-        out.append(int(12000 * math.sin(phase)))
+    phase, length = 0.0, int(0.8 * SAMPLE_RATE)
+    for i in range(length):
+        phase += 2 * math.pi * (100 + 400 * i / length) / SAMPLE_RATE
+        out.append(int(14000 * math.sin(phase)))
     return out.tobytes()
 
 

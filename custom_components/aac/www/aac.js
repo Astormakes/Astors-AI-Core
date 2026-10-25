@@ -52,7 +52,7 @@ h4[data-alarm] { color: var(--error-color, #db4437); animation: alarm 2s ease-in
 #wave { position: fixed; inset: 0; z-index: 1500; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 12px; }
 #wave .wavebox { background: var(--card-background-color, #fff); color: var(--primary-text-color); border-radius: 10px; width: min(1300px, 100%); max-height: 100%; overflow: auto; padding: 12px 14px; box-shadow: 0 8px 30px rgba(0,0,0,.35); }
 #wave canvas { width: 100%; height: 340px; display: block; border: 1px solid var(--divider-color); border-radius: 6px; touch-action: none; cursor: grab; background: var(--primary-background-color); }
-#wave .row { flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; } #wave input[type=number] { width: 90px; } #wave input[type=range] { width: 200px; }
+#wave .row { flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; } #wave .check { display: inline-flex; gap: 6px; align-items: center; } #wave .check input { width: auto; margin: 0; } #wave input[type=number] { width: 90px; } #wave input[type=range] { width: 200px; }
 #dlg { position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 16px; }
 .dlgbox { background: var(--card-background-color, #fff); color: var(--primary-text-color); border-radius: 12px; padding: 18px 20px; width: min(440px, 100%);
   box-shadow: 0 8px 32px rgba(0,0,0,.35); } .dlgbox h3 { margin: 0 0 8px; } .dlgbox p { margin: 0 0 8px; white-space: normal; }
@@ -428,7 +428,7 @@ class AacPanel extends HTMLElement {
       const pcm = (b64) => { if (!b64) return null; const b = atob(b64), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return new Int16Array(u.buffer); };
       w.mic = pcm(r.mic); w.ref = pcm(r.reference);
       w.start = 0; w.spp = Math.max(1, (w.mic?.length || 1) / 1200);
-      w.info = w.ref ? `${(w.mic.length / r.rate).toFixed(1)} s from ${r.source}` : "This satellite sends no reference (turn on its reference option).";
+      w.info = `${(w.mic.length / r.rate).toFixed(1)} s · microphone: ${r.names[0]} · speaker: ${r.names[1]}`;
     } catch (e) { w.info = e.message || String(e); }
     this._drawWave();
   }
@@ -463,6 +463,7 @@ class AacPanel extends HTMLElement {
     box.id = "wave";
     const sw = (k, color, label) => `<label class="check"><input type="checkbox" data-wvshow="${k}" ${w.show[k] ? "checked" : ""}><span style="color:${color}">■</span> ${label}</label>`;
     box.innerHTML = `<div class="wavebox"><div class="row" style="margin:0"><h3 style="margin:0">Waveforms · ${esc(this._card(w.card)?.title || "")}</h3><span style="flex:1"></span><button class="small" data-wv="close">✕</button></div>
+      ${this._field(this._card(w.card), ["source", this._type("microphone").settings.source])}${this._field(this._card(w.card), ["echo_from", this._type("microphone").settings.echo_from])}
       <canvas id="wavecv"></canvas>
       <div class="row">${sw("mic", "#2196f3", "microphone")}${sw("ref", "#ff9800", "what the speaker played (shifted, scaled: what is subtracted)")}${sw("res", "#4caf50", "after the subtraction")}</div>
       <div class="row"><label>Delay</label><input type="range" min="-100" max="200" step="0.0625" data-wvin="delay" value="${w.delay}"><input type="number" step="0.0625" data-wvin="delay" value="${w.delay}"> ms
@@ -483,6 +484,7 @@ class AacPanel extends HTMLElement {
         w.info = "Saved: the card subtracts with these values now."; await this._load(); this.render();
       }
     });
+    box.querySelectorAll("[data-set]").forEach((el) => el.addEventListener("change", () => this._saveSetting(el))); // which microphone, whose speaker
     box.querySelectorAll("[data-wvshow]").forEach((el) => el.addEventListener("change", () => { w.show[el.dataset.wvshow] = el.checked; this._waveCanvas(); }));
     box.querySelectorAll("[data-wvin]").forEach((el) => el.addEventListener("input", () => {
       const k = el.dataset.wvin;
@@ -516,15 +518,20 @@ class AacPanel extends HTMLElement {
     const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
     cv.width = W * dpr; cv.height = H * dpr;
     const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
-    g.strokeStyle = "rgba(127,127,127,.4)"; g.beginPath(); g.moveTo(0, H / 2); g.lineTo(W, H / 2); g.stroke();
     if (!w.mic) return;
     const mic = w.mic, ref = w.ref, d = Math.round(w.delay * 16), k = (w.invert ? -1 : 1) * w.gain;
     const echo = (i) => (ref && i - d >= 0 && i - d < ref.length ? k * ref[i - d] : 0);
     const traces = [["mic", "#2196f3", (i) => mic[i]], ["ref", "#ff9800", echo], ["res", "#4caf50", (i) => mic[i] - echo(i)]].filter(([key]) => w.show[key] && (key === "mic" || ref));
-    let peak = 1000;
-    for (let i = 0; i < mic.length; i += 7) peak = Math.max(peak, Math.abs(mic[i]));
-    const y = (v) => H / 2 - (v / peak) * (H / 2 - 6);
-    for (const [, color, val] of traces) {
+    const top = H * 0.62, lanes = { mic: [0, top], ref: [0, top], res: [top, H] };
+    let peakMic = 300, peakRef = 300;
+    for (let i = 0; i < mic.length; i += 5) { peakMic = Math.max(peakMic, Math.abs(mic[i])); peakRef = Math.max(peakRef, Math.abs(echo(i))); }
+    const scale = { mic: peakMic, ref: w.show.mic ? Math.max(peakMic, peakRef) : peakRef, res: peakMic };
+    scale.mic = scale.ref; // microphone and speaker on one scale: lined up, they lie on each other
+    g.strokeStyle = "rgba(127,127,127,.4)"; g.beginPath(); g.moveTo(0, top); g.lineTo(W, top); g.moveTo(0, (top + H) / 2); g.lineTo(W, (top + H) / 2); g.stroke();
+    g.fillStyle = "rgba(127,127,127,.9)"; g.font = "11px sans-serif"; g.fillText("after the subtraction", 6, top + 14);
+    for (const [key, color, val] of traces) {
+      const [y0, y1] = lanes[key], mid = (y0 + y1) / 2, half = (y1 - y0) / 2 - 6, y = (v) => mid - (v / scale[key]) * half;
+      g.save(); g.beginPath(); g.rect(0, y0, W, y1 - y0); g.clip();
       g.strokeStyle = color; g.globalAlpha = 0.85; g.lineWidth = 1; g.beginPath();
       if (w.spp >= 1) {
         for (let x = 0; x < W; x++) {
@@ -540,10 +547,10 @@ class AacPanel extends HTMLElement {
           if (first) { g.moveTo(x, y(val(i))); first = false; } else g.lineTo(x, y(val(i)));
         }
       }
-      g.stroke();
+      g.stroke(); g.restore();
     }
     g.globalAlpha = 1; g.fillStyle = "rgba(127,127,127,.9)"; g.font = "11px sans-serif";
-    g.fillText(`${(Math.max(0, w.start) / 16000).toFixed(3)} s · ${(w.spp * 1000 / 16).toFixed(2)} ms per pixel`, 6, 14);
+    g.fillText(`${(Math.max(0, w.start) / 16000).toFixed(3)} s · ${(w.spp / 16).toFixed(w.spp < 16 ? 3 : 2)} ms per pixel`, 6, 14);
   }
 
   // ------------------------------------------------------------------ dialogs (AAC's own, not the browser's)
@@ -1072,7 +1079,7 @@ class AacPanel extends HTMLElement {
       return `<label>${esc(f.title)}${h}</label>${rows}`;
     }
     if (f.type === "player") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">the satellite the line came from</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)} (satellite)</option>`).join("")}${Object.keys(this._hass.states).filter((e) => e.startsWith("media_player.") && !e.startsWith("media_player.aac_satellite_")).sort().map((e) => `<option value="${esc(e)}" ${e === v ? "selected" : ""}>${esc(this._hass.states[e].attributes.friendly_name || e)}</option>`).join("")}</select>`;
-    if (f.type === "source") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="${key === "source" && c.type === "microphone" ? "any" : ""}">${c.type === "microphone" ? "any satellite" : "where the line came from"}</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)}</option>`).join("")}</select>`;
+    if (f.type === "source") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="${key === "source" && c.type === "microphone" ? "any" : ""}">${esc(f.empty || (c.type === "microphone" ? "any satellite" : "where the line came from"))}</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)}</option>`).join("")}</select>`;
     if (f.type === "outputs") return `<label>${esc(f.title)}${h}</label><textarea rows="4" data-set="${esc(key)}" data-outputs>${esc((v || []).map((o) => `${o.name}: ${o.description || ""}`).join("\n"))}</textarea>`;
     if (f.type === "schedule") return `<label>${esc(f.title)}${h}</label>${(v || []).map((e, i) => `<div class="card" style="padding:8px" data-entry="${i}">
         <div class="row"><input data-e="name" value="${esc(e.name)}" placeholder="Name"><input data-e="at" value="${esc(e.at)}" style="width:80px" placeholder="HH:MM"></div>
