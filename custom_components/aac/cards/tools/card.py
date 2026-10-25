@@ -227,7 +227,7 @@ class ModelServers(Card):
             if model is None:
                 return {"error": f"AAC has no model {args.get('aac_model')!r}"}
             try:
-                result = await pool.bench(model, str(args.get("model") or ""))
+                result = await pool.bench(Client(self.hass, model), str(args.get("model") or ""))
             except ModelError as err:
                 return {"error": str(err)}
             self.core.save()

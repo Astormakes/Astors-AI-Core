@@ -307,30 +307,31 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
 
     client = await hass_ws_client(hass)
     await client.send_json({"id": 1, "type": "aac/models/servers"})
-    (server,) = (await client.receive_json())["result"]["servers"]  # both AAC models are on the one address
+    (server,) = (await client.receive_json())["result"]["servers"]  # both AAC models are on the one address: one server
     assert server["router"] and server["address"] == root and [u["name"] for u in server["uses"]] == ["Big", "Small"]
+    sid = server["id"]
+    assert core.pool.get("m_big")["server"] == sid and core.pool.get("m_small")["server"] == sid
     big, new = server["models"]
     assert big["status"] == "loaded" and big["quant"] == "Q4_0" and big["tools"] and big["speed"] == {"read": 1044, "write": 45}
     assert big["context"] == 16384 and big["context_max"] == 262144
     assert new["status"] == "downloading" and new["progress"] == 25 and new["can_remove"]
 
-    await client.send_json({"id": 2, "type": "aac/models/router", "model_id": "m_small", "action": "use", "name": "big"})
+    await client.send_json({"id": 2, "type": "aac/models/router", "server_id": sid, "action": "load", "name": "big"})
     assert (await client.receive_json())["success"]
-    assert core.pool.get("m_small")["model"] == "big"
     assert any(m[0] == "POST" and str(m[1]).endswith("/models/load") and m[2] == {"model": "big"} for m in aioclient_mock.mock_calls)
-    await client.send_json({"id": 3, "type": "aac/models/router", "model_id": "m_big", "action": "download",
+    await client.send_json({"id": 3, "type": "aac/models/router", "server_id": sid, "action": "download",
                             "name": "user/new-GGUF:Q4_K_M", "sidecars": ["mtp"]})
     assert (await client.receive_json())["success"]
     assert any(m[0] == "POST" and str(m[1]) == f"{root}/models" and m[2] == {"model": "user/new-GGUF:Q4_K_M", "sidecars": ["mtp"]}
                for m in aioclient_mock.mock_calls)
-    await client.send_json({"id": 4, "type": "aac/models/router", "model_id": "m_big", "action": "delete", "name": "user/new-GGUF:Q4_K_M"})
+    await client.send_json({"id": 4, "type": "aac/models/router", "server_id": sid, "action": "delete", "name": "user/new-GGUF:Q4_K_M"})
     assert (await client.receive_json())["success"]
     assert any(m[0] == "DELETE" and m[1].query.get("model") == "user/new-GGUF:Q4_K_M" for m in aioclient_mock.mock_calls)
 
     assert all(m[1].query.get("autoload") == "false" for m in aioclient_mock.mock_calls if m[1].path in ("/props", "/metrics"))
     aioclient_mock.post(f"{root}/v1/chat/completions", json={"choices": [{"message": {"content": "Foxes …"}}], "timings": {
         "prompt_n": 1520, "prompt_per_second": 1043.6, "prompt_ms": 1456.5, "predicted_n": 256, "predicted_per_second": 107.2, "predicted_ms": 2388.1}})
-    await client.send_json({"id": 5, "type": "aac/models/router", "model_id": "m_big", "action": "bench", "name": "big"})
+    await client.send_json({"id": 5, "type": "aac/models/router", "server_id": sid, "action": "bench", "name": "big"})
     assert (await client.receive_json())["success"]
     kept = core.data["benches"][f"{root} big"]
     assert (kept["read"], kept["write"], kept["prompt"], kept["written"], kept["seconds"]) == (1044, 107, 1520, 256, 3.8)
@@ -343,6 +344,12 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     from custom_components.aac.models import Client
     assert await Client(hass, core.pool.get("m_small")).following() == "big" and core.pool.get("m_small")["model"] == "big"
 
+    await client.send_json({"id": 7, "type": "aac/servers/save", "server": {"id": sid, "name": "Box", "base_url": "http://box.local:8080/v1"}})
+    assert (await client.receive_json())["success"]  # a new address: its models follow
+    assert core.pool.get("m_big")["base_url"] == "http://box.local:8080/v1" and core.pool.get("m_big")["api_key"] is None
+    await client.send_json({"id": 8, "type": "aac/servers/save", "server": {"id": sid, "name": "Box", "base_url": f"{root}/v1"}})
+    assert (await client.receive_json())["success"]
+
     card = await core.domain.add_card("model_servers", "Servers")
     assert await card.call("bench", {"aac_model": "Small", "model": "big"}) == {"reads": "1044 tokens/s", "writes": "107 tokens/s"}
     (listed,) = await card.call("servers", {})
@@ -351,3 +358,17 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert await card.call("use", {"aac_model": "big", "model": "user/new-GGUF:Q4_K_M"}) == {"done": "Big uses user/new-GGUF:Q4_K_M"}
     assert core.pool.get("m_big")["model"] == "user/new-GGUF:Q4_K_M"
     assert "error" in await card.call("use", {"aac_model": "nobody", "model": "big"})
+
+
+
+async def test_servers_and_their_models(hass: HomeAssistant, mock_entry):
+    """Every model is on a server: a new one by its server (address and key come from it), deleting a server takes its
+    models along; a model saved with only an address gets the server there."""
+    core = await setup_aac(hass, mock_entry)
+    server = core.save_server({"name": "PC", "base_url": "http://pc.local:8080/v1", "api_key": "k"})
+    model = core.save_model({"name": "Gemma", "model": "gemma", "server": server["id"]})
+    assert (model["base_url"], model["api_key"], model["server"]) == ("http://pc.local:8080/v1", "k", server["id"])
+    same = core.save_model({"name": "Other", "model": "x", "base_url": "http://pc.local:8080/v1", "api_key": "k"})
+    assert same["server"] == server["id"] and same["id"] != model["id"]
+    core.delete_server(server["id"])
+    assert not core.pool.get(model["id"]) and not core.pool.get(same["id"]) and server not in core.data["servers"]

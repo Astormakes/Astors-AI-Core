@@ -314,8 +314,11 @@ class Core:
         first = not self.data
         self.data.setdefault("models", [])
         self.data.setdefault("benches", {})  # the last benchmark of each server's model ("<address> <model>")
+        self.data.setdefault("servers", [])
         self.data.setdefault("domains", [])
-        self.pool = ModelPool(self.hass, self.data["models"], self.data["benches"])
+        self.pool = ModelPool(self.hass, self.data["models"], self.data["benches"], self.data["servers"])
+        for model in self.data["models"]:  # every model belongs to a server (one saved before servers gets its address's)
+            self._give_server(model)
         if first:
             from .defaults import async_first_start  # noqa: PLC0415
             await async_first_start(self)
@@ -463,15 +466,59 @@ class Core:
         self.save()
         return new_id
 
-    # ------------------------------------------------------------------ models
+    # ------------------------------------------------------------------ servers and models
+    def save_server(self, server: dict[str, Any]) -> dict[str, Any]:
+        """Add or change a model server (name, base_url, api_key); its models follow a new address or key."""
+        old = next((s for s in self.data["servers"] if s["id"] == server.get("id")), None)
+        if old:
+            key = server.get("api_key") or old.get("api_key")
+            old.update({k: v for k, v in server.items() if k != "api_key"}, api_key=key)
+            for model in self.data["models"]:
+                if model.get("server") == old["id"]:
+                    model.update(base_url=old["base_url"], api_key=old.get("api_key"))
+            self.save()
+            return old
+        server = {**server, "id": server.get("id") or self._new_id("s", server.get("name") or server["base_url"], self.data["servers"])}
+        self.data["servers"].append(server)
+        self.save()
+        return server
+
+    def delete_server(self, server_id: str) -> None:
+        """Take a server and its models out of AAC."""
+        self.data["servers"][:] = [s for s in self.data["servers"] if s["id"] != server_id]
+        self.data["models"][:] = [m for m in self.data["models"] if m.get("server") != server_id]
+        self.save()
+
+    def _give_server(self, model: dict[str, Any]) -> None:
+        """A model's server: the one it names (its address and key come from it), else the one at its address (a new
+        one if there is none)."""
+        server = next((s for s in self.data["servers"] if s["id"] == model.get("server")), None)
+        if server is None and model.get("base_url"):
+            server = next((s for s in self.data["servers"] if s["base_url"].rstrip("/") == model["base_url"].rstrip("/")
+                           and (s.get("api_key") or "") == (model.get("api_key") or "")), None)
+            if server is None:
+                server = self.save_server({"name": model["base_url"].split("//")[-1].split("/")[0], "base_url": model["base_url"],
+                                           "api_key": model.get("api_key")})
+        if server is not None:
+            model.update(server=server["id"], base_url=server["base_url"], api_key=server.get("api_key"))
+
+    def _new_id(self, prefix: str, name: str, taken: list[dict[str, Any]]) -> str:
+        base, ids, n = f"{prefix}_{slug(name) or prefix}", {x["id"] for x in taken}, 2
+        new = base
+        while new in ids:
+            new, n = f"{base}_{n}", n + 1
+        return new
+
     def save_model(self, model: dict[str, Any]) -> dict[str, Any]:
-        """Add or change a model in the pool."""
+        """Add or change a model in the pool (on a server)."""
         old = self.pool.get(model.get("id", ""))
         if old:
             key = model.get("api_key") or old.get("api_key")
             old.update({k: v for k, v in model.items() if k != "api_key"}, api_key=key)
+            self._give_server(old)
             return old
-        model = {"id": f"m_{slug(model['name'])}", **model}
+        model = {**model, "id": model.get("id") or self._new_id("m", model["name"], self.data["models"])}
+        self._give_server(model)
         self.data["models"].append(model)
         self.save()
         return model

@@ -196,16 +196,12 @@ class AacPanel extends HTMLElement {
       if (e.target.id === "dlg") { this._closeDialog("cancel"); return; } // a click beside the dialog
       const dlg = e.target.closest?.("[data-dlg]");
       if (dlg) { this._closeDialog(dlg.dataset.dlg); return; }
-      const t = e.target.closest?.("[data-ract],[data-rdl],[data-navact],[data-navmore],[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],[data-acclevel],[data-accall],[data-permopen],#dombtn,#navbtn");
+      const m = e.target.closest?.("[data-rload],[data-ract],[data-rdl],[data-srvadd],[data-srvsave],[data-srvedit],[data-srvdel],[data-srvcancel],[data-amadd],[data-amsave],[data-amedit],[data-amdel],[data-amcancel]");
+      if (m) { this._modelsClick(m); return; }
+      const t = e.target.closest?.("[data-navact],[data-navmore],[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],[data-acclevel],[data-accall],[data-permopen],#dombtn,#navbtn");
       if (!t) return;
       const d = t.dataset;
-      if (d.ract) this._router(d.rmodel, d.ract, d.rname);
-      else if (d.rdl) {
-        const i = d.rdl, name = this.shadowRoot.querySelector(`#dl${i}`).value.trim(), q = (id) => this.shadowRoot.querySelector(id).checked;
-        if (!name) { this.alert("Type a Hugging Face model: user/repo:quant"); return; }
-        this._router(this.servers[Number(i)].uses[0].id, "download", name, [...(q(`#dlmm${i}`) ? ["mmproj"] : []), ...(q(`#dlmtp${i}`) ? ["mtp"] : [])]);
-        this.shadowRoot.querySelector(`#dl${i}`).value = "";
-      } else if (d.say) this.ws("aac/audio/say", { source: d.say, text: "This is how I sound." });
+      if (d.say) this.ws("aac/audio/say", { source: d.say, text: "This is how I sound." });
       else if (t.id === "dombtn") { this.domOpen = !this.domOpen; this.render(); }
       else if (d.navmore) { e.stopPropagation(); this.navMenu = this.navMenu === d.navmore ? null : d.navmore; this._redrawNav(); }
       else if (d.navact) { e.stopPropagation(); this._navAction(d.entry, d.navact); }
@@ -595,78 +591,135 @@ class AacPanel extends HTMLElement {
   }
 
   // ------------------------------------------------------------------ models
-  _models() {
-    const rows = this.state.models.map((m) => `<tr><td><b>${esc(m.name)}</b><div class="hint">${m.follow ? `follows the server · now <b>${esc(m.model)}</b>` : esc(m.model)} · ${esc(m.base_url)}</div><div class="hint">${(m.tags || []).map((t) => `<code>${esc(t)}</code>`).join(" ")}</div></td>
-      <td>${m.failing ? `<span style="color:var(--error-color,#db4437)">✗ not answering${m.up ? " (tried again with the next request)" : " (skipped for a minute)"}</span>` : "✓"}<div class="hint">${m.busy || 0}/${m.parallel || 1} running${m.waiting ? ` · ${m.waiting} waiting` : ""}</div></td>
-      <td><button class="small" data-editmodel="${esc(m.id)}">Edit</button> <button class="small danger" data-delmodel="${esc(m.id)}">Delete</button></td></tr>`).join("");
-    const f = this.modelForm || {};
-    return `${this._header("Models", tip("Every model AAC may use, for all domains. Each card that uses models has its own list, picked from these by what they can do (their tags). Any OpenAI-compatible server works: llama.cpp, Ollama, vLLM, LM Studio, cloud APIs."))}
-      <div class="content"><div class="card models"><table style="width:100%;border-collapse:collapse">${rows || '<tr><td class="hint">No models yet.</td></tr>'}</table></div>
-      <div class="card"><h3 style="margin-top:0">${f.id ? "Change model" : "Add a model"}</h3>
-        <label class="hint">Server address</label><div class="row"><input id="m_url" value="${esc(f.base_url || "http://192.168.1.x:8080/v1")}"><button class="small" id="probe">Find models</button></div>
-        <label class="hint">Model</label>${this.probed ? `<select id="m_model">${this.probed.map((x) => `<option ${x === f.model ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>` : `<input id="m_model" value="${esc(f.model || "")}">`}
-        <label class="check" style="font-size:13px"><input type="checkbox" id="m_follow" ${f.follow ? "checked" : ""}>Follow the server ${tip("For a llama-server router: AAC asks for whatever model it has loaded now (load another under Servers and AAC uses that one); with none loaded, the one it used last.")}</label>
-        <label class="hint">Name</label><input id="m_name" value="${esc(f.name || "")}">
-        <label class="hint">API key (only for servers that need one)</label><input id="m_key" type="password" placeholder="${f.has_key ? "kept" : ""}">
-        <label class="hint">Runs at once ${tip("How many requests the server works on side by side (llama-server: its slots, --parallel). More wait in the queue of cards that allow it.")}</label><input id="m_parallel" type="number" min="1" value="${esc(f.parallel || 1)}" style="width:80px">
-        <label class="hint">What it can do ${tip("Cards use only models with the tag they need: a Model text, Memory embeddings, Speech to text speech to text. None ticked: guessed from the name.")}</label>
-        <div class="row" style="flex-wrap:wrap;gap:4px 12px">${(this.state.model_tags || []).map((t) => `<label class="check" style="font-size:13px"><input type="checkbox" data-mtag="${esc(t)}" ${(f.tags || []).includes(t) ? "checked" : ""}>${esc(t)}</label>`).join("")}</div>
-        <div style="margin-top:10px;display:flex;gap:8px"><button class="primary" id="savemodel">Save</button>${f.id ? '<button id="cancelmodel">Cancel</button>' : ""}</div></div>
+  _models() { // on top only the models; servers below, each with what it offers and AAC's models on it (their settings)
+    const srv = (id) => (this.servers || []).find((x) => x.id === id);
+    const rows = this.state.models.map((m) => `<tr><td><b>${esc(m.name)}</b></td><td class="hint">${esc(srv(m.server)?.name || "")}</td>
+      <td class="hint">${m.follow ? `follows what is loaded · now <b>${esc(m.model)}</b>` : esc(m.model)}</td>
+      <td>${(m.tags || []).map((t) => `<code>${esc(t)}</code>`).join(" ")}</td>
+      <td>${m.failing ? `<span style="color:var(--error-color,#db4437)">✗ not answering${m.up ? " (tried again with the next request)" : " (skipped for a minute)"}</span>` : "✓"}<div class="hint">${m.busy || 0}/${m.parallel || 1} running${m.waiting ? ` · ${m.waiting} waiting` : ""}</div></td></tr>`).join("");
+    return `${this._header("Models", tip("The models AAC may use, for all domains (each card that uses models picks from these by what they can do, their tags). They are set up below, on their servers: any OpenAI-compatible server works (llama.cpp, Ollama, vLLM, LM Studio, cloud APIs); a llama-server router also lists, loads, downloads and deletes its models here."))}
+      <div class="content"><div class="card models"><table style="width:100%;border-collapse:collapse">${rows || '<tr><td class="hint">No models yet: add a server below, then its models.</td></tr>'}</table></div>
+      ${this.srvForm === "new" ? this._srvForm(null) : '<button data-srvadd="1" style="margin-bottom:12px">+ Add a server</button>'}
       ${this._servers()}</div>`;
   }
 
-  _servers() { // the servers behind the models; a llama-server router lists, loads, downloads and deletes its models
-    if (!this.servers) return '<div class="card"><h3 style="margin-top:0">Servers</h3><p class="hint">Asking the servers …</p></div>';
-    return this.servers.map((s, i) => `<div class="card"><h3 style="margin-top:0">${esc(s.address)} ${tip("A llama-server in router mode (llama-server --models-preset … or --models-dir …) offers many models and loads them when asked; with --models-max 1 one at a time. Load, Use, Unload and Delete act on the server; Use also lets that AAC model ask for it from now on.")}</h3>
-      <div class="hint">AAC's models here: ${s.uses.map((u) => `<b>${esc(u.name)}</b> (${esc(u.model)})`).join(", ")}</div>
-      <div data-srvlist="${i}">${this._serverRows(s)}</div>
-      ${s.router ? `<div class="row" style="margin-top:10px"><input id="dl${i}" placeholder="Download: user/repo:quant, e.g. unsloth/gemma-4-12B-it-qat-GGUF:Q4_K_XL">
-        <label class="check" style="font-size:13px" title="The image part, for models that see"><input type="checkbox" id="dlmm${i}">vision</label>
-        <label class="check" style="font-size:13px" title="A draft head that makes writing faster (MTP), if the repo has one"><input type="checkbox" id="dlmtp${i}">mtp</label>
-        <button class="small" data-rdl="${i}">Download</button></div>` : ""}</div>`).join("");
+  _srvForm(s) {
+    const f = s || {}, key = s ? s.id : "new";
+    return `<div class="card" data-srvform="${esc(key)}"><h3 style="margin-top:0">${s ? "Change the server" : "Add a server"}</h3>
+      <label class="hint">Name</label><input data-sf="name" value="${esc(f.name || "")}" placeholder="e.g. PC">
+      <label class="hint">Address</label><input data-sf="base_url" value="${esc(f.base_url || "http://192.168.1.x:8080/v1")}">
+      <label class="hint">API key (only for servers that need one)</label><input type="password" data-sf="api_key" placeholder="${f.has_key ? "kept" : ""}">
+      <div style="margin-top:10px;display:flex;gap:8px"><button class="primary" data-srvsave="${esc(key)}">Save</button><button data-srvcancel="1">Cancel</button></div></div>`;
+  }
+
+  _servers() {
+    if (!this.servers) return '<div class="card"><p class="hint">Asking the servers …</p></div>';
+    return this.servers.map((s) => `<div class="card"><div class="row"><h3 style="margin:0">${esc(s.name)}</h3><span class="hint">${esc(s.base_url)}</span>
+        <span style="margin-left:auto"></span><button class="small" data-srvedit="${esc(s.id)}">Edit</button><button class="small danger" data-srvdel="${esc(s.id)}">Delete</button></div>
+      ${this.srvForm === s.id ? this._srvForm(s) : ""}
+      <div data-srvlist="${esc(s.id)}">${this._serverRows(s)}</div>
+      <h4 style="margin:12px 0 4px">AAC's models here ${tip("What AAC uses from this server: each with its name in AAC, the server's model it asks for (or, on a router, whatever is loaded), what it can do (its tags; cards pick models by them) and how many requests it runs at once.")}</h4>
+      ${s.uses.map((u) => (this.amForm === u.id ? this._amForm(s, u) : `<div class="row"><b>${esc(u.name)}</b><span class="hint">${u.follow ? `follows what is loaded · now ${esc(u.model)}` : esc(u.model)} · ${u.tags.map((t) => `<code>${esc(t)}</code>`).join(" ")} · runs ${esc(u.parallel)}</span>
+        <span style="margin-left:auto"></span><button class="small" data-amedit="${esc(u.id)}">Edit</button><button class="small danger" data-amdel="${esc(u.id)}">Remove</button></div>`)).join("") || '<p class="hint">None yet.</p>'}
+      ${this.amForm === `new:${s.id}` ? this._amForm(s, null) : `<button class="small" data-amadd="${esc(s.id)}" title="Add one of this server's models to AAC (or type one it does not list)">+ model</button>`}
+      ${s.router ? `<div class="row" style="margin-top:10px"><input id="dl-${esc(s.id)}" placeholder="Download: user/repo:quant, e.g. unsloth/gemma-4-12B-it-qat-GGUF:Q4_K_XL">
+        <label class="check" style="font-size:13px" title="The image part, for models that see"><input type="checkbox" id="dlmm-${esc(s.id)}">vision</label>
+        <label class="check" style="font-size:13px" title="A draft head that makes writing faster (MTP), if the repo has one"><input type="checkbox" id="dlmtp-${esc(s.id)}">mtp</label>
+        <button class="small" data-rdl="${esc(s.id)}">Download</button></div>` : ""}</div>`).join("");
+  }
+
+  _amForm(s, m) { // one of AAC's models on server s (m null: a new one)
+    const key = m ? m.id : `new:${s.id}`, f = m || { follow: !!s.router, parallel: 1, tags: [] };
+    const names = s.router ? (s.models || []).map((x) => x.id) : (s.offered || []);
+    const opts = [...new Set([...names, ...(f.model ? [f.model] : [])])];
+    return `<div class="card" data-amform="${esc(key)}" style="margin:6px 0">
+      <label class="hint">Name in AAC</label><input data-am="name" value="${esc(f.name || "")}" placeholder="e.g. Main PC">
+      ${s.router ? `<label class="check" style="font-size:13px"><input type="checkbox" data-am="follow" ${f.follow ? "checked" : ""}>Follows what is loaded ${tip("AAC asks for whatever model the router has loaded now (tick another one as loaded above and AAC uses it); with none loaded, the one it used last.")}</label>` : ""}
+      <label class="hint">The server's model ${s.router ? "(when nothing is loaded, or without follow)" : ""}</label><input data-am="model" list="ml-${esc(key)}" value="${esc(f.model || "")}" placeholder="pick or type"><datalist id="ml-${esc(key)}">${opts.map((o) => `<option value="${esc(o)}">`).join("")}</datalist>
+      <label class="hint">Runs at once ${tip("How many requests the server works on side by side (llama-server: its slots, --parallel). More wait in the queue of cards that allow it.")}</label><input data-am="parallel" type="number" min="1" value="${esc(f.parallel || 1)}" style="width:80px">
+      <label class="hint">What it can do ${tip("Cards use only models with the tag they need: a Model text, Memory embeddings, Speech to text speech to text. None ticked: guessed from the name.")}</label>
+      <div class="row" style="flex-wrap:wrap;gap:4px 12px">${(this.state.model_tags || []).map((t) => `<label class="check" style="font-size:13px"><input type="checkbox" data-amtag="${esc(t)}" ${(f.tags || []).includes(t) ? "checked" : ""}>${esc(t)}</label>`).join("")}</div>
+      <div style="margin-top:10px;display:flex;gap:8px"><button class="primary small" data-amsave="${esc(key)}">Save</button><button class="small" data-amcancel="1">Cancel</button></div></div>`;
   }
 
   _serverRows(s) {
     if (s.error) return `<p style="color:var(--error-color,#db4437)">Not answering: ${esc(s.error)}</p>`;
-    if (!s.router) return '<p class="hint">One fixed model (not a llama-server router).</p>';
-    const gb = (b) => (b ? `${(b / 1e9).toFixed(1)} GB` : ""), first = s.uses[0].id;
+    if (!s.router) return `<p class="hint">${(s.offered || []).length ? `It offers: ${s.offered.map(esc).join(", ")}` : "It lists no models (add them with + model)."} Not a llama-server router: one fixed model.</p>`;
+    const gb = (b) => (b ? `${(b / 1e9).toFixed(1)} GB` : "");
     const rows = (s.models || []).map((m) => {
-      const users = s.uses.filter((u) => u.model === m.id && (!u.follow || ["loaded", "loading", "sleeping"].includes(m.status))), st = m.status;
+      const st = m.status, on = ["loaded", "loading", "sleeping"].includes(st);
+      const users = s.uses.filter((u) => u.model === m.id && (!u.follow || on));
       const facts = [st === "downloading" ? `downloading ${m.progress ?? 0} %` : st + (m.failed ? " (failed to start)" : ""),
         m.quant, m.params ? `${(m.params / 1e9).toFixed(1)} B` : "", gb(m.size),
         m.context ? `context ${m.context.toLocaleString()}${m.context_max ? ` of ${m.context_max.toLocaleString()}` : ""}` : "",
         m.tools ? "tools" : "", (m.inputs || []).filter((x) => x !== "text").join(", "),
         m.speed && (m.speed.read || m.speed.write) ? `reads ${m.speed.read} · writes ${m.speed.write} tokens/s` : ""].filter(Boolean).join(" · ");
-      const act = (a, label, cls = "") => `<button class="small ${cls}" data-ract="${a}" data-rmodel="${esc(first)}" data-rname="${esc(m.id)}">${label}</button>`;
-      const uses = s.uses.filter((u) => u.model !== m.id && !u.follow).map((u) => `<button class="small" data-ract="use" data-rmodel="${esc(u.id)}" data-rname="${esc(m.id)}" title="${esc(u.name)} asks for this model from now on (it is loaded at once)">Use for ${esc(u.name)}</button>`).join(" ");
-      const buttons = st === "downloading" ? act("unload", "Pause") : st === "incomplete" ? act("download", "Resume") + " " + act("delete", "Delete", "danger")
-        : `${st === "loaded" || st === "sleeping" ? act("unload", "Unload") : st === "loading" ? "" : act("load", "Load")} ${uses} ${
-          !m.can_remove ? `<button class="small" disabled title="Set up on the server itself (its preset file or models folder): it can't be deleted from here, only downloaded models can">Delete</button>`
-          : st === "loaded" ? '<button class="small" disabled title="Unload it first">Delete</button>' : act("delete", "Delete", "danger")}`;
-      const b = m.bench, benching = (this._benching || new Set()).has(`${s.address} ${m.id}`);
+      const b = m.bench, benching = (this._benching || new Set()).has(`${s.id} ${m.id}`);
       const benchLine = b ? `<div class="hint">Bench ${esc(new Date(b.at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }))}: reads <b>${esc(b.read)}</b> · writes <b>${esc(b.write)}</b> tokens/s <span title="tokens read, tokens written, seconds">(${esc(b.prompt)} in, ${esc(b.written)} out, ${esc(b.seconds)} s)</span></div>` : "";
-      const bench = st === "loaded" || st === "sleeping" ? (benching ? '<button class="small" disabled>Benching …</button> ' : `<button class="small" data-ract="bench" data-rmodel="${esc(first)}" data-rname="${esc(m.id)}" title="A short fixed test: reads ~1,500 tokens, writes 256; the result is kept">Bench</button> `) : "";
-      return `<tr><td><b>${esc(m.id)}</b>${users.length ? ` <span class="hint">← ${users.map((u) => esc(u.name)).join(", ")}</span>` : ""}<div class="hint">${esc(facts)}</div>${benchLine}</td><td style="text-align:right;white-space:nowrap">${bench}${buttons}</td></tr>`;
+      const act = (a, label, cls = "", title = "") => `<button class="small ${cls}" data-ract="${a}" data-srv="${esc(s.id)}" data-rname="${esc(m.id)}" ${title ? `title="${esc(title)}"` : ""}>${label}</button>`;
+      const del = !m.can_remove ? `<button class="small" disabled title="Set up on the server itself (its preset file or models folder): it can't be deleted from here, only downloaded models can">Delete</button>`
+        : st === "loaded" ? '<button class="small" disabled title="Unload it first">Delete</button>' : act("delete", "Delete", "danger");
+      const buttons = st === "downloading" ? act("unload", "Pause") : st === "incomplete" ? `${act("download", "Resume")} ${act("delete", "Delete", "danger")}`
+        : `${on && st !== "loading" ? (benching ? '<button class="small" disabled>Benching …</button>' : act("bench", "Bench", "", "A short fixed test: reads ~1,500 tokens, writes 256; the result is kept")) : ""} ${del}`;
+      const tick = st === "downloading" || st === "incomplete" ? "" : `<input type="checkbox" data-rload="1" data-srv="${esc(s.id)}" data-rname="${esc(m.id)}" ${on ? "checked" : ""} ${st === "loading" ? "disabled" : ""} title="Loaded (with one model at a time, ticking another unloads this one)">`;
+      return `<tr><td style="width:28px;vertical-align:top">${tick}</td><td><b>${esc(m.id)}</b>${users.length ? ` <span class="hint">← ${users.map((u) => esc(u.name)).join(", ")}</span>` : ""}<div class="hint">${esc(facts)}</div>${benchLine}</td><td style="text-align:right;white-space:nowrap;vertical-align:top">${buttons}</td></tr>`;
     }).join("");
-    return `<table style="width:100%;border-collapse:collapse">${rows || '<tr><td class="hint">It offers no models.</td></tr>'}</table>`;
+    return `<table style="width:100%;border-collapse:collapse;margin-top:6px"><tr><th class="hint" style="text-align:left;font-weight:normal">loaded</th><th></th><th></th></tr>${rows || '<tr><td></td><td class="hint">It offers no models.</td><td></td></tr>'}</table>`;
   }
 
   async _loadServers() {
     try { this.servers = (await this.ws("aac/models/servers")).servers; } catch (e) { this.servers = []; }
-    const lists = this.shadowRoot.querySelectorAll("[data-srvlist]");
-    if (lists.length !== this.servers.length) { if (this.view.kind === "models") this.render(); return; }
-    lists.forEach((el) => { el.innerHTML = this._serverRows(this.servers[Number(el.dataset.srvlist)]); });
+    const lists = [...this.shadowRoot.querySelectorAll("[data-srvlist]")];
+    if (lists.length !== this.servers.length || lists.some((el) => !this.servers.some((x) => x.id === el.dataset.srvlist))) { if (this.view.kind === "models") this.render(); return; }
+    lists.forEach((el) => { el.innerHTML = this._serverRows(this.servers.find((x) => x.id === el.dataset.srvlist)); });
   }
 
-  async _router(model_id, action, name, sidecars) {
+  async _router(server_id, action, name, sidecars) {
     if (action === "delete" && !(await this.confirm(`Delete ${name} from the server's disk?`))) return;
-    const key = `${this.servers?.find((s) => s.uses.some((u) => u.id === model_id))?.address} ${name}`;
+    const key = `${server_id} ${name}`;
     if (action === "bench") { (this._benching ||= new Set()).add(key); this._loadServers(); }
-    try { await this.ws("aac/models/router", { model_id, action, name, ...(sidecars ? { sidecars } : {}) }); }
+    try { await this.ws("aac/models/router", { server_id, action, name, ...(sidecars ? { sidecars } : {}) }); }
     catch (e) { this.alert(`${action}: ${e.message || e}`); }
     finally { this._benching?.delete(key); }
-    if (action === "use") await this._load();
     await this._loadServers();
+  }
+
+  async _modelsClick(t) { // the Models page's buttons (its lists are redrawn every few seconds: one listener for all)
+    const d = t.dataset, q = (sel) => this.shadowRoot.querySelector(sel);
+    const done = async () => { await this._load(); this.servers = null; this.render(); await this._loadServers(); };
+    if (d.rload) this._router(d.srv, t.checked ? "load" : "unload", d.rname);
+    else if (d.ract) this._router(d.srv, d.ract, d.rname);
+    else if (d.rdl) {
+      const name = q(`#dl-${CSS.escape(d.rdl)}`).value.trim();
+      if (!name) { this.alert("Type a Hugging Face model: user/repo:quant"); return; }
+      this._router(d.rdl, "download", name, [...(q(`#dlmm-${CSS.escape(d.rdl)}`).checked ? ["mmproj"] : []), ...(q(`#dlmtp-${CSS.escape(d.rdl)}`).checked ? ["mtp"] : [])]);
+      q(`#dl-${CSS.escape(d.rdl)}`).value = "";
+    } else if (d.srvadd) { this.srvForm = "new"; this.render(); }
+    else if (d.srvedit) { this.srvForm = this.srvForm === d.srvedit ? null : d.srvedit; this.render(); }
+    else if (d.srvcancel) { this.srvForm = null; this.render(); }
+    else if (d.srvsave) {
+      const box = q(`[data-srvform="${CSS.escape(d.srvsave)}"]`), v = (k) => box.querySelector(`[data-sf="${k}"]`).value.trim();
+      const server = { name: v("name") || v("base_url").split("//").pop().split("/")[0], base_url: v("base_url"), ...(v("api_key") ? { api_key: v("api_key") } : {}), ...(d.srvsave !== "new" ? { id: d.srvsave } : {}) };
+      if (!server.base_url) { this.alert("Type the server's address"); return; }
+      await this.ws("aac/servers/save", { server }); this.srvForm = null; await done();
+    } else if (d.srvdel) {
+      const s = this.servers.find((x) => x.id === d.srvdel);
+      if (await this.confirm(`Delete the server ${s.name}${s.uses.length ? ` and AAC's ${s.uses.length} model(s) on it` : ""}?`)) { await this.ws("aac/servers/delete", { server_id: d.srvdel }); await done(); }
+    } else if (d.amadd) { this.amForm = `new:${d.amadd}`; this.render(); }
+    else if (d.amedit) { this.amForm = d.amedit; this.render(); }
+    else if (d.amcancel) { this.amForm = null; this.render(); }
+    else if (d.amsave) {
+      const box = q(`[data-amform="${CSS.escape(d.amsave)}"]`), get = (k) => box.querySelector(`[data-am="${k}"]`);
+      const isNew = d.amsave.startsWith("new:"), serverId = isNew ? d.amsave.slice(4) : this.state.models.find((m) => m.id === d.amsave).server;
+      const model = { name: get("name").value.trim() || get("model").value.trim(), model: get("model").value.trim(), server: serverId,
+        follow: !!get("follow")?.checked, parallel: Math.max(1, Number(get("parallel").value) || 1),
+        tags: [...box.querySelectorAll("[data-amtag]")].filter((x) => x.checked).map((x) => x.dataset.amtag), ...(isNew ? {} : { id: d.amsave }) };
+      if (!model.model && !model.follow) { this.alert("Pick or type the server's model"); return; }
+      if (!model.name) { this.alert("Give it a name"); return; }
+      await this.ws("aac/models/save", { model }); this.amForm = null; await done();
+    } else if (d.amdel) {
+      if (await this.confirm("Remove this model from AAC? (The server keeps it.)")) { await this.ws("aac/models/delete", { model_id: d.amdel }); await done(); }
+    }
   }
 
   // ------------------------------------------------------------------ nodes
@@ -1391,22 +1444,6 @@ class AacPanel extends HTMLElement {
     this._grips();
     $("#scrim")?.addEventListener("click", () => { this.navOpen = false; this.shadowRoot.querySelector(".root").classList.remove("navopen"); });
     $("#habtn")?.addEventListener("click", () => this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true })));
-    // models
-    $("#probe")?.addEventListener("click", async () => {
-      try { this.probed = (await this.ws("aac/models/probe", { base_url: $("#m_url").value, api_key: $("#m_key").value || null })).models; this.modelForm = { ...(this.modelForm || {}), base_url: $("#m_url").value }; this.render(); }
-      catch (e) { this.alert(`No answer: ${e.message || e}`); }
-    });
-    $("#savemodel")?.addEventListener("click", async () => {
-      const model = { name: $("#m_name").value || $("#m_model").value, base_url: $("#m_url").value, model: $("#m_model").value, api_key: $("#m_key").value || null,
-        tags: [...this.shadowRoot.querySelectorAll("[data-mtag]")].filter((x) => x.checked).map((x) => x.dataset.mtag),
-        parallel: Math.max(1, Number($("#m_parallel").value) || 1), follow: $("#m_follow").checked };
-      if (this.modelForm?.id) model.id = this.modelForm.id;
-      if (!model.model) { this.alert("Pick or type a model"); return; }
-      await this.ws("aac/models/save", { model }); this.modelForm = null; this.probed = null; await this._load(); this.render();
-    });
-    $("#cancelmodel")?.addEventListener("click", () => { this.modelForm = null; this.probed = null; this.render(); });
-    $$("[data-editmodel]").forEach((el) => el.addEventListener("click", () => { this.modelForm = { ...this.state.models.find((m) => m.id === el.dataset.editmodel) }; this.probed = null; this.render(); }));
-    $$("[data-delmodel]").forEach((el) => el.addEventListener("click", async () => { if (await this.confirm("Delete this model?")) { await this.ws("aac/models/delete", { model_id: el.dataset.delmodel }); await this._load(); this.render(); } }));
     // nodes
     $$("[data-pick]").forEach((el) => el.addEventListener("click", () => { this.selType = this.selType === el.dataset.pick ? null : el.dataset.pick; this.render(); }));
     $("#undo")?.addEventListener("click", async () => { await this.ws("aac/undo"); await this._load(); this.render(); });

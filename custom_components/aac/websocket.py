@@ -15,7 +15,7 @@ from homeassistant.loader import async_get_integration
 from .cards import CARD_TYPES, CATEGORIES
 from .const import DOMAIN, SIGNAL
 from .core import UNDO_STEPS
-from .models import MODEL_TAGS, Client, ModelError
+from .models import MODEL_TAGS, ModelError
 
 COMMANDS: list = []
 
@@ -265,11 +265,11 @@ async def ws_chat_request(hass, connection, msg) -> None:
 
 # ---------------------------------------------------------------------- models (core) and domains
 @command({vol.Required("type"): "aac/models/save", vol.Required("model"): {
-    vol.Optional("id"): str, vol.Required("name"): str, vol.Required("base_url"): str, vol.Required("model"): str,
-    vol.Optional("api_key"): vol.Any(str, None), vol.Optional("tags"): [str], vol.Optional("parallel"): vol.All(vol.Coerce(int), vol.Range(1, 64)),
-    vol.Optional("follow"): bool}})
+    vol.Optional("id"): str, vol.Required("name"): str, vol.Optional("server"): str, vol.Optional("base_url"): str,
+    vol.Required("model"): str, vol.Optional("api_key"): vol.Any(str, None), vol.Optional("tags"): [str],
+    vol.Optional("parallel"): vol.All(vol.Coerce(int), vol.Range(1, 64)), vol.Optional("follow"): bool}})
 async def ws_models_save(hass, connection, msg) -> None:
-    """Add or change a model in the pool."""
+    """Add or change one of AAC's models (on a server)."""
     core = _core(hass)
     core.save_model(dict(msg["model"]))
     core.save()
@@ -284,42 +284,43 @@ async def ws_models_delete(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"models": core.pool.summary()})
 
 
-@command({vol.Required("type"): "aac/models/probe", vol.Required("base_url"): str, vol.Optional("api_key"): vol.Any(str, None)})
-async def ws_models_probe(hass, connection, msg) -> None:
-    """What a server offers (to pick a model name)."""
-    try:
-        found = await Client(hass, {"base_url": msg["base_url"], "model": "", "api_key": msg.get("api_key")}).list_models()
-    except ModelError as err:
-        return await _fail(connection, msg, err)
-    connection.send_result(msg["id"], {"models": found})
+@command({vol.Required("type"): "aac/servers/save", vol.Required("server"): {
+    vol.Optional("id"): str, vol.Required("name"): vol.All(str, vol.Length(min=1, max=40)), vol.Required("base_url"): str,
+    vol.Optional("api_key"): vol.Any(str, None)}})
+async def ws_servers_save(hass, connection, msg) -> None:
+    """Add or change a model server."""
+    connection.send_result(msg["id"], {"id": _core(hass).save_server(dict(msg["server"]))["id"]})
+
+
+@command({vol.Required("type"): "aac/servers/delete", vol.Required("server_id"): str})
+async def ws_servers_delete(hass, connection, msg) -> None:
+    """Take a server and its models out of AAC."""
+    core = _core(hass)
+    core.delete_server(msg["server_id"])
+    connection.send_result(msg["id"], {"models": core.pool.summary()})
 
 
 @command({vol.Required("type"): "aac/models/servers"})
 async def ws_models_servers(hass, connection, msg) -> None:
-    """Every server behind the pool with what it offers now (a llama-server router: its models, their state, numbers)."""
+    """Every server with what it offers now (a llama-server router: its models, their state, numbers)."""
     connection.send_result(msg["id"], {"servers": await _core(hass).pool.offers()})
 
 
-@command({vol.Required("type"): "aac/models/router", vol.Required("model_id"): str,
-          vol.Required("action"): vol.In(["load", "unload", "download", "delete", "use", "bench"]), vol.Required("name"): str,
+@command({vol.Required("type"): "aac/models/router", vol.Required("server_id"): str,
+          vol.Required("action"): vol.In(["load", "unload", "download", "delete", "bench"]), vol.Required("name"): str,
           vol.Optional("sidecars"): [str]})
 async def ws_models_router(hass, connection, msg) -> None:
-    """On the server of a pool model: load, unload, download or delete one of its models, use one (the pool model
-    asks for it from now on, and it is loaded at once), or benchmark one (the result is kept)."""
+    """On a router: load, unload, download or delete one of its models, or benchmark one (the result is kept)."""
     core = _core(hass)
-    model = core.pool.get(msg["model_id"])
-    if model is None:
-        return await _fail(connection, msg, ValueError("no such model"))
+    server = core.pool.server_of(msg["server_id"])
+    if server is None:
+        return await _fail(connection, msg, ValueError("no such server"))
     try:
-        if msg["action"] == "use":
-            core.save_model({"id": model["id"], "model": msg["name"]})
-            core.save()
-            await Client(hass, model).router_do("load", msg["name"])
-        elif msg["action"] == "bench":
-            await core.pool.bench(model, msg["name"])
+        if msg["action"] == "bench":
+            await core.pool.bench(server["client"], msg["name"])
             core.save()
         else:
-            await Client(hass, model).router_do(msg["action"], msg["name"], msg.get("sidecars"))
+            await server["client"].router_do(msg["action"], msg["name"], msg.get("sidecars"))
     except ModelError as err:
         return await _fail(connection, msg, err)
     connection.send_result(msg["id"], {"models": core.pool.summary()})

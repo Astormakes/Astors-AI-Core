@@ -264,11 +264,13 @@ class ModelPool:
     queues it when the entry says so, and the first that gets free takes it (it leaves the other queues). A model
     that does not answer is skipped a minute."""
 
-    def __init__(self, hass: HomeAssistant, models: list[dict[str, Any]], benches: dict[str, Any] | None = None) -> None:
-        """Initialize with the stored list (and the stored benchmarks)."""
+    def __init__(self, hass: HomeAssistant, models: list[dict[str, Any]], benches: dict[str, Any] | None = None,
+                 servers: list[dict[str, Any]] | None = None) -> None:
+        """Initialize with the stored lists: models, the last benchmarks, the servers the models are on."""
         self.hass = hass
         self.models = models
         self.benches = benches if benches is not None else {}
+        self.server_list = servers if servers is not None else []
         self._down: dict[str, float] = {}
         self.failing: set[str] = set()  # models that did not answer last time (until they answer again): the panel warns
         self._busy: dict[str, int] = {}  # requests running per model
@@ -375,18 +377,20 @@ class ModelPool:
                  "waiting": len(self._queues.get(m["id"], []))} for m in self.models]
 
     def servers(self) -> list[dict[str, Any]]:
-        """The servers behind the pool: one per address and key, each with the pool's models on it (a router serves
-        many models on one address)."""
-        found: dict[tuple[str, str], dict[str, Any]] = {}
-        for m in self.models:
-            client = Client(self.hass, m)
-            server = found.setdefault((client.root, m.get("api_key") or ""), {"address": client.root, "client": client, "uses": []})
-            server["uses"].append(m)
-        return list(found.values())
+        """The model servers, each with a client for it and the pool's models on it (a router serves many models)."""
+        out = []
+        for record in self.server_list:
+            client = Client(self.hass, {"base_url": record["base_url"], "api_key": record.get("api_key"), "model": ""})
+            out.append({"record": record, "address": client.root, "client": client,
+                        "uses": [m for m in self.models if m.get("server") == record["id"]]})
+        return out
 
-    async def bench(self, model: dict[str, Any], name: str) -> dict[str, Any]:
-        """Benchmark one model of a pool model's server and keep the result (the newest per server and model)."""
-        client = Client(self.hass, model)
+    def server_of(self, server_id: str) -> dict[str, Any] | None:
+        """One server (with its client), by id."""
+        return next((s for s in self.servers() if s["record"]["id"] == server_id), None)
+
+    async def bench(self, client: Client, name: str) -> dict[str, Any]:
+        """Benchmark one model of a server and keep the result (the newest per server and model)."""
         result = {**await client.bench(name), "at": dt_util.utcnow().isoformat()}
         self.benches[f"{client.root} {name}"] = result
         return result
@@ -400,11 +404,19 @@ class ModelPool:
         """Every server with what it offers right now (a router: its models and their state; else only the pool's
         models on it). For the panel and the Models card; no keys."""
         async def one(server: dict[str, Any]) -> dict[str, Any]:
-            out = {"address": server["address"], "uses": [{"id": m["id"], "name": m["name"], "model": m["model"], "follow": bool(m.get("follow"))}
-                                                          for m in server["uses"]]}
+            record = server["record"]
+            out = {"id": record["id"], "name": record["name"], "base_url": record["base_url"], "has_key": bool(record.get("api_key")),
+                   "address": server["address"],
+                   "uses": [{"id": m["id"], "name": m["name"], "model": m["model"], "follow": bool(m.get("follow")),
+                             "tags": self.tags(m["id"]), "parallel": m.get("parallel") or 1} for m in server["uses"]]}
             try:
                 out["models"] = await server["client"].router()
                 out["router"] = out["models"] is not None
+                if not out["router"]:  # one fixed model (or a few): what its /v1/models says, if it says anything
+                    try:
+                        out["offered"] = await server["client"].list_models()
+                    except ModelError:
+                        out["offered"] = []
             except ModelError as err:
                 out.update(router=False, models=None, error=str(err))
             for m in out["models"] or []:
