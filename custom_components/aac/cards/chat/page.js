@@ -34,12 +34,12 @@ class AacChatPage extends HTMLElement {
   }
 
   event(ev) { // what the core tells about this card
-    if (ev.what === "delta" && this.busy) {
+    if (ev.what === "delta" && (this.busy || (this.entry && ev.chat_id === this.entry))) { // typed here, or spoken into this chat
       this.live = ev.text;
       const box = this.querySelector("#live");
-      if (box) box.innerHTML = this.panel.md(ev.text);
+      if (box) box.innerHTML = this.panel.md(ev.text); else if (!this.busy) this.render();
     } else if (ev.what === "chat" && this.entry && !this.busy && (!ev.chat_id || ev.chat_id === this.entry)) {
-      clearTimeout(this._t); this._t = setTimeout(async () => { await this._get(); this.render(); }, 150);
+      clearTimeout(this._t); this._t = setTimeout(async () => { await this._get(); this.live = ""; this.render(); }, 150);
     }
   }
 
@@ -52,7 +52,7 @@ class AacChatPage extends HTMLElement {
       : this.mode === "doc" && this.chat ? (this.chat.entries || []).map((e) => `<div class="entry"><div class="k">${esc(e.by)} · ${esc(e.kind)} ${e.tags.map((t) => `#${esc(t)}`).join(" ")}</div>${md(e.text || (e.data?.function ? `${e.data.function}(${JSON.stringify(e.data.args || {})})` : ""))}</div>`).join("")
       : msgs.map((m) => `<div class="bubble ${m.role === "user" ? "user" : "aac"} ${m.error ? "err" : ""}">${md(m.text)}${m.cut ? '<div class="cut">stopped</div>' : ""}</div>`).join("")
         || `<div class="hint" style="margin:auto">${esc(card.title)}: ask anything.</div>`;
-    const live = this.busy ? `<div class="bubble aac" id="live">${md(this.live || "…")}</div>` : "";
+    const live = this.busy || this.live ? `<div class="bubble aac" id="live">${md(this.live || "…")}</div>` : "";
     const modes = this.chat ? `<button class="small" data-mode="" ${!this.mode ? "disabled" : ""}>Chat</button><button class="small" data-mode="doc" title="The document: every entry with its card, kind and tags" ${this.mode === "doc" ? "disabled" : ""}>Document</button><button class="small" data-mode="request" title="What the model got for the newest turn: each message with the cards its text came from, and the tools it had" ${this.mode === "request" ? "disabled" : ""}>Request</button><button class="small danger" id="delchat">Delete</button>` : "";
     this.innerHTML = `<div class="chat">${header(this.chat?.title || `New chat · ${card.title}`, `${modes}<button class="small" id="chatstop" title="Stop: sends this chat's context with a stop; a model still writing cuts its answer">Stop</button>`)}
       <div class="log">${log}${live}</div>

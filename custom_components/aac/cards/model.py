@@ -163,6 +163,8 @@ class Model(Card):
             return
         answer = context.add(self.id, "answer", "", ["answer"])
         answer["state"] = "open"
+        self._snapshot(context, step)  # under way: a chat shows the question at once (a spoken one too)
+        await self._sent  # before the model is asked (only a few cards pass it on)
         told = [c for c in step.tool_cards() if (c.settings.get("instructions") or "").strip()]  # what its tools ask of it
         about = "About your tools:\n" + "\n".join(f"- {c.name} ({c.id}): {c.settings['instructions'].strip()}" for c in told) if told else ""
         for _ in range(MAX_ROUNDS):

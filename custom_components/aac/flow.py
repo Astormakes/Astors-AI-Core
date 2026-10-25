@@ -68,7 +68,7 @@ class Step:
 
     def live(self, text: str) -> None:
         """Text that is still growing (a model writing): open panels show it."""
-        self.flow.domain.core.notify("delta", domain=self.flow.domain.id, chat_id=self.context.chat_id,
+        self.flow.domain.core.notify("delta", domain=self.flow.domain.id, chat_id=self.context.chat_id or self.context.id,
                                      card=self.context.origin, text=text)
 
 

@@ -207,13 +207,11 @@ class Chat(Card):
         self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "said"), f"aac {self.id} stop")
 
     async def progress(self, context: Context, port: str) -> list[Any] | None:
-        """A turn still being worked on: once it has something finished (a sentence said, a tool called), the chat
-        shows it; a turn that ends in "nothing" stays out (nothing finished before it)."""
+        """A turn still being worked on: the chat shows it at once (a spoken question too; the answer grows live in
+        the panel). A turn that ends in "nothing" goes again when it is finished."""
         if context.origin != self.id or port != "answers" or context.id in self._switch:  # a switching turn is not kept
             return []
-        said = max((i for i, e in enumerate(context.entries) if e["kind"] == "said"), default=-1)
-        if any(e["kind"] == "call" or (e["kind"] == "answer" and e.get("state") == "closed") for e in context.entries[said + 1:]):
-            await self._keep_turn(context)
+        await self._keep_turn(context)
         return []
 
     async def _keep_turn(self, context: Context) -> None:
@@ -227,17 +225,21 @@ class Chat(Card):
     async def _do_switch(self, context: Context, target: str) -> None:
         """A turn asked to go on in another chat: the chat it came from drops the turn (and goes if nothing is left),
         the other chat is the current one."""
-        said = next((e["id"] for e in reversed(context.entries) if e["kind"] == "said"), None)
         here = self.data["chats"].get(context.chat_id or context.id)
         if here is not None and here["id"] != target:
-            ids = [e["id"] for e in here["entries"]]
-            here["entries"] = here["entries"][:ids.index(said)] if said in ids else here["entries"]
-            if not any(e["kind"] == "said" for e in here["entries"]):
-                self.data["chats"].pop(here["id"])
+            self._drop_turn(here, context)
         self._switched[context.id] = target
         while len(self._switched) > 20:
             self._switched.pop(next(iter(self._switched)))
         await self._make_current(target)
+
+    def _drop_turn(self, chat: dict[str, Any], context: Context) -> None:
+        """The chat forgets a turn it showed (from its newest said line on), and goes if nothing is left."""
+        said = next((e["id"] for e in reversed(context.entries) if e["kind"] == "said"), None)
+        ids = [e["id"] for e in chat["entries"]]
+        chat["entries"] = chat["entries"][:ids.index(said)] if said in ids else chat["entries"]
+        if not any(e["kind"] == "said" for e in chat["entries"]):
+            self.data["chats"].pop(chat["id"])
 
     async def _make_current(self, chat_id: str) -> None:
         self.data["chats"][chat_id]["updated"] = dt_util.utcnow().isoformat()  # the newest: the current one
@@ -258,6 +260,10 @@ class Chat(Card):
         text = context.answer or error or ("" if cut else "(no answer)")
         if context.origin == self.id and text.strip().lower() not in SILENT:
             await self._keep_turn(context)
+        elif context.origin == self.id and (chat := self.data["chats"].get(context.chat_id or context.id)) is not None:
+            self._drop_turn(chat, context)  # "nothing": it was not meant for AAC, the chat shows it no longer
+            await self.save()
+            self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=chat["id"])
         if (future := self._waiting.get(context.id)) and not future.done():
             future.set_result(text)
         return []

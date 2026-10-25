@@ -10,7 +10,7 @@ from custom_components.aac.audio import EnergyVad, Segmenter
 
 from custom_components.aac.audio import pcm_to_wav
 
-from .conftest import model_answers, reply, setup_aac
+from .conftest import BASE_URL, model_answers, reply, setup_aac
 
 WAVE = pcm_to_wav(b"\x01\x00" * 1600, 22050)  # what a voice engine gives back
 
@@ -37,7 +37,15 @@ async def test_a_spoken_round_trip(hass: HomeAssistant, hass_client, mock_entry,
     core.data["voice_chain"] = False
     await async_voice_chain(core)
     d = core.domain
-    asked = model_answers(aioclient_mock, reply("It is five."), reply("nothing"))
+    from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
+    asked, answers, in_chat = [], [reply("It is five."), reply("nothing")], []
+
+    async def model(method, url, data):  # what the chat shows while the model is still working
+        asked.append(data)
+        chat = d.cards["chat"]
+        in_chat.append([m["text"] for m in chat.get(chat.chats()[0]["id"])["messages"]] if chat.chats() else [])  # the newest
+        return AiohttpClientMockResponse(method, url, json=answers[len(asked) - 1])
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=model)
     heard = AsyncMock(side_effect=[{"text": "Computer, what time is it?"}, {"text": "see you in the next video"}])
     client = await hass_client()
     with (patch("aac_cards.audio.make_vad", return_value=EnergyVad()),
@@ -61,6 +69,8 @@ async def test_a_spoken_round_trip(hass: HomeAssistant, hass_client, mock_entry,
     chat = d.cards["chat"]
     kept = chat.get(chat.chats()[0]["id"])
     assert kept["title"].startswith("Voice · PC · ") and [m["text"] for m in kept["messages"]] == ["Computer, what time is it?", "It is five."]
+    assert in_chat[0] == ["Computer, what time is it?"]  # shown at once, before the answer came
+    assert in_chat[1][-1].endswith("see you in the next video")  # the follow-up showed too, and went with its "nothing"
 
 
 async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry, start):

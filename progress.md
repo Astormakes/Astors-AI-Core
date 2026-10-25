@@ -250,7 +250,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
    sends frames only while a Nodes page shows the card (`aac/view/watch`, said every 8 s). First one: Scope (Audio:
    level bars, waveform, spectrum with numpy; passes the audio on). Next: Gain, Compressor.
 3. ~~Faster lights~~ **done (2.1.1):** wire levels 10×/s, only while a Nodes page is open.
-4. **Audio delay**: measure each stage first (clip end → text → model → speech → playing), then: the satellite
+4. **Audio delay** (2.1.32: a spoken turn shows in the chat at once, the answer grows live there; a turn answered "nothing" goes again): measure each stage first (clip end → text → model → speech → playing), then: the satellite
    plays a stream instead of whole WAVs; sentence-wise speech (item 1); the Audio clipper's pause. Found: the
    Microphone → Speaker loop sounded broken because AAC ignores a satellite's microphone while it plays (no talking
    to itself) and the Speaker plays a stream in separate 2 s pieces; needs echo cancellation (best in the satellite)
