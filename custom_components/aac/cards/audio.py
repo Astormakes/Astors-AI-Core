@@ -126,7 +126,7 @@ class Microphone(Card):
                 if not hub.sources[speaker].playing:
                     break
             await asyncio.sleep(0.3)  # the tail of the sound reaches the microphone
-            seconds = len(sound) / 2 / SAMPLE_RATE + 1.0
+            seconds = len(sound) / 2 / SAMPLE_RATE + 1.5  # room for a long way back (Bluetooth: several hundred ms)
         else:
             seconds = float(args.get("seconds") or 5)
         mic, ref = hub.recent(source, seconds) or {}, hub.recent(speaker, seconds) or {}

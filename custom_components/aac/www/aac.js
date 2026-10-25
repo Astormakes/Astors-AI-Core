@@ -446,7 +446,7 @@ class AacPanel extends HTMLElement {
       }
       return at;
     };
-    const coarse = best(-1600, 3200, 4), d = best(coarse - 8, coarse + 8, 1);
+    const coarse = best(-1600, 16000, 4), d = best(coarse - 8, coarse + 8, 1); // −100 ms … +1 s (Bluetooth adds a lot)
     let num = 0, den = 1e-9;
     for (let i = Math.max(0, d); i < mic.length && i - d < ref.length; i++) { const r = ref[i - d]; num += mic[i] * r; den += r * r; }
     const g = num / den;
@@ -466,7 +466,7 @@ class AacPanel extends HTMLElement {
       ${this._field(this._card(w.card), ["source", this._type("microphone").settings.source])}${this._field(this._card(w.card), ["echo_from", this._type("microphone").settings.echo_from])}
       <canvas id="wavecv"></canvas>
       <div class="row">${sw("mic", "#2196f3", "microphone")}${sw("ref", "#ff9800", "what the speaker played (shifted, scaled: what is subtracted)")}${sw("res", "#4caf50", "after the subtraction")}</div>
-      <div class="row"><label>Delay</label><input type="range" min="-100" max="200" step="0.0625" data-wvin="delay" value="${w.delay}"><input type="number" step="0.0625" data-wvin="delay" value="${w.delay}"> ms
+      <div class="row"><label>Delay</label><input type="range" min="-100" max="1000" step="0.0625" data-wvin="delay" value="${w.delay}"><input type="number" step="0.0625" data-wvin="delay" value="${w.delay}"> ms
         <label>Gain</label><input type="range" min="0" max="4" step="0.005" data-wvin="gain" value="${w.gain}"><input type="number" step="0.005" min="0" data-wvin="gain" value="${w.gain}">
         <label class="check"><input type="checkbox" data-wvin="invert" ${w.invert ? "checked" : ""}>inverted</label></div>
       <div class="row"><button class="small" data-wv="test">Play test sound & record</button><button class="small" data-wv="recent">Take the last 5 s</button><button class="small" data-wv="auto" ${w.ref ? "" : "disabled"}>Line up automatically</button>
