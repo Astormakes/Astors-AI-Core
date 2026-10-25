@@ -310,7 +310,15 @@ class AacPanel extends HTMLElement {
     this[key] = open; this.render();
   }
 
+  _closePanels() { // a tap on the empty grid (phone): every open panel goes at once (one step back per panel)
+    const n = (this.sideOpen ? 1 : 0) + (this.palOpen ? 1 : 0);
+    if (!n) return false;
+    this.sideOpen = this.palOpen = false; this._quietBack = true; history.go(-n); this.render();
+    return true;
+  }
+
   _onBack() {
+    if (this._quietBack) { this._quietBack = false; return; } // the panels closed already
     if (this.view.kind !== "nodes") return;
     if (this.sideOpen) this.sideOpen = false;
     else if (this.palOpen) this.palOpen = false;
@@ -1451,8 +1459,10 @@ class AacPanel extends HTMLElement {
       if (pinch) { if (!fingers.size) pinch = null; return; } // a pinch ends when the last finger lifts
       const d = drag; drag = null; this._dragging = false;
       if (!d) return;
-      if (d.kind === "pan" && Math.hypot(e.clientX - d.at[0], e.clientY - d.at[1]) < 4 && (this.sel || this.selWire)) { // a click on empty grid lets go
-        this.sel = this.selWire = null; this.render(); return;
+      if (d.kind === "pan" && Math.hypot(e.clientX - d.at[0], e.clientY - d.at[1]) < 4) { // a tap on empty grid lets go (on a phone it closes the panels too)
+        const closed = this._phone() && this._closePanels();
+        if (this.sel || this.selWire) { this.sel = this.selWire = null; this.render(); return; }
+        if (closed) return;
       }
       if (d.kind === "move") {
         if (d.moved) { this._snap(d.id); this._drawGrid(); await this._savePositions(); }
