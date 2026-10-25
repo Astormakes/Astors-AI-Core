@@ -277,10 +277,15 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     the rest (only the text changes) / Cancel. Editing an answer only changes the text.
 12. ~~Own dialogs~~ **done (2.1.21).**
 13. ~~Archive for chats~~ **done (2.1.21).**
-14. **Switchable models on the PC** (owner, as planned in v1): llama-server's router mode (`--models-dir ~/models
-    --models-max 1` instead of `-m …$MODEL` in `aac-llm`, the unit reads `~/.config/aac/llm.env`) offers every model in
-    ~/models (now Ornith-1.5-35B and Qwen3.6-35B-A3B); AAC adds each as a model on the same address. A switch loads the
-    other one (~15–30 s). Later AAC itself decides what to load (the broker idea from v1).
+14. **Switchable models** (owner, 2026-10-25; as planned in v1): AAC asks each llama-server which models it offers
+    and shows them; the owner picks one on the fly (Models page) or a card does it (a function: load / unload, so a
+    model or a Conditional can switch too). That way the owner tests models on their own. Even better: AAC downloads
+    a model (a Hugging Face repo + file) to the machine. Base: llama-server's router mode (`--models-dir ~/models
+    --models-max 1`; `--models-max 1` unloads before it loads, so never two models on one card). On both machines:
+    the PC (`aac-llm`, `~/.config/aac/llm.env`) and CT 110 (the RX 7800 XT). Needs per model its own settings
+    (context, `-ub`) and a VRAM check before loading: on the 7800 XT a model without 1–2 GB of headroom froze the host
+    three times (2026-10-25, see the CT 110 notes). To check: whether the router can fetch from Hugging Face itself
+    (`-hf`), else a small helper on the machine. Later AAC decides what to load (the broker idea from v1).
 15. **Smaller undo history**: the domain's store is ~720 KB because every undo step and slot is a whole copy of the
     setup (the Home card's access list alone is big), and it is written on every change. Keep changes instead of
     copies, or leave big settings out of the undo steps. Also: a removed card's data stays stored (for Undo); stores of
