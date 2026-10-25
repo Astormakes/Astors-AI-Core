@@ -15,6 +15,7 @@ import aiohttp
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.util import dt as dt_util
 
 from .const import LOGGER, SIGNAL
 
@@ -62,9 +63,23 @@ class Client:
                 raise
         return await self._chat(messages, tools, on_delta, **params)
 
+    async def following(self) -> str:
+        """The model to ask for: its own, or (it follows a router) whatever the router has loaded now; with none loaded
+        the one it used last (the router loads it)."""
+        if not self.model.get("follow"):
+            return self.model["model"]
+        try:
+            found = (await self._request("GET", "/models", seconds=5)).get("data") or []
+        except ModelError:
+            return self.model["model"]
+        loaded = next((m["id"] for m in found if (m.get("status") or {}).get("value") in ("loaded", "loading", "sleeping")), None)
+        if loaded:
+            self.model["model"] = loaded  # the pool's entry remembers it (shown, and used when nothing is loaded)
+        return self.model["model"]
+
     async def _chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None,
                     on_delta: Callable[[str], None] | None, **params: Any) -> dict[str, Any]:
-        body = {"model": self.model["model"], "messages": messages, "stream": True, **params}
+        body = {"model": await self.following(), "messages": messages, "stream": True, **params}
         if tools:
             body["tools"] = tools
         content, calls = "", {}
@@ -112,10 +127,10 @@ class Client:
         """The server's own address: the router's endpoints sit beside /v1."""
         return self.base[:-3] if self.base.endswith("/v1") else self.base
 
-    async def _request(self, method: str, path: str, text_only: bool = False, **kwargs: Any) -> Any:
+    async def _request(self, method: str, path: str, text_only: bool = False, seconds: float = 10, **kwargs: Any) -> Any:
         try:
             async with self.session.request(method, f"{self.root}{path}", headers=self._headers(),
-                                            timeout=aiohttp.ClientTimeout(total=10), **kwargs) as resp:
+                                            timeout=aiohttp.ClientTimeout(total=seconds), **kwargs) as resp:
                 text = await resp.text()
                 if resp.status >= 400:
                     try:
@@ -161,10 +176,10 @@ class Client:
                 info = meta.get(m["id"], {})
                 entry.update(params=info.get("n_params"), size=info.get("size"), quant=info.get("ftype"), context=info.get("n_ctx") or entry["context"])
                 try:
-                    props = await self._request("GET", "/props", params={"model": m["id"]})
+                    props = await self._request("GET", "/props", params={"model": m["id"], "autoload": "false"})
                     entry["tools"] = bool((props.get("chat_template_caps") or {}).get("supports_tools"))
                     entry["build"] = props.get("build_info")
-                    metrics = await self._request("GET", "/metrics", text_only=True, params={"model": m["id"]})
+                    metrics = await self._request("GET", "/metrics", text_only=True, params={"model": m["id"], "autoload": "false"})
                 except (ModelError, ValueError):
                     metrics = ""
                 numbers = dict(line.split()[:2] for line in metrics.splitlines() if line.startswith("llamacpp:") and len(line.split()) >= 2)
@@ -192,6 +207,18 @@ class Client:
             pass
         return out
 
+    async def bench(self, name: str) -> dict[str, Any]:
+        """A short fixed test of one of the server's models: it reads a long text (no cache) and writes 256 tokens;
+        how fast each went, as the server measured it."""
+        body = {"model": name, "messages": [{"role": "user", "content": BENCH_TEXT}], "max_tokens": 256, "temperature": 0,
+                "ignore_eos": True, "cache_prompt": False, "stream": False, "chat_template_kwargs": {"enable_thinking": False}}
+        timings = (await self._request("POST", "/v1/chat/completions", seconds=600, json=body)).get("timings") or {}
+        if not timings:
+            raise ModelError("the server measured nothing (not a llama-server?)")
+        return {"read": round(timings.get("prompt_per_second") or 0), "write": round(timings.get("predicted_per_second") or 0),
+                "prompt": timings.get("prompt_n"), "written": timings.get("predicted_n"),
+                "seconds": round(((timings.get("prompt_ms") or 0) + (timings.get("predicted_ms") or 0)) / 1000, 1)}
+
     async def router_do(self, action: str, name: str, sidecars: list[str] | None = None) -> None:
         """load / unload one of the router's models, download one from Hugging Face ("user/repo:quant", sidecars like
         "mmproj", "mtp"), or delete a downloaded one."""
@@ -203,6 +230,10 @@ class Client:
             await self._request("DELETE", "/models", params={"model": name})
         else:
             raise ModelError(f"unknown action {action}")
+
+
+BENCH_TEXT = ("Read this text, then write on about foxes and dogs for as long as you can.\n\n"
+              + "The quick brown fox jumps over the lazy dog, and the dog sleeps on in the warm afternoon sun. " * 75)
 
 
 def _percent(files: dict[str, Any]) -> int:
@@ -233,10 +264,11 @@ class ModelPool:
     queues it when the entry says so, and the first that gets free takes it (it leaves the other queues). A model
     that does not answer is skipped a minute."""
 
-    def __init__(self, hass: HomeAssistant, models: list[dict[str, Any]]) -> None:
-        """Initialize with the stored list."""
+    def __init__(self, hass: HomeAssistant, models: list[dict[str, Any]], benches: dict[str, Any] | None = None) -> None:
+        """Initialize with the stored list (and the stored benchmarks)."""
         self.hass = hass
         self.models = models
+        self.benches = benches if benches is not None else {}
         self._down: dict[str, float] = {}
         self.failing: set[str] = set()  # models that did not answer last time (until they answer again): the panel warns
         self._busy: dict[str, int] = {}  # requests running per model
@@ -352,6 +384,13 @@ class ModelPool:
             server["uses"].append(m)
         return list(found.values())
 
+    async def bench(self, model: dict[str, Any], name: str) -> dict[str, Any]:
+        """Benchmark one model of a pool model's server and keep the result (the newest per server and model)."""
+        client = Client(self.hass, model)
+        result = {**await client.bench(name), "at": dt_util.utcnow().isoformat()}
+        self.benches[f"{client.root} {name}"] = result
+        return result
+
     def find(self, name: str) -> dict[str, Any] | None:
         """A pool model by id or name (as a model or a Conditional writes it)."""
         name = (name or "").strip().lower()
@@ -361,12 +400,20 @@ class ModelPool:
         """Every server with what it offers right now (a router: its models and their state; else only the pool's
         models on it). For the panel and the Models card; no keys."""
         async def one(server: dict[str, Any]) -> dict[str, Any]:
-            out = {"address": server["address"], "uses": [{"id": m["id"], "name": m["name"], "model": m["model"]} for m in server["uses"]]}
+            out = {"address": server["address"], "uses": [{"id": m["id"], "name": m["name"], "model": m["model"], "follow": bool(m.get("follow"))}
+                                                          for m in server["uses"]]}
             try:
                 out["models"] = await server["client"].router()
                 out["router"] = out["models"] is not None
             except ModelError as err:
                 out.update(router=False, models=None, error=str(err))
+            for m in out["models"] or []:
+                if bench := self.benches.get(f"{server['address']} {m['id']}"):
+                    m["bench"] = bench
+            loaded = next((m["id"] for m in out["models"] or [] if m["status"] in ("loaded", "loading", "sleeping")), None)
+            for model, use in zip(server["uses"], out["uses"]):
+                if model.get("follow") and loaded:  # a model that follows the server uses what it has loaded
+                    model["model"] = use["model"] = loaded
             return out
         return list(await asyncio.gather(*(one(s) for s in self.servers())))
 

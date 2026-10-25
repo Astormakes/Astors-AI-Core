@@ -17,7 +17,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Client, Context, ModelError, register
 
-VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -206,6 +206,10 @@ class ModelServers(Card):
         "load": {"help": "Load a model on the server of one of AAC's models (without switching what that one uses).",
                  "args": {"aac_model": {"type": "string", "help": "AAC's model whose server it is.", "required": True},
                           "model": {"type": "string", "help": "The server's model.", "required": True}}},
+        "bench": {"help": "Measure how fast a model of a server reads and writes (a short fixed test, ~10–60 s; it is "
+                          "loaded first if needed). The result is kept and shown on the Models page.",
+                  "args": {"aac_model": {"type": "string", "help": "AAC's model whose server it is.", "required": True},
+                           "model": {"type": "string", "help": "The server's model.", "required": True}}},
         "unload": {"help": "Unload a model on the server of one of AAC's models (frees its memory).",
                    "args": {"aac_model": {"type": "string", "help": "AAC's model whose server it is.", "required": True},
                             "model": {"type": "string", "help": "The server's model.", "required": True}}},
@@ -218,6 +222,16 @@ class ModelServers(Card):
                      "offers": [{"model": m["id"], "state": m["status"], **({"downloaded": f"{m['progress']} %"} if "progress" in m else {})}
                                 for m in s["models"]] if s.get("models") else (s.get("error") or "one fixed model (no router)")}
                     for s in await pool.offers()]
+        if function == "bench":
+            model = pool.find(str(args.get("aac_model") or ""))
+            if model is None:
+                return {"error": f"AAC has no model {args.get('aac_model')!r}"}
+            try:
+                result = await pool.bench(model, str(args.get("model") or ""))
+            except ModelError as err:
+                return {"error": str(err)}
+            self.core.save()
+            return {"reads": f"{result['read']} tokens/s", "writes": f"{result['write']} tokens/s"}
         if function in ("use", "load", "unload"):
             model = pool.find(str(args.get("aac_model") or ""))
             if model is None:

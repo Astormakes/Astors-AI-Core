@@ -266,7 +266,8 @@ async def ws_chat_request(hass, connection, msg) -> None:
 # ---------------------------------------------------------------------- models (core) and domains
 @command({vol.Required("type"): "aac/models/save", vol.Required("model"): {
     vol.Optional("id"): str, vol.Required("name"): str, vol.Required("base_url"): str, vol.Required("model"): str,
-    vol.Optional("api_key"): vol.Any(str, None), vol.Optional("tags"): [str], vol.Optional("parallel"): vol.All(vol.Coerce(int), vol.Range(1, 64))}})
+    vol.Optional("api_key"): vol.Any(str, None), vol.Optional("tags"): [str], vol.Optional("parallel"): vol.All(vol.Coerce(int), vol.Range(1, 64)),
+    vol.Optional("follow"): bool}})
 async def ws_models_save(hass, connection, msg) -> None:
     """Add or change a model in the pool."""
     core = _core(hass)
@@ -300,11 +301,11 @@ async def ws_models_servers(hass, connection, msg) -> None:
 
 
 @command({vol.Required("type"): "aac/models/router", vol.Required("model_id"): str,
-          vol.Required("action"): vol.In(["load", "unload", "download", "delete", "use"]), vol.Required("name"): str,
+          vol.Required("action"): vol.In(["load", "unload", "download", "delete", "use", "bench"]), vol.Required("name"): str,
           vol.Optional("sidecars"): [str]})
 async def ws_models_router(hass, connection, msg) -> None:
-    """On the server of a pool model: load, unload, download or delete one of its models, or use one (the pool model
-    asks for it from now on, and it is loaded at once)."""
+    """On the server of a pool model: load, unload, download or delete one of its models, use one (the pool model
+    asks for it from now on, and it is loaded at once), or benchmark one (the result is kept)."""
     core = _core(hass)
     model = core.pool.get(msg["model_id"])
     if model is None:
@@ -314,6 +315,9 @@ async def ws_models_router(hass, connection, msg) -> None:
             core.save_model({"id": model["id"], "model": msg["name"]})
             core.save()
             await Client(hass, model).router_do("load", msg["name"])
+        elif msg["action"] == "bench":
+            await core.pool.bench(model, msg["name"])
+            core.save()
         else:
             await Client(hass, model).router_do(msg["action"], msg["name"], msg.get("sidecars"))
     except ModelError as err:

@@ -327,7 +327,24 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert (await client.receive_json())["success"]
     assert any(m[0] == "DELETE" and m[1].query.get("model") == "user/new-GGUF:Q4_K_M" for m in aioclient_mock.mock_calls)
 
+    assert all(m[1].query.get("autoload") == "false" for m in aioclient_mock.mock_calls if m[1].path in ("/props", "/metrics"))
+    aioclient_mock.post(f"{root}/v1/chat/completions", json={"choices": [{"message": {"content": "Foxes …"}}], "timings": {
+        "prompt_n": 1520, "prompt_per_second": 1043.6, "prompt_ms": 1456.5, "predicted_n": 256, "predicted_per_second": 107.2, "predicted_ms": 2388.1}})
+    await client.send_json({"id": 5, "type": "aac/models/router", "model_id": "m_big", "action": "bench", "name": "big"})
+    assert (await client.receive_json())["success"]
+    kept = core.data["benches"][f"{root} big"]
+    assert (kept["read"], kept["write"], kept["prompt"], kept["written"], kept["seconds"]) == (1044, 107, 1520, 256, 3.8)
+    bench_body = next(m[2] for m in aioclient_mock.mock_calls if str(m[1]).endswith("/v1/chat/completions"))
+    assert bench_body["model"] == "big" and bench_body["ignore_eos"] and not bench_body["cache_prompt"]
+    await client.send_json({"id": 6, "type": "aac/models/servers"})
+    assert (await client.receive_json())["result"]["servers"][0]["models"][0]["bench"]["write"] == 107
+
+    core.save_model({"id": "m_small", "follow": True, "model": "something old"})  # follows: asks for what is loaded
+    from custom_components.aac.models import Client
+    assert await Client(hass, core.pool.get("m_small")).following() == "big" and core.pool.get("m_small")["model"] == "big"
+
     card = await core.domain.add_card("model_servers", "Servers")
+    assert await card.call("bench", {"aac_model": "Small", "model": "big"}) == {"reads": "1044 tokens/s", "writes": "107 tokens/s"}
     (listed,) = await card.call("servers", {})
     assert listed["aac_models"] == ["Big (uses big)", "Small (uses big)"]
     assert listed["offers"][1] == {"model": "user/new-GGUF:Q4_K_M", "state": "downloading", "downloaded": "25 %"}

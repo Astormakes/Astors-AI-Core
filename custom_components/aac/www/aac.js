@@ -596,7 +596,7 @@ class AacPanel extends HTMLElement {
 
   // ------------------------------------------------------------------ models
   _models() {
-    const rows = this.state.models.map((m) => `<tr><td><b>${esc(m.name)}</b><div class="hint">${esc(m.model)} · ${esc(m.base_url)}</div><div class="hint">${(m.tags || []).map((t) => `<code>${esc(t)}</code>`).join(" ")}</div></td>
+    const rows = this.state.models.map((m) => `<tr><td><b>${esc(m.name)}</b><div class="hint">${m.follow ? `follows the server · now <b>${esc(m.model)}</b>` : esc(m.model)} · ${esc(m.base_url)}</div><div class="hint">${(m.tags || []).map((t) => `<code>${esc(t)}</code>`).join(" ")}</div></td>
       <td>${m.failing ? `<span style="color:var(--error-color,#db4437)">✗ not answering${m.up ? " (tried again with the next request)" : " (skipped for a minute)"}</span>` : "✓"}<div class="hint">${m.busy || 0}/${m.parallel || 1} running${m.waiting ? ` · ${m.waiting} waiting` : ""}</div></td>
       <td><button class="small" data-editmodel="${esc(m.id)}">Edit</button> <button class="small danger" data-delmodel="${esc(m.id)}">Delete</button></td></tr>`).join("");
     const f = this.modelForm || {};
@@ -605,6 +605,7 @@ class AacPanel extends HTMLElement {
       <div class="card"><h3 style="margin-top:0">${f.id ? "Change model" : "Add a model"}</h3>
         <label class="hint">Server address</label><div class="row"><input id="m_url" value="${esc(f.base_url || "http://192.168.1.x:8080/v1")}"><button class="small" id="probe">Find models</button></div>
         <label class="hint">Model</label>${this.probed ? `<select id="m_model">${this.probed.map((x) => `<option ${x === f.model ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>` : `<input id="m_model" value="${esc(f.model || "")}">`}
+        <label class="check" style="font-size:13px"><input type="checkbox" id="m_follow" ${f.follow ? "checked" : ""}>Follow the server ${tip("For a llama-server router: AAC asks for whatever model it has loaded now (load another under Servers and AAC uses that one); with none loaded, the one it used last.")}</label>
         <label class="hint">Name</label><input id="m_name" value="${esc(f.name || "")}">
         <label class="hint">API key (only for servers that need one)</label><input id="m_key" type="password" placeholder="${f.has_key ? "kept" : ""}">
         <label class="hint">Runs at once ${tip("How many requests the server works on side by side (llama-server: its slots, --parallel). More wait in the queue of cards that allow it.")}</label><input id="m_parallel" type="number" min="1" value="${esc(f.parallel || 1)}" style="width:80px">
@@ -630,17 +631,20 @@ class AacPanel extends HTMLElement {
     if (!s.router) return '<p class="hint">One fixed model (not a llama-server router).</p>';
     const gb = (b) => (b ? `${(b / 1e9).toFixed(1)} GB` : ""), first = s.uses[0].id;
     const rows = (s.models || []).map((m) => {
-      const users = s.uses.filter((u) => u.model === m.id), st = m.status;
+      const users = s.uses.filter((u) => u.model === m.id && (!u.follow || ["loaded", "loading", "sleeping"].includes(m.status))), st = m.status;
       const facts = [st === "downloading" ? `downloading ${m.progress ?? 0} %` : st + (m.failed ? " (failed to start)" : ""),
         m.quant, m.params ? `${(m.params / 1e9).toFixed(1)} B` : "", gb(m.size),
         m.context ? `context ${m.context.toLocaleString()}${m.context_max ? ` of ${m.context_max.toLocaleString()}` : ""}` : "",
         m.tools ? "tools" : "", (m.inputs || []).filter((x) => x !== "text").join(", "),
         m.speed && (m.speed.read || m.speed.write) ? `reads ${m.speed.read} · writes ${m.speed.write} tokens/s` : ""].filter(Boolean).join(" · ");
       const act = (a, label, cls = "") => `<button class="small ${cls}" data-ract="${a}" data-rmodel="${esc(first)}" data-rname="${esc(m.id)}">${label}</button>`;
-      const uses = s.uses.filter((u) => u.model !== m.id).map((u) => `<button class="small" data-ract="use" data-rmodel="${esc(u.id)}" data-rname="${esc(m.id)}" title="${esc(u.name)} asks for this model from now on (it is loaded at once)">Use for ${esc(u.name)}</button>`).join(" ");
+      const uses = s.uses.filter((u) => u.model !== m.id && !u.follow).map((u) => `<button class="small" data-ract="use" data-rmodel="${esc(u.id)}" data-rname="${esc(m.id)}" title="${esc(u.name)} asks for this model from now on (it is loaded at once)">Use for ${esc(u.name)}</button>`).join(" ");
       const buttons = st === "downloading" ? act("unload", "Pause") : st === "incomplete" ? act("download", "Resume") + " " + act("delete", "Delete", "danger")
         : `${st === "loaded" || st === "sleeping" ? act("unload", "Unload") : st === "loading" ? "" : act("load", "Load")} ${uses}${m.can_remove && st !== "loaded" ? " " + act("delete", "Delete", "danger") : ""}`;
-      return `<tr><td><b>${esc(m.id)}</b>${users.length ? ` <span class="hint">← ${users.map((u) => esc(u.name)).join(", ")}</span>` : ""}<div class="hint">${esc(facts)}</div></td><td style="text-align:right;white-space:nowrap">${buttons}</td></tr>`;
+      const b = m.bench, benching = (this._benching || new Set()).has(`${s.address} ${m.id}`);
+      const benchLine = b ? `<div class="hint">Bench ${esc(new Date(b.at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }))}: reads <b>${esc(b.read)}</b> · writes <b>${esc(b.write)}</b> tokens/s <span title="tokens read, tokens written, seconds">(${esc(b.prompt)} in, ${esc(b.written)} out, ${esc(b.seconds)} s)</span></div>` : "";
+      const bench = st === "loaded" || st === "sleeping" ? (benching ? '<button class="small" disabled>Benching …</button> ' : `<button class="small" data-ract="bench" data-rmodel="${esc(first)}" data-rname="${esc(m.id)}" title="A short fixed test: reads ~1,500 tokens, writes 256; the result is kept">Bench</button> `) : "";
+      return `<tr><td><b>${esc(m.id)}</b>${users.length ? ` <span class="hint">← ${users.map((u) => esc(u.name)).join(", ")}</span>` : ""}<div class="hint">${esc(facts)}</div>${benchLine}</td><td style="text-align:right;white-space:nowrap">${bench}${buttons}</td></tr>`;
     }).join("");
     return `<table style="width:100%;border-collapse:collapse">${rows || '<tr><td class="hint">It offers no models.</td></tr>'}</table>`;
   }
@@ -654,8 +658,11 @@ class AacPanel extends HTMLElement {
 
   async _router(model_id, action, name, sidecars) {
     if (action === "delete" && !(await this.confirm(`Delete ${name} from the server's disk?`))) return;
+    const key = `${this.servers?.find((s) => s.uses.some((u) => u.id === model_id))?.address} ${name}`;
+    if (action === "bench") { (this._benching ||= new Set()).add(key); this._loadServers(); }
     try { await this.ws("aac/models/router", { model_id, action, name, ...(sidecars ? { sidecars } : {}) }); }
     catch (e) { this.alert(`${action}: ${e.message || e}`); }
+    finally { this._benching?.delete(key); }
     if (action === "use") await this._load();
     await this._loadServers();
   }
@@ -1390,7 +1397,7 @@ class AacPanel extends HTMLElement {
     $("#savemodel")?.addEventListener("click", async () => {
       const model = { name: $("#m_name").value || $("#m_model").value, base_url: $("#m_url").value, model: $("#m_model").value, api_key: $("#m_key").value || null,
         tags: [...this.shadowRoot.querySelectorAll("[data-mtag]")].filter((x) => x.checked).map((x) => x.dataset.mtag),
-        parallel: Math.max(1, Number($("#m_parallel").value) || 1) };
+        parallel: Math.max(1, Number($("#m_parallel").value) || 1), follow: $("#m_follow").checked };
       if (this.modelForm?.id) model.id = this.modelForm.id;
       if (!model.model) { this.alert("Pick or type a model"); return; }
       await this.ws("aac/models/save", { model }); this.modelForm = null; this.probed = null; await this._load(); this.render();

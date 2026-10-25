@@ -313,8 +313,9 @@ class Core:
         self.data = await self._store.async_load() or {}
         first = not self.data
         self.data.setdefault("models", [])
+        self.data.setdefault("benches", {})  # the last benchmark of each server's model ("<address> <model>")
         self.data.setdefault("domains", [])
-        self.pool = ModelPool(self.hass, self.data["models"])
+        self.pool = ModelPool(self.hass, self.data["models"], self.data["benches"])
         if first:
             from .defaults import async_first_start  # noqa: PLC0415
             await async_first_start(self)
