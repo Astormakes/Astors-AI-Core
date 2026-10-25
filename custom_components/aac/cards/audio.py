@@ -136,11 +136,15 @@ class Microphone(Card):
 
 
 def _test_sound() -> bytes:
-    """A test sound for lining up: three clicks, then a slow sweep from 100 to 500 Hz (its waves can be told apart when
-    zoomed in; 1.4 s, 16 kHz PCM)."""
+    """A test sound for lining up: three short 1 kHz beeps (sharp starts that live through Bluetooth's speech codec),
+    then a slow sweep from 100 to 500 Hz (its waves can be told apart when zoomed in; 1.4 s, 16 kHz PCM)."""
     out = array("h")
+    beep = int(0.025 * SAMPLE_RATE)
     for _ in range(3):
-        out.extend([20000, -20000] + [0] * 3198)  # a click, then 0.2 s of silence
+        for i in range(beep):  # 25 ms at 1 kHz with soft ends (no clicks of its own), then silence up to 0.2 s
+            edge = min(1.0, i / 40, (beep - i) / 40)
+            out.append(int(16000 * edge * math.sin(2 * math.pi * 1000 * i / SAMPLE_RATE)))
+        out.extend([0] * (int(0.2 * SAMPLE_RATE) - beep))
     phase, length = 0.0, int(0.8 * SAMPLE_RATE)
     for i in range(length):
         phase += 2 * math.pi * (100 + 400 * i / length) / SAMPLE_RATE
