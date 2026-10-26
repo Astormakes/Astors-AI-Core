@@ -346,4 +346,13 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     notification) until the owner allows all, some or none; locks, alarms, covers, valves, sirens only with the owner
     in the chat; HA's "expose to Assist" as the starting point. Ties in with 19 (what a script may call). Talk through
     first.
+21. **Card sandboxing** (owner, 2026-10-26). Today a card file in `<config>/aac/cards/` is plain Python run inside
+    Home Assistant's process (`cards/__init__.py` `_load`: `exec`): it can do anything HA can (files, network, every
+    entity, other cards' data), and "only uses `api`" is a convention, not enforced. Fine for AAC's own cards, not for
+    downloaded or model-made ones. v1's plan (`spec/module.md`): code modules never active without the owner, run
+    isolated, only what their declared `permissions` allow. Options to talk through: cards declare what they need
+    (entities, web, notify, files …) and get only those core services, checked against 20's domain and per-card
+    grants; untrusted cards in a separate process (a subprocess or the add-on, talking to the core over a narrow
+    API) instead of `exec` in HA; signed / reviewed AAC cards vs. unchecked ones marked in the palette; a new or
+    changed card file waits for the owner's OK before it loads. Ties in with 19 and 20.
 - Presets; docs/v2 page 2 details for the remaining cards.
