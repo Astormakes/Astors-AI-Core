@@ -334,4 +334,16 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     off by default); a mark and a diff in the panel for scripts a model changed; limits on size and loops (a cap on
     loop steps / string length); Relays that may not call certain cards (Home Assistant, Notify); a review of the
     sandbox (str/regex blow-ups, what `e.data` and card values can reach).
+20. **Permission rework, as in v0/v1** (owner, 2026-10-26: "this time it needs to be actually like it is in V0 and
+    V1"). Two layers: **first the domain** allows or disallows privileges at all: individual Home Assistant entities
+    (invisible / read / control), the web, and the other outside things (notify, files, servers …); what the domain
+    does not allow does not exist for any of its cards. **Then each card** asks for what it needs within that, and the
+    owner controls it per card separately. Today (2.x) it is only per card: the Home Assistant card's own access list
+    (hidden / read-only / full) and the `permission` ticks gathered on the Permissions page; no domain layer, no asking.
+    v1 for reference (tag `v1-final`, `spec/requests.md`): what a domain can see (`visible`, tick list per room /
+    integration, new domains see nothing) × read / write per entity, the effective level where both meet; requests
+    (`request_access(entity_ids, level, reason)`, `request_visibility`) wait outside the chat (panel badge + HA
+    notification) until the owner allows all, some or none; locks, alarms, covers, valves, sirens only with the owner
+    in the chat; HA's "expose to Assist" as the starting point. Ties in with 19 (what a script may call). Talk through
+    first.
 - Presets; docs/v2 page 2 details for the remaining cards.
