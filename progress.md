@@ -355,4 +355,11 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     grants; untrusted cards in a separate process (a subprocess or the add-on, talking to the core over a narrow
     API) instead of `exec` in HA; signed / reviewed AAC cards vs. unchecked ones marked in the palette; a new or
     changed card file waits for the owner's OK before it loads. Ties in with 19 and 20.
+    **Owner's direction (2026-10-26):** cards already reach everything through the api (needed so cards stay unified
+    and interchangeable, nothing hardwired); so wall them in and expose only those interfaces. Note: inside HA's
+    Python process this cannot be enforced (a card can always `import os`, reach `hass`, or walk objects to the
+    core); a real wall means running cards outside it (a worker process per card or per domain) with the api as the
+    only channel (calls and events over a pipe; `self.core` / `self.domain` become proxies). Costs to weigh: every
+    call crosses the process boundary (audio streams! maybe audio cards stay inside, trusted), data copied not shared,
+    a card's page / view files unchanged. AAC's own cards could run the same way, so the api is the real contract.
 - Presets; docs/v2 page 2 details for the remaining cards.
