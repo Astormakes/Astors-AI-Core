@@ -324,4 +324,14 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     give the raw echo (a cheap USB speakerphone on a Pi).
 17. **Ideas, not started:** AAC's own output as the echo reference, lined up per answer by correlation (any satellite,
     and another room's speaker); RAM/VRAM on the Models page (llama-server's API has none: a helper on each machine).
+18. **Chat rework** (owner, 2026-10-26: "needs to be reworked a little"; what exactly: talk through first). Related
+    and still open: item 11 (edit messages, resend).
+19. **Measures against code injection** (owner, 2026-10-26). Since 2.2.0 Relay scripts are code a model can write
+    (the Node editor's `change_card`), and models read untrusted text (web pages, mails, chat lines), so a planted
+    instruction could make a model write a script. In place now: `ast` check (no imports / while / `_` names /
+    `.format`), no builtins beyond a list, card calls only to cards in the Relay's loop, a script runs at most 20 s.
+    To talk through: scripts changed by a model need the owner's OK (or a Node editor setting "may change scripts",
+    off by default); a mark and a diff in the panel for scripts a model changed; limits on size and loops (a cap on
+    loop steps / string length); Relays that may not call certain cards (Home Assistant, Notify); a review of the
+    sandbox (str/regex blow-ups, what `e.data` and card values can reach).
 - Presets; docs/v2 page 2 details for the remaining cards.
