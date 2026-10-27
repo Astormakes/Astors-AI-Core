@@ -11,7 +11,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
 - **2026-10-25 (2.1.30–2.1.48):** model servers as records with their models; both machines run llama-server routers
   (switch, download, delete, Bench, follow what is loaded; Next 14); the Model servers card; a spoken turn shows in
   the chat at once; the Nodes page works on a phone (folding side panels, touch, pinch, Back); echo subtraction with
-  a Waveforms view (Next 16); the panel keeps its scroll position on a redraw. Models now: PC Gemma 4 26B-A4B, server
+  a Waveforms view (Next 16); the panel keeps its scroll position on a redraw. Models now (every model tried and the tests: `docs/models.md`): PC Gemma 4 26B-A4B, server
   (RX 7800 XT) Gemma 4 12B as `qwen3-8b`; Qwen and Ornith dropped by the owner. The server froze 4× that day (the
   7800 XT's runtime power management copied VRAM into RAM): fixed with `amdgpu.runpm=0` (CT 110 notes).
 
