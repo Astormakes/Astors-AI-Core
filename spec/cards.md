@@ -82,9 +82,10 @@ after every redraw and `remember()` before one; the element is kept, so typing g
 
 ## A card folder
 
-A card with more than one file is a folder: `chat/card.py` (with `VERSION`), `page.js`, `view.js`. It is copied,
-versioned and loaded as a whole (`aac_cards.chat`); a single-file card stays `decide.py`. Files are served at
-`/aac_cards/<folder>/<file>.js`.
+One card type per file, always: never several card types in one file, so each can be removed or replaced alone (a
+helper or base class two cards share is copied into each, or offered by the core's `api`). A card with more than one
+file is a folder: `chat/card.py` (with `VERSION`), `page.js`, `view.js`. It is copied, versioned and loaded as a whole
+(`aac_cards.chat`); a single-file card stays `decide.py`. Files are served at `/aac_cards/<folder>/<file>.js`.
 
 ## A card's view
 

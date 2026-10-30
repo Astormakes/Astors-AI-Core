@@ -1,4 +1,4 @@
-// The page of Schedule, HA event and Heartbeat (spec/cards.md "A card's page"): what woke the chain, and what came
+// The Heartbeat card's page (spec/cards.md "A card's page"): what woke the chain, and what came
 // back (quiet: the model had nothing to say).
 
 class AacLogPage extends HTMLElement {
@@ -15,6 +15,4 @@ class AacLogPage extends HTMLElement {
   }
 }
 
-for (const name of ["aac-card-schedule", "aac-card-ha-event", "aac-card-heartbeat"]) {
-  if (!customElements.get(name)) customElements.define(name, class extends AacLogPage {});
-}
+if (!customElements.get("aac-card-heartbeat")) customElements.define("aac-card-heartbeat", class extends AacLogPage {});
