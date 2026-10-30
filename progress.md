@@ -426,10 +426,10 @@ pencil edit is missing" is item 11.
 32. **Models page: deleted downloads go on.** A stopped and deleted download seems to go on: the next model's
     progress jumps between 0 % and ~12 %. Happens with every model (first seen after stopping a base Gemma 3 31B
     download for a quantised one).
-33. **Nodes page: lit wires wrong.** The lit wires do not seem right: a question that makes Gemma search the web
+33. **Nodes page: lit wires wrong.** (2.3.0: tool calls travel along the wires now, snapshots no longer go through Schedule; check again live) The lit wires do not seem right: a question that makes Gemma search the web
     reliably ("lithium is used in many antidepressant medications, how does it work…") always lights the way to
     Schedule and Chat.
-34. **Nodes page: drag several selected cards.** (2.3.0: tool calls travel along the wires now, snapshots no longer go through Schedule; check again live) With several cards selected, dragging one moves only that one, not
+34. **Nodes page: drag several selected cards.** With several cards selected, dragging one moves only that one, not
     all selected.
 35. **Nodes page: overlapping cards.** Cards can be placed overlapping; they are only moved apart when a card near
     another is moved. The "too close" check must happen consistently.
