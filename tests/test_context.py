@@ -131,4 +131,5 @@ async def test_a_chat_without_a_model(hass: HomeAssistant, mock_entry):
     assert [c["name"] for m in shown for c in m.get("calls", [])] == ["post"] and not any(m.get("error") for m in shown)
     assert {f"{relay.id}.out", "chat.said"} <= set(d.flow.last)  # the call went there and back along the wires
     read = await chat.ui_call("as_read", {"chat_id": chat_id})
-    assert read["raw"] and read["text"].startswith("[said · Chat]\nping") and "calls post(" in read["text"]
+    held = read["context"]["messages"]  # AAC's context itself
+    assert read["raw"] and held[0]["text"] == "ping" and held[1]["data"]["calls"][0]["name"] == "post"

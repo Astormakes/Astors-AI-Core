@@ -7,7 +7,6 @@ read from the context it holds. A dotted wire from `provides` lets another card 
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -17,7 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Client, Context, is_stop, new_id, register
 
-VERSION = "2.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.3.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NOT_WIRED = "Nothing is wired to this chat's output 'said': what you write goes nowhere."
@@ -152,9 +151,10 @@ class Chat(Card):
         if chat is None:
             return {"text": None}
         request = (chat.get("last") or {}).get("request")
-        if not request:  # no model read the newest turn: the context as AAC holds it, raw
-            names = {c.id: c.name for c in self.domain.cards.values()}
-            return {"text": raw(self._context(chat), names) or None, "raw": True}
+        if not request:  # no model read the newest turn: the context as AAC holds it (its data, container by container)
+            context, last = self._context(chat), chat.get("last") or {}
+            return {"raw": True, "text": bool(context.messages) or None, "context": {
+                "system": last.get("system", []), "messages": context.messages, "tools": last.get("tools", []), "events": context.events}}
         model = self.core.pool.get(request["model"]) or {}
         text = await Client(self.hass, model).template(request["body"]) if model else None
         answers = [m["content"] for m in request["body"].get("messages") or [] if m["role"] == "assistant" and m.get("content")]
@@ -421,16 +421,3 @@ def plain(body: dict[str, Any]) -> str:
         out.insert(at, "[tools]\n" + "\n".join(tools))
     return "\n\n".join(out)
 
-
-def raw(context: Context, names: dict[str, str]) -> str:
-    """A context as AAC holds it, as plain text (a turn no model read): each entry with its kind and card."""
-    name = lambda by: names.get(by, by)  # noqa: E731
-    out = []
-    for e in context.entries:
-        if e["kind"] in ("signal", "error"):
-            continue
-        calls = "".join(f"\n  calls {c['name']}({json.dumps(c.get('args') or {}, ensure_ascii=False)})" for c in e["data"].get("calls") or [])
-        out.append(f"[{e['kind']} · {name(e['by'])}]\n{e['text']}{calls}".rstrip())
-    if events := [e for e in context.entries if e["kind"] in ("signal", "error")]:
-        out.append("--- events (AAC only, never sent to a model) ---\n" + "\n".join(f"[{e['kind']} · {name(e['by'])}] {e['text']}" for e in events))
-    return "\n\n".join(out)

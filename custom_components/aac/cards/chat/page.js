@@ -81,7 +81,16 @@ class AacChatPage extends HTMLElement {
     html += marked(text.slice(at));
     const rep = r.reply, wrote = rep ? [rep.content, ...(rep.calls || []).map((c) => `[calls ${c}]`)].filter(Boolean).join("\n") : "";
     const reply = rep ? `<div class="answered"><b>The model answered:</b><pre class="wrote">${esc(wrote || "(nothing)")}</pre></div>` : "";
-    if (r.raw) return `<p class="hint plainhead">No model read this turn: the context as AAC holds it, raw.</p><pre class="plain">${esc(r.text)}</pre>`;
+    if (r.raw) { // no model read this turn: AAC's context itself, one entry per line (keys and brackets dim, answers blue)
+      const tok = (s) => `<span class="tok">${esc(s)}</span>`;
+      const val = (v, blue) => (Array.isArray(v) ? `${tok("[")}${v.map((x) => val(x)).join(tok(","))}${tok("]")}`
+        : v && typeof v === "object" ? `${tok("{")}${Object.entries(v).map(([k, x]) => `${tok(`"${k}":`)}${val(x, k === "text" && v.kind === "answer")}`).join(tok(","))}${tok("}")}`
+        : blue ? `<span class="ans">${esc(JSON.stringify(v))}</span>` : esc(JSON.stringify(v)));
+      const box = (name, list) => `${tok(`${name}: [`)}${list.length ? `\n${list.map((x) => `  ${val(x)}`).join(`${tok(",")}\n`)}\n` : ""}${tok("]")}`;
+      const c = r.context || {};
+      return `<p class="hint plainhead">No model read this turn: AAC's context itself, as it holds it (dim: keys and brackets; blue: answers).</p>
+        <pre class="plain">${["system", "messages", "tools", "events"].map((n) => box(n, c[n] || [])).join("\n")}</pre>`;
+    }
     return `<p class="hint plainhead">${r.template ? `As ${esc(r.model)} read it: the model server wrote it with the model's own template (dim: its markers; blue: what the model wrote earlier).` : `The request as sent to ${esc(r.model)} (its server cannot show the model's template).`}</p><pre class="plain">${html}</pre>${reply}`;
   }
 
