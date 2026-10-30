@@ -16,10 +16,10 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Client, Context, is_stop, new_id, register
 
-VERSION = "2.2.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.2.3"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
-NO_ANSWER = "(no answer came back: is a model wired back into this chat?)"
+NOT_WIRED = "Nothing is wired to this chat's output 'said': what you write goes nowhere."
 SILENT = ("nothing", "nothing.")  # the answer to a line that was not meant for AAC: nothing is kept
 
 
@@ -237,10 +237,12 @@ class Chat(Card):
             self._waiting.pop(context.id, None)
         if future.done():
             return self._switched.pop(context.id, chat["id"]), future.result()
+        if self.domain.flow.wired_from(self.id, "said"):  # wired, and nothing came back: fine (not every chat has a model)
+            return chat["id"], ""
         held = self._context(chat)
-        held.add(self.id, "error", NO_ANSWER, ["error"])
+        held.add(self.id, "error", NOT_WIRED, ["error"])
         await self._hold(chat, held)
-        return chat["id"], NO_ANSWER
+        return chat["id"], NOT_WIRED
 
     async def edit(self, chat_id: str, message_id: str, text: str, resend: bool = False) -> dict[str, Any]:
         """The pencil: a line someone said or an answer gets a new text. resend (only a said line): what came after it

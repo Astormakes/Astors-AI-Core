@@ -112,3 +112,18 @@ async def test_the_pencil_edits_and_resends(hass: HomeAssistant, mock_entry, aio
     assert result == {"chat_id": chat_id, "answer": "Berlin."}
     assert [m["text"] for m in chat.get(chat_id)["messages"]] == ["capital of Germany?", "Berlin."]  # what came after went
     assert asked[-1]["messages"][-1]["content"].startswith("capital of Germany?")  # the turn ran again from there
+
+
+async def test_a_chat_without_a_model_stays_quiet(hass: HomeAssistant, mock_entry):
+    """Chat → Relay that posts into the chat (no model): no "no answer" error; only a chat wired to nothing says so."""
+    core = await setup_aac(hass, mock_entry)
+    await core.create("Play")
+    d = await core.switch(next(x["id"] for x in core.data["domains"] if x["name"] == "Play"))
+    chat = await d.add_card("chat", "Chat")
+    relay = await d.add_card("relay", "Relay", {"script": '@on("*.said")\ndef echo(e):\n    chat.post("pong")\n'})
+    _, answer = await chat.send("ping")
+    assert answer.startswith("Nothing is wired")  # nothing at said yet
+    d.set_wires([{"from": "chat.said", "to": f"{relay.id}.in"}, {"from": f"{relay.id}.out", "to": "chat.answers"}])
+    chat_id, answer = await chat.send("ping")
+    shown = chat.get(chat_id)["messages"]
+    assert answer == "" and [m["text"] for m in shown][-2:] == ["ping", "pong"] and not any(m.get("error") for m in shown[-2:])
