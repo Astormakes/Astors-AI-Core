@@ -455,3 +455,7 @@ pencil edit is missing" is item 11.
     Ties in with 15 (stores of long-gone cards).
 53. **Review: signals besides stop.** Page 1 says stop is the only signal, but Decide writes its choice and the Audio
     clipper its cuts as `signal` entries (the Level card reads the cuts). Either page 1 or the code changes.
+54. **The context as a model request** (owner, 2026-10-30; design: docs/v2/03-the-context.md, waiting for the owner's
+    OK). Containers system / messages (user, assistant, tool; attachments on user messages) / tools / events; cards
+    put their output where a model expects it; "For models" per function (tick, name, description, Reset); the chat's
+    Behind the scenes view. Breaks the backup (2.3.0). Closes 24, 26, 27, 50, 53 and the chat part of 18.
