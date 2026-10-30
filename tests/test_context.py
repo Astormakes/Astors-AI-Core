@@ -161,6 +161,19 @@ async def test_cut_off_answers_say_why_and_the_context_fills(hass: HomeAssistant
     assert chat.get(other)["messages"][-1]["cut"] == "Longest answer reached (20 tokens)"
 
 
+async def test_tool_rounds_have_a_setting(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """The Model card gives up after its Most tool rounds without an answer (8 by default); 0 means no limit."""
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    chat = d.cards["chat"]
+    asked = model_answers(aioclient_mock, *[reply(calls=[("lists", {})])] * 13, reply("Done at last."))
+    await d.update_card("model", settings={"max_rounds": 2})
+    await chat.send("lists forever")
+    assert len(asked) == 2
+    await d.update_card("model", settings={"max_rounds": 0})
+    _, answer = await chat.send("lists, many times")
+    assert answer == "Done at last." and len(asked) == 14  # 11 rounds of calls: past the old fixed 8
+
 async def test_a_call_travels_through_the_loop(hass: HomeAssistant, mock_entry, aioclient_mock):
     """Chat → Charter → Model → Answer → Chat (the owner's wiring): the Chat is in the Model's loop, so its functions are
     tools; a call takes the shortest way there (Model → Answer → Chat) and the result the shortest way back (Chat →

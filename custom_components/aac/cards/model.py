@@ -12,9 +12,8 @@ from typing import Any
 from custom_components.aac.api import (LOGGER, Card, Client, Context, ModelError, ModelUnreachable, entry, new_id, register, run,
                                       tool_spec)
 
-VERSION = "2.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.2.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
-MAX_ROUNDS = 8  # model → tools → model … per turn
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
 
@@ -90,6 +89,8 @@ class Model(Card):
         "temperature": {"type": "number", "title": "Temperature", "default": 0.7, "help": "0 = always the same, higher = more varied."},
         "max_tokens": {"type": "number", "title": "Longest answer (tokens)", "default": 0,
                        "help": "0 or empty: no limit (only the model's context). A limit keeps answers short (voice); thinking counts too."},
+        "max_rounds": {"type": "number", "title": "Most tool rounds without an answer", "default": 8,
+                       "help": "Model → tools → model … in one turn before it gives up. 0 or empty: no limit (Stop still ends it)."},
         "context_note": {"type": "bool", "title": "Tell the model when its context is nearly full", "default": True,
                          "help": "From 80 % on, a short note is attached to the turn (visible in Context): keep it short, older parts may soon not fit."},
         "thinking": {"type": "bool", "title": "Thinking", "default": False, "help": "Let models that can, think first (slower)."},
@@ -172,8 +173,8 @@ class Model(Card):
         without calls: None (it goes on as the answer)."""
         said = max((i for i, m in enumerate(context.messages) if m["kind"] == "said"), default=-1)
         rounds = sum(1 for m in context.messages[said + 1:] if m["kind"] == "answer" and m["by"] == self.id)
-        if rounds >= MAX_ROUNDS:
-            context.add(self.id, "error", f"Error: {MAX_ROUNDS} rounds of tool calls without an answer.", ["error"])
+        if (most := int(self.settings.get("max_rounds") or 0)) > 0 and rounds >= most:
+            context.add(self.id, "error", f"Error: {most} rounds of tool calls without an answer.", ["error"])
             return None
         tools = self._tools(context)
         specs = [tool_spec(t["name"], {"help": t["description"], "args": t["args"]}) for t in tools.values()]

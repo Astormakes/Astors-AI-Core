@@ -3,7 +3,15 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-30) – 2.3.17, live on the owner's HA
+## Current state (2026-10-30) – 2.3.18, live on the owner's HA
+
+- **2026-10-30 (2.3.18): Model card setting "Most tool rounds without an answer"** (owner: may be unlimited). Was the
+  fixed MAX_ROUNDS 8; now `max_rounds`, default 8, 0 or empty = no limit (Stop still ends it; flow's MAX_STEPS 400 stays).
+- **2026-10-30, outside the code:** HA's own AI removed (GLaDOS pipeline, llama.cpp, ai_memory, LVA); AAC is HA's
+  preferred pipeline "AAC" (text). Voice: Calisto via the satellite app, Wyoming `tts.piper` (CT 110, own announcer
+  voice) and `stt.faster_whisper` (CT 110, fallback after the PC Whisper). CT 110 has no chat model any more (the owner
+  deleted the 12B, 26B, Ornith). Open: the Text to speech card's en voice → `en_US-announcer-medium` (language `en-us`)
+  once the Assistant domain is active again; first spoken test when the Calisto is on. Details: docs/home-assistant.md.
 
 - **2026-10-30 (2.3.17): tools are the loop again, and calls travel through it** (owner: "everything always moves
   through a context through wires", not "tools only when wired directly"; 2.3.0's pair rule had taken the Chat's
