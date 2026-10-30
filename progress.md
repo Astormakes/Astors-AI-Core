@@ -476,3 +476,7 @@ pencil edit is missing" is item 11.
     OK). Containers system / messages (user, assistant, tool; attachments on user messages) / tools / events; cards
     put their output where a model expects it; "For models" per function (tick, name, description, Reset); the chat's
     Behind the scenes view. Breaks the backup (2.3.0). Closes 24, 26, 27, 50, 53 and the chat part of 18.
+55. **Tools: one name, declared in Python** (owner, 2026-10-30, "just thinking, later"; talk through once the owner has
+    looked at Behind the scenes). (a) A card should have only one name: the card's name is the name the model sees
+    (today a function has its own tool name, e.g. the Time card's `text` renamed `get_time`). (b) Tools declared in the
+    card in Python would fit better than the For models form (for a Relay: in its script).
