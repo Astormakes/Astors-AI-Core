@@ -9,9 +9,11 @@ const STYLE = `<style>
 .toolline { align-self: flex-start; margin: 2px 0 2px 8px; }
 .bubble { position: relative; }
 .pen { position: absolute; bottom: -10px; right: 6px; border: none; background: var(--card-background-color); border-radius: 50%;
-  width: 22px; height: 22px; padding: 0; font-size: 12px; cursor: pointer; opacity: 0; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+  width: 22px; height: 22px; padding: 0; font-size: 12px; cursor: pointer; opacity: 0; box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  color: var(--primary-text-color); }
 .bubble:hover .pen, .pen:focus { opacity: .9; } @media (hover: none) { .pen { opacity: .5; } }
-.bubble.editing { width: 80%; max-width: 80%; } .bubble.editing textarea { width: 100%; box-sizing: border-box; min-height: 3em; font: inherit; resize: vertical; }
+.bubble.editing { width: 80%; max-width: 80%; } .bubble.editing textarea { width: 100%; box-sizing: border-box; min-height: 3em; font: inherit; resize: vertical;
+  color: var(--primary-text-color); background: var(--card-background-color); border-radius: 6px; }
 .editbar { display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px; }
 .ok { border: none; border-radius: 50%; width: 28px; height: 28px; cursor: pointer; background: #9e9e9e; color: #fff; font-size: 16px; }
 .ok:hover, .ok:focus { background: #43a047; }
