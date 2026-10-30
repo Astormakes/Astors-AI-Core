@@ -59,7 +59,7 @@ class Context:
     id: str = field(default_factory=new_id)
     way: list[str] = field(default_factory=list)  # the cards it passed
     progress: bool = False  # a snapshot of a turn still being worked on (the same turn comes again, finished)
-    request: dict[str, Any] | None = None  # the newest request a Model sent: {model, body} (a chat page's Plain text)
+    request: dict[str, Any] | None = None  # the newest request a Model sent: {model, body, reply} (a chat page's Plain text)
 
     # ------------------------------------------------------------------ adding
     def add(self, by: str, kind: str, text: str = "", tags: list[str] | None = None, **data: Any) -> dict[str, Any]:

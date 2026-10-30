@@ -12,7 +12,7 @@ from typing import Any
 from custom_components.aac.api import (LOGGER, Card, Client, Context, ModelError, ModelUnreachable, entry, new_id, register, run,
                                       tool_spec)
 
-VERSION = "2.0.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 MAX_ROUNDS = 8  # model → tools → model … per turn
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -198,7 +198,9 @@ class Model(Card):
                     reply = await Client(self.hass, pool.get(model_id)).chat(
                         payload, specs or None, on_delta=lambda t, a=answer: self._live(a, t, step), **params)
                     pool.mark_up(model_id)
-                    context.request = {"model": model_id, "body": {"messages": payload, **({"tools": specs} if specs else {}), **params}}
+                    context.request = {"model": model_id, "body": {"messages": payload, **({"tools": specs} if specs else {}), **params},
+                                       "reply": {"content": reply["content"], "calls": [  # what it wrote
+                                           f"{c['function']['name']}({c['function']['arguments']})" for c in reply["tool_calls"]]}}
                     break
                 except ModelUnreachable:
                     pool.mark_down(model_id)

@@ -16,7 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Client, Context, is_stop, new_id, register
 
-VERSION = "2.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NO_ANSWER = "(no answer came back: is a model wired back into this chat?)"
@@ -149,7 +149,8 @@ class Chat(Card):
             return {"text": None}
         model = self.core.pool.get(request["model"]) or {}
         text = await Client(self.hass, model).template(request["body"]) if model else None
-        return {"text": text or plain(request["body"]), "template": bool(text), "model": model.get("name") or request["model"]}
+        return {"text": text or plain(request["body"]), "template": bool(text), "model": model.get("name") or request["model"],
+                "reply": request.get("reply")}
 
     def _context(self, chat: dict[str, Any]) -> Context:
         """What a chat holds, as a context (a copy)."""

@@ -9,6 +9,8 @@ const STYLE = `<style>
 .toolline { align-self: flex-start; margin: 2px 0 2px 8px; }
 .plain { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; margin: 0; }
 .plain .tok { opacity: .45; } .plainhead { margin: 0 0 8px; }
+.plain .reply { color: var(--primary-color); background: rgba(3,169,244,.08); border-radius: 3px; }
+.plain .replynote { display: block; font-family: var(--paper-font-body1_-_font-family, sans-serif); font-size: 11px; opacity: .7; margin-top: 6px; }
 </style>`;
 
 class AacChatPage extends HTMLElement {
@@ -50,7 +52,9 @@ class AacChatPage extends HTMLElement {
     const TOKEN = /(<\|[^<>\s|]{0,30}\|?>|<[^<>\s|]{1,30}\|>)/g;
     const text = r.text.replace(/(?<!\n)(<\|tool[^<>\s|]*\|?>)/g, "\n$1");
     const html = text.split(TOKEN).map((part, i) => (i % 2 ? `<span class="tok">${esc(part)}</span>` : esc(part))).join("");
-    return `<p class="hint plainhead">${r.template ? `As ${esc(r.model)} read it: the model server wrote it with the model's own template (dim: its markers).` : `The request as sent to ${esc(r.model)} (its server cannot show the model's template).`}</p><pre class="plain">${html}</pre>`;
+    const rep = r.reply, wrote = rep ? [rep.content, ...(rep.calls || []).map((c) => `[calls ${c}]`)].filter(Boolean).join("\n") : "";
+    const reply = rep ? `<span class="reply" title="What the model wrote here">${esc(wrote || "(nothing)")}</span><span class="replynote">↑ what the model wrote, right where it wrote it (a call as AAC read it back). The next request has it inside, its turn closed.</span>` : "";
+    return `<p class="hint plainhead">${r.template ? `As ${esc(r.model)} read it: the model server wrote it with the model's own template (dim: its markers).` : `The request as sent to ${esc(r.model)} (its server cannot show the model's template).`}</p><pre class="plain">${html}${reply}</pre>`;
   }
 
   event(ev) { // what the core tells about this card
