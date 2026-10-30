@@ -3,7 +3,12 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-30) – 2.3.12, live on the owner's HA
+## Current state (2026-10-30) – 2.3.15, live on the owner's HA
+
+- **2026-10-30 (2.3.13–2.3.15):** Plain text of a turn no model read shows AAC's context itself (container by
+  container, one entry per line, keys and brackets dim, answers blue). The Relay's help is written for people new to
+  Python (owner): "How a script works" at the top of the ? panel (blocks, def, @on, @new, output), a Basics group in
+  the reference (def, if, quotes, = vs ==, for, #), output explained as picking the way out (only there, not at out).
 
 - **2026-10-30 (2.3.11, 2.3.12): no model needed** (owner, building Chat → Relay → Chat in a test domain to show that
   anything is possible). A chat no longer says "no answer came back" when something is wired and does not answer (only
