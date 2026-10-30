@@ -4,7 +4,7 @@
     messages  the conversation: said (user), answer (assistant, with the calls it made), result (tool)
               a message carries attachments: note (before its text) and trailer (after), added for that turn
     tools     what a model may call this turn (the Model card fills it from the cards wired to it and back)
-    events    stop, cuts, choices, errors, a Relay's calls: for cards and the panel, never sent to a model
+    events    stop, cuts, choices, errors: for cards and the panel, never sent to a model
 
 An entry: {id, by (card id), kind, text, tags (`<card>.<tag>`), time, data, state}. State: open while it grows,
 closed when done, cut when a stop ended it. An answer's calls: data["calls"] = [{id, card, function, name, args}];
@@ -23,7 +23,7 @@ from homeassistant.util import dt as dt_util
 
 MESSAGES = ("said", "answer", "result")
 ATTACHMENTS = ("note", "trailer")
-EVENTS = ("signal", "error", "call")
+EVENTS = ("signal", "error")
 KINDS = ("system", *MESSAGES, *ATTACHMENTS, *EVENTS)
 
 

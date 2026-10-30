@@ -440,9 +440,8 @@ class Run:
         key = (*self._key, "call", card.id, name, repr(args))
         if key in self.done:
             return self.done[key]
-        result = asyncio.run_coroutine_threadsafe(card.call(name, args, self.context), self.loop).result(60)
+        result = asyncio.run_coroutine_threadsafe(self.relay.travel(card, name, args, self.context), self.loop).result(60)
         self.done[key] = result
-        self.context.add(self.relay.id, "call", f"{card.id}.{name}", ["call"], args=args, result=str(result)[:4000])
         return result
 
     def names(self, script: Script) -> dict[str, Any]:

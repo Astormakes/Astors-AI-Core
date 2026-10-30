@@ -54,7 +54,7 @@ class Step:
         returns): await what it returns to send it."""
         snap = self.context.branch()
         snap.progress = True
-        return self.flow._out(self.card, snap, picks)
+        return self.flow.out(self.card, snap, picks)
 
     def live(self, text: str) -> None:
         """Text that is still growing (a model writing): open panels show it."""
@@ -147,7 +147,7 @@ class Flow:
 
     async def send(self, context: Context, card_id: str, port: str = "out") -> None:
         """A card sends a context from one of its outputs."""
-        await self._out(self.domain.cards[card_id], context, [port])
+        await self.out(self.domain.cards[card_id], context, [port])
 
     async def enter(self, card: Card, port: str, context: Context) -> None:
         """A context arrives at a card's input."""
@@ -161,12 +161,12 @@ class Flow:
             except Exception:  # noqa: BLE001
                 LOGGER.exception("AAC: card %s failed on a snapshot", card.id)
                 return
-            await self._out(card, context, result)
+            await self.out(card, context, result)
             return
         if context.stopped:  # a stop runs forward: a busy card cuts and sends its own context on, the stop ends there
             if await card.stop(context.events[-1]):
                 return
-            await self._out(card, context, None)
+            await self.out(card, context, None)
             return
         if (call := self._call_for(card, context)) is not None:  # a call addressed to it: answered here, sent back
             await self._answer_call(card, context, *call)
@@ -176,7 +176,7 @@ class Flow:
         except Exception:  # noqa: BLE001 - one broken card must not stop the domain
             LOGGER.exception("AAC: card %s failed", card.id)
             return
-        await self._out(card, context, result)
+        await self.out(card, context, result)
 
     @staticmethod
     def _call_for(card: Card, context: Context) -> tuple[str, dict[str, Any]] | None:
@@ -203,9 +203,10 @@ class Flow:
             context.add(card.id, "error", f"{card.name} is not wired back to {caller}: the result cannot return")
             LOGGER.warning("AAC: %s is not wired back to %s", card.id, caller)
             return
-        await self._out(card, context, back[:1])
+        await self.out(card, context, back[:1])
 
-    async def _out(self, card: Card, context: Context, result: list[Any] | None) -> None:
+    async def out(self, card: Card, context: Context, result: list[Any] | None) -> None:
+        """A card sends a context from its outputs: result as handle() returns it (None: every round output)."""
         _, outs, square = card.ports()
         if result is None:
             picks = [p for p, kind in outs.items() if kind == "text" and p not in square]

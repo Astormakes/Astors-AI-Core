@@ -7,6 +7,7 @@ read from the context it holds. A dotted wire from `provides` lets another card 
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -16,7 +17,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Client, Context, is_stop, new_id, register
 
-VERSION = "2.2.3"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NOT_WIRED = "Nothing is wired to this chat's output 'said': what you write goes nowhere."
@@ -43,7 +44,8 @@ class Chat(Card):
                               "after the quiet time"}
     ui = True
     keeps_data = True
-    tags = {"said": "what you wrote in this chat", "stop": "you pressed Stop", "error": "nothing came back"}
+    tags = {"said": "what you wrote in this chat", "stop": "you pressed Stop", "post": "written into the chat by a model or a script",
+            "error": "nothing is wired to 'said'"}
     settings_schema = {
         "turns": {"type": "number", "title": "Conversation that goes along (turns)", "default": 0,
                   "help": "0 = the whole chat; otherwise only the last turns."},
@@ -146,9 +148,13 @@ class Chat(Card):
     async def as_read(self, chat_id: str) -> dict[str, Any]:
         """The chat's newest request as the model read it: the model server writes it with the model's chat template
         (llama-server); a server that cannot: the request as plain text."""
-        request = ((self.data["chats"].get(chat_id) or {}).get("last") or {}).get("request")
-        if not request:
+        chat = self.data["chats"].get(chat_id)
+        if chat is None:
             return {"text": None}
+        request = (chat.get("last") or {}).get("request")
+        if not request:  # no model read the newest turn: the context as AAC holds it, raw
+            names = {c.id: c.name for c in self.domain.cards.values()}
+            return {"text": raw(self._context(chat), names) or None, "raw": True}
         model = self.core.pool.get(request["model"]) or {}
         text = await Client(self.hass, model).template(request["body"]) if model else None
         answers = [m["content"] for m in request["body"].get("messages") or [] if m["role"] == "assistant" and m.get("content")]
@@ -179,9 +185,8 @@ class Chat(Card):
             held["messages"] = [*deepcopy(kept[:start]), *held["messages"]]
             held["events"] = [{**e, "at": e.get("at", 0) + start} for e in held["events"]]
         chat["context"] = held
-        if context.system or context.tools or context.request:
-            chat["last"] = {"system": deepcopy(context.system), "tools": deepcopy(context.tools),
-                            **({"request": deepcopy(context.request)} if context.request else {})}
+        chat["last"] = {"system": deepcopy(context.system), "tools": deepcopy(context.tools),  # the newest turn's (a turn no
+                        **({"request": deepcopy(context.request)} if context.request else {})}  # model read keeps none)
         chat["updated"] = dt_util.utcnow().isoformat()
         await self.save()
         self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=chat["id"])
@@ -328,7 +333,7 @@ class Chat(Card):
         if context.stopped and not cut:  # a stop came through and nothing was busy: nothing to keep
             return []
         error = next((e["text"] for e in reversed(context.entries) if e["kind"] == "error"), "")
-        text = context.answer or error or ("" if cut else "(no answer)")
+        text = context.answer or error  # nothing at all: fine (not every chat has a model)
         if context.origin == self.id and text.strip().lower() not in SILENT:
             await self._keep_turn(context)
         elif context.origin == self.id and (chat := self.data["chats"].get(context.chat_id or context.id)) is not None:
@@ -373,10 +378,13 @@ class Chat(Card):
             turns = int(args.get("turns") or 10)
             return [{"role": m["role"], "text": m["text"]} for m in (chat or {}).get("messages", [])[-turns:]]
         if function == "post":
+            if context is not None and context.chat_id in self.data["chats"]:  # during a turn of one of its chats: into that turn
+                context.add(self.id, "answer", str(args.get("text") or ""), ["post"])
+                return {"posted": True}
             chats = self.chats()
             chat = self.data["chats"][chats[0]["id"]] if chats else self._new("From AAC")
             held = self._context(chat)
-            held.add(self.id, "answer", str(args.get("text") or ""))
+            held.add(self.id, "answer", str(args.get("text") or ""), ["post"])
             await self._hold(chat, held)
             return {"posted": True}
         return await super().call(function, args, context)
@@ -411,4 +419,18 @@ def plain(body: dict[str, Any]) -> str:
     if tools:  # after the system part, as chat templates put them
         at = 1 if (body.get("messages") or [{}])[0].get("role") == "system" else 0
         out.insert(at, "[tools]\n" + "\n".join(tools))
+    return "\n\n".join(out)
+
+
+def raw(context: Context, names: dict[str, str]) -> str:
+    """A context as AAC holds it, as plain text (a turn no model read): each entry with its kind and card."""
+    name = lambda by: names.get(by, by)  # noqa: E731
+    out = []
+    for e in context.entries:
+        if e["kind"] in ("signal", "error"):
+            continue
+        calls = "".join(f"\n  calls {c['name']}({json.dumps(c.get('args') or {}, ensure_ascii=False)})" for c in e["data"].get("calls") or [])
+        out.append(f"[{e['kind']} · {name(e['by'])}]\n{e['text']}{calls}".rstrip())
+    if events := [e for e in context.entries if e["kind"] in ("signal", "error")]:
+        out.append("--- events (AAC only, never sent to a model) ---\n" + "\n".join(f"[{e['kind']} · {name(e['by'])}] {e['text']}" for e in events))
     return "\n\n".join(out)

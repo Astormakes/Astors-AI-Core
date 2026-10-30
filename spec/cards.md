@@ -152,7 +152,7 @@ only through what they offer: `call`, `current()`, `held()`, `dated()`), `templa
 A context (`Context`, docs/v2 page 3) has the shape of a model request: `system` (parts), `messages` (said, answer,
 result; an answer's calls in `data["calls"]`, a result's `data["call_id"]`; a message's `attachments`: note before
 its text, trailer after), `tools` (`{name, card, function, description, args}`, filled by a Model), `events` (signal,
-error, call: never sent to a model). Every item is an entry `{id, by, kind, text, tags, time, data, state}`.
+error: never sent to a model). Every item is an entry `{id, by, kind, text, tags, time, data, state}`.
 `context.add(by, kind, …)` puts an entry where its kind belongs (a note or trailer on the newest said message);
 `context.put(...)` (a card's standing text: a system part stays in place, an attachment moves to the newest message),
 `context.remove(e)`, `context.entries` (all in order), `context.last(kind)`, `context.tagged(tag)`, `context.answer`,
@@ -166,7 +166,8 @@ before=tag, after=tag, replace=)` above a `def` writes an entry of its own (tag 
 `system` part, the end a `trailer` on the newest said message, before / after a `note` / `trailer` on the message of
 that tag); `@on("tag", …, which="last"|"first"|"all",
 kind=, live=)` runs on entries with a tag (`*` = any card, `"context"` = the whole context once). Names: `context`,
-other cards (`chat.said.text`, `lists.total`, `lists.add_items(...)` for cards wired to it and back; such a call is an event of kind `call`), `now()`, `states()`,
+other cards (`chat.said.text`, `lists.total`, `lists.add_items(...)` for cards wired to it and back; such a call travels like a model's: an answer of the Relay
+with the call, the card's result as a tool message, and the context goes back to where it started), `now()`, `states()`,
 `stop()`, `output("name")` (the Relay gets that output), `signal()`, `between()`, `re`, `audio`. In a snapshot
 (a stream) an open entry a block works on goes on empty until it is closed; `live=True` runs on every piece.
 Side effects (stop, signals, calls) happen once per turn and entry. The full list with examples is `REFERENCE`

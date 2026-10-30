@@ -32,7 +32,7 @@ def for_me(e):
     route = await check.handle(context, "in", Step(domain.flow, check, "in", context))
     said = context.last("said")
     assert route == [("aac", "yes")] and said["text"] == "lights on" and "user.addressed" in said["tags"]
-    assert buffer.data["lines"] == ["lights on"] and context.last("call")["text"] == "room.add"  # an event
+    assert buffer.data["lines"] == ["lights on"] and [c["name"] for c in context.last("answer")["data"]["calls"]] == ["add"]  # the call travelled
     other = Context()
     other.add("chat", "said", "hello")
     assert await check.handle(other, "in", Step(domain.flow, check, "in", other)) == [("out", "no")]  # the buffer is a tool
