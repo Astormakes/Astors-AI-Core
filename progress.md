@@ -3,7 +3,24 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-30) – 2.2.2, live on the owner's HA
+## Current state (2026-10-30) – 2.3.0, live on the owner's HA
+
+- **2026-10-30 (2.3.0): the context as a model request** (docs/v2 page 3, owner's design talk). Containers system /
+  messages (said, answer with its calls, result; notes and trailers attached to their message) / tools / events
+  (never sent to a model). A model's tools are the cards wired from it and straight back (the loop search is gone: it
+  had made every card in the big loop everyone's tool); calls **travel**: along the wire to the card, the core runs the
+  function there, the result comes back along the card's wire (several one after the other; the wires light). Every
+  Model card is a member of the chat (others' answers by name). For models per function (tick, name, description,
+  Reset) replaced offers / instructions / About your tools; a Relay offers one function per @new block (the owner's
+  Time: `get_time`, "call to get the time"). Chat: Chat + Behind the scenes (the context in sections, `contextView`
+  in aac.js, also the wire monitor) replaced Document and Request (the Model's in-memory requests and
+  `aac/chat/request` are gone); tool calls as small lines; bugs 22, 23, 25 fixed. Schedule / HA event / Heartbeat
+  ignore snapshots (part of 34). The owner's data was converted by a scratchpad script (8 chats, 10 calls, the Relays'
+  old settings dropped, Undo steps too) with HA stopped ~2 min; checked in the test environment first with the
+  exported setup and a copy of the chats. Backup before: `/config/aac/bak-v2-2.2.2/`. Test backup now 2.3.0.
+  Open from it: in the owner's wiring the Chat is not wired straight to the Model, so the model no longer has the
+  Chat's functions (chats, continue, read, post): talk through. Chats from before 2.3.0 show no system parts and tools
+  in Behind the scenes until their next turn. JS is checked with headless Firefox (scratchpad jscheck.py).
 
 - **2026-10-30 (2.2.2): review fixes.** A review of the whole code against docs/v2 page 1 (owner's worry: things that
   seem to work but go against the idea). Fixed: the Model card's `ask` never worked (a relative import; now tested);
@@ -385,14 +402,14 @@ Items 22–46: the owner's open issues, moved here on 2026-10-30 from the AAC li
 2026-10-20 to 10-29; the owner's words, spelling fixed). "Tools as one file" from that list is done (2.2.1); "the
 pencil edit is missing" is item 11.
 
-22. **Chat: messages shown twice.** Messages are shown twice even if the model answers once.
-23. **Chat: old message in a new chat.** When opening a new chat, a message of the last chat is still visible.
-24. **Chat: Chat / Document / Request unclear.** Where the differences between Chat, Document and Request are is not
+22. ~~**Chat: messages shown twice.**~~ **fixed (2.3.0).** Messages are shown twice even if the model answers once.
+23. ~~**Chat: old message in a new chat.**~~ **fixed (2.3.0).** When opening a new chat, a message of the last chat is still visible.
+24. ~~**Chat: Chat / Document / Request unclear.**~~ **done (2.3.0): Chat + Behind the scenes.** Where the differences between Chat, Document and Request are is not
     clear; Document feels like a lesser Request.
-25. **Chat: switching views loses the chat.** Switching between Chat, Document, Request … loses the chat in between.
-26. **Chat: tool usage as in v1.** Tool calls as small, less prominent lines that unfold to a still compressed
+25. ~~**Chat: switching views loses the chat.**~~ **fixed (2.3.0).** Switching between Chat, Document, Request … loses the chat in between.
+26. ~~**Chat: tool usage as in v1.**~~ **done (2.3.0).** Tool calls as small, less prominent lines that unfold to a still compressed
     version of what the model called and got back ("you might literally take the v1 Chat"). Ties in with 18.
-27. **Models: tools more natural.** Check whether the way models use tools can be made more "natural" to them: a
+27. ~~**Models: tools more natural.**~~ **done (2.3.0): For models, tools without ids.** Check whether the way models use tools can be made more "natural" to them: a
     model without a tool still often says "yes, I'll do x, y" and then quietly does nothing. Owner's notes: (a) "For
     models" was meant to be the instructions, so the owner can change them for specific needs; the default should be
     in there and resettable when messed up. (b) Asked for the time, the model said 11:41; told to use the Time card
@@ -412,7 +429,7 @@ pencil edit is missing" is item 11.
 33. **Nodes page: lit wires wrong.** The lit wires do not seem right: a question that makes Gemma search the web
     reliably ("lithium is used in many antidepressant medications, how does it work…") always lights the way to
     Schedule and Chat.
-34. **Nodes page: drag several selected cards.** With several cards selected, dragging one moves only that one, not
+34. **Nodes page: drag several selected cards.** (2.3.0: tool calls travel along the wires now, snapshots no longer go through Schedule; check again live) With several cards selected, dragging one moves only that one, not
     all selected.
 35. **Nodes page: overlapping cards.** Cards can be placed overlapping; they are only moved apart when a card near
     another is moved. The "too close" check must happen consistently.
@@ -447,15 +464,15 @@ pencil edit is missing" is item 11.
 49. **Review: the voice chain as a preset** (talk through first). `defaults.py` builds the voice chain (11 cards and
     their wires) by itself when a satellite first connects, picking cards by type. Against rules 1, 4 and 10; it
     should be a preset the owner applies (ties in with "Presets").
-50. **Review: the Request view goes through the card.** The core's `aac/chat/request` reads `card.requests` inside the
+50. ~~**Review: the Request view goes through the card.**~~ **done (2.3.0): the Request view is gone.** The core's `aac/chat/request` reads `card.requests` inside the
     Model card (a hidden contract); it should be the card's own ui_call.
 51. **Review: cards may not import each other.** The loader makes `aac_cards` a package so card files can import one
     another; that invites cards to depend on each other. Remove it (folders keep their own relative imports).
 52. **Review: removing a card asks about its data** (page 1, rule 3). Today its data stays stored forever, silently.
     Ties in with 15 (stores of long-gone cards).
-53. **Review: signals besides stop.** Page 1 says stop is the only signal, but Decide writes its choice and the Audio
+53. ~~**Review: signals besides stop.**~~ **done (2.3.0): events.** Page 1 says stop is the only signal, but Decide writes its choice and the Audio
     clipper its cuts as `signal` entries (the Level card reads the cuts). Either page 1 or the code changes.
-54. **The context as a model request** (owner, 2026-10-30; design: docs/v2/03-the-context.md, waiting for the owner's
+54. ~~**The context as a model request**~~ **done (2.3.0).** (owner, 2026-10-30; design: docs/v2/03-the-context.md, waiting for the owner's
     OK). Containers system / messages (user, assistant, tool; attachments on user messages) / tools / events; cards
     put their output where a model expects it; "For models" per function (tick, name, description, Reset); the chat's
     Behind the scenes view. Breaks the backup (2.3.0). Closes 24, 26, 27, 50, 53 and the chat part of 18.
