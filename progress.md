@@ -301,7 +301,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     then `AAC_SAVE_BACKUP=1 pytest tests/test_backups.py`
     replaces the backup. Every test also runs twice by itself (conftest `start`): on a fresh install and on one that
     starts from that backup (dated as an old install); `@pytest.mark.fresh` for the few that only make sense fresh.
-11. **Edit messages in a chat** (owner, as in v1, often used to resend): a pencil under a message (yours or the
+11. **Edit messages in a chat** (owner, as in v1, often used to resend; raised again 2026-10-29: "the pencil edit is missing"): a pencil under a message (yours or the
     model's), visible when hovering the message or near the pencil. Editing keeps the message where it is on screen,
     the chat moves up and the box grows upwards; send is a checkmark (grey, green on hover), so resending is a double
     click. Editing your line runs the turn again from there; first a warning: Resend (what came after it goes) / Keep
@@ -372,56 +372,55 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     a card's page / view files unchanged. AAC's own cards could run the same way, so the api is the real contract.
 - Presets; docs/v2 page 2 details for the remaining cards.
 
-22. **Owner's open issues** (moved here on 2026-10-30 from the AAC list "Open Issues in AAC", written 2026-10-20 to
-    10-29; in the owner's words, spelling fixed; talk through first where it says so or is unclear):
-    - **Chat**
-      - Messages are shown twice even if the model answers once.
-      - When opening a new chat, a message of the last chat is still visible.
-      - Chat, Document and Request are not clear in where the differences are; Document feels like a lesser Request.
-      - Switching between Chat, Document, Request … loses the chat in between.
-      - The pencil edit is missing (= item 11).
-      - Tool usage as in v1: small, less prominent lines that unfold to a still compressed version of what the model
-        called and got back ("you might literally take the v1 Chat"). Ties in with item 18 (chat rework).
-    - **Models and tools**
-      - The way models use tools needs checking whether it can be made more "natural" to them: a model without a tool
-        still often says "yes, I'll do x, y" and then quietly does nothing.
-        - "For models" was meant to be the instructions, so the owner can change them for specific needs; the default
-          should be in there and resettable when messed up.
-        - Asked for the time, the model said 11:41; told to use the Time card (wired as its tool, out to in and back)
-          it could. So it was not aware of the card: fix that if possible.
-        - `card: name = "ID"`?
-        - The model called `time__text({})` to get the Time card to append the time, then answered with it: correct,
-          but a cumbersome way to call it.
-      - Models page: a clearer way to set the order in which models are used, and a tick that it is no issue when a
-        compute resource is not available.
-      - Models page: the top list is not really clear; models in the server lists should show their parameter count
-        if llama.cpp gives it.
-      - Models page: a "last spoken to" per compute server, so it is visible when RAM overfills and a server stops
-        answering.
-      - Models page: the Delete per model does not seem to line up with the actual models.
-      - Downloads: a stopped and deleted download seems to go on; the next model's progress jumps between 0 % and
-        ~12 %. Happens with every model (first seen after stopping a base Gemma 3 31B download for a quantised one).
-    - **Nodes page (the grid)**
-      - The lit wires do not seem right: a question that makes Gemma search the web reliably ("lithium is used in many
-        antidepressant medications, how does it work…") always lights the way to Schedule and Chat.
-      - Several selected cards: dragging one moves only that one, not all selected.
-      - Cards can be placed overlapping; they are only moved apart when a card near another is moved. The "too close"
-        check must happen consistently.
-      - Snapping to columns only happens on release; while dragging, cards still move in the old raster (a leftover).
-      - Cards are called cards or nodes interchangeably; they should just be called cards (with their
-        interchangeability now).
-    - **Cards**
-      - Logging per card instead of a Log card: a unified logging interface; every card has a dropdown what to log
-        (whole context / only changed text) and ticks for in, out or both. The Log card should use that.
-      - Schedule should work more like it did in v1.
-      - File card: only one file. Owner imagined accessing different files, but likes the single file too: maybe a
-        File system card (with a whitelist of paths) and the File card.
-      - File card: should have a provides (read) output.
-      - Home card: clicking something makes the list jump.
-      - ~~Tools as one file instead of a file per card~~ **done (2.2.1)**.
-    - **Lists**
-      - Removing an entry cannot be undone; maybe show an Undo button (a function `undo_remove` exists: check the page).
-      - Entries cannot be edited (check against the current page).
-      - The Lists entry in the sidebar should be folded open.
-    - **Settings**
-      - The entities UI in settings is broken on the phone.
+Items 22–46: the owner's open issues, moved here on 2026-10-30 from the AAC list "Open Issues in AAC" (written
+2026-10-20 to 10-29; the owner's words, spelling fixed). "Tools as one file" from that list is done (2.2.1); "the
+pencil edit is missing" is item 11.
+
+22. **Chat: messages shown twice.** Messages are shown twice even if the model answers once.
+23. **Chat: old message in a new chat.** When opening a new chat, a message of the last chat is still visible.
+24. **Chat: Chat / Document / Request unclear.** Where the differences between Chat, Document and Request are is not
+    clear; Document feels like a lesser Request.
+25. **Chat: switching views loses the chat.** Switching between Chat, Document, Request … loses the chat in between.
+26. **Chat: tool usage as in v1.** Tool calls as small, less prominent lines that unfold to a still compressed
+    version of what the model called and got back ("you might literally take the v1 Chat"). Ties in with 18.
+27. **Models: tools more natural.** Check whether the way models use tools can be made more "natural" to them: a
+    model without a tool still often says "yes, I'll do x, y" and then quietly does nothing. Owner's notes: (a) "For
+    models" was meant to be the instructions, so the owner can change them for specific needs; the default should be
+    in there and resettable when messed up. (b) Asked for the time, the model said 11:41; told to use the Time card
+    (wired as its tool, out to in and back) it could, so it was not aware of the card: fix that if possible. (c)
+    `card: name = "ID"`? (d) The model called `time__text({})` to get the Time card to append the time, then answered
+    with it: correct, but a cumbersome way to call it.
+28. **Models page: model order and unavailable servers.** A clearer way to set the order in which models are used,
+    and a tick that it is no issue when a compute resource is not available.
+29. **Models page: top list and parameter counts.** The top list is not really clear; models in the server lists
+    should show their parameter count if llama.cpp gives it.
+30. **Models page: last spoken to per server.** A "last spoken to" per compute server, so it is visible when RAM
+    overfills and a server stops answering.
+31. **Models page: Delete misaligned.** The Delete per model does not seem to line up with the actual models.
+32. **Models page: deleted downloads go on.** A stopped and deleted download seems to go on: the next model's
+    progress jumps between 0 % and ~12 %. Happens with every model (first seen after stopping a base Gemma 3 31B
+    download for a quantised one).
+33. **Nodes page: lit wires wrong.** The lit wires do not seem right: a question that makes Gemma search the web
+    reliably ("lithium is used in many antidepressant medications, how does it work…") always lights the way to
+    Schedule and Chat.
+34. **Nodes page: drag several selected cards.** With several cards selected, dragging one moves only that one, not
+    all selected.
+35. **Nodes page: overlapping cards.** Cards can be placed overlapping; they are only moved apart when a card near
+    another is moved. The "too close" check must happen consistently.
+36. **Nodes page: snap while dragging.** Snapping to columns only happens on release; while dragging, cards still
+    move in the old raster (a leftover).
+37. **Naming: cards, not nodes.** Cards are called cards or nodes interchangeably; they should just be called cards
+    (with their interchangeability now).
+38. **Cards: logging per card.** Logging per card instead of a Log card: a unified logging interface; every card has
+    a dropdown what to log (whole context / only changed text) and ticks for in, out or both. The Log card should use
+    that.
+39. **Schedule: like v1.** Schedule should work more like it did in v1 (talk through: what exactly).
+40. **File: several files.** The File card has only one file. Owner imagined accessing different files, but likes the
+    single file too: maybe a File system card (with a whitelist of paths) next to the File card.
+41. **File: provides output.** The File card should have a provides (read) output.
+42. **Home card: list jumps.** Clicking something in the Home card makes the list jump.
+43. **Lists: undo a removal.** Removing an entry cannot be undone; maybe show an Undo button (a function
+    `undo_remove` exists: check the page).
+44. **Lists: edit entries.** Entries cannot be edited (check against the current page).
+45. **Lists: sidebar folded open.** The Lists entry in the sidebar should be folded open.
+46. **Settings: entities UI on the phone.** The entities UI in settings is broken on the phone.
