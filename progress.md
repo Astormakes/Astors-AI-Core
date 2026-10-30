@@ -14,7 +14,7 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   separate domain first (the live AAC now holds real data).
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
-the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
+the owner wires them, or a card does (the Node editor, for a model; never the core on its own), the message is a document of entries with `<card>.<tag>` tags.
 
 - **2026-10-25 (2.1.30–2.1.48):** model servers as records with their models; both machines run llama-server routers
   (switch, download, delete, Bench, follow what is loaded; Next 14); the Model servers card; a spoken turn shows in
@@ -424,3 +424,7 @@ pencil edit is missing" is item 11.
 44. **Lists: edit entries.** Entries cannot be edited (check against the current page).
 45. **Lists: sidebar folded open.** The Lists entry in the sidebar should be folded open.
 46. **Settings: entities UI on the phone.** The entities UI in settings is broken on the phone.
+47. **Node editor: draft mode** (owner idea, 2026-10-30; talk through first). A model plans a new card setup as a
+    draft, puts it live to test it, and then decides whether it works: the Node editor keeps the context while the
+    cards are rebuilt to the model's design, and expects the model to say "keep" within ~120 s, otherwise the old
+    setup comes back. Maybe instead of the 3 save slots: the Node editor (and the Nodes page) with a panel of its own.

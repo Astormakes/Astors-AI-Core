@@ -7,3 +7,5 @@
 - Update `progress.md` at the end of a work step
 - Tests: `../.venv/bin/python -m pytest` (mocked)
 - Deploy to the real HA for testing: `scripts/deploy_ha.sh` (values in `docs/dev-environment.md`)
+- No Deadweight. Remove old bits keep the clodebase clean and readable
+ 
