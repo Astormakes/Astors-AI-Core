@@ -108,7 +108,7 @@ class AacChatPage extends HTMLElement {
     const body = this.mode === "context" && this.chat ? `<div class="behind">${this.panel.contextView(this.chat.behind || {})}</div>`
       : this.mode === "text" && this.chat ? `<div class="behind">${this._plain()}</div>`
       : msgs.map((m) => (!m.text && m.calls?.length ? `<div class="toolline">${this._calls(m)}</div>` // it only called tools: a small line
-        : this.editing?.id === m.id ? `<div class="bubble ${m.role === "user" ? "user" : "aac"} editing"><textarea id="editbox">${esc(this.editing.text)}</textarea>
+        : this.editing && m.id && this.editing.id === m.id ? `<div class="bubble ${m.role === "user" ? "user" : "aac"} editing"><textarea id="editbox">${esc(this.editing.text)}</textarea>
           <div class="editbar"><button class="small" data-editcancel>Cancel</button><button class="ok" data-editok title="${m.role === "user" ? "Send" : "Save"} (Enter)">✓</button></div></div>`
         : `<div class="bubble ${m.role === "user" ? "user" : "aac"} ${m.error ? "err" : ""}">${m.text ? md(m.text) : ""}${this._calls(m)}${m.cut ? '<div class="cut">stopped</div>' : ""}${m.id && m.text && !m.error && !this.busy ? `<button class="pen" data-edit="${esc(m.id)}" title="Edit">✎</button>` : ""}</div>`)).join("")
         || `<div class="hint" style="margin:auto">${esc(card.title)}: ask anything.</div>`;
