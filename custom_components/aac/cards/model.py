@@ -10,9 +10,10 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.api import LOGGER, Card, Client, Context, entry, is_stop, ModelError, ModelUnreachable, register, tool_spec
+from custom_components.aac.api import (LOGGER, Card, Client, Context, ModelError, ModelUnreachable, Step, entry, is_stop, register,
+                                      tool_spec)
 
-VERSION = "1.5.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.5.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 MAX_ROUNDS = 8  # model → tool → model … per context
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -259,7 +260,6 @@ class Model(Card):
         if function == "ask":
             ask = Context(origin=self.id)
             ask.add(context.last("said")["by"] if context and context.last("said") else self.id, "said", str(args.get("text") or ""))
-            from ..flow import Step  # noqa: PLC0415
             await self._answer(ask, Step(self.domain.flow, self, "in", ask))
             return ask.answer
         return await super().call(function, args, context)

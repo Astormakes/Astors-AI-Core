@@ -1,6 +1,6 @@
 """Schedule, HA event, Heartbeat, HA Assist, Decide, Memory, File, Timer, Builder."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components import conversation
@@ -22,7 +22,8 @@ async def test_a_schedule_fires_at_its_time(hass: HomeAssistant, mock_entry, aio
     schedule = await d.add_card("schedule", "Schedule", {"entries": [{"name": "Bed light", "at": "05:25", "weekdays": [],
                                                                        "text": "Turn on the bed light.", "enabled": True}]}, card_id="schedule")
     d.set_wires([*d.wires, {"from": "schedule.out", "to": "charter.in"}, {"from": "model.out", "to": "schedule.answers"}])
-    freezer.move_to(dt_util.as_utc(datetime(2026, 10, 26, 5, 25, 0, tzinfo=dt_util.get_default_time_zone())))
+    at = (dt_util.now() + timedelta(days=1)).replace(hour=5, minute=25, second=0, microsecond=0)  # always ahead
+    freezer.move_to(dt_util.as_utc(at))
     async_fire_time_changed(hass)
     await hass.async_block_till_done(wait_background_tasks=True)
     assert "Turn on the bed light." in asked[-1]["messages"][-1]["content"]
@@ -56,6 +57,7 @@ async def test_ha_conversations_go_to_whoever_takes_the_channel(hass: HomeAssist
     assert result.response.speech["plain"]["speech"] == "It is noon."
     chat = core.domain.cards["chat"].get(result.conversation_id)
     assert chat["title"].startswith("Assist · Home Assistant · ") and chat["messages"][0]["text"] == "what time is it?"
+    assert "messages" not in core.domain.cards["chat"].data["chats"][result.conversation_id]  # what it shows is not stored
     await core.domain.update_card("chat", settings={"ha_agent": False})
     result = await conversation.async_converse(hass, "hello?", None, HaContext(), agent_id=mock_entry.entry_id)
     assert result.response.error_code is not None
@@ -95,6 +97,12 @@ async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
     context.add("chat", "said", "where is the drill?")
     await memory.handle(context, "in", None)
     assert "basement shelf 2" in context.last("note")["text"]
+    await memory.call("remember", {"text": "The car is blue."})
+    missed = await memory.call("forget", {"text": "the"})  # a word is not a memory: nothing goes, the close ones are named
+    assert missed["error"] and len(memory.data["memories"]) == 2 and missed["close"]
+    car = next(m["id"] for m in memory.data["memories"] if "car" in m["text"])
+    assert (await memory.call("forget", {"text": car}))["memories"] == 1
+    assert (await memory.call("forget", {"text": "the drill is on basement shelf 2."}))["memories"] == 0  # its whole text
     file = await core.domain.add_card("file", "Notes", {"name": "test"})
     await file.call("write", {"text": "# Hi"})
     await file.call("append", {"text": "more"})
@@ -114,26 +122,28 @@ async def test_calendar_card_and_entity(hass: HomeAssistant, mock_entry, aioclie
     core = await setup_aac(hass, mock_entry)
     cal = core.domain.cards["calendar"]
     assert {"from": "model.out", "to": "calendar.in"} in core.domain.wires
-    tomorrow = (dt_util.now() + timedelta(days=1)).date().isoformat()
+    day = (dt_util.now() + timedelta(days=200)).date()  # far from anything the backup holds
+    tomorrow, after = day.isoformat(), (day + timedelta(days=1)).isoformat()
     assert (await cal.call("add", {"summary": "Dentist", "start": f"{tomorrow}T10:00"}))["done"] == "add"
     lists = core.domain.cards["lists"]
     await lists.call("create_list", {"list": "Errands"})
     await lists.call("add_items", {"list": "Errands", "items": ["Pay rent"]})
     item = lists.data["lists"][-1]["items"][0]
     item["fields"]["due"] = tomorrow
-    found = await cal.call("calendar", {})
+    found = await cal.call("calendar", {"start": tomorrow, "end": after})
     assert [e["summary"] for e in found] == ["Pay rent (Errands)", "Dentist"]
     uid = next(e["uid"] for e in found if e["summary"] == "Dentist")
     await cal.call("change", {"uid": uid, "summary": "Dentist (moved)"})
     await hass.async_block_till_done()
     state = hass.states.get("calendar.aac_calendar")
     assert state is not None
-    start, end = dt_util.now(), dt_util.now() + timedelta(days=3)
+    start = dt_util.start_of_local_day(day)
+    end = start + timedelta(days=1)
     events = await hass.services.async_call("calendar", "get_events", {"entity_id": "calendar.aac_calendar", "start_date_time": start,
                                                                         "end_date_time": end}, blocking=True, return_response=True)
     assert {e["summary"] for e in events["calendar.aac_calendar"]["events"]} == {"Pay rent (Errands)", "Dentist (moved)"}
     await cal.call("remove", {"uid": uid})
-    assert len(await cal.call("calendar", {})) == 1
+    assert len(await cal.call("calendar", {"start": tomorrow, "end": after})) == 1
 
 
 async def test_card_pages_through_nav_and_ui(hass: HomeAssistant, mock_entry, aioclient_mock, hass_ws_client):
@@ -214,15 +224,13 @@ async def test_chat_finds_and_switches_to_old_chats(hass: HomeAssistant, mock_en
 
 
 async def test_home_access_list(hass: HomeAssistant, mock_entry):
-    """The Home card's access list: its entries come from HA, anything not set is hidden; an old 'everything else'
-    level is dropped when the card is loaded."""
+    """The Home card's access list: its entries come from HA, anything not set is hidden."""
     core = await setup_aac(hass, mock_entry)
     hass.states.async_set("light.desk", "on", {"friendly_name": "Desk"})
     home = core.domain.cards["home"]
     items = await home.ui_call("access_items", {})
     assert {"id": "light.desk", "name": "Desk", "area": "", "group": "light"} in items
     assert home.level("light.desk") == "hidden"
-    assert type(home).upgrade({"default": "read", "levels": {"light.desk": "full"}}, "1.1.0") == {"levels": {"light.desk": "full"}}
 
 
 async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
@@ -376,3 +384,11 @@ async def test_servers_and_their_models(hass: HomeAssistant, mock_entry):
     assert same["server"] == server["id"] and same["id"] != model["id"]
     core.delete_server(server["id"])
     assert not core.pool.get(model["id"]) and not core.pool.get(same["id"]) and server not in core.data["servers"]
+
+
+async def test_a_model_asked_as_a_tool(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """Another model (or a Relay's script) asks a Model card through its function ask: its answer comes back."""
+    model_answers(aioclient_mock, reply("Forty-two."))
+    core = await setup_aac(hass, mock_entry)
+    expert = await core.domain.add_card("model", "Expert")
+    assert await expert.call("ask", {"text": "What is the answer?"}) == "Forty-two."

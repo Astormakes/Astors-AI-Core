@@ -3,7 +3,8 @@
 A satellite (the AAC satellite add-on next to a mic/speaker, or the PC program) streams raw 16 kHz mono PCM over a
 WebSocket. The hub hands each source's audio to the running domain's Microphone cards and offers speech to text
 (the order in the audio settings: Whisper-like model servers, HA's STT engines) and text to speech (an HA TTS
-engine) at a source. It does not listen while AAC speaks there. Raw audio stays in RAM.
+engine) at a source. While AAC speaks at a source, its audio goes on marked "speaking" (the Microphone card mutes it
+or keeps listening). Raw audio stays in RAM.
 
 Protocol: satellite → {"type": "hello", "id", "name", "area", "rate": 16000, "channels": 1 or 2}; AAC → {"type":
 "welcome", "source_id"}; satellite → binary PCM (2 channels: interleaved, the microphone and what its speaker plays, for
@@ -38,7 +39,7 @@ from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.components import stt, tts
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 

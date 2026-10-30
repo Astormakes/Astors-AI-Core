@@ -15,7 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, is_stop, new_id, register
 
-VERSION = "1.7.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.7.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NO_ANSWER = "(no answer came back: is a model wired back into this chat?)"
@@ -113,8 +113,7 @@ class Chat(Card):
             return {"done": what}
         if action == "archived":  # the Archive page: archived chats, newest first
             return [c for c in self.chats() if c.get("archived")]
-        """Its page: the chats, one chat, writing, deleting, Stop."""
-        if action == "get":
+        if action == "get":  # its page: one chat, writing, deleting, Stop
             return self.get(args["chat_id"])
         if action == "send":
             chat_id, answer = await self.send(str(args["text"]), args.get("chat_id"))
@@ -127,15 +126,13 @@ class Chat(Card):
 
     def chats(self) -> list[dict[str, Any]]:
         """Newest first, without their contexts."""
-        found = [{k: v for k, v in c.items() if k not in ("messages", "entries")} for c in self.data["chats"].values()]
+        found = [{k: v for k, v in c.items() if k != "entries"} for c in self.data["chats"].values()]
         return sorted(found, key=lambda c: c["updated"], reverse=True)
 
     def get(self, chat_id: str) -> dict[str, Any] | None:
         """One chat, with what it shows (read from the context it holds)."""
         chat = self.data["chats"].get(chat_id)
-        if chat is not None:
-            chat["messages"] = shown(chat["entries"])
-        return chat
+        return {**chat, "messages": shown(chat["entries"])} if chat is not None else None
 
     def _new(self, title: str, chat_id: str | None = None) -> dict[str, Any]:
         now = dt_util.utcnow().isoformat()
@@ -145,6 +142,8 @@ class Chat(Card):
 
     async def _hold(self, chat: dict[str, Any], entries: list[dict[str, Any]]) -> None:
         """The chat now holds this context (system parts come again from their cards each turn)."""
+        if (chat := self.data["chats"].get(chat["id"])) is None:  # the stored one (get() gives a copy); deleted meanwhile: gone
+            return
         chat["entries"] = [e for e in entries if e["kind"] != "system"]
         chat["updated"] = dt_util.utcnow().isoformat()
         await self.save()

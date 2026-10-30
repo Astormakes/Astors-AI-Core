@@ -11,7 +11,7 @@ from homeassistant.helpers import area_registry as ar, device_registry as dr, en
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 LEVELS = ["hidden", "read", "full"]
 MAX_FOUND = 60
@@ -52,11 +52,6 @@ class HomeAssistantCard(Card):
                                   "entity_id": {"type": "string", "help": "The entity.", "required": True},
                                   "data": {"type": "object", "help": "Extra service data (e.g. brightness_pct)."}}},
     }
-
-    @classmethod
-    def upgrade(cls, settings: dict[str, Any], made_with: str) -> dict[str, Any]:
-        settings.pop("default", None)  # before 1.2.0 an "everything else" level; now anything not listed is hidden
-        return settings
 
     async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
         """For its access list (the panel's "access" field): every entity, with its name, area and domain."""

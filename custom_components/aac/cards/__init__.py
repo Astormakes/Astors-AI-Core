@@ -231,9 +231,6 @@ def load_all(folder: str) -> None:
                 shutil.copyfile(shipped, there)
         elif (shipped / "card.py").exists():
             there = cards / shipped.name
-            for old in (cards / f"{shipped.name}.py", cards / f"{shipped.name}.js"):  # it was one file before: that goes
-                if old.exists() and (old.suffix == ".js" or _version(old) <= _version(shipped / "card.py")):
-                    old.unlink()
             if not (there / "card.py").exists() or (_version(there / "card.py") <= _version(shipped / "card.py")
                                                    and _files(there) != _files(shipped)):
                 LOGGER.info("AAC: card folder %s %s", shipped.name, "updated" if there.exists() else "added")

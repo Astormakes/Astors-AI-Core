@@ -52,7 +52,7 @@ class Step:
         return list(found.values())
 
     def wired_into(self, port: str) -> list[Card]:
-        """The cards wired into one of this card's inputs (e.g. the Pool on a Model's pool input)."""
+        """The cards wired into one of this card's inputs."""
         return [c for c, _ in self.flow.wired_into(self.card.id, port)]
 
     def read(self, port: str) -> list[Context]:
@@ -79,8 +79,8 @@ class Flow:
         """Initialize."""
         self.domain = domain
         self.last: dict[str, dict[str, Any]] = {}  # "card.port" → the newest context that left there
-        self.records: dict[str, list[dict[str, Any]]] = {}
-        self.held: dict[str, Context] = {}  # "card.port" → a copy of the newest context that left there (dotted wires read it)  # "card.port" → what passed lately: {time, text}
+        self.records: dict[str, list[dict[str, Any]]] = {}  # "card.port" → what passed lately: {time, text}
+        self.held: dict[str, Context] = {}  # "card.port" → a copy of the newest context that left there (dotted wires read it)
         self._level_at: dict[str, float] = {}
 
     def wired_from(self, card_id: str, port: str) -> list[tuple[Card, str]]:

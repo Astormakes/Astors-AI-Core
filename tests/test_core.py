@@ -2,7 +2,7 @@
 
 import pytest
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 
 from custom_components.aac.context import Context
 
@@ -311,7 +311,7 @@ async def test_a_model_that_does_not_answer_is_flagged_until_it_does(hass: HomeA
 
     core = await setup_aac(hass, mock_entry)
     told = []
-    unsub = async_dispatcher_connect(hass, SIGNAL, lambda e: told.append(e["what"]))
+    unsub = async_dispatcher_connect(hass, SIGNAL, callback(lambda e: told.append(e["what"])))  # at once, not scheduled
     core.pool.mark_down("m_big")
     assert next(m for m in core.pool.summary() if m["id"] == "m_big")["failing"] and told.count("models") == 1
     core.pool.mark_down("m_big")  # still failing: told once

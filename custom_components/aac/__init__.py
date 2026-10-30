@@ -76,11 +76,6 @@ class CardUiView(HomeAssistantView):
         return web.FileResponse(path, headers={"Content-Type": "text/javascript", "Cache-Control": "no-cache"})
 
 
-async def async_remove_config_entry_device(hass: HomeAssistant, entry: AACConfigEntry, device) -> bool:
-    """Devices left from older versions can be deleted in HA (v2 makes none)."""
-    return True
-
-
 async def async_unload_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     """Stop: the setup is kept."""
     frontend.async_remove_panel(hass, "aac")

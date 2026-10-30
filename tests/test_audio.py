@@ -61,6 +61,11 @@ async def test_a_spoken_round_trip(hass: HomeAssistant, hass_client, mock_entry,
         await hass.async_block_till_done(wait_background_tasks=True)
         assert core.audio.spoken()["satellites"]["pc"]["seconds"] < 10
         await ws.send_bytes(audio((SILENCE, 0.2), (LOUD, 0.8), (SILENCE, 1.0)))  # right after: a possible follow-up
+        for _ in range(100):  # the socket hands the audio over in its own time: wait for the model to be asked
+            await hass.async_block_till_done(wait_background_tasks=True)
+            if len(asked) >= 2:
+                break
+            await asyncio.sleep(0.05)
         await hass.async_block_till_done(wait_background_tasks=True)
         await ws.close()
     assert asked[0]["messages"][-1]["content"].startswith("Computer, what time is it?")

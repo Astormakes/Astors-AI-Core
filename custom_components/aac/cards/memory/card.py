@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, ModelError, ModelUnreachable, new_id, register, run
 
-VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WORD = re.compile(r"\w{3,}")
 
@@ -51,8 +51,8 @@ class Memory(Card):
         "remember": {"help": "Keep something for later (a fact, a preference, a plan).",
                      "args": {"text": {"type": "string", "help": "One short sentence.", "required": True}}},
         "recall": {"help": "Memories that match a question.", "args": {"query": {"type": "string", "help": "What to look for.", "required": True}}},
-        "forget": {"help": "Delete memories that contain a text (or by id).",
-                   "args": {"text": {"type": "string", "help": "Text or id.", "required": True}}},
+        "forget": {"help": "Delete one memory, by its id (from recall or list) or its exact text.",
+                   "args": {"text": {"type": "string", "help": "The memory's id or its whole text.", "required": True}}},
         "list": {"help": "The newest memories."},
     }
 
@@ -109,9 +109,13 @@ class Memory(Card):
             memories.append({"id": new_id(), "text": text, "time": dt_util.utcnow().isoformat(), "vector": await self._embed(text)})
         elif function == "recall":
             return [{"id": m["id"], "text": m["text"]} for m in await self.find(str(args.get("query") or ""), 5)]
-        elif function == "forget":
-            key = str(args.get("text") or "").lower()
-            self.data["memories"] = [m for m in memories if m["id"] != key and key not in m["text"].lower()]
+        elif function == "forget":  # one memory, by its id or its whole text: never everything that contains a word
+            key = str(args.get("text") or "").strip()
+            gone = [m for m in memories if m["id"] == key or m["text"].strip().lower() == key.lower()]
+            if not gone:
+                return {"error": "no memory with that id or text; recall or list give the ids",
+                        "close": [{"id": m["id"], "text": m["text"]} for m in await self.find(key, 5)]}
+            self.data["memories"] = [m for m in memories if m not in gone]
         elif function == "list":
             return [{"id": m["id"], "text": m["text"], "time": m["time"]} for m in memories[-30:]]
         else:

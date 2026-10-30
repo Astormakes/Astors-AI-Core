@@ -317,7 +317,7 @@ class Core:
         self.data.setdefault("servers", [])
         self.data.setdefault("domains", [])
         self.pool = ModelPool(self.hass, self.data["models"], self.data["benches"], self.data["servers"])
-        for model in self.data["models"]:  # every model belongs to a server (one saved before servers gets its address's)
+        for model in self.data["models"]:  # every model belongs to a server (its address and key come from it)
             self._give_server(model)
         if first:
             from .defaults import async_first_start  # noqa: PLC0415

@@ -53,7 +53,7 @@ async def build_default(domain) -> None:
     await add("relay", "Time", {"script": TIME}, card_id="time", at={"x": 580, "y": 0})
     await add("model", "Model", card_id="model", at={"x": 870, "y": 0})
     await add("lists", "Lists", card_id="lists", at={"x": 870, "y": 140})
-    await add("homeassistant", "Home", {"default": "hidden"}, card_id="home", at={"x": 870, "y": 260})
+    await add("homeassistant", "Home", card_id="home", at={"x": 870, "y": 260})
     await add("calendar", "Calendar", card_id="calendar", at={"x": 870, "y": 380})
     domain.set_wires([
         {"from": "chat.said", "to": "charter.in"},
