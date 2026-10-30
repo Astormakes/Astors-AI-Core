@@ -159,3 +159,21 @@ async def test_cut_off_answers_say_why_and_the_context_fills(hass: HomeAssistant
     await core.domain.update_card("model", settings={"max_tokens": 20})
     other, _ = await chat.send("again")
     assert chat.get(other)["messages"][-1]["cut"] == "Longest answer reached (20 tokens)"
+
+
+async def test_a_call_travels_through_the_loop(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """Chat → Charter → Model → Answer → Chat (the owner's wiring): the Chat is in the Model's loop, so its functions are
+    tools; a call takes the shortest way there (Model → Answer → Chat) and the result the shortest way back (Chat →
+    Charter → Model); the cards between only pass it on (Answer's script does not run on it); every wire lights."""
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    marks = '@on("*", kind="answer")\ndef mark(e):\n    e.text = e.text + " (passed Answer)"\n'
+    a = (await d.add_card("relay", "Answer", {"script": marks})).id  # (a backup brings an Answer card of its own)
+    d.set_wires([w for w in d.wires if w["from"] != "model.out" or w["to"].split(".")[0] in ("lists", "home", "calendar")]
+                + [{"from": "model.out", "to": f"{a}.in"}, {"from": f"{a}.out", "to": "chat.answers"}])
+    assert "chat" in {c.id for c in d.flow.tools("model")}
+    asked = model_answers(aioclient_mock, reply(calls=[("chats", {})]), reply("You have one chat."))
+    chat_id, answer = await d.cards["chat"].send("which chats do I have?")
+    assert answer == "You have one chat. (passed Answer)"  # the answer went through Answer once, the call did not run it
+    assert asked[1]["messages"][-1]["role"] == "tool" and "which chats" in asked[1]["messages"][-1]["content"]
+    assert {"model.out", f"{a}.out", "chat.said", "charter.out"} <= set(d.flow.last)  # the way there and back lit

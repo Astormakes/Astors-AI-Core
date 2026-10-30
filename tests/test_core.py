@@ -239,15 +239,14 @@ async def test_a_model_talks_while_it_works(hass: HomeAssistant, mock_entry, aio
     assert ["Let me check."] in shown  # the chat showed it while the model went on
 
 
-async def test_tools_are_the_cards_wired_to_it_and_back(hass: HomeAssistant, mock_entry):
-    """A model's tools are the cards wired from its output and straight back (no loop search: the Chat further round
-    is not one); a card whose functions are all unticked is none."""
+async def test_tools_are_the_cards_in_its_loop(hass: HomeAssistant, mock_entry):
+    """A model's tools are the cards with functions in its loop (straight back, or round through other cards: the
+    Chat); a card whose functions are all unticked is none; a Relay in the loop has the same tools."""
     core = await setup_aac(hass, mock_entry)
     d = core.domain
     tools = {c.id for c in d.flow.tools("model")}
-    assert tools == {"lists", "home", "calendar"}
+    assert tools == {"lists", "home", "calendar", "chat"}
     assert d.cards["model"].summary()["tools"] == sorted(tools)
-    assert {c.id for c in d.flow.tools("charter")} == set()  # a Relay in the line gets nothing it was not wired to
     await d.update_card("lists", settings={"functions": {fn: {"on": False} for fn in d.cards["lists"].functions}})
     assert "lists" not in {c.id for c in d.flow.tools("model")}
 

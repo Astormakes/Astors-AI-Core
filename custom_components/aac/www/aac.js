@@ -1156,8 +1156,8 @@ class AacPanel extends HTMLElement {
     return `<label>Name</label><input id="title" value="${esc(c.title)}">
       <p class="hint" style="margin-top:8px">${esc(t?.help || "")} <span title="The version of its card file">· ${esc(t?.title || c.type)} v${esc(t?.version || "?")}</span></p>
       ${Object.entries(t?.settings || {}).filter(([, f]) => !f.fold).map(field).join("")}
-      ${c.tools ? `<label>Its tools ${tip("The cards wired from its output and straight back into it, with at least one function ticked under For models. A call goes there along the wire and comes back.")}</label>
-        <div class="row" style="flex-wrap:wrap;gap:4px">${c.tools.map((id) => `<button class="small" data-selcard="${esc(id)}" title="Select it">${esc(this._card(id)?.title || id)}</button>`).join("") || '<span class="hint">none: wire a card with functions from it and back</span>'}</div>` : ""}
+      ${c.tools ? `<label>Its tools ${tip("The cards in its loop (wired from its output back into it, straight or round through other cards) with at least one function ticked under For models. A call goes there along the wires and comes back.")}</label>
+        <div class="row" style="flex-wrap:wrap;gap:4px">${c.tools.map((id) => `<button class="small" data-selcard="${esc(id)}" title="Select it">${esc(this._card(id)?.title || id)}</button>`).join("") || '<span class="hint">none: wire a card with functions into its loop</span>'}</div>` : ""}
       ${Object.entries(Object.entries(t?.settings || {}).filter(([, f]) => f.fold).reduce((g, e) => ({ ...g, [e[1].fold]: [...(g[e[1].fold] || []), e] }), {}))
         .map(([name, fs]) => `<details class="fold" ${fs.some(([k]) => c.settings[k]) ? "open" : ""}><summary>${esc(name)}</summary>${fs.map(field).join("")}</details>`).join("")}
       ${this._portDocs(c, t)}

@@ -62,13 +62,13 @@ see them. A card whose functions come from its settings sets `dynamic_functions 
 instance (a Relay: one per `@new` block). A setting may say `fold` to sit in a fold at the bottom of the card's settings.
 
 **Tools** (docs/v2 page 3). A card that uses tools (`uses_tools = True`: a Model, a Relay's script) gets the functions
-of the cards wired from one of its outputs and straight back into it (`flow.paired()`, `flow.tools()`); nothing else
-is a tool. A model's call travels: the context goes along the wire to the called card, the core runs the function
-there (`call()`), adds the result as a `result` message and sends the context back along that card's wire to the
-caller; several calls go one after the other. Tool names are the function's own (as For models names it); the card's
-name goes in front only when two cards in one model's tools offer the same name. The card id never reaches a model.
-The answer goes back to the card the context started at when that is wired (even when it is a tool too), else to
-every wired card but the tools.
+of the cards in its loop (`flow.loop()`, `flow.tools()`): on a way from its outputs back into it, straight or through
+other cards. A model's call travels the shortest way along the wires (`flow.way()`, `flow.carry()`): the cards between
+only pass it on, the core runs the function at the called card (`call()`), adds the result as a `result` message and
+carries the context the shortest way back to the caller; several calls go one after the other. Tool names are the
+function's own (as For models names it); the card's name goes in front only when two cards in one model's tools offer
+the same name. The card id never reaches a model. The answer goes back to the card the context started at when that is
+wired from the model (even when it is a tool too), else to every wired card but those wired straight back.
 
 More a card may define: `busy` (a property: True while it works on something; a newer version of its file waits),
 `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await

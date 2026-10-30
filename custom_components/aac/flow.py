@@ -2,10 +2,11 @@
 
 A round output gives every wire a copy; on a square one the card picks the wire. While a card works on a turn it may
 send snapshots of it (`Step.progress`): they pass every card's `progress()` (by default straight on), and the finished
-turn follows through `handle()`. A card's tools are the cards wired from one of its outputs and straight back into
-it. A call travels: the context goes along the wire to the called card, which runs the function, adds the result as a
-tool message and sends the context back along its wire (every card does it the same way, here). What passed each
-output is kept for the monitor, and open panels hear about it (live wires).
+turn follows through `handle()`. A card's tools are the cards with functions in its loop (on a way from its outputs
+back into it). A call travels the shortest way along the wires to the called card (the cards between only pass it on),
+which runs the function and adds the result as a tool message; the result travels back the shortest way to the caller
+(every card does it the same way, here). What passed each output is kept for the monitor, and open panels hear about
+it (live wires).
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 
 LEVEL_EVERY = 0.1  # seconds between an audio wire's loudness updates (only while a Nodes page is open)
 KEEP_RECORDS, KEEP_SECONDS = 10, 600  # what passed an output lately (the monitor windows)
-MAX_STEPS = 80  # a context that visits more cards than this is stopped (the wiring loops)
+MAX_STEPS = 400  # a context that visits more cards than this is stopped (the wiring loops; calls travel through the loop too)
 
 
 class Step:
@@ -83,15 +84,62 @@ class Flow:
                 found.append((card, bp))
         return found
 
-    def paired(self, card_id: str) -> list[Card]:
-        """The cards wired from one of its outputs and straight back into it (a tool pair: nothing else goes there)."""
-        out = {w["to"].split(".")[0] for w in self.domain.wires if w["from"].split(".")[0] == card_id}
-        back = {w["from"].split(".")[0] for w in self.domain.wires if w["to"].split(".")[0] == card_id}
-        return [self.domain.cards[i] for i in sorted(out & back) if i != card_id and i in self.domain.cards]
+    def _text_wires(self) -> list[tuple[str, str, str, str]]:
+        """The wires that carry contexts: (from card, its output, to card, its input); dotted and audio wires do not."""
+        found = []
+        for w in self.domain.wires:
+            a, ap = w["from"].split(".", 1)
+            b, bp = w["to"].split(".", 1)
+            if (card := self.domain.cards.get(a)) and card.ports()[1].get(ap) == "text" and b in self.domain.cards:
+                found.append((a, ap, b, bp))
+        return found
+
+    def loop(self, card_id: str) -> list[Card]:
+        """The cards in its loop: on a way from its outputs back into it, straight or through other cards."""
+        wires = self._text_wires()
+
+        def reach(forward: bool) -> set[str]:
+            seen, todo = set(), [card_id]
+            while todo:
+                at = todo.pop()
+                for a, _, b, _ in wires:
+                    nxt = b if forward and a == at else a if not forward and b == at else None
+                    if nxt and nxt != card_id and nxt not in seen:
+                        seen.add(nxt)
+                        todo.append(nxt)
+            return seen
+        return [self.domain.cards[i] for i in sorted(reach(True) & reach(False))]
 
     def tools(self, card_id: str) -> list[Card]:
-        """A card's tools: the cards wired to it and back that offer at least one function (docs/v2 page 3)."""
-        return [c for c in self.paired(card_id) if c.offered()]
+        """A card's tools: the cards in its loop that offer at least one function (docs/v2 page 3)."""
+        return [c for c in self.loop(card_id) if c.offered()]
+
+    def way(self, start: str, to: str, port: str | None = None) -> list[tuple[str, str, str, str]] | None:
+        """The shortest way along the wires from a card (from one of its outputs, or the one given) to another card."""
+        from collections import deque  # noqa: PLC0415
+
+        wires = self._text_wires()
+        queue = deque([[w] for w in wires if w[0] == start and (port is None or w[1] == port)])
+        seen = {start}
+        while queue:
+            way = queue.popleft()
+            at = way[-1][2]
+            if at == to:
+                return way
+            if at in seen:
+                continue
+            seen.add(at)
+            queue.extend([*way, w] for w in wires if w[0] == at)
+        return None
+
+    async def carry(self, context: Context, way: list[tuple[str, str, str, str]]) -> None:
+        """A call or its result along a way: every wire lights, the cards between only pass it on, the last takes it."""
+        for a, ap, b, bp in way:
+            self.record(a, ap, context, [f"{b}.{bp}"])
+            if (a, ap, b, bp) != way[-1]:
+                context.way.append(b)
+        a, ap, b, bp = way[-1]
+        await self.enter(self.domain.cards[b], bp, context)
 
     def wired_into(self, card_id: str, port: str) -> list[tuple[Card, str]]:
         """Sources of an input."""
@@ -198,12 +246,11 @@ class Flow:
             result = {"error": str(err)}
         text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
         context.add(card.id, "result", text[:8000], call_id=call["id"], name=call["name"])
-        back = [(port, caller) for port in card.ports()[1] if any(c.id == caller for c, _ in self.wired_from(card.id, port))]
-        if not back:
-            context.add(card.id, "error", f"{card.name} is not wired back to {caller}: the result cannot return")
-            LOGGER.warning("AAC: %s is not wired back to %s", card.id, caller)
+        if (back := self.way(card.id, caller)) is None:
+            context.add(card.id, "error", f"No way along the wires from {card.name} back to {caller}: the result cannot return")
+            LOGGER.warning("AAC: no way from %s back to %s", card.id, caller)
             return
-        await self.out(card, context, back[:1])
+        await self.carry(context, back)
 
     async def out(self, card: Card, context: Context, result: list[Any] | None) -> None:
         """A card sends a context from its outputs: result as handle() returns it (None: every round output)."""
@@ -218,6 +265,8 @@ class Flow:
             targets = [(c, p) for c, p in self.wired_from(card.id, port) if only is None or c.id == only]
             if targets:
                 self.record(card.id, port, context, [f"{c.id}.{p}" for c, p in targets])
+            elif only and (way := self.way(card.id, only, port) or self.way(card.id, only)):  # a call: the way through the loop
+                await self.carry(context, way)
             sends += targets
         for i, (target, in_port) in enumerate(sends):
             await self.enter(target, in_port, context if i == len(sends) - 1 else context.branch())

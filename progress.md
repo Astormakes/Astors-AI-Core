@@ -3,7 +3,14 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-30) – 2.3.16, live on the owner's HA
+## Current state (2026-10-30) – 2.3.17, live on the owner's HA
+
+- **2026-10-30 (2.3.17): tools are the loop again, and calls travel through it** (owner: "everything always moves
+  through a context through wires", not "tools only when wired directly"; 2.3.0's pair rule had taken the Chat's
+  functions from his model). `flow.loop()` / `tools()`: cards with functions on a way from a card's outputs back into
+  it; `flow.way()` finds the shortest way along text wires, `flow.carry()` takes a call there and its result back (the
+  cards between only pass it on, every wire lights). A Model's answer goes to every wired card but those wired straight
+  back (pure tools), so a second Model or the Answer Relay further round still gets it. MAX_STEPS 400.
 
 - **2026-10-30 (2.3.16): thinking, cut-offs, tokens** (owner). The client reads the server's thinking
   (`reasoning_content`), why it stopped (`finish_reason`) and the tokens (`stream_options.include_usage`); the context

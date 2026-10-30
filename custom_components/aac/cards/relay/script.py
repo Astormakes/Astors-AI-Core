@@ -96,8 +96,8 @@ REFERENCE = [
      '@on("*", kind="said")\ndef wake_word(e):\n    if "computer" in e.text.lower():\n        output("yes")   # to the cards wired from yes\n    # otherwise: to out'),
     ("Actions", "stop()", "Sends stop: every card lets go of what it holds.", ""),
     ("Actions", 'signal("done")', "Adds a signal (user.done) other cards can react to; never sent to a model.", ""),
-    ("Actions", 'lists.add_items(list="Shopping", items=[e.text])', "Calls a function of a card wired from this Relay and "
-     "back into it (the card's id, a dot, the function). The call travels along the wires; the script waits for the "
+    ("Actions", 'lists.add_items(list="Shopping", items=[e.text])', "Calls a function of a card in this Relay's loop (wired "
+     "from it and back into it, straight or round; the card's id, a dot, the function). The call travels along the wires; the script waits for the "
      "result.", ""),
     ("Actions", 'print("…")', "Shows under Last run (for checking a script).", ""),
     ("Values", "now()", "The time now: now().hour, f\"{now():%A %H:%M}\".", ""),
@@ -450,7 +450,7 @@ class Run:
 
     def call(self, card: Any, name: str, args: dict[str, Any]) -> Any:
         if card not in self.tools:
-            raise ScriptError(f"{card.id} is not wired to this Relay and back: wire it so to use {name}()")
+            raise ScriptError(f"{card.id} is not in this Relay's loop: wire it so (from the Relay, back into it) to use {name}()")
         key = (*self._key, "call", card.id, name, repr(args))
         if key in self.done:
             return self.done[key]

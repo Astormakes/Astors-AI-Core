@@ -1,6 +1,6 @@
 """Relay: passes the context on, and its script (Python, `script.py`) works on it: `@new("name")` adds a text of its
 own (the start: the system prompt; the end: read last; before or after a tag), `@on("tag")` changes the entries with
-a tag, calls cards wired to it and back, sends stop or picks an output. Empty: a pure relay.
+a tag, calls cards in its loop, sends stop or picks an output. Empty: a pure relay.
 
 Streams: entries no block works on pass at once; one a block works on is held back until it is closed (`live=True`:
 on every piece). The editor (`editor.js`) has a simple view that writes the code."""
@@ -18,7 +18,7 @@ from custom_components.aac.api import LOGGER, Card, Context, new_id, register
 sys.modules.pop(f"{__name__}.script", None)  # a newer card file brings a newer script.py
 from .script import REFERENCE, Run, Script, check, reference_text  # noqa: E402
 
-VERSION = "2.2.1"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
+VERSION = "2.2.2"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
 
 KEEP_TURNS = 20  # turns whose side effects (stop, calls) are remembered, so a snapshot and the finished turn do them once
 WAIT = 20  # seconds a script may run

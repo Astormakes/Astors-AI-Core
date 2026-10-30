@@ -1,6 +1,6 @@
 """Model: reads the context as it is (docs/v2 page 3: system, messages, tools) and answers. Its tools are the cards
-wired from its output and straight back: a call travels there along the wire and comes back with its result, then the
-model goes on. The answer goes back where the context came from."""
+with functions in its loop: a call travels the shortest way along the wires there and its result the shortest way back,
+then the model goes on. The answer goes back where the context came from."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any
 from custom_components.aac.api import (LOGGER, Card, Client, Context, ModelError, ModelUnreachable, entry, new_id, register, run,
                                       tool_spec)
 
-VERSION = "2.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 MAX_ROUNDS = 8  # model → tools → model … per turn
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -69,8 +69,9 @@ class Model(Card):
     type = "model"
     title = "Model"
     category = "Models"
-    help = ("Reads the context and answers, with the first free model of its list. Cards wired from its output and "
-            "straight back into it are its tools: a call goes there along the wire and comes back with the result. "
+    help = ("Reads the context and answers, with the first free model of its list. Cards with functions in its loop "
+            "(wired from its output back into it, straight or round through other cards) are its tools: a call goes "
+            "there along the wires and the result comes back. "
             "While it works, every finished sentence goes out at once (a Chat shows it, Text to speech speaks it); the "
             "finished answer follows.")
     outputs = {"out": "text"}
@@ -81,9 +82,9 @@ class Model(Card):
             "error": "no answer came (no model available, a model failed); models never read these"}
     ports_help = {"in": "a context arrives: the model reads it and answers; a tool's result comes back here too (a stop "
                         "while it writes cuts the answer)",
-                  "out": "square: a call goes to the called card; the answer goes back to the card the context started "
-                         "at if that is wired, else to every wired card but its tools. A card wired from here and "
-                         "straight back is a tool (its functions: For models)"}
+                  "out": "square: a call goes the shortest way to the called card; the answer goes back to the card the "
+                         "context started at if that is wired from here, else to every wired card but those wired "
+                         "straight back (pure tools). Every card with functions in its loop is a tool (For models)"}
     settings_schema = {
         "models": {"type": "modellist", "tag": "text", "title": "Models (in order)", "default": [], "help": "The list is run through from the top: a free model takes the context; a busy one queues it if its Queue is ticked, then the next is tried; the first that gets free takes it. Empty: every model with the tag, queued."},
         "temperature": {"type": "number", "title": "Temperature", "default": 0.7, "help": "0 = always the same, higher = more varied."},
@@ -136,13 +137,13 @@ class Model(Card):
         return routes or self._routes(context, step)
 
     def _routes(self, context: Context, step) -> list[Any]:
-        """The answer goes back where the context started (if wired, even when that card is a tool too: a Chat wired
-        straight to it and back), else to every wired card but its tools."""
+        """The answer goes back where the context started (if wired from here, even when that card is a tool too), else
+        to every wired card but those wired straight back (they only take calls: Lists, Home …)."""
         targets = [c.id for c, _ in step.targets("out")]
         if context.origin in targets:
             return [("out", context.origin)]
-        tools = {c.id for c in self.domain.flow.paired(self.id)}
-        return [("out", n) for n in targets if n not in tools]
+        back = {w["from"].split(".")[0] for w in self.domain.wires if w["to"].split(".")[0] == self.id}
+        return [("out", n) for n in targets if n not in back]
 
     def _snapshot(self, context: Context, step) -> None:
         """Send what it has so far (after the snapshots before it)."""

@@ -378,8 +378,8 @@ class AacRelayScript extends HTMLElement {
       <div class="note"><b>Streams:</b> entries no block works on pass at once, piece by piece. An entry a block works on is held back until its card closes it; then the block runs once. live=True runs it on every piece instead (a stop word mid-sentence).</div>
       ${Object.entries(groups).map(([g, rows]) => `<h5>${esc(g)}</h5>${rows.map((r) => `<div class="fn">${ins(r.sig)} ${esc(r.what)}${r.example ? `<pre class="ex">${esc(r.example)}</pre>` : ""}</div>`).join("")}`).join("")}
       <h5>Tags in this domain</h5>${this.dom.tags.map((t) => `<div class="fn">${ins(t.tag)} <span class="hint">${esc(t.card)}: ${esc(t.what)}</span></div>`).join("")}
-      <h5>Cards wired to it and back (their functions)</h5>${tools.length ? tools.map((c) => Object.entries(this.panel.type(c.type)?.functions || {}).map(([n, f]) => `<div class="fn">${ins(`${c.id}.${n}(${Object.keys(f.args || {}).map((a) => `${a}=`).join(", ")})`)} <span class="hint">${esc(f.help || "")}</span></div>`).join("")).join("")
-        : '<p class="hint">None: wire a card from this Relay and back into it to call its functions.</p>'}
+      <h5>Cards in its loop (their functions)</h5>${tools.length ? tools.map((c) => Object.entries(this.panel.type(c.type)?.functions || {}).map(([n, f]) => `<div class="fn">${ins(`${c.id}.${n}(${Object.keys(f.args || {}).map((a) => `${a}=`).join(", ")})`)} <span class="hint">${esc(f.help || "")}</span></div>`).join("")).join("")
+        : '<p class="hint">None: wire a card with functions into the loop of this Relay (from it, back into it) to call its functions.</p>'}
       <h5>Values of the cards</h5>${this._cards().flatMap((c) => Object.entries(this.panel.type(c.type)?.values || {}).map(([n, w]) => `<div class="fn">${ins(`${c.id}.${n}`)} <span class="hint">${esc(w)}</span></div>`)).join("") || '<p class="hint">No card offers values.</p>'}`;
   }
 
