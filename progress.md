@@ -3,7 +3,15 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-25) – 2.2.0 (Relay scripts), live on the owner's HA
+## Current state (2026-10-30) – 2.2.1, live on the owner's HA
+
+- **2026-10-30 (2.2.1): one card type per folder (owner rule: "Cards in their own files always").** `audio.py` (7
+  cards), `tools/` (File, Notify, Timer, Web, Model servers) and `auto/` (Schedule, HA event, Heartbeat) became 15
+  folders `cards/<type>/card.py`; the auto cards' base class and log page are copied into each (spec/cards.md "A card
+  folder"). The old files were removed from `<config>/aac/cards` by hand at the deploy; backup before:
+  `/config/aac/bak-v2-2.2.0/` (storage + cards.tar). The flat single-card files (buffer, builder, decide,
+  homeassistant, model) stay files. Owner, same day: work on the live AAC; changes that could break data are tried in a
+  separate domain first (the live AAC now holds real data).
 
 Rebuilt from scratch on the owner's design (docs/v2): everything is a card instance in a domain, cards own their data,
 the owner wires them (no automatic wiring), the message is a document of entries with `<card>.<tag>` tags.
@@ -45,7 +53,7 @@ the owner wires them (no automatic wiring), the message is a document of entries
   added by a model), HA Assist (AAC is HA's conversation agent again, entity `conversation.aac_qwen3_8b`), Decide,
   Memory (by meaning with an embedding model, else by words), File, Notify, Timer, Web (DuckDuckGo or SearXNG),
   Node editor (type builder: a model changes cards and wires, within its settings).
-- **Audio (alpha.3, `audio.py` + `cards/audio.py`):** satellites on `/api/aac/audio` (same protocol: the add-on works
+- **Audio (alpha.3, `audio.py` + the audio card folders):** satellites on `/api/aac/audio` (same protocol: the add-on works
   unchanged, its HA user taken over from v1), STT in the order on the Audio page (Whisper on the PC, then HA's),
   TTS (Piper, voices per language), volume; cards Microphone, Noise gate, Audio clipper, Speech to text, Voice chat
   (sessions per satellite, follow-up window after Voice out's "finished"), Voice out. Audio wires carry a stream
