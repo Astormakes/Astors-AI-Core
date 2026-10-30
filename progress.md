@@ -3,7 +3,15 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-30) – 2.3.10, live on the owner's HA
+## Current state (2026-10-30) – 2.3.12, live on the owner's HA
+
+- **2026-10-30 (2.3.11, 2.3.12): no model needed** (owner, building Chat → Relay → Chat in a test domain to show that
+  anything is possible). A chat no longer says "no answer came back" when something is wired and does not answer (only
+  when nothing is wired to `said`), and never hands back "(no answer)". A Relay script's card calls **travel** like a
+  model's (`Relay.travel`: an answer of the Relay with the call, the result back along the card's wire, `_answered`
+  wakes the script; the old `call` event kind is gone); a Relay sends the turn back to the card it started at even when
+  that card is its tool; `chat.post` during a turn of that chat writes into the turn. Plain text shows the raw context
+  when no model read the turn. Checked by sending through the real page in the owner's test123 domain.
 
 - **2026-10-30 (2.3.3–2.3.10):** Plain text shows "The model answered:" below the text and the model's earlier answers
   blue; Context reads top to bottom (a colour per part, only connected things fold, events set apart); the pencil
