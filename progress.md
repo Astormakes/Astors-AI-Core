@@ -3,7 +3,16 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-30) – 2.2.1, live on the owner's HA
+## Current state (2026-10-30) – 2.2.2, live on the owner's HA
+
+- **2026-10-30 (2.2.2): review fixes.** A review of the whole code against docs/v2 page 1 (owner's worry: things that
+  seem to work but go against the idea). Fixed: the Model card's `ask` never worked (a relative import; now tested);
+  the Chat card stored a copy of every opened chat (`get()` wrote `messages` into its data; the 8 live chats were
+  cleaned with jq while HA was stopped, 119 → 84 KB); Memory's `forget` deleted every memory containing the text (now
+  one memory by id or whole text); leftovers removed (Home card upgrade, the loader's flat-file removal, v1 device
+  removal, the default Home card's unused option, stale comments, an unused import); tests no longer depend on the
+  date, two races fixed (suite green 8× in a row). Open review points: items 48–53. Backup before:
+  `/config/aac/bak-v2-2.2.1/`.
 
 - **2026-10-30 (2.2.1): one card type per folder (owner rule: "Cards in their own files always").** `audio.py` (7
   cards), `tools/` (File, Notify, Timer, Web, Model servers) and `auto/` (Schedule, HA event, Heartbeat) became 15
@@ -317,7 +326,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     (context, `-ub`) and a VRAM check before loading: on the 7800 XT a model without 1–2 GB of headroom froze the host
     three times (2026-10-25, see the CT 110 notes). To check: whether the router can fetch from Hugging Face itself
     (`-hf`), else a small helper on the machine. Later AAC decides what to load (the broker idea from v1).
-15. **Smaller undo history**: the domain's store is ~720 KB because every undo step and slot is a whole copy of the
+15. **Smaller undo history** (review 2026-10-30: the undo steps are 462 KB of the 712 KB domain store): the domain's store is ~720 KB because every undo step and slot is a whole copy of the
     setup (the Home card's access list alone is big), and it is written on every change. Keep changes instead of
     copies, or leave big settings out of the undo steps. Also: a removed card's data stays stored (for Undo); stores of
     cards that are long gone should go (owner's no-dead-weight rule).
@@ -414,7 +423,9 @@ pencil edit is missing" is item 11.
 38. **Cards: logging per card.** Logging per card instead of a Log card: a unified logging interface; every card has
     a dropdown what to log (whole context / only changed text) and ticks for in, out or both. The Log card should use
     that.
-39. **Schedule: like v1.** Schedule should work more like it did in v1 (talk through: what exactly).
+39. **Schedule: like v1.** Schedule should work more like it did in v1 (talk through: what exactly). Review: its
+    entries are settings, so every reminder a model adds or a one-time entry that fires makes an Undo step and remakes
+    the card (reminders push the owner's undo steps out).
 40. **File: several files.** The File card has only one file. Owner imagined accessing different files, but likes the
     single file too: maybe a File system card (with a whitelist of paths) next to the File card.
 41. **File: provides output.** The File card should have a provides (read) output.
@@ -428,3 +439,19 @@ pencil edit is missing" is item 11.
     draft, puts it live to test it, and then decides whether it works: the Node editor keeps the context while the
     cards are rebuilt to the model's design, and expects the model to say "keep" within ~120 s, otherwise the old
     setup comes back. Maybe instead of the 3 save slots: the Node editor (and the Nodes page) with a panel of its own.
+48. **Review: card editors out of the panel** (talk through first). The panel (core) has editors for specific cards:
+    Schedule entries, HA event watches, the Home access list, Decide's outputs, voices, the speaker and satellite
+    pickers, the Microphone's whole Waveforms view, and checks for the types microphone / model / chat. Against rule
+    10 and "the core stays light"; each card should bring its editor from its folder (the `element` setting type, like
+    the Relay's script editor).
+49. **Review: the voice chain as a preset** (talk through first). `defaults.py` builds the voice chain (11 cards and
+    their wires) by itself when a satellite first connects, picking cards by type. Against rules 1, 4 and 10; it
+    should be a preset the owner applies (ties in with "Presets").
+50. **Review: the Request view goes through the card.** The core's `aac/chat/request` reads `card.requests` inside the
+    Model card (a hidden contract); it should be the card's own ui_call.
+51. **Review: cards may not import each other.** The loader makes `aac_cards` a package so card files can import one
+    another; that invites cards to depend on each other. Remove it (folders keep their own relative imports).
+52. **Review: removing a card asks about its data** (page 1, rule 3). Today its data stays stored forever, silently.
+    Ties in with 15 (stores of long-gone cards).
+53. **Review: signals besides stop.** Page 1 says stop is the only signal, but Decide writes its choice and the Audio
+    clipper its cuts as `signal` entries (the Level card reads the cuts). Either page 1 or the code changes.
