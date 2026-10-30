@@ -68,6 +68,16 @@ class AacChatPage extends HTMLElement {
   _plain() { // the request as the model read it: the template's markers dimmed, each tool on its own line
     const { esc } = this.panel, r = this.read || {};
     if (!r.text) return '<p class="hint">Nothing kept yet: the next turn in this chat shows here.</p>';
+    if (r.raw) { // no model read this turn: AAC's context itself, one entry per line (keys and brackets dim, answers blue)
+      const tok = (s) => `<span class="tok">${esc(s)}</span>`;
+      const val = (v, blue) => (Array.isArray(v) ? `${tok("[")}${v.map((x) => val(x)).join(tok(","))}${tok("]")}`
+        : v && typeof v === "object" ? `${tok("{")}${Object.entries(v).map(([k, x]) => `${tok(`"${k}":`)}${val(x, k === "text" && v.kind === "answer")}`).join(tok(","))}${tok("}")}`
+        : blue ? `<span class="ans">${esc(JSON.stringify(v))}</span>` : esc(JSON.stringify(v)));
+      const box = (name, list) => `${tok(`${name}: [`)}${list.length ? `\n${list.map((x) => `  ${val(x)}`).join(`${tok(",")}\n`)}\n` : ""}${tok("]")}`;
+      const c = r.context || {};
+      return `<p class="hint plainhead">No model read this turn: AAC's context itself, as it holds it (dim: keys and brackets; blue: answers).</p>
+        <pre class="plain">${["system", "messages", "tools", "events"].map((n) => box(n, c[n] || [])).join("\n")}</pre>`;
+    }
     const TOKEN = /(<\|[^<>\s|]{0,30}\|?>|<[^<>\s|]{1,30}\|>)/g;
     const text = r.text.replace(/(?<!\n)(<\|tool[^<>\s|]*\|?>)/g, "\n$1");
     const marked = (s) => s.split(TOKEN).map((part, i) => (i % 2 ? `<span class="tok">${esc(part)}</span>` : esc(part))).join("");
@@ -81,16 +91,6 @@ class AacChatPage extends HTMLElement {
     html += marked(text.slice(at));
     const rep = r.reply, wrote = rep ? [rep.content, ...(rep.calls || []).map((c) => `[calls ${c}]`)].filter(Boolean).join("\n") : "";
     const reply = rep ? `<div class="answered"><b>The model answered:</b><pre class="wrote">${esc(wrote || "(nothing)")}</pre></div>` : "";
-    if (r.raw) { // no model read this turn: AAC's context itself, one entry per line (keys and brackets dim, answers blue)
-      const tok = (s) => `<span class="tok">${esc(s)}</span>`;
-      const val = (v, blue) => (Array.isArray(v) ? `${tok("[")}${v.map((x) => val(x)).join(tok(","))}${tok("]")}`
-        : v && typeof v === "object" ? `${tok("{")}${Object.entries(v).map(([k, x]) => `${tok(`"${k}":`)}${val(x, k === "text" && v.kind === "answer")}`).join(tok(","))}${tok("}")}`
-        : blue ? `<span class="ans">${esc(JSON.stringify(v))}</span>` : esc(JSON.stringify(v)));
-      const box = (name, list) => `${tok(`${name}: [`)}${list.length ? `\n${list.map((x) => `  ${val(x)}`).join(`${tok(",")}\n`)}\n` : ""}${tok("]")}`;
-      const c = r.context || {};
-      return `<p class="hint plainhead">No model read this turn: AAC's context itself, as it holds it (dim: keys and brackets; blue: answers).</p>
-        <pre class="plain">${["system", "messages", "tools", "events"].map((n) => box(n, c[n] || [])).join("\n")}</pre>`;
-    }
     return `<p class="hint plainhead">${r.template ? `As ${esc(r.model)} read it: the model server wrote it with the model's own template (dim: its markers; blue: what the model wrote earlier).` : `The request as sent to ${esc(r.model)} (its server cannot show the model's template).`}</p><pre class="plain">${html}</pre>${reply}`;
   }
 
