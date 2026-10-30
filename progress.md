@@ -3,7 +3,13 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-30) – 2.3.2, live on the owner's HA
+## Current state (2026-10-30) – 2.3.10, live on the owner's HA
+
+- **2026-10-30 (2.3.3–2.3.10):** Plain text shows "The model answered:" below the text and the model's earlier answers
+  blue; Context reads top to bottom (a colour per part, only connected things fold, events set apart); the pencil
+  (item 11); the sidebar ⋯ closes on a click elsewhere. **2.3.7–2.3.9 broke sending in every chat** (the owner hit it
+  showing AAC to a friend): a line shown before it has an id matched "nothing being edited", drawing threw before the
+  message went out. Fixed in 2.3.10, checked by sending in a real browser (now the rule for page changes).
 
 - **2026-10-30 (2.3.1, 2.3.2):** 2.3.1 fixed the Nodes page (a removed panel helper was still called by the card type
   info: every click there crashed). 2.3.2: the chat has three views (owner): **Chat**, **Context** (the sectioned view)
