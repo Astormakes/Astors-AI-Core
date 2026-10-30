@@ -214,6 +214,15 @@ class Client:
             pass
         return out
 
+    async def template(self, body: dict[str, Any]) -> str | None:
+        """A request as the model reads it: llama-server writes it with the model's chat template (no answer is made);
+        None when the server cannot."""
+        try:
+            found = await self._request("POST", "/apply-template", json={"model": await self.following(), **body})
+        except ModelError:
+            return None
+        return found.get("prompt") if isinstance(found, dict) else None
+
     async def bench(self, name: str) -> dict[str, Any]:
         """A short fixed test of one of the server's models: it reads a long text (no cache) and writes 256 tokens;
         how fast each went, as the server measured it."""

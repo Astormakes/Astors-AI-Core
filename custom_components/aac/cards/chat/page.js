@@ -1,12 +1,14 @@
-// The Chat card's page (spec/cards.md "A card's page"): one chat (or a new one), the composer, Stop, and Behind the
-// scenes: the context as the model got it (docs/v2 page 3). The panel hands over .panel (its helpers), .card and
-// .entry (the chat id).
+// The Chat card's page (spec/cards.md "A card's page"): one chat (or a new one), the composer, Stop, and two views of
+// the newest turn (docs/v2 page 3): Context (in sections, each part with its card) and Plain text (the request as the
+// model read it). The panel hands over .panel (its helpers), .card and .entry (the chat id).
 
 const STYLE = `<style>
 .calls { margin-top: 6px; font-size: 12px; opacity: .8; } .calls summary { cursor: pointer; }
 .calls .call { margin: 4px 0 0 10px; } .calls pre { white-space: pre-wrap; word-break: break-word; margin: 2px 0 0 10px; font: inherit; opacity: .85; }
 .behind { padding: 4px 2px; }
 .toolline { align-self: flex-start; margin: 2px 0 2px 8px; }
+.plain { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; margin: 0; }
+.plain .tok { opacity: .45; } .plainhead { margin: 0 0 8px; }
 </style>`;
 
 class AacChatPage extends HTMLElement {
@@ -37,7 +39,19 @@ class AacChatPage extends HTMLElement {
     this.innerHTML = `${header("Archive")}<div class="content">${rows || '<p class="hint">Nothing archived.</p>'}</div>`;
   }
 
-  async _get() { this.chat = await this.panel.ui("get", { chat_id: this.entry }); }
+  async _get() {
+    this.chat = await this.panel.ui("get", { chat_id: this.entry });
+    if (this.mode === "text") this.read = await this.panel.ui("as_read", { chat_id: this.entry });
+  }
+
+  _plain() { // the request as the model read it: the template's markers dimmed, each tool on its own line
+    const { esc } = this.panel, r = this.read || {};
+    if (!r.text) return '<p class="hint">Nothing kept yet: the next turn in this chat shows here.</p>';
+    const TOKEN = /(<\|[^<>\s|]{0,30}\|?>|<[^<>\s|]{1,30}\|>)/g;
+    const text = r.text.replace(/(?<!\n)(<\|tool[^<>\s|]*\|?>)/g, "\n$1");
+    const html = text.split(TOKEN).map((part, i) => (i % 2 ? `<span class="tok">${esc(part)}</span>` : esc(part))).join("");
+    return `<p class="hint plainhead">${r.template ? `As ${esc(r.model)} read it: the model server wrote it with the model's own template (dim: its markers).` : `The request as sent to ${esc(r.model)} (its server cannot show the model's template).`}</p><pre class="plain">${html}</pre>`;
+  }
 
   event(ev) { // what the core tells about this card
     if (ev.what === "delta" && (this.busy || (this.entry && ev.chat_id === this.entry))) { // typed here, or spoken into this chat
@@ -60,19 +74,20 @@ class AacChatPage extends HTMLElement {
   render() {
     if (this.entry === "archive") return this._archive();
     const { esc, md, header } = this.panel, card = this.card, msgs = this.chat?.messages || [];
-    const body = this.mode === "behind" && this.chat
-      ? `<div class="behind">${this.panel.contextView(this.chat.behind || {})}</div>`
+    const body = this.mode === "context" && this.chat ? `<div class="behind">${this.panel.contextView(this.chat.behind || {})}</div>`
+      : this.mode === "text" && this.chat ? `<div class="behind">${this._plain()}</div>`
       : msgs.map((m) => (!m.text && m.calls?.length ? `<div class="toolline">${this._calls(m)}</div>` // it only called tools: a small line
         : `<div class="bubble ${m.role === "user" ? "user" : "aac"} ${m.error ? "err" : ""}">${m.text ? md(m.text) : ""}${this._calls(m)}${m.cut ? '<div class="cut">stopped</div>' : ""}</div>`)).join("")
         || `<div class="hint" style="margin:auto">${esc(card.title)}: ask anything.</div>`;
-    const live = (this.busy || this.live) && this.mode !== "behind" ? `<div class="bubble aac" id="live">${md(this.live || "…")}</div>` : "";
-    const modes = this.chat ? `<button class="small" data-mode="" ${!this.mode ? "disabled" : ""}>Chat</button><button class="small" data-mode="behind" title="The context as the model got it: the system parts with the card each came from, every message with what was attached, the tools it called and what came back, the tools it had" ${this.mode === "behind" ? "disabled" : ""}>Behind the scenes</button><button class="small danger" id="delchat">Delete</button>` : "";
+    const live = (this.busy || this.live) && !this.mode ? `<div class="bubble aac" id="live">${md(this.live || "…")}</div>` : "";
+    const mode = (m, label, title) => `<button class="small" data-mode="${m}" title="${title}" ${this.mode === m ? "disabled" : ""}>${label}</button>`;
+    const modes = this.chat ? `${mode("", "Chat", "The conversation")}${mode("context", "Context", "The newest turn's context, in sections: the system parts with the card each came from, every message with what was attached, the tools it called and what came back, the tools it had")}${mode("text", "Plain text", "The newest request exactly as the model read it")}<button class="small danger" id="delchat">Delete</button>` : "";
     this.innerHTML = `${STYLE}<div class="chat">${header(this.chat?.title || `New chat · ${card.title}`, `${modes}<button class="small" id="chatstop" title="Stop: sends this chat's context with a stop; a model still writing cuts its answer">Stop</button>`)}
       <div class="log">${body}${live}</div>
       ${(this.panel.failing?.() || []).length ? `<div class="warnline">Not answering: ${esc(this.panel.failing().join(", "))} (Settings → Models)</div>` : ""}
       ${this.chat?.archived ? `<div class="composer"><span class="hint" style="flex:1">This chat is archived.</span><button id="restore">Restore</button></div>` : `<div class="composer"><textarea id="input" placeholder="Message AAC…" ${this.busy ? "disabled" : ""}>${esc(this.draft)}</textarea><button class="primary" id="send" ${this.busy ? "disabled" : ""}>Send</button></div>`}</div>`;
     const box = this.querySelector(".log");
-    if (box && this.mode !== "behind") box.scrollTop = box.scrollHeight;
+    if (box && !this.mode) box.scrollTop = box.scrollHeight;
     const input = this.querySelector("#input");
     if (input && !this.busy) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
   }

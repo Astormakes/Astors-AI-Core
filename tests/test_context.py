@@ -74,3 +74,23 @@ async def test_another_model_is_a_member_of_the_chat(hass: HomeAssistant, mock_e
     _, mine = conversation(c, "critic", {"model": "Model"})
     assert [m["role"] for m in mine] == ["user", "assistant"] and mine[0]["content"] == "hi\n\nModel: Hello."
     assert "boom" not in str(mine)
+
+
+async def test_plain_text_is_the_request_as_the_model_read_it(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """The chat keeps the newest request; its Plain text is what the model server writes with the model's template, or
+    the request as plain text when the server cannot."""
+    from .conftest import BASE_URL
+
+    core = await setup_aac(hass, mock_entry)
+    chat = core.domain.cards["chat"]
+    model_answers(aioclient_mock, reply("Hi."))
+    chat_id, _ = await chat.send("hello")
+    aioclient_mock.post(BASE_URL.removesuffix("/v1") + "/apply-template", json={"prompt": "<|turn>user\nhello<turn|>"})
+    read = await chat.ui_call("as_read", {"chat_id": chat_id})
+    assert read == {"text": "<|turn>user\nhello<turn|>", "template": True, "model": "Big"}
+    sent = aioclient_mock.mock_calls[-1][2]
+    assert sent["messages"][-1]["content"].startswith("hello") and sent["model"] == "big"  # the request as it was sent
+    aioclient_mock.clear_requests()
+    aioclient_mock.post(BASE_URL.removesuffix("/v1") + "/apply-template", status=404)
+    read = await chat.ui_call("as_read", {"chat_id": chat_id})
+    assert not read["template"] and read["text"].startswith("[system]\nBe kind.") and "[user]\nhello" in read["text"]

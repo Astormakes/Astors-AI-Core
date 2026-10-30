@@ -1,5 +1,5 @@
-"""Chat: a chat in the sidebar. It holds a context per chat (its messages and events, docs/v2 page 3; the system parts
-and tools of the newest turn too, for Behind the scenes). What you write is added to it and the whole context leaves
+"""Chat: a chat in the sidebar. It holds a context per chat (its messages and events, docs/v2 page 3; the newest turn's
+system parts and tools, and the request the model got: its page shows the context and the text as the model read it). What you write is added to it and the whole context leaves
 at `said`; a context that comes into `answers` replaces what the chat holds (an answer to what you wrote, or
 a turn that started elsewhere, e.g. a spoken line a Relay put on top of this chat's context). What the chat shows is
 read from the context it holds. A dotted wire from `provides` lets another card read the current chat's context."""
@@ -14,9 +14,9 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.api import Card, Context, is_stop, new_id, register
+from custom_components.aac.api import Card, Client, Context, is_stop, new_id, register
 
-VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NO_ANSWER = "(no answer came back: is a model wired back into this chat?)"
@@ -114,6 +114,8 @@ class Chat(Card):
             return {"done": what}
         if action == "archived":  # the Archive page: archived chats, newest first
             return [c for c in self.chats() if c.get("archived")]
+        if action == "as_read":  # Plain text: the newest request as the model read it
+            return await self.as_read(str(args.get("chat_id") or ""))
         if action == "get":  # its page: one chat, writing, deleting, Stop
             return self.get(args["chat_id"])
         if action == "send":
@@ -139,6 +141,16 @@ class Chat(Card):
         behind = {**context.summary(), "system": last.get("system", []), "tools": last.get("tools", [])}  # the newest turn's
         return {**{k: v for k, v in chat.items() if k not in ("context", "last")}, "messages": shown(context), "behind": behind}
 
+    async def as_read(self, chat_id: str) -> dict[str, Any]:
+        """The chat's newest request as the model read it: the model server writes it with the model's chat template
+        (llama-server); a server that cannot: the request as plain text."""
+        request = ((self.data["chats"].get(chat_id) or {}).get("last") or {}).get("request")
+        if not request:
+            return {"text": None}
+        model = self.core.pool.get(request["model"]) or {}
+        text = await Client(self.hass, model).template(request["body"]) if model else None
+        return {"text": text or plain(request["body"]), "template": bool(text), "model": model.get("name") or request["model"]}
+
     def _context(self, chat: dict[str, Any]) -> Context:
         """What a chat holds, as a context (a copy)."""
         held = deepcopy(chat["context"])
@@ -163,8 +175,9 @@ class Chat(Card):
             held["messages"] = [*deepcopy(kept[:start]), *held["messages"]]
             held["events"] = [{**e, "at": e.get("at", 0) + start} for e in held["events"]]
         chat["context"] = held
-        if context.system or context.tools:
-            chat["last"] = {"system": deepcopy(context.system), "tools": deepcopy(context.tools)}
+        if context.system or context.tools or context.request:
+            chat["last"] = {"system": deepcopy(context.system), "tools": deepcopy(context.tools),
+                            **({"request": deepcopy(context.request)} if context.request else {})}
         chat["updated"] = dt_util.utcnow().isoformat()
         await self.save()
         self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=chat["id"])
@@ -355,3 +368,16 @@ def shown(context: Context) -> list[dict[str, Any]]:
         elif is_stop(e) and out and out[-1]["role"] == "aac":
             out[-1]["cut"] = True
     return out
+
+
+def plain(body: dict[str, Any]) -> str:
+    """A request as plain text (for a server that cannot show it with the model's template)."""
+    out = []
+    for m in body.get("messages") or []:
+        calls = "".join(f"\n  calls {c['function']['name']}({c['function']['arguments']})" for c in m.get("tool_calls") or [])
+        out.append(f"[{m['role']}{' ' + m['name'] if m.get('name') else ''}]\n{m.get('content') or ''}{calls}")
+    tools = [f"  {t['function']['name']}: {t['function'].get('description', '')}" for t in body.get("tools") or []]
+    if tools:  # after the system part, as chat templates put them
+        at = 1 if (body.get("messages") or [{}])[0].get("role") == "system" else 0
+        out.insert(at, "[tools]\n" + "\n".join(tools))
+    return "\n\n".join(out)
