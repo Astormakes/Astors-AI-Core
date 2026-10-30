@@ -27,14 +27,9 @@ if TYPE_CHECKING:
 CARD_TYPES: dict[str, type[Card]] = {}
 LOADED: dict[str, tuple[int, ...]] = {}  # card module → the VERSION it was loaded with
 UI_URL = "/aac_cards"  # a card file's UI (<stem>.js next to it) is served here
-INSTRUCTIONS = {"type": "longtext", "title": "Instructions for models", "default": "", "fold": "For models",
-                "help": "A model that has this card as a tool reads its functions with their descriptions (below) and "
-                        "this text, under 'About your tools'. Say when and how to use it, e.g. 'Look here before you "
-                        "say you do not know something.'"}
-OFFERS = {"type": "bool", "title": "Offers its functions to models in its loop", "default": True, "permission": True,
-          "help": "A Model (or a Relay's script) whose output comes back to it through this card, straight or "
-                  "through other cards, can use these functions, with their descriptions and this card's id. Off: it "
-                  "stays out of their tools."}
+FUNCTIONS = {"type": "functions", "title": "For models", "default": {}, "fold": "For models", "permission": True,
+             "help": "A Model wired to this card and back has these functions as tools: each ticked one, under the name "
+                     "and with the description written here (Reset: the card's own). The card's id never reaches the model."}
 CATEGORIES = ["In and out", "Text", "Logic", "Models", "Data", "Home Assistant", "Audio", "Other"]
 
 
@@ -54,8 +49,8 @@ def register(cls: type[Card]) -> type[Card]:
         folder = file.parent.name if file.name == "card.py" else None
         cls.settings_schema = {k: {**f, "url": f"{UI_URL}/{folder}/{f['file']}?v={cls.version}"} if f.get("type") == "element" and folder else f
                                for k, f in cls.settings_schema.items()}
-    if cls.functions and "offers" not in cls.settings_schema:  # every card with functions: kept out of tools, told about
-        cls.settings_schema = {**cls.settings_schema, "offers": {**OFFERS, "default": cls.offers}, "instructions": INSTRUCTIONS}
+    if (cls.functions or cls.dynamic_functions) and "functions" not in cls.settings_schema:  # every card with functions
+        cls.settings_schema = {**cls.settings_schema, "functions": FUNCTIONS}
     CARD_TYPES[cls.type] = cls
     return cls
 
@@ -75,7 +70,8 @@ class Card:
     functions: ClassVar[dict[str, dict[str, Any]]] = {}  # name → {"help", "args": {name: {"type", "help", "required"}}}
     ports_help: ClassVar[dict[str, str]] = {}  # port → one sentence: what goes in or comes out there
     values: ClassVar[dict[str, str]] = {}  # name → what it is: read in templates as {{ <card>.<name> }}
-    offers: ClassVar[bool] = True  # its functions go to the models in its loop (the default of its tick)
+    offers: ClassVar[bool] = True  # its functions are ticked for models until the owner says otherwise
+    dynamic_functions: ClassVar[bool] = False  # its functions come from its settings (a Relay's @new blocks)
     uses_tools: ClassVar[bool] = False  # it calls the functions of the cards in its loop (a Model): the panel lists them
     ui: ClassVar[bool] = False  # a page of its own: the element aac-card-<type> from the .js next to its file
     ui_url: ClassVar[str | None] = None  # where the panel loads it (set when the file is loaded)
@@ -139,6 +135,18 @@ class Card:
         """One of its functions (a model's tool call, a Relay's script)."""
         raise ValueError(f"{self.name} has no function {function}")
 
+    def offered(self) -> dict[str, dict[str, Any]]:
+        """Its functions as models see them: each ticked one with its name and description ("For models"; the card's
+        own unless the owner wrote others) and its arguments."""
+        own = self.settings.get("functions") or {}
+        out = {}
+        for fn, spec in self.functions.items():
+            mine = own.get(fn) or {}
+            if mine.get("on", self.offers):
+                out[fn] = {"name": (mine.get("name") or "").strip() or fn,
+                           "help": (mine.get("help") or "").strip() or spec.get("help", ""), "args": spec.get("args") or {}}
+        return out
+
     async def stop(self, stop: dict[str, Any] | None = None) -> bool:
         """A stop arrived (`stop`: its entry; None: the Send stop button). A busy card closes its open block as cut
         off, appends the stop and sends its own context on; it says True. Not busy: False (the stop goes on)."""
@@ -167,7 +175,7 @@ class Card:
         return {"type": cls.type, "title": cls.title, "category": cls.category, "help": cls.help,
                 "inputs": cls.inputs, "outputs": cls.outputs, "square": sorted(cls.square),
                 "settings": cls.settings_schema, "tags": cls.tags, "functions": cls.functions, "values": cls.values, "ports_help": cls.ports_help, "ui": cls.ui_url,
-                "version": cls.version}
+                "version": cls.version, "offers": cls.offers}
 
     def nav(self) -> dict[str, Any] | None:
         """Its entries in the sidebar (a card with a page): {"entries": [{id, title, children?}], "add": "New …"};
@@ -194,14 +202,14 @@ class Card:
     def summary(self) -> dict[str, Any]:
         """This card: for the node view."""
         ins, outs, square = self.ports()
-        return {"id": self.id, "type": self.type, "title": self.name, "settings": self.settings,
+        return {"id": self.id, "type": self.type, "title": self.name, "settings": self.settings, "functions": self.functions,
                 "inputs": ins, "outputs": outs, "square": sorted(square), "ui": self.ui_url, "view": self._view(),
                 **({"tools": [c.id for c in self.domain.flow.tools(self.id)]} if self.uses_tools else {}),
                 "tags": {self.tag(t): what for t, what in self.tags.items()}}
 
 
-def tool_spec(card: Card, name: str, spec: dict[str, Any]) -> dict[str, Any]:
-    """A card function as an OpenAI tool (`<card>__<function>`)."""
+def tool_spec(name: str, spec: dict[str, Any]) -> dict[str, Any]:
+    """A card function as an OpenAI tool, under the name the model sees (spec: as Card.offered gives it)."""
     props, required = {}, []
     for arg, a in (spec.get("args") or {}).items():
         kind = a.get("type", "string")
@@ -211,7 +219,7 @@ def tool_spec(card: Card, name: str, spec: dict[str, Any]) -> dict[str, Any]:
         if a.get("required"):
             required.append(arg)
     return {"type": "function", "function": {
-        "name": f"{card.id}__{name}", "description": f"{card.name}: {spec.get('help', '')}",
+        "name": name, "description": spec.get("help", ""),
         "parameters": {"type": "object", "properties": props, **({"required": required} if required else {})}}}
 
 

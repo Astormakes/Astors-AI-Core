@@ -11,7 +11,7 @@ from typing import Any
 
 from custom_components.aac.api import Card, Context, register, wav_to_pcm
 
-VERSION = "2.10.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.10.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 SILENT = ("nothing", "nothing.", "")
 
@@ -67,9 +67,10 @@ class TextToSpeech(Card):
 
     def _speak(self, context: Context, finished: bool) -> None:
         """Queue what is newly finished in the answers of the newest turn (all of it once the turn is finished)."""
-        said = max((i for i, e in enumerate(context.entries) if e["kind"] == "said"), default=-1)
-        heard = (context.entries[said]["data"] if said >= 0 else {})
-        for e in context.entries[said + 1:]:
+        entries = context.entries
+        said = max((i for i, e in enumerate(entries) if e["kind"] == "said"), default=-1)
+        heard = (entries[said]["data"] if said >= 0 else {})
+        for e in entries[said + 1:]:
             if e["kind"] not in ("answer", "error") or e.get("state") == "cut":  # an error is said too (nothing came)
                 continue
             text, upto = e["text"], self._spoken.get(e["id"], 0)

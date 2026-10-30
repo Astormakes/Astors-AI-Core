@@ -1,6 +1,6 @@
 """Relay: passes the context on, and its script (Python, `script.py`) works on it: `@new("name")` adds a text of its
 own (the start: the system prompt; the end: read last; before or after a tag), `@on("tag")` changes the entries with
-a tag, calls cards in its loop, sends stop or picks an output. Empty: a pure relay.
+a tag, calls cards wired to it and back, sends stop or picks an output. Empty: a pure relay.
 
 Streams: entries no block works on pass at once; one a block works on is held back until it is closed (`live=True`:
 on every piece). The editor (`editor.js`) has a simple view that writes the code."""
@@ -17,7 +17,7 @@ from custom_components.aac.api import LOGGER, Card, Context, register
 sys.modules.pop(f"{__name__}.script", None)  # a newer card file brings a newer script.py
 from .script import REFERENCE, Run, Script, check, reference_text  # noqa: E402
 
-VERSION = "2.0.0"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
+VERSION = "2.1.0"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
 
 KEEP_TURNS = 20  # turns whose side effects (stop, calls) are remembered, so a snapshot and the finished turn do them once
 WAIT = 20  # seconds a script may run
@@ -47,8 +47,9 @@ class Relay(Card):
                    "help": "Python, checked before it runs. The ? button lists everything with examples. For models:\n"
                            + reference_text()},
     }
-    functions = {"text": {"help": "The texts its @new blocks make now (e.g. a Relay with the time)."}}
-    offers = False  # in a model's loop its text is in the line already
+    functions: dict[str, dict[str, Any]] = {}  # one per @new block (see __init__)
+    dynamic_functions = True
+    offers = False  # a model wired to it and back gets a block's text only when it is ticked (For models)
 
     def __init__(self, *args: Any) -> None:
         """Initialize."""
@@ -57,6 +58,7 @@ class Relay(Card):
         self._done: dict[str, dict[Any, Any]] = {}  # turn id → side effects done
         self.last_run: dict[str, Any] = {}
         self.tags = self._tags()
+        self.functions = {h.tag: {"help": f"The text of its block {h.tag} (made now)."} for h in self.script.handlers if h.new}
 
     def _tags(self) -> dict[str, str]:
         """The tags its script writes: its @new texts, and stop / call only when it uses them."""
@@ -84,8 +86,9 @@ class Relay(Card):
         if port != "in":
             return []
         if step and (read := step.read("reads")):  # start from what it reads (a chat's context), the new lines on top
-            base, new = read[0], [e for e in context.entries if e["kind"] not in ("system", "signal")]
-            context.entries[:] = [*base.entries, *new]
+            base, start = read[0], len(read[0].messages)
+            context.events = [*base.events, *({**e, "at": e.get("at", 0) + start} for e in context.events)]
+            context.messages = [*base.messages, *context.messages]
             context.origin, context.chat_id = base.origin, base.chat_id
         return await self._run(context, snapshot=False)
 
@@ -126,14 +129,13 @@ class Relay(Card):
                 for c, _ in self.domain.flow.wired_from(mine, p) if c.id not in back]
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
-        if function == "text":
-            context = Context()
-            run = Run(self, context, False, {}, [], self.hass.loop)
+        if function in self.functions:  # one @new block's text, made now
+            made = Context()
+            run = Run(self, made, False, {}, [], self.hass.loop)
             script = self.script
-            if script.code:
-                await self.hass.async_add_executor_job(run.go, Script(script.source, [h for h in script.handlers if h.new],
-                                                                        code=script.code, names=script.names))
-            return "\n\n".join(e["text"] for e in context.entries)
+            await self.hass.async_add_executor_job(run.go, Script(script.source, [h for h in script.handlers if h.new and h.tag == function],
+                                                                    code=script.code, names=script.names))
+            return "\n\n".join(e["text"] for e in made.entries)
         return await super().call(function, args, context)
 
     async def ui_call(self, action: str, args: dict[str, Any]) -> Any:

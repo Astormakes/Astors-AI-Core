@@ -53,17 +53,22 @@ While a card works on a turn it may send snapshots of it: `await step.progress(p
 (`context.progress`) passes each card's `async progress(context, port)`, which by default sends it straight on (like
 `handle` returning None); cards that show or speak things as they come answer it (Chat holds the turn, Text to speech
 speaks each newly finished sentence). The finished turn always follows through `handle()`. A Model sends one after
-every finished sentence and every tool result.
+every finished sentence and when it calls tools.
 
-**Instructions.** Every card with functions also has the setting `instructions` ("Instructions for models", in a fold
-"For models"): a model that has the card as a tool reads it under "About your tools" in its system text. A setting
-may say `fold` to sit in a fold at the bottom of the card's settings.
+**For models.** Every card with functions has the setting `functions` (type `functions`, in the fold "For models"):
+per function `{on, name, help}`, the tick, the name a model sees and the description it reads; empty keeps the card's
+own (`offers` on the class is the tick's default; a Relay's is off). `card.offered()` gives the ticked ones as models
+see them. A card whose functions come from its settings sets `dynamic_functions = True` and `self.functions` per
+instance (a Relay: one per `@new` block). A setting may say `fold` to sit in a fold at the bottom of the card's settings.
 
-**Tools.** A card that uses tools (`uses_tools = True`: a Model, a Relay's script) gets the functions of
-every card in its loop: on a way from its outputs back into its inputs, straight or through other cards (a Chat,
-Relays). Each card with functions has a tick "Offers its functions to models in its loop" (setting `offers`, default
-`offers = True` on the class; a Relay's is off). Tool names are `<card id>__<function>`, so two cards of one type stay
-apart. A card wired straight out and back only attaches a tool: no answer goes there.
+**Tools** (docs/v2 page 3). A card that uses tools (`uses_tools = True`: a Model, a Relay's script) gets the functions
+of the cards wired from one of its outputs and straight back into it (`flow.paired()`, `flow.tools()`); nothing else
+is a tool. A model's call travels: the context goes along the wire to the called card, the core runs the function
+there (`call()`), adds the result as a `result` message and sends the context back along that card's wire to the
+caller; several calls go one after the other. Tool names are the function's own (as For models names it); the card's
+name goes in front only when two cards in one model's tools offer the same name. The card id never reaches a model.
+The answer goes back to the card the context started at when that is wired (even when it is a tool too), else to
+every wired card but the tools.
 
 More a card may define: `busy` (a property: True while it works on something; a newer version of its file waits),
 `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
@@ -144,18 +149,24 @@ Through `self.core`:
 Through `self.domain`: `flow.send(context, self.id, port)` (start a context at an output), `cards` (other cards, used
 only through what they offer: `call`, `current()`, `held()`, `dated()`), `template_values()` (every card's values: the Values panel, a Relay's script).
 
-A context (`Context`) is a document of entries `{id, by, kind, text, tags, time, data, state}`; `context.add(...)`,
-`context.put(...)` (a card's standing text), `context.last(kind)`, `context.tagged(tag)`, `context.answer`,
-`context.stopped`. Kinds: system, note, trailer, said, answer, call, result, signal (a stop), error.
+A context (`Context`, docs/v2 page 3) has the shape of a model request: `system` (parts), `messages` (said, answer,
+result; an answer's calls in `data["calls"]`, a result's `data["call_id"]`; a message's `attachments`: note before
+its text, trailer after), `tools` (`{name, card, function, description, args}`, filled by a Model), `events` (signal,
+error, call: never sent to a model). Every item is an entry `{id, by, kind, text, tags, time, data, state}`.
+`context.add(by, kind, …)` puts an entry where its kind belongs (a note or trailer on the newest said message);
+`context.put(...)` (a card's standing text: a system part stays in place, an attachment moves to the newest message),
+`context.remove(e)`, `context.entries` (all in order), `context.last(kind)`, `context.tagged(tag)`, `context.answer`,
+`context.open_calls(card)`, `context.stopped`.
 
 ## The Relay's script
 
 A Relay card's setting `script` is Python, checked before it runs (`cards/relay/script.py`, `check()`): only the
 parts listed there (no imports, no `while`, nothing starting with `_`). `@new("name", at="start"|"end",
 before=tag, after=tag, replace=)` above a `def` writes an entry of its own (tag `<relay>.<name>`; the start is a
-`system` entry, the end a `trailer`, before / after a `note`); `@on("tag", …, which="last"|"first"|"all",
+`system` part, the end a `trailer` on the newest said message, before / after a `note` / `trailer` on the message of
+that tag); `@on("tag", …, which="last"|"first"|"all",
 kind=, live=)` runs on entries with a tag (`*` = any card, `"context"` = the whole context once). Names: `context`,
-other cards (`chat.said.text`, `lists.total`, `lists.add_items(...)` for cards in its loop), `now()`, `states()`,
+other cards (`chat.said.text`, `lists.total`, `lists.add_items(...)` for cards wired to it and back; such a call is an event of kind `call`), `now()`, `states()`,
 `stop()`, `output("name")` (the Relay gets that output), `signal()`, `between()`, `re`, `audio`. In a snapshot
 (a stream) an open entry a block works on goes on empty until it is closed; `live=True` runs on every piece.
 Side effects (stop, signals, calls) happen once per turn and entry. The full list with examples is `REFERENCE`

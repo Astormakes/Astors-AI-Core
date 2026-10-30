@@ -4,7 +4,6 @@ import pytest
 
 from homeassistant.core import HomeAssistant, callback
 
-from custom_components.aac.context import Context
 
 from .conftest import BASE_URL, model_answers, reply, setup_aac
 
@@ -37,19 +36,20 @@ async def test_a_chat_round_trip(hass: HomeAssistant, mock_entry, aioclient_mock
     assert answer == "You said hi." and [m["role"] for m in second] == ["system", "user", "assistant", "user"]
     assert second[1]["content"] == first[-1]["content"]  # earlier turns stay as they were: the server's cache
     assert [m["text"] for m in chat.get(chat_id)["messages"]] == ["hi", "Hello!", "what did I say?", "You said hi."]
-    kept = core.domain.cards["model"].requests[chat_id]  # the panel's Request view: each part's cards
-    assert kept["messages"][0]["_from"] == ["charter"] and kept["messages"][-1]["_from"] == ["chat", "time"]
+    behind = chat.get(chat_id)["behind"]  # Behind the scenes: the newest turn as the model got it, each part's card
+    assert [e["by"] for e in behind["system"]] == ["charter"] and behind["messages"][-2]["attachments"][0]["by"] == "time"
 
 
 async def test_tools_are_the_cards_wired_out_and_back(hass: HomeAssistant, mock_entry, aioclient_mock):
     """The model calls the Lists card's function; the call and its result go into the message."""
     core = await setup_aac(hass, mock_entry)
-    asked = model_answers(aioclient_mock, reply(calls=[("lists__add_items", {"list": "Shopping", "items": ["Milk"]})]),
+    asked = model_answers(aioclient_mock, reply(calls=[("add_items", {"list": "Shopping", "items": ["Milk"]})]),
                           reply("Added milk."))
     _, answer = await core.domain.cards["chat"].send("put milk on the shopping list")
     names = {t["function"]["name"] for t in asked[0]["tools"]}
-    assert {"lists__add_items", "home__find", "home__call_service"} <= names
+    assert {"add_items", "find", "call_service"} <= names  # the function's own name: no card id
     assert answer == "Added milk."
+    assert {"model.out", "lists.out"} <= set(core.domain.flow.last)  # the call went along the wires and back
     shopping = await core.domain.cards["lists"].call("read_list", {"list": "Shopping"})
     assert {"text": "Milk", "done": False} in shopping["items"]
     assert asked[1]["messages"][-1]["role"] == "tool"
@@ -128,7 +128,7 @@ async def test_stop_cuts_the_answer_and_stays_visible(hass: HomeAssistant, mock_
     await chat.stop_chat(chat_id)
     _, answer = await sending
     kept = chat.get(chat_id)
-    assert answer == "" and kept["messages"][-1]["cut"] and is_stop(kept["entries"][-1])
+    assert answer == "" and kept["messages"][-1]["cut"] and is_stop(kept["behind"]["events"][-1])
     _, answer = await chat.send("go on", chat_id)
     assert answer == "Fine." and any(m["content"] == "[stopped]" or "[stopped]" in str(m["content"]) for m in asked[-1]["messages"])
 
@@ -239,16 +239,17 @@ async def test_a_model_talks_while_it_works(hass: HomeAssistant, mock_entry, aio
     assert ["Let me check."] in shown  # the chat showed it while the model went on
 
 
-async def test_tools_are_the_cards_in_the_loop(hass: HomeAssistant, mock_entry):
-    """A model's tools are the cards with functions on a way from its output back into it (straight, or through a
-    Chat and Relays); a card can opt out; the answer never goes to cards wired straight back."""
+async def test_tools_are_the_cards_wired_to_it_and_back(hass: HomeAssistant, mock_entry):
+    """A model's tools are the cards wired from its output and straight back (no loop search: the Chat further round
+    is not one); a card whose functions are all unticked is none."""
     core = await setup_aac(hass, mock_entry)
     d = core.domain
     tools = {c.id for c in d.flow.tools("model")}
-    assert {"chat", "lists", "home", "calendar"} <= tools and "charter" not in tools  # a Relay has no functions
+    assert tools == {"lists", "home", "calendar"}
     assert d.cards["model"].summary()["tools"] == sorted(tools)
-    await d.update_card("chat", settings={"offers": False})
-    assert "chat" not in {c.id for c in d.flow.tools("model")}
+    assert {c.id for c in d.flow.tools("charter")} == set()  # a Relay in the line gets nothing it was not wired to
+    await d.update_card("lists", settings={"functions": {fn: {"on": False} for fn in d.cards["lists"].functions}})
+    assert "lists" not in {c.id for c in d.flow.tools("model")}
 
 
 async def test_a_closed_connection_is_tried_again_and_errors_are_not_read(hass: HomeAssistant, mock_entry, aioclient_mock):
@@ -277,9 +278,10 @@ async def test_a_closed_connection_is_tried_again_and_errors_are_not_read(hass: 
     aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=off)
     chat_id, answer = await core.domain.cards["chat"].send("still there?")
     assert answer == "Error: no model was available."
-    entries = core.domain.cards["chat"].get(chat_id)["entries"]
-    assert entries[-1]["kind"] == "error"
-    _, chat = conversation(Context(entries=entries), "model", {})
+    card = core.domain.cards["chat"]
+    held = card._context(card.data["chats"][chat_id])
+    assert held.entries[-1]["kind"] == "error" and held.events[-1]["kind"] == "error"  # an event
+    _, chat = conversation(held, "model", {})
     assert "Error" not in str(chat)
 
 
@@ -300,7 +302,7 @@ async def test_domains_new_rename_delete(hass: HomeAssistant, mock_entry, hass_s
     with pytest.raises(ValueError):
         await core.delete(first)  # the last one stays
     perms = [k for c in core.domain.cards.values() for k, f in c.settings_schema.items() if f.get("permission")]
-    assert {"offers", "levels"} <= set(perms) and "default" not in perms
+    assert {"functions", "levels"} <= set(perms) and "default" not in perms
 
 
 async def test_a_model_that_does_not_answer_is_flagged_until_it_does(hass: HomeAssistant, mock_entry):
@@ -320,16 +322,20 @@ async def test_a_model_that_does_not_answer_is_flagged_until_it_does(hass: HomeA
     unsub()
 
 
-async def test_instructions_for_models_and_short_card_lists(hass: HomeAssistant, mock_entry, aioclient_mock):
-    """A card's instructions reach every model that has it as a tool; the Node editor's list of cards counts long
-    settings instead of listing them (so every card fits), and gives one card in full."""
+async def test_for_models_and_short_card_lists(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """For models: the owner's name and description of a function are what the model sees (the system prompt gets
+    nothing); the Node editor's list of cards counts long settings instead of listing them (so every card fits), and
+    gives one card in full."""
     core = await setup_aac(hass, mock_entry)
     d = core.domain
-    await d.update_card("lists", settings={"instructions": "Look here before saying you do not know."})
+    await d.update_card("lists", settings={"functions": {"read_list": {"help": "Look here before saying you do not know."},
+                                                         "add_items": {"name": "add_to_list"}, "delete_list": {"on": False}}})
     await d.update_card("home", settings={"levels": {f"light.l{i}": "read" for i in range(40)}})
     asked = model_answers(aioclient_mock, reply("Fine."))
     await d.cards["chat"].send("hi")
-    assert "About your tools:\n- Lists (lists): Look here before saying you do not know." in asked[0]["messages"][0]["content"]
+    tools = {t["function"]["name"]: t["function"]["description"] for t in asked[0]["tools"]}
+    assert tools["read_list"] == "Look here before saying you do not know." and "add_to_list" in tools
+    assert "add_items" not in tools and "delete_list" not in tools and asked[0]["messages"][0]["content"] == "Be kind."
     editor = await d.add_card("builder", "Node editor")
     listed = await editor.call("cards", {})
     home = next(c for c in listed["cards"] if c["id"] == "home")

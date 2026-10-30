@@ -1,0 +1,765 @@
+{
+ "aac2.domain.assistant": {
+  "version": 1,
+  "minor_version": 1,
+  "key": "aac2.domain.assistant",
+  "data": {
+   "cards": {
+    "chat": {
+     "type": "chat",
+     "title": "Chat",
+     "settings": {
+      "ha_agent": true
+     },
+     "version": "2.0.0"
+    },
+    "charter": {
+     "type": "relay",
+     "title": "Charter",
+     "settings": {
+      "script": "@new(\"charter\")\ndef charter(e):\n    e.text = \"\"\"Be kind.\"\"\"\n"
+     },
+     "version": "2.1.0"
+    },
+    "time": {
+     "type": "relay",
+     "title": "Time",
+     "settings": {
+      "script": "@new(\"time\", at=\"end\", replace=False)\ndef time(e):\n    e.text = f\"Local time: {now():%A %Y-%m-%d %H:%M}\"\n"
+     },
+     "version": "2.1.0"
+    },
+    "model": {
+     "type": "model",
+     "title": "Model",
+     "settings": {},
+     "version": "2.0.0"
+    },
+    "lists": {
+     "type": "lists",
+     "title": "Lists",
+     "settings": {},
+     "version": "1.2.0"
+    },
+    "home": {
+     "type": "homeassistant",
+     "title": "Home",
+     "settings": {},
+     "version": "1.2.1"
+    },
+    "calendar": {
+     "type": "calendar",
+     "title": "Calendar",
+     "settings": {},
+     "version": "1.1.0"
+    },
+    "mic": {
+     "type": "microphone",
+     "title": "Microphone",
+     "settings": {
+      "source": "any"
+     },
+     "version": "2.10.1"
+    },
+    "cut": {
+     "type": "pause_cut",
+     "title": "Audio clipper",
+     "settings": {
+      "pause": 800
+     },
+     "version": "2.10.1"
+    },
+    "ears": {
+     "type": "speech_to_text",
+     "title": "Speech to text",
+     "settings": {},
+     "version": "2.10.1"
+    },
+    "voice": {
+     "type": "text_to_speech",
+     "title": "Text to speech",
+     "settings": {},
+     "version": "2.10.2"
+    },
+    "speaker": {
+     "type": "speaker",
+     "title": "Speaker",
+     "settings": {},
+     "version": "2.10.1"
+    },
+    "stop_word": {
+     "type": "relay",
+     "title": "Stop word",
+     "settings": {
+      "script": "@on(\"*\", kind=\"said\")\ndef says_stop(e):\n    if \"stop\" in e.text.lower():\n        stop()\n        output(\"stop\")\n"
+     },
+     "version": "2.1.0"
+    },
+    "wake": {
+     "type": "relay",
+     "title": "Wake word",
+     "settings": {
+      "script": "@on(\"*\", kind=\"said\")\ndef wake_word(e):\n    if any(word in e.text.lower() for word in [\"computer\"]):\n        output(\"yes\")\n"
+     },
+     "version": "2.1.0"
+    },
+    "follow_up": {
+     "type": "relay",
+     "title": "Follow-up",
+     "settings": {
+      "script": "@on(\"*\", kind=\"said\")\ndef follow_up(e):\n    # you started talking less than 6 s after AAC spoke at that satellite (long answers too)\n    spoke = audio.satellites.get(e.data.get(\"mic\"), {}).get(\"seconds\", 999999)\n    said_for = e.data.get(\"seconds\") or 0\n    named = any(word in e.text.lower() for word in [\"stop\", \"computer\"])\n    if not e.data.get(\"aac_spoke\") and spoke - said_for < 6 and not named:\n        output(\"yes\")\n"
+     },
+     "version": "2.1.0"
+    },
+    "spoken": {
+     "type": "relay",
+     "title": "Spoken turn",
+     "settings": {
+      "script": "@new(\"rules\", at=\"end\", replace=False)\ndef rules(e):\n    e.text = \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\"\n"
+     },
+     "version": "2.1.0"
+    },
+    "followed": {
+     "type": "relay",
+     "title": "Follow-up turn",
+     "settings": {
+      "script": "@new(\"rules\", at=\"end\", replace=False)\ndef rules(e):\n    e.text = \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\"\n\n@on(\"ears.heard\")\ndef maybe_not_for_me(e):\n    e.text = \"(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) \" + e.text\n"
+     },
+     "version": "2.1.0"
+    },
+    "answer": {
+     "type": "relay",
+     "title": "Answer",
+     "settings": {},
+     "version": "2.1.0"
+    }
+   },
+   "wires": [
+    {
+     "from": "chat.said",
+     "to": "charter.in"
+    },
+    {
+     "from": "charter.out",
+     "to": "time.in"
+    },
+    {
+     "from": "time.out",
+     "to": "model.in"
+    },
+    {
+     "from": "model.out",
+     "to": "lists.in"
+    },
+    {
+     "from": "lists.out",
+     "to": "model.in"
+    },
+    {
+     "from": "model.out",
+     "to": "home.in"
+    },
+    {
+     "from": "home.out",
+     "to": "model.in"
+    },
+    {
+     "from": "model.out",
+     "to": "calendar.in"
+    },
+    {
+     "from": "calendar.out",
+     "to": "model.in"
+    },
+    {
+     "from": "mic.out",
+     "to": "cut.in"
+    },
+    {
+     "from": "cut.out",
+     "to": "ears.in"
+    },
+    {
+     "from": "ears.out",
+     "to": "stop_word.in"
+    },
+    {
+     "from": "ears.out",
+     "to": "wake.in"
+    },
+    {
+     "from": "ears.out",
+     "to": "follow_up.in"
+    },
+    {
+     "from": "wake.yes",
+     "to": "spoken.in"
+    },
+    {
+     "from": "follow_up.yes",
+     "to": "followed.in"
+    },
+    {
+     "from": "answer.out",
+     "to": "voice.in"
+    },
+    {
+     "from": "voice.out",
+     "to": "speaker.in"
+    },
+    {
+     "from": "stop_word.stop",
+     "to": "charter.in"
+    },
+    {
+     "from": "spoken.out",
+     "to": "charter.in"
+    },
+    {
+     "from": "followed.out",
+     "to": "charter.in"
+    },
+    {
+     "from": "chat.provides",
+     "to": "spoken.reads"
+    },
+    {
+     "from": "chat.provides",
+     "to": "followed.reads"
+    },
+    {
+     "from": "answer.out",
+     "to": "chat.answers"
+    },
+    {
+     "from": "model.out",
+     "to": "answer.in"
+    }
+   ],
+   "positions": {
+    "chat": {
+     "x": 0,
+     "y": 0
+    },
+    "charter": {
+     "x": 290,
+     "y": 0
+    },
+    "time": {
+     "x": 580,
+     "y": 0
+    },
+    "model": {
+     "x": 870,
+     "y": 0
+    },
+    "lists": {
+     "x": 870,
+     "y": 140
+    },
+    "home": {
+     "x": 870,
+     "y": 260
+    },
+    "calendar": {
+     "x": 870,
+     "y": 380
+    },
+    "mic": {
+     "x": -720,
+     "y": 420
+    },
+    "cut": {
+     "x": -480,
+     "y": 420
+    },
+    "ears": {
+     "x": -240,
+     "y": 420
+    },
+    "voice": {
+     "x": 1440,
+     "y": 600
+    },
+    "speaker": {
+     "x": 1730,
+     "y": 600
+    },
+    "stop_word": {
+     "x": 0,
+     "y": 300
+    },
+    "wake": {
+     "x": 0,
+     "y": 420
+    },
+    "follow_up": {
+     "x": 0,
+     "y": 540
+    },
+    "spoken": {
+     "x": 240,
+     "y": 420
+    },
+    "followed": {
+     "x": 240,
+     "y": 540
+    },
+    "answer": {
+     "x": 1200,
+     "y": 420
+    }
+   },
+   "undo": [],
+   "slots": {},
+   "user_tags": []
+  }
+ },
+ "aac2.card.assistant.chat": {
+  "version": 1,
+  "minor_version": 1,
+  "key": "aac2.card.assistant.chat",
+  "data": {
+   "chats": {
+    "34915c38db": {
+     "id": "34915c38db",
+     "title": "what time is it?",
+     "created": "2026-01-01T12:00:00+00:00",
+     "updated": "2026-01-01T12:00:00+00:00",
+     "context": {
+      "messages": [
+       {
+        "id": "c5ee33f48a",
+        "by": "chat",
+        "kind": "said",
+        "text": "what time is it?",
+        "tags": [
+         "chat.said"
+        ],
+        "time": "2026-10-30T09:13:57.570447+00:00",
+        "data": {},
+        "state": "closed",
+        "attachments": [
+         {
+          "id": "88d5fb6ffc",
+          "by": "time",
+          "kind": "trailer",
+          "text": "Local time: Friday 2026-10-30 02:13",
+          "tags": [
+           "time.time"
+          ],
+          "time": "2026-10-30T09:13:57.571478+00:00",
+          "data": {},
+          "state": "closed"
+         }
+        ]
+       },
+       {
+        "id": "33e27cffc3",
+        "by": "model",
+        "kind": "answer",
+        "text": "It is noon.",
+        "tags": [
+         "model.answer"
+        ],
+        "time": "2026-10-30T09:13:57.571974+00:00",
+        "data": {},
+        "state": "closed"
+       }
+      ],
+      "events": []
+     },
+     "last": {
+      "system": [
+       {
+        "id": "3eeef5e7f5",
+        "by": "charter",
+        "kind": "system",
+        "text": "Be kind.",
+        "tags": [
+         "charter.charter"
+        ],
+        "time": "2026-10-30T09:13:57.570968+00:00",
+        "data": {},
+        "state": "closed"
+       }
+      ],
+      "tools": [
+       {
+        "name": "calendar",
+        "card": "calendar",
+        "function": "calendar",
+        "description": "Entries between two dates (default: the next 7 days).",
+        "args": {
+         "start": {
+          "type": "string",
+          "help": "YYYY-MM-DD"
+         },
+         "end": {
+          "type": "string",
+          "help": "YYYY-MM-DD"
+         }
+        }
+       },
+       {
+        "name": "add",
+        "card": "calendar",
+        "function": "add",
+        "description": "A new entry.",
+        "args": {
+         "summary": {
+          "type": "string",
+          "help": "What.",
+          "required": true
+         },
+         "start": {
+          "type": "string",
+          "help": "YYYY-MM-DD or YYYY-MM-DDTHH:MM.",
+          "required": true
+         },
+         "end": {
+          "type": "string",
+          "help": "Same form (default: 1 hour / 1 day)."
+         },
+         "description": {
+          "type": "string",
+          "help": "Details."
+         }
+        }
+       },
+       {
+        "name": "change",
+        "card": "calendar",
+        "function": "change",
+        "description": "Change an entry.",
+        "args": {
+         "uid": {
+          "type": "string",
+          "help": "Its id (from calendar).",
+          "required": true
+         },
+         "summary": {
+          "type": "string"
+         },
+         "start": {
+          "type": "string"
+         },
+         "end": {
+          "type": "string"
+         },
+         "description": {
+          "type": "string"
+         }
+        }
+       },
+       {
+        "name": "remove",
+        "card": "calendar",
+        "function": "remove",
+        "description": "Delete an entry.",
+        "args": {
+         "uid": {
+          "type": "string",
+          "help": "Its id.",
+          "required": true
+         }
+        }
+       },
+       {
+        "name": "find",
+        "card": "home",
+        "function": "find",
+        "description": "Entities AAC may see: id, name, area, state (if readable), access.",
+        "args": {
+         "search": {
+          "type": "string",
+          "help": "A word in the name, id or area."
+         },
+         "domain": {
+          "type": "string",
+          "help": "e.g. light, switch, sensor."
+         }
+        }
+       },
+       {
+        "name": "get_state",
+        "card": "home",
+        "function": "get_state",
+        "description": "The state and attributes of entities.",
+        "args": {
+         "entity_ids": {
+          "type": "array",
+          "help": "Entity ids.",
+          "required": true
+         }
+        }
+       },
+       {
+        "name": "call_service",
+        "card": "home",
+        "function": "call_service",
+        "description": "Switch something: a service on an entity with full access (e.g. switch.turn_on).",
+        "args": {
+         "domain": {
+          "type": "string",
+          "help": "e.g. switch, light.",
+          "required": true
+         },
+         "service": {
+          "type": "string",
+          "help": "e.g. turn_on, turn_off, toggle.",
+          "required": true
+         },
+         "entity_id": {
+          "type": "string",
+          "help": "The entity.",
+          "required": true
+         },
+         "data": {
+          "type": "object",
+          "help": "Extra service data (e.g. brightness_pct)."
+         }
+        }
+       },
+       {
+        "name": "lists",
+        "card": "lists",
+        "function": "lists",
+        "description": "The lists and how many entries each has.",
+        "args": {}
+       },
+       {
+        "name": "read_list",
+        "card": "lists",
+        "function": "read_list",
+        "description": "A list with its entries (fields, sub-entries).",
+        "args": {
+         "list": {
+          "type": "string",
+          "help": "The list's name.",
+          "required": true
+         }
+        }
+       },
+       {
+        "name": "create_list",
+        "card": "lists",
+        "function": "create_list",
+        "description": "A new, empty list.",
+        "args": {
+         "list": {
+          "type": "string",
+          "help": "The list's name.",
+          "required": true
+         }
+        }
+       },
+       {
+        "name": "add_items",
+        "card": "lists",
+        "function": "add_items",
+        "description": "Add entries to a list (under an entry: give 'under').",
+        "args": {
+         "list": {
+          "type": "string",
+          "help": "The list's name.",
+          "required": true
+         },
+         "items": {
+          "type": "array",
+          "help": "The entries' texts.",
+          "required": true
+         },
+         "under": {
+          "type": "string",
+          "help": "An entry's text: they become its sub-entries."
+         }
+        }
+       },
+       {
+        "name": "update_item",
+        "card": "lists",
+        "function": "update_item",
+        "description": "Change an entry: its text, done, or a field.",
+        "args": {
+         "list": {
+          "type": "string",
+          "help": "The list's name.",
+          "required": true
+         },
+         "item": {
+          "type": "string",
+          "help": "The entry's text or id.",
+          "required": true
+         },
+         "text": {
+          "type": "string",
+          "help": "New text."
+         },
+         "done": {
+          "type": "boolean",
+          "help": "Ticked?"
+         },
+         "field": {
+          "type": "string",
+          "help": "A field's name (e.g. status)."
+         },
+         "value": {
+          "type": "string",
+          "help": "The field's new value (empty removes it)."
+         }
+        }
+       },
+       {
+        "name": "remove_items",
+        "card": "lists",
+        "function": "remove_items",
+        "description": "Take entries out (with their sub-entries).",
+        "args": {
+         "list": {
+          "type": "string",
+          "help": "The list's name.",
+          "required": true
+         },
+         "items": {
+          "type": "array",
+          "help": "The entries' texts or ids.",
+          "required": true
+         }
+        }
+       },
+       {
+        "name": "delete_list",
+        "card": "lists",
+        "function": "delete_list",
+        "description": "Delete a whole list.",
+        "args": {
+         "list": {
+          "type": "string",
+          "help": "The list's name.",
+          "required": true
+         }
+        }
+       },
+       {
+        "name": "undo_remove",
+        "card": "lists",
+        "function": "undo_remove",
+        "description": "Bring back what was removed last.",
+        "args": {}
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "aac2.card.assistant.lists": {
+  "version": 1,
+  "minor_version": 1,
+  "key": "aac2.card.assistant.lists",
+  "data": {
+   "lists": [
+    {
+     "id": "4ee9e4e614",
+     "name": "Shopping",
+     "view": "checklist",
+     "created": "2026-10-30T09:13:57.574532+00:00",
+     "updated": "2026-10-30T09:13:57.574549+00:00",
+     "items": [
+      {
+       "id": "6f999c875e",
+       "text": "Oat milk",
+       "done": false,
+       "fields": {},
+       "created": "2026-10-30T09:13:57.574540+00:00",
+       "updated": "2026-10-30T09:13:57.574540+00:00"
+      },
+      {
+       "id": "44504dbba9",
+       "text": "Coffee",
+       "done": false,
+       "fields": {},
+       "created": "2026-10-30T09:13:57.574545+00:00",
+       "updated": "2026-10-30T09:13:57.574545+00:00"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "aac2.card.assistant.calendar": {
+  "version": 1,
+  "minor_version": 1,
+  "key": "aac2.card.assistant.calendar",
+  "data": {
+   "events": [
+    {
+     "uid": "1e80392b77",
+     "summary": "Dentist",
+     "start": "2026-11-02T10:00",
+     "end": null,
+     "description": ""
+    }
+   ]
+  }
+ },
+ "aac2.core": {
+  "version": 1,
+  "minor_version": 1,
+  "key": "aac2.core",
+  "data": {
+   "models": [
+    {
+     "id": "m_big",
+     "name": "Big",
+     "base_url": "http://llm.local:8080/v1",
+     "model": "big",
+     "server": "s_llm_local_8080",
+     "api_key": null
+    },
+    {
+     "id": "m_small",
+     "name": "Small",
+     "base_url": "http://llm.local:8080/v1",
+     "model": "small",
+     "server": "s_llm_local_8080",
+     "api_key": null
+    }
+   ],
+   "benches": {},
+   "servers": [
+    {
+     "name": "llm.local:8080",
+     "base_url": "http://llm.local:8080/v1",
+     "api_key": null,
+     "id": "s_llm_local_8080"
+    }
+   ],
+   "domains": [
+    {
+     "id": "assistant",
+     "name": "Assistant"
+    }
+   ],
+   "active": "assistant",
+   "voice_chain": true,
+   "audio": {
+    "stt": [],
+    "tts": null,
+    "voices": {},
+    "volume": 40,
+    "known": [
+     {
+      "id": "pc",
+      "name": "PC"
+     }
+    ]
+   },
+   "satellite_app": {
+    "user_id": "61f3852d34f44a1f8b4826f53e18aee5",
+    "refresh_token_id": "87db7349f16b49aa8cffd3ed57bddfa3"
+   }
+  }
+ }
+}

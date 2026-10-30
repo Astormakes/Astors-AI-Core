@@ -32,7 +32,7 @@ def for_me(e):
     route = await check.handle(context, "in", Step(domain.flow, check, "in", context))
     said = context.last("said")
     assert route == [("aac", "yes")] and said["text"] == "lights on" and "user.addressed" in said["tags"]
-    assert buffer.data["lines"] == ["lights on"] and context.last("call")["data"]["function"] == "room.add"
+    assert buffer.data["lines"] == ["lights on"] and context.last("call")["text"] == "room.add"  # an event
     other = Context()
     other.add("chat", "said", "hello")
     assert await check.handle(other, "in", Step(domain.flow, check, "in", other)) == [("out", "no")]  # the buffer is a tool
@@ -63,7 +63,8 @@ def room(e):
         ("system", "You are AAC."), ("said", "hi"), ("trailer", "Asked: hi"), ("note", "In the kitchen."), ("said", "and?"),
         ("trailer", "Asked: and?")]
     assert {"texts.role", "texts.time", "texts.room"} <= {t["tag"] for t in core.domain.tag_pool()}
-    assert await relay.call("text", {}) == "You are AAC.\n\nAsked:"  # as a tool: its texts now
+    assert set(relay.functions) == {"role", "time", "room"} and relay.offered() == {}  # a function per block, off until ticked
+    assert await relay.call("role", {}) == "You are AAC."  # as a tool: that block's text, now
 
 
 async def test_relay_script_problems(hass: HomeAssistant, mock_entry):

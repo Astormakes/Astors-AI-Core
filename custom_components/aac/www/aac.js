@@ -9,6 +9,39 @@ const W = 180, HEAD = 34, ROW = 20;
 const COL = W + 110; // one slot column (v1: a column per step in the flow)
 const KIND_NAMES = { text: "context", read: "read (dotted)", audio: "audio stream", clip: "audio clip", any: "anything" };
 const KIND_NAME = new Proxy(KIND_NAMES, { get: (t, k) => String(k).split("|").map((x) => t[x] || x).join(" or ") }); // "audio|clip": either
+// A context as the model gets it (docs/v2 page 3), in sections: the monitor and a chat's Behind the scenes show it.
+// ctx: {system, messages, tools, events} (a context's summary); name(id): a card's name.
+const contextView = (ctx, name) => {
+  const body = (text, open) => {
+    const s = String(text ?? "");
+    return s.length > 280 ? `<details ${open ? "open" : ""}><summary class="cvmore">${esc(s.slice(0, 160).replace(/\s+/g, " "))}…</summary><pre class="cvtext">${esc(s)}</pre></details>`
+      : `<pre class="cvtext">${esc(s)}</pre>`;
+  };
+  const tags = (e) => (e.tags || []).map((x) => `<code class="cvtag">#${esc(x)}</code>`).join(" ");
+  const head = (who, what, e) => `<div class="cvhead"><b>${esc(who)}</b> <span class="hint">${esc(what)}</span> ${tags(e)}</div>`;
+  const att = (a) => `<div class="cvatt">${head(name(a.by), a.kind === "note" ? "attached before" : "attached after", a)}${body(a.text)}</div>`;
+  const results = Object.fromEntries((ctx.messages || []).filter((m) => m.kind === "result").map((m) => [m.data?.call_id, m]));
+  const msg = (m) => {
+    if (m.kind === "result") return "";  // shown under the call it answers
+    const att_ = m.attachments || [], calls = m.data?.calls || [];
+    const who = m.kind === "said" ? `${name(m.by)} · said` : `${name(m.by)} · answered${m.state === "cut" ? " (stopped)" : m.state === "open" ? " (writing…)" : ""}`;
+    return `<div class="cvmsg ${m.kind}">${att_.filter((a) => a.kind === "note").map(att).join("")}
+      ${head(...who.split(" · "), m)}${m.text ? body(m.text, true) : ""}
+      ${calls.map((c) => { const r = results[c.id]; return `<div class="cvcall"><code>${esc(c.name)}(${esc(JSON.stringify(c.args || {}).slice(1, -1))})</code> <span class="hint">→ ${esc(name(c.card || ""))}</span>
+        ${r ? `<div class="cvres">${body(r.text)}</div>` : '<div class="hint">no result yet</div>'}</div>`; }).join("")}
+      ${att_.filter((a) => a.kind !== "note").map(att).join("")}</div>`;
+  };
+  const sec = (title, help, html, open = true) => `<details class="cvsec" ${open ? "open" : ""}><summary>${title}${tip(help)}</summary>${html || '<p class="hint">none</p>'}</details>`;
+  return sec(`System (${(ctx.system || []).length})`, "The system prompt: each part with the card that wrote it. The model reads them first, joined.",
+      (ctx.system || []).map((e) => `<div class="cvpart">${head(name(e.by), "", e)}${body(e.text)}</div>`).join(""), false)
+    + sec(`Conversation (${(ctx.messages || []).filter((m) => m.kind !== "result").length})`, "What was said and answered, in order; under an answer the tools it called with what came back; attached: what cards added for that turn.",
+      (ctx.messages || []).map(msg).join(""))
+    + sec(`Tools (${(ctx.tools || []).length})`, "What the model could call this turn: the name and description it saw (For models), from the card wired to it and back.",
+      (ctx.tools || []).map((x) => `<div class="cvpart"><code>${esc(x.name)}(${Object.entries(x.args || {}).map(([a, y]) => `${esc(a)}${y.required ? "" : "?"}`).join(", ")})</code> <span class="hint">${esc(name(x.card))}</span><div>${esc(x.description || "")}</div></div>`).join(""), false)
+    + sec(`Events (${(ctx.events || []).length})`, "Stops, cuts, choices, errors, a Relay's calls: for the cards and you; never sent to a model.",
+      (ctx.events || []).map((e) => `<div class="cvpart">${head(name(e.by), e.kind, e)}${e.text ? body(e.text) : ""}</div>`).join(""), false);
+};
+
 const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", clip: "#9c27b0", any: "#ffffff" };
 const DAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
@@ -134,6 +167,15 @@ textarea { resize: vertical; }
 .mon .x { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; white-space: pre-wrap; }
 .mon.flash { animation: monflash .8s; } @keyframes monflash { from { box-shadow: 0 0 14px var(--primary-color); } }
 .fold { margin-top: 8px; font-size: 12px; } .fold > summary { cursor: pointer; color: var(--secondary-text-color); font-weight: 500; }
+.cvsec { margin: 6px 0; } .cvsec > summary { cursor: pointer; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--secondary-text-color); padding: 4px 0; }
+.cvpart, .cvmsg { border-left: 3px solid var(--divider-color); padding: 4px 8px; margin: 4px 0; font-size: 13px; }
+.cvmsg.said { border-left-color: var(--primary-color); } .cvmsg.answer { border-left-color: #f5a623; }
+.cvatt { margin: 4px 0 4px 12px; padding: 3px 8px; border-left: 2px dashed var(--divider-color); font-size: 12px; }
+.cvcall { margin: 4px 0 4px 12px; font-size: 12px; } .cvres { margin-left: 12px; padding-left: 8px; border-left: 2px solid #9c27b0; }
+.cvhead { font-size: 12px; } .cvtag { font-size: 10px; opacity: .7; } .cvmore { cursor: pointer; font-size: 12px; color: var(--secondary-text-color); }
+.cvtext { white-space: pre-wrap; word-break: break-word; margin: 2px 0; font: inherit; font-size: 12px; }
+.fnrow { border-left: 3px solid var(--divider-color); padding: 4px 8px; margin: 6px 0; } .fnrow.off { opacity: .55; }
+.fnrow input[type=text], .fnrow textarea { width: 100%; box-sizing: border-box; font-size: 12px; }
 .legend { position: absolute; right: 8px; bottom: 6px; font-size: 10px; color: var(--secondary-text-color); line-height: 1.5; opacity: .8; }
 .legend div { display: flex; align-items: center; gap: 4px; } .grid .legend svg { flex: none; width: 20px; height: 8px; }
 .warn { color: var(--error-color, #db4437); font-size: 12px; margin: 4px 0; }
@@ -357,6 +399,7 @@ class AacPanel extends HTMLElement {
       save: async (settings) => this.ws("aac/card/update", { card, settings }),
       go: (entry) => this.go("card", card, entry),
       header: (title, extra) => this._header(title, extra), cardTitle: (id) => this._card(id)?.title || id, esc, md, tip,
+      contextView: (ctx) => contextView(ctx, (id) => this._card(id)?.title || id), // a context in sections
       failing: () => this._failing(), // names of models that do not answer (a page may warn)
       confirm: (text, ok, danger) => this.confirm(text, ok, danger), prompt: (text, value, multiline) => this.prompt(text, value, multiline),
       alert: (text) => this.alert(text), dialog: (o) => this.dialog(o), // AAC's own dialogs
@@ -957,13 +1000,6 @@ class AacPanel extends HTMLElement {
       <div title="A finished bit of audio: speech cut out of a stream, a sound file, …">${line(KIND_COLOR.clip)} audio clip</div></div>`;
   }
 
-  _fnDocs(fns) {
-    const list = Object.entries(fns || {});
-    if (!list.length) return "";
-    return `<details class="fold"><summary>Functions ${tip("A model calls these as tools (this card wired from its output and back); a Relay's script calls them (wired from the Relay and back).")}</summary>`
-      + list.map(([name, f]) => `<div class="fn"><code>${esc(name)}(${Object.entries(f.args || {}).map(([a, x]) => `${esc(a)}${x.required ? "" : "?"}`).join(", ")})</code> ${esc(f.help || "")}</div>`).join("") + "</details>";
-  }
-
   _portDocs(c, t) {
     const fns = Object.keys(t?.functions || {}).length;
     const help = { ...(fns ? { in: "used as a tool: wire it from a Model (or a Relay) and back, and its functions are called", out: "back to the card that called it" } : {}), ...(t?.ports_help || {}) };
@@ -1080,6 +1116,16 @@ class AacPanel extends HTMLElement {
         <textarea rows="2" data-w="text" placeholder="What to do" style="margin-top:4px">${esc(w.text)}</textarea>
         <button class="small danger" data-delwatch="${i}">Remove</button></div>`).join("")}
       <button class="small" id="addwatch">Add a watch</button>`;
+    if (f.type === "functions") { // For models: each function with its tick, the name and description a model sees, Reset
+      const own = v || {}, defOn = t?.offers !== false;
+      return `<p class="hint" style="margin:4px 0">${esc(f.help || "")}</p>` + Object.entries(c.functions || {}).map(([fn, spec]) => {
+        const o = own[fn] || {}, on = o.on ?? defOn, args = Object.entries(spec.args || {}).map(([a, x]) => `${esc(a)}${x.required ? "" : "?"}`).join(", ");
+        return `<div class="fnrow ${on ? "" : "off"}" data-fnrow="${esc(fn)}" data-key="${esc(key)}"><label class="check"><input type="checkbox" data-fnon ${on ? "checked" : ""}>offered <code>${esc(fn)}(${args})</code></label>
+          <label>Name the model sees</label><input type="text" data-fnname value="${esc(o.name || "")}" placeholder="${esc(fn)}">
+          <label>Description the model reads</label><textarea rows="2" data-fnhelp placeholder="${esc(spec.help || "")}">${esc(o.help || "")}</textarea>
+          ${o.name || o.help ? `<button class="small" data-fnreset title="Back to the card's own name and description">Reset</button>` : ""}</div>`;
+      }).join("") || '<p class="hint">No functions.</p>';
+    }
     if (f.type === "element") return `<label>${esc(f.title)}</label><div data-elfield="${esc(c.id)}|${esc(key)}"><p class="hint">Loading…</p></div>`; // the card's own editor
     return `<label>${esc(f.title)}${h}</label><input data-set="${esc(key)}" value="${esc(v)}">`;
   }
@@ -1106,9 +1152,8 @@ class AacPanel extends HTMLElement {
     return `<label>Name</label><input id="title" value="${esc(c.title)}">
       <p class="hint" style="margin-top:8px">${esc(t?.help || "")} <span title="The version of its card file">· ${esc(t?.title || c.type)} v${esc(t?.version || "?")}</span></p>
       ${Object.entries(t?.settings || {}).filter(([, f]) => !f.fold).map(field).join("")}
-      ${c.tools ? `<label>Its tools ${tip("The cards in its loop (on a way from its output back into it, straight or through other cards) that offer functions. A card's tick \"Offers its functions to models in its loop\" takes it out.")}</label>
-        <div class="row" style="flex-wrap:wrap;gap:4px">${c.tools.map((id) => `<button class="small" data-selcard="${esc(id)}" title="Select it">${esc(this._card(id)?.title || id)}</button>`).join("") || '<span class="hint">none: wire cards with functions into its loop</span>'}</div>` : ""}
-      ${this._fnDocs(t?.functions)}
+      ${c.tools ? `<label>Its tools ${tip("The cards wired from its output and straight back into it, with at least one function ticked under For models. A call goes there along the wire and comes back.")}</label>
+        <div class="row" style="flex-wrap:wrap;gap:4px">${c.tools.map((id) => `<button class="small" data-selcard="${esc(id)}" title="Select it">${esc(this._card(id)?.title || id)}</button>`).join("") || '<span class="hint">none: wire a card with functions from it and back</span>'}</div>` : ""}
       ${Object.entries(Object.entries(t?.settings || {}).filter(([, f]) => f.fold).reduce((g, e) => ({ ...g, [e[1].fold]: [...(g[e[1].fold] || []), e] }), {}))
         .map(([name, fs]) => `<details class="fold" ${fs.some(([k]) => c.settings[k]) ? "open" : ""}><summary>${esc(name)}</summary>${fs.map(field).join("")}</details>`).join("")}
       ${this._portDocs(c, t)}
@@ -1458,11 +1503,9 @@ class AacPanel extends HTMLElement {
     const m = this.monData?.[key] || {}, msg = m.context, [from, to] = key.split("|");
     const name = (id) => this._card(String(id || "").split(".")[0])?.title || id;
     const recs = (m.records || []).slice().reverse().map((r) => `<div class="entry"><div class="k">${esc(new Date(r.time * 1000).toLocaleTimeString())}</div>${esc(r.text)}</div>`).join("");
-    const entries = (msg?.entries || []).map((e) => `<details class="entry"><summary><b>${esc(name(e.by))}</b> · ${esc(e.kind)} ${e.tags.map((t) => `#${esc(t)}`).join(" ")} <span class="hint">${esc(e.text.replace(/\s+/g, " ").slice(0, 60))}</span></summary>
-        <pre class="req">${esc(e.text)}${Object.keys(e.data || {}).length ? `\n\n${esc(JSON.stringify(e.data, null, 1))}` : ""}</pre></details>`).join("");
     return `<b>Monitor</b><p class="hint">${esc(name(from))}.${esc(from.split(".")[1])} › ${esc(name(to))}.${esc(to.split(".")[1])} · live</p>
       <button class="small" data-monoff="${esc(key)}">Stop monitoring</button>
-      ${msg?.entries ? `<label>NEWEST CONTEXT · ${esc(new Date(msg.time * 1000).toLocaleTimeString())}</label><p class="hint">Way: ${esc((msg.way || []).map(name).join(" › "))}</p>${entries}`
+      ${msg?.messages ? `<label>NEWEST CONTEXT · ${esc(new Date(msg.time * 1000).toLocaleTimeString())}</label><p class="hint">Way: ${esc((msg.way || []).map(name).join(" › "))}</p>${contextView(msg, name)}`
         : msg?.clip ? `<label>NEWEST</label><p>${esc(msg.clip)} from ${esc(msg.source)}</p>` : ""}
       <label>PASSED LATELY</label>${recs || '<p class="hint">Nothing yet (kept 10 minutes).</p>'}`;
   }
@@ -1640,6 +1683,16 @@ class AacPanel extends HTMLElement {
     }));
     $("#title")?.addEventListener("change", async (e) => { await this.ws("aac/card/update", { card: this.sel, title: e.target.value }); await this._load(); this.render(); });
     $$("[data-set]").forEach((el) => el.addEventListener("change", () => this._saveSetting(el)));
+    const fnSave = async (row, reset) => { // For models: one function's tick, name, description (empty: the card's own)
+      const c = this._card(this.sel), key = row.dataset.key, all = { ...(c.settings[key] || {}) };
+      const name = row.querySelector("[data-fnname]").value.trim(), help = row.querySelector("[data-fnhelp]").value.trim();
+      all[row.dataset.fnrow] = { on: row.querySelector("[data-fnon]").checked, ...(reset ? {} : { ...(name ? { name } : {}), ...(help ? { help } : {}) }) };
+      await this.ws("aac/card/update", { card: c.id, settings: { [key]: all } }); await this._load(); this.render();
+    };
+    $$("[data-fnrow]").forEach((row) => {
+      row.querySelectorAll("input,textarea").forEach((el) => el.addEventListener("change", () => fnSave(row, false)));
+      row.querySelector("[data-fnreset]")?.addEventListener("click", () => fnSave(row, true));
+    });
     $$("[data-voicefor]").forEach((el) => el.addEventListener("change", async () => {
       const c = this._card(this.sel), voices = { ...(c.settings[el.dataset.key] || {}) };
       if (el.value) voices[el.dataset.voicefor] = { language: el.selectedOptions[0].dataset.locale, voice: el.value }; else delete voices[el.dataset.voicefor];

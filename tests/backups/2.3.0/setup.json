@@ -8,7 +8,7 @@
    "settings": {
     "ha_agent": true
    },
-   "version": "1.7.0"
+   "version": "2.0.0"
   },
   "charter": {
    "type": "relay",
@@ -16,7 +16,7 @@
    "settings": {
     "script": "@new(\"charter\")\ndef charter(e):\n    e.text = \"\"\"Be kind.\"\"\"\n"
    },
-   "version": "2.0.0"
+   "version": "2.1.0"
   },
   "time": {
    "type": "relay",
@@ -24,13 +24,13 @@
    "settings": {
     "script": "@new(\"time\", at=\"end\", replace=False)\ndef time(e):\n    e.text = f\"Local time: {now():%A %Y-%m-%d %H:%M}\"\n"
    },
-   "version": "2.0.0"
+   "version": "2.1.0"
   },
   "model": {
    "type": "model",
    "title": "Model",
    "settings": {},
-   "version": "1.5.0"
+   "version": "2.0.0"
   },
   "lists": {
    "type": "lists",
@@ -42,7 +42,7 @@
    "type": "homeassistant",
    "title": "Home",
    "settings": {},
-   "version": "1.2.0"
+   "version": "1.2.1"
   },
   "calendar": {
    "type": "calendar",
@@ -56,7 +56,7 @@
    "settings": {
     "source": "any"
    },
-   "version": "2.10.0"
+   "version": "2.10.1"
   },
   "cut": {
    "type": "pause_cut",
@@ -64,25 +64,25 @@
    "settings": {
     "pause": 800
    },
-   "version": "2.10.0"
+   "version": "2.10.1"
   },
   "ears": {
    "type": "speech_to_text",
    "title": "Speech to text",
    "settings": {},
-   "version": "2.10.0"
+   "version": "2.10.1"
   },
   "voice": {
    "type": "text_to_speech",
    "title": "Text to speech",
    "settings": {},
-   "version": "2.10.0"
+   "version": "2.10.2"
   },
   "speaker": {
    "type": "speaker",
    "title": "Speaker",
    "settings": {},
-   "version": "2.10.0"
+   "version": "2.10.1"
   },
   "stop_word": {
    "type": "relay",
@@ -90,7 +90,7 @@
    "settings": {
     "script": "@on(\"*\", kind=\"said\")\ndef says_stop(e):\n    if \"stop\" in e.text.lower():\n        stop()\n        output(\"stop\")\n"
    },
-   "version": "2.0.0"
+   "version": "2.1.0"
   },
   "wake": {
    "type": "relay",
@@ -98,7 +98,7 @@
    "settings": {
     "script": "@on(\"*\", kind=\"said\")\ndef wake_word(e):\n    if any(word in e.text.lower() for word in [\"computer\"]):\n        output(\"yes\")\n"
    },
-   "version": "2.0.0"
+   "version": "2.1.0"
   },
   "follow_up": {
    "type": "relay",
@@ -106,7 +106,7 @@
    "settings": {
     "script": "@on(\"*\", kind=\"said\")\ndef follow_up(e):\n    # you started talking less than 6 s after AAC spoke at that satellite (long answers too)\n    spoke = audio.satellites.get(e.data.get(\"mic\"), {}).get(\"seconds\", 999999)\n    said_for = e.data.get(\"seconds\") or 0\n    named = any(word in e.text.lower() for word in [\"stop\", \"computer\"])\n    if not e.data.get(\"aac_spoke\") and spoke - said_for < 6 and not named:\n        output(\"yes\")\n"
    },
-   "version": "2.0.0"
+   "version": "2.1.0"
   },
   "spoken": {
    "type": "relay",
@@ -114,7 +114,7 @@
    "settings": {
     "script": "@new(\"rules\", at=\"end\", replace=False)\ndef rules(e):\n    e.text = \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\"\n"
    },
-   "version": "2.0.0"
+   "version": "2.1.0"
   },
   "followed": {
    "type": "relay",
@@ -122,13 +122,13 @@
    "settings": {
     "script": "@new(\"rules\", at=\"end\", replace=False)\ndef rules(e):\n    e.text = \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\"\n\n@on(\"ears.heard\")\ndef maybe_not_for_me(e):\n    e.text = \"(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) \" + e.text\n"
    },
-   "version": "2.0.0"
+   "version": "2.1.0"
   },
   "answer": {
    "type": "relay",
    "title": "Answer",
    "settings": {},
-   "version": "2.0.0"
+   "version": "2.1.0"
   }
  },
  "wires": [

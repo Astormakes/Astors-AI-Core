@@ -1,5 +1,6 @@
-"""Chat: a chat in the sidebar. It holds a context per chat. What you write is added to it and the whole context
-leaves at `said`; a context that comes into `answers` replaces what the chat holds (an answer to what you wrote, or
+"""Chat: a chat in the sidebar. It holds a context per chat (its messages and events, docs/v2 page 3; the system parts
+and tools of the newest turn too, for Behind the scenes). What you write is added to it and the whole context leaves
+at `said`; a context that comes into `answers` replaces what the chat holds (an answer to what you wrote, or
 a turn that started elsewhere, e.g. a spoken line a Relay put on top of this chat's context). What the chat shows is
 read from the context it holds. A dotted wire from `provides` lets another card read the current chat's context."""
 
@@ -15,7 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, is_stop, new_id, register
 
-VERSION = "1.7.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NO_ANSWER = "(no answer came back: is a model wired back into this chat?)"
@@ -126,25 +127,44 @@ class Chat(Card):
 
     def chats(self) -> list[dict[str, Any]]:
         """Newest first, without their contexts."""
-        found = [{k: v for k, v in c.items() if k != "entries"} for c in self.data["chats"].values()]
+        found = [{k: v for k, v in c.items() if k not in ("context", "last")} for c in self.data["chats"].values()]
         return sorted(found, key=lambda c: c["updated"], reverse=True)
 
     def get(self, chat_id: str) -> dict[str, Any] | None:
         """One chat, with what it shows (read from the context it holds)."""
         chat = self.data["chats"].get(chat_id)
-        return {**chat, "messages": shown(chat["entries"])} if chat is not None else None
+        if chat is None:
+            return None
+        context, last = self._context(chat), chat.get("last") or {}
+        behind = {**context.summary(), "system": last.get("system", []), "tools": last.get("tools", [])}  # the newest turn's
+        return {**{k: v for k, v in chat.items() if k not in ("context", "last")}, "messages": shown(context), "behind": behind}
+
+    def _context(self, chat: dict[str, Any]) -> Context:
+        """What a chat holds, as a context (a copy)."""
+        held = deepcopy(chat["context"])
+        return Context(messages=held["messages"], events=held["events"], origin=self.id, chat_id=chat["id"])
 
     def _new(self, title: str, chat_id: str | None = None) -> dict[str, Any]:
         now = dt_util.utcnow().isoformat()
-        chat = {"id": chat_id or new_id(), "title": title[:48] or "New chat", "created": now, "updated": now, "entries": []}
+        chat = {"id": chat_id or new_id(), "title": title[:48] or "New chat", "created": now, "updated": now,
+                "context": {"messages": [], "events": []}}
         self.data["chats"][chat["id"]] = chat
         return chat
 
-    async def _hold(self, chat: dict[str, Any], entries: list[dict[str, Any]]) -> None:
-        """The chat now holds this context (system parts come again from their cards each turn)."""
+    async def _hold(self, chat: dict[str, Any], context: Context) -> None:
+        """The chat now holds this context: its messages and events (a turn that went out with only the last turns
+        keeps the older ones), and the newest turn's system parts and tools."""
         if (chat := self.data["chats"].get(chat["id"])) is None:  # the stored one (get() gives a copy); deleted meanwhile: gone
             return
-        chat["entries"] = [e for e in entries if e["kind"] != "system"]
+        held, kept = context.held(), chat["context"]["messages"]
+        ids = [m["id"] for m in kept]
+        if held["messages"] and held["messages"][0]["id"] in ids[1:]:  # it went out with only the last turns
+            start = ids.index(held["messages"][0]["id"])
+            held["messages"] = [*deepcopy(kept[:start]), *held["messages"]]
+            held["events"] = [{**e, "at": e.get("at", 0) + start} for e in held["events"]]
+        chat["context"] = held
+        if context.system or context.tools:
+            chat["last"] = {"system": deepcopy(context.system), "tools": deepcopy(context.tools)}
         chat["updated"] = dt_util.utcnow().isoformat()
         await self.save()
         self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=chat["id"])
@@ -162,7 +182,7 @@ class Chat(Card):
         if port != "provides":
             return None
         chat = self.current()
-        return Context(entries=deepcopy(chat["entries"]) if chat else [], origin=self.id, chat_id=chat["id"] if chat else None)
+        return self._context(self.data["chats"][chat["id"]]) if chat else Context(origin=self.id)
 
     async def delete(self, chat_id: str) -> None:
         """Delete a chat."""
@@ -175,14 +195,17 @@ class Chat(Card):
         """Something was written: added to what the chat holds, the context leaves at `said`; returns (chat id, answer).
         create_as / title: the id and title a new chat gets (HA Assist: its conversation id, "Assist · …"); data: on the
         line (where it came from)."""
-        chat = (self.get(chat_id) if chat_id else None) or self._new(title or text, create_as)
-        entries = list(chat["entries"])
+        chat = self.data["chats"].get(chat_id or "") or self._new(title or text, create_as)
+        held = self._context(chat)
+        held.add(self.id, "said", text, ["said"], **data)
+        await self._hold(chat, held)
+        context = held.branch()
         if (turns := int(self.settings.get("turns") or 0)) > 0:  # only the last turns go along
-            said = [i for i, e in enumerate(entries) if e["kind"] == "said"]
-            entries = entries[said[-turns]:] if len(said) >= turns else entries
-        context = Context(entries=entries, origin=self.id, chat_id=chat["id"])
-        line = context.add(self.id, "said", text, ["said"], **data)
-        await self._hold(chat, [*chat["entries"], line])
+            said = [i for i, m in enumerate(context.messages) if m["kind"] == "said"]
+            if len(said) > turns:
+                start = said[-turns]
+                context.messages = context.messages[start:]
+                context.events = [{**e, "at": e.get("at", 0) - start} for e in context.events if e.get("at", 0) >= start]
         future = asyncio.get_running_loop().create_future()
         self._waiting[context.id] = future
         try:  # the whole way runs before send returns: no answer by then means none comes (nothing waits forever)
@@ -193,15 +216,16 @@ class Chat(Card):
             self._waiting.pop(context.id, None)
         if future.done():
             return self._switched.pop(context.id, chat["id"]), future.result()
-        await self._hold(chat, [*chat["entries"], {**line, "id": new_id(), "kind": "error", "text": NO_ANSWER, "tags": [self.tag("error")]}])
+        held = self._context(chat)
+        held.add(self.id, "error", NO_ANSWER, ["error"])
+        await self._hold(chat, held)
         return chat["id"], NO_ANSWER
 
     async def stop_chat(self, chat_id: str) -> None:
         """The chat's Stop button: its context goes out with a stop at the end (a busy model cuts its answer)."""
-        chat = self.get(chat_id)
-        if chat is None:
+        if (chat := self.data["chats"].get(chat_id)) is None:
             return
-        context = Context(entries=list(chat["entries"]), origin=self.id, chat_id=chat_id)
+        context = self._context(chat)
         context.add(self.id, "signal", "stop", ["stop"])
         self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "said"), f"aac {self.id} stop")
 
@@ -214,12 +238,12 @@ class Chat(Card):
         return []
 
     async def _keep_turn(self, context: Context) -> None:
-        chat = self.get(context.chat_id or context.id)  # a turn without a chat gets one named after it (snapshots too)
+        chat = self.data["chats"].get(context.chat_id or context.id)  # a turn without a chat gets one named after it (snapshots too)
         if chat is None:  # a turn built on an empty read (quiet for long): a new chat
             said = context.last("said") or {}
             name = said.get("data", {}).get("mic_name")
             chat = self._new(f"Voice · {name} · {dt_util.now().strftime('%H:%M')}" if name else said.get("text", ""), context.chat_id or context.id)
-        await self._hold(chat, context.entries)
+        await self._hold(chat, context)
 
     async def _do_switch(self, context: Context, target: str) -> None:
         """A turn asked to go on in another chat: the chat it came from drops the turn (and goes if nothing is left),
@@ -234,10 +258,14 @@ class Chat(Card):
 
     def _drop_turn(self, chat: dict[str, Any], context: Context) -> None:
         """The chat forgets a turn it showed (from its newest said line on), and goes if nothing is left."""
-        said = next((e["id"] for e in reversed(context.entries) if e["kind"] == "said"), None)
-        ids = [e["id"] for e in chat["entries"]]
-        chat["entries"] = chat["entries"][:ids.index(said)] if said in ids else chat["entries"]
-        if not any(e["kind"] == "said" for e in chat["entries"]):
+        said = next((m["id"] for m in reversed(context.messages) if m["kind"] == "said"), None)
+        held = chat["context"]
+        ids = [m["id"] for m in held["messages"]]
+        if said in ids:
+            cut = ids.index(said)
+            held["messages"] = held["messages"][:cut]
+            held["events"] = [e for e in held["events"] if e.get("at", 0) <= cut]
+        if not any(m["kind"] == "said" for m in held["messages"]):
             self.data["chats"].pop(chat["id"])
 
     async def _make_current(self, chat_id: str) -> None:
@@ -273,8 +301,9 @@ class Chat(Card):
             words = plain(str(args.get("search") or "")).split()
             found = []
             for c in self.chats():
-                said = next((e["text"] for e in self.data["chats"][c["id"]]["entries"] if e["kind"] == "said"), "")
-                text = plain(" ".join([c["title"], *(e["text"] for e in self.data["chats"][c["id"]]["entries"])]))
+                held = self.data["chats"][c["id"]]["context"]["messages"]
+                said = next((m["text"] for m in held if m["kind"] == "said"), "")
+                text = plain(" ".join([c["title"], *(m["text"] for m in held)]))
                 if all(w in text for w in words):
                     found.append({"id": c["id"], "title": c["title"], "updated": c["updated"], "first": said[:200],
                                   **({"archived": True} if c.get("archived") else {})})
@@ -301,22 +330,26 @@ class Chat(Card):
             return [{"role": m["role"], "text": m["text"]} for m in (chat or {}).get("messages", [])[-turns:]]
         if function == "post":
             chats = self.chats()
-            chat = self.get(chats[0]["id"]) if chats else self._new("From AAC")
-            post = Context()
-            post.add(self.id, "answer", str(args.get("text") or ""))
-            await self._hold(chat, [*chat["entries"], *post.entries])
+            chat = self.data["chats"][chats[0]["id"]] if chats else self._new("From AAC")
+            held = self._context(chat)
+            held.add(self.id, "answer", str(args.get("text") or ""))
+            await self._hold(chat, held)
             return {"posted": True}
         return await super().call(function, args, context)
 
 
-def shown(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """What a chat shows, read from its context: what people said, the answers (cut off where a stop came), errors."""
+def shown(context: Context) -> list[dict[str, Any]]:
+    """What a chat shows, read from its context: what people said, the answers (cut off where a stop came), the tools
+    a model called with what came back, errors."""
     out: list[dict[str, Any]] = []
-    for e in entries:
+    results = {m["data"].get("call_id"): m["text"] for m in context.messages if m["kind"] == "result"}
+    for e in context.entries:
         if e["kind"] == "said":
             out.append({"role": "user", "text": e["text"], "time": e["time"], **({"mic": e["data"]["mic_name"]} if e["data"].get("mic_name") else {})})
         elif e["kind"] == "answer" and e.get("state") != "open":
-            out.append({"role": "aac", "text": e["text"], "time": e["time"], **({"cut": True} if e.get("state") == "cut" else {})})
+            calls = [{"name": c["name"], "args": c.get("args") or {}, "result": results.get(c["id"])} for c in e["data"].get("calls") or []]
+            out.append({"role": "aac", "text": e["text"], "time": e["time"], "by": e["by"],
+                        **({"calls": calls} if calls else {}), **({"cut": True} if e.get("state") == "cut" else {})})
         elif e["kind"] == "error":
             out.append({"role": "aac", "text": e["text"], "time": e["time"], "error": True})
         elif is_stop(e) and out and out[-1]["role"] == "aac":

@@ -13,7 +13,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import LOGGER, Card, Context, register
 
-VERSION = "1.1.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 
@@ -57,6 +57,10 @@ class AutoCard(Card):
                                                  "answer": answer, "id": message_id}][-LOG_SIZE:]
         self.hass.async_create_task(self.save())
         self.core.notify("card", domain=self.domain.id, card=self.id)
+
+    async def progress(self, context: Context, port: str) -> list[Any] | None:
+        """A turn still being worked on: only the finished answer counts (nothing goes on from here)."""
+        return []
 
     async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         """What the chain concluded."""

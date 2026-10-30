@@ -10,7 +10,7 @@ from custom_components.aac.audio import EnergyVad, Segmenter
 
 from custom_components.aac.audio import pcm_to_wav
 
-from .conftest import BASE_URL, model_answers, reply, setup_aac
+from .conftest import BASE_URL, reply, setup_aac
 
 WAVE = pcm_to_wav(b"\x01\x00" * 1600, 22050)  # what a voice engine gives back
 

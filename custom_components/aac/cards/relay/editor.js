@@ -12,7 +12,7 @@ const GLOBALS = [
   ["context", "the whole context"], ["audio", "when AAC last spoke"], ["len()", "how long"], ["str()", "as text"], ["int()", "as a whole number"],
   ["any(… for x in …)", "True when one is"], ["re.search(r\"\", e.text, re.I)", "a pattern"], ["re.sub(r\"\", \"\", e.text)", "replace a pattern"],
 ];
-const ENTRY = [["text", "its text (set it to change it)"], ["tags", "its tags"], ["kind", "said, answer, note …"], ["data", "what its card added"],
+const ENTRY = [["text", "its text (set it to change it)"], ["tags", "its tags"], ["kind", "said, answer, note …"], ["calls", "an answer's tool calls"], ["data", "what its card added"],
   ["state", "open, closed or cut"], ["add_tag(\"\")", "adds a tag"], ["remove()", "takes it out"]];
 const TEXT = [["replace(\"\", \"\")", "every a becomes b"], ["strip()", "spaces and empty lines off both ends"], ["lower()", "small letters"],
   ["upper()", "capitals"], ["title()", "Each Word Capital"], ["startswith(\"\")", "starts so?"], ["endswith(\"\")", "ends so?"],
@@ -373,7 +373,7 @@ class AacRelayScript extends HTMLElement {
       <div class="note"><b>Streams:</b> entries no block works on pass at once, piece by piece. An entry a block works on is held back until its card closes it; then the block runs once. live=True runs it on every piece instead (a stop word mid-sentence).</div>
       ${Object.entries(groups).map(([g, rows]) => `<h5>${esc(g)}</h5>${rows.map((r) => `<div class="fn">${ins(r.sig)} ${esc(r.what)}${r.example ? `<pre class="ex">${esc(r.example)}</pre>` : ""}</div>`).join("")}`).join("")}
       <h5>Tags in this domain</h5>${this.dom.tags.map((t) => `<div class="fn">${ins(t.tag)} <span class="hint">${esc(t.card)}: ${esc(t.what)}</span></div>`).join("")}
-      <h5>Cards in its loop (their functions)</h5>${tools.length ? tools.map((c) => Object.entries(this.panel.type(c.type)?.functions || {}).map(([n, f]) => `<div class="fn">${ins(`${c.id}.${n}(${Object.keys(f.args || {}).map((a) => `${a}=`).join(", ")})`)} <span class="hint">${esc(f.help || "")}</span></div>`).join("")).join("")
+      <h5>Cards wired to it and back (their functions)</h5>${tools.length ? tools.map((c) => Object.entries(this.panel.type(c.type)?.functions || {}).map(([n, f]) => `<div class="fn">${ins(`${c.id}.${n}(${Object.keys(f.args || {}).map((a) => `${a}=`).join(", ")})`)} <span class="hint">${esc(f.help || "")}</span></div>`).join("")).join("")
         : '<p class="hint">None: wire a card from this Relay and back into it to call its functions.</p>'}
       <h5>Values of the cards</h5>${this._cards().flatMap((c) => Object.entries(this.panel.type(c.type)?.values || {}).map(([n, w]) => `<div class="fn">${ins(`${c.id}.${n}`)} <span class="hint">${esc(w)}</span></div>`)).join("") || '<p class="hint">No card offers values.</p>'}`;
   }

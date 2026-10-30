@@ -16,6 +16,8 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
+from custom_components.aac.api import EVENTS, entry
+
 ALLOWED = {
     ast.Module, ast.FunctionDef, ast.arguments, ast.arg, ast.Return, ast.Assign, ast.AugAssign, ast.Expr, ast.If,
     ast.For, ast.Break, ast.Continue, ast.Pass, ast.BoolOp, ast.BinOp, ast.UnaryOp, ast.Compare, ast.Call,
@@ -42,19 +44,22 @@ REFERENCE = [
      '@on("chat.said")\ndef clean(e):\n    e.text = e.text.replace("computer", "")'),
     ("Blocks", '@on("*.said")', "* is any card: every card's said. Several tags: @on(\"chat.said\", \"ears.heard\").", ""),
     ("Blocks", '@on("chat.said", which="first")', "Which entry: \"last\" (the newest, default), \"first\" or \"all\".", ""),
-    ("Blocks", '@on("*", kind="said")', "Only entries of a kind: said, answer, note, trailer, system, call, result.", ""),
+    ("Blocks", '@on("*", kind="said")', "Only entries of a kind: system, said, answer, result, note, trailer.", ""),
     ("Blocks", '@on("*.heard", live=True)', "Runs on every piece while the entry still grows (a stop word mid-sentence). "
      "Without live, an entry it works on is held back until it is closed.", ""),
     ("Blocks", '@on("context")', "Runs once with the whole context (waits until everything is closed).", ""),
-    ("Blocks", '@new("charter")', "Makes this card's own entry (tag <card>.charter) at the very start: the system "
-     "prompt. Replaced in place each time, so the model server's cache keeps working.",
+    ("Blocks", '@new("charter")', "Makes this card's own entry (tag <card>.charter): a part of the system prompt. "
+     "Replaced in place each time, so the model server's cache keeps working.",
      '@new("charter")\ndef charter(e):\n    e.text = """You are AAC."""'),
-    ("Blocks", '@new("time", at="end")', "At the very end, read last. A new one each turn (replace=True: only one).",
+    ("Blocks", '@new("time", at="end")', "Attached to the newest thing said, after it (what matters for this turn). "
+     "A new one each turn (replace=True: only one, on the newest).",
      '@new("time", at="end")\ndef time(e):\n    e.text = f"It is {now():%H:%M}."'),
-    ("Blocks", '@new("room", before="chat.said")', "Just before (or after=) the newest entry with that tag.", ""),
+    ("Blocks", '@new("room", before="chat.said")', "Attached just before (or after=) the newest entry with that tag.", ""),
     ("Entry", "e.text", "Its text. Set it to change it: e.text = \"…\"", ""),
     ("Entry", "e.tags", "Its tags, e.g. [\"chat.said\"]: if \"user.urgent\" in e.tags:", ""),
-    ("Entry", "e.kind", "said, answer, note, trailer, system, call, result.", ""),
+    ("Entry", "e.kind", "system (the system prompt), said, answer, result (a tool's), note, trailer (attached to a "
+     "message, before / after it).", ""),
+    ("Entry", "e.calls", "An answer's tool calls: [{name, args}] (empty for others).", ""),
     ("Entry", "e.data", "What the card that wrote it added (e.g. the satellite: e.data[\"mic\"]).", ""),
     ("Entry", "e.add_tag(\"urgent\")", "Adds a tag (without a dot it becomes user.urgent).", ""),
     ("Entry", "e.remove()", "Takes the entry out of the context.", ""),
@@ -78,8 +83,7 @@ REFERENCE = [
     ("Actions", "stop()", "Sends stop: every card lets go of what it holds.", ""),
     ("Actions", 'output("night")', "The context goes to this output (it appears on the card). Not called: to out.", ""),
     ("Actions", 'signal("done")', "Adds a signal entry (user.done) that other cards can pick up.", ""),
-    ("Actions", 'lists.add_items(list="Shopping", items=[e.text])', "Calls a function of a card in this Relay's loop "
-     "(wired from it and back).", ""),
+    ("Actions", 'lists.add_items(list="Shopping", items=[e.text])', "Calls a function of a card wired from this Relay and back.", ""),
     ("Actions", 'print("…")', "Shows under Last run (for checking a script).", ""),
     ("Values", "now()", "The time now: now().hour, f\"{now():%A %H:%M}\".", ""),
     ("Values", 'states("sensor.x")', "A Home Assistant state (state_attr(id, \"name\"), is_state(id, \"on\")).", ""),
@@ -221,7 +225,7 @@ def check(source: str) -> Script:
 
 # ------------------------------------------------------------------ what the script sees
 def _matches(e: dict[str, Any], patterns: tuple[str, ...], kind: str | None) -> bool:
-    if e["kind"] == "signal" or (kind and e["kind"] != kind):
+    if e["kind"] in EVENTS or (kind and e["kind"] != kind):
         return False
     return any(p == "*" or any(fnmatch.fnmatchcase(t, p) for t in e["tags"]) for p in patterns)
 
@@ -309,6 +313,11 @@ class Entry:
         """open (still growing), closed or cut."""
         return self._e.get("state", "closed")
 
+    @property
+    def calls(self) -> list[Values]:
+        """An answer's tool calls: name, args."""
+        return [Values({"name": c.get("name"), "args": c.get("args") or {}}) for c in (self._e.get("data") or {}).get("calls") or []]
+
     def add_tag(self, tag: str) -> None:
         """Adds a tag (without a dot: user.<tag>)."""
         tag = str(tag) if "." in str(tag) else f"user.{tag}"
@@ -317,9 +326,8 @@ class Entry:
 
     def remove(self) -> None:
         """Takes it out of the context."""
-        entries = self._run.context.entries
-        if any(x is self._e for x in entries):
-            entries[:] = [x for x in entries if x is not self._e]
+        if self._e is not MISSING:
+            self._run.context.remove(self._e)
 
     def __bool__(self) -> bool:
         return self._e is not MISSING
@@ -353,13 +361,13 @@ class ContextView:
 
     @property
     def entries(self) -> list[Entry]:
-        """Every entry, oldest first (signals left out)."""
-        return [Entry(e, self._run) for e in self._run.context.entries if e["kind"] != "signal"]
+        """Every entry, oldest first (events left out)."""
+        return [Entry(e, self._run) for e in self._run.context.entries if e["kind"] not in EVENTS]
 
     @property
     def text(self) -> str:
         """Every entry's text, one after the other."""
-        return "\n".join(e["text"] for e in self._run.context.entries if e["kind"] != "signal" and e["text"].strip())
+        return "\n".join(e["text"] for e in self._run.context.entries if e["kind"] not in EVENTS and e["text"].strip())
 
     def find(self, tag: str = "*", which: str = "last", kind: str | None = None) -> Entry:
         """The newest (or first) entry with a tag; empty when none."""
@@ -378,7 +386,7 @@ class ContextView:
 
 
 class CardRef:
-    """Another card: its functions (when it is in the loop), its values, the entries with its tags."""
+    """Another card: its functions (when it is wired to the Relay and back), its values, the entries with its tags."""
 
     __slots__ = ("_card", "_run")
 
@@ -428,15 +436,13 @@ class Run:
 
     def call(self, card: Any, name: str, args: dict[str, Any]) -> Any:
         if card not in self.tools:
-            raise ScriptError(f"{card.id} is not in this Relay's loop: wire it from the Relay and back to use {name}()")
+            raise ScriptError(f"{card.id} is not wired to this Relay and back: wire it so to use {name}()")
         key = (*self._key, "call", card.id, name, repr(args))
         if key in self.done:
             return self.done[key]
         result = asyncio.run_coroutine_threadsafe(card.call(name, args, self.context), self.loop).result(60)
         self.done[key] = result
-        me = self.relay.id
-        self.context.add(me, "call", "", ["call"], function=f"{card.id}.{name}", args=args)
-        self.context.add(card.id, "result", str(result)[:4000])
+        self.context.add(self.relay.id, "call", f"{card.id}.{name}", ["call"], args=args, result=str(result)[:4000])
         return result
 
     def names(self, script: Script) -> dict[str, Any]:
@@ -545,21 +551,29 @@ class Run:
             self.ran.append(h.name)
 
     def _place(self, h: Handler, text: str) -> None:
-        """Where a @new entry goes."""
+        """Where a @new entry goes: at the start a system part; at the end attached after the newest thing said;
+        before= / after= attached to the message of the newest entry with that tag (a system part beside a system part)."""
         relay, context = self.relay, self.context
         if not (h.before or h.after):
             context.put(relay.id, "system" if h.at == "start" else "trailer", text, h.tag, replace_it=h.replace)
             return
         tag = relay.tag(h.tag)
         if h.replace:
-            context.entries[:] = [e for e in context.entries if not (e["by"] == relay.id and tag in e["tags"])]
-        anchor = next((i for i in range(len(context.entries) - 1, -1, -1)
-                       if _matches(context.entries[i], (h.before or h.after,), None)), None)
+            for e in [e for e in context.entries if e["by"] == relay.id and tag in e["tags"]]:
+                context.remove(e)
+        anchor = next((e for e in reversed(context.entries) if _matches(e, (h.before or h.after,), None)), None)
         if anchor is None or not text:
             return
-        item = context.add(relay.id, "note", text, [h.tag])
-        context.entries.pop()
-        context.entries.insert(anchor if h.before else anchor + 1, item)
+        if anchor["kind"] == "system":
+            item = entry(relay.id, "system", text, [h.tag])
+            at = next(i for i, e in enumerate(context.system) if e is anchor)
+            context.system.insert(at if h.before else at + 1, item)
+            return
+        message = next((m for m in context.messages if m is anchor or any(a is anchor for a in m.get("attachments", []))), None)
+        item = entry(relay.id, "note" if h.before else "trailer", text, [h.tag])
+        attached = message.setdefault("attachments", [])
+        at = next((i for i, a in enumerate(attached) if a is anchor), len(attached) if h.after else 0)
+        attached.insert(at if h.before else at + 1, item)
 
 
 def _inner_import(name: str, *args: Any, **kwargs: Any) -> Any:

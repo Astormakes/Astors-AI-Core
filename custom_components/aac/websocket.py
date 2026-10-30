@@ -255,14 +255,6 @@ async def ws_card_ui(hass, connection, msg) -> None:
         await _fail(connection, msg, err)
 
 
-@command({vol.Required("type"): "aac/chat/request", vol.Required("chat_id"): str})
-async def ws_chat_request(hass, connection, msg) -> None:
-    """What the models got for a chat's newest turn: each message with the cards its text came from, the tools."""
-    found = [card.requests[msg["chat_id"]] for card in _core(hass).domain.cards.values()
-             if msg["chat_id"] in getattr(card, "requests", {})]
-    connection.send_result(msg["id"], {"requests": sorted(found, key=lambda r: r["at"])})
-
-
 # ---------------------------------------------------------------------- models (core) and domains
 @command({vol.Required("type"): "aac/models/save", vol.Required("model"): {
     vol.Optional("id"): str, vol.Required("name"): str, vol.Optional("server"): str, vol.Optional("base_url"): str,

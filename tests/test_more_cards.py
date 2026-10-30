@@ -1,6 +1,6 @@
 """Schedule, HA event, Heartbeat, HA Assist, Decide, Memory, File, Timer, Builder."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components import conversation
@@ -207,20 +207,23 @@ async def test_chat_finds_and_switches_to_old_chats(hass: HomeAssistant, mock_en
     core = await setup_aac(hass, mock_entry)
     card = core.domain.cards["chat"]
     old, other = card._new("About the drone"), card._new("Groceries")
-    old["entries"] = [{"id": "e1", "by": "chat", "kind": "said", "text": "the LoRa mast drone", "tags": [], "time": "", "data": {}, "state": "closed"}]
+    old["context"]["messages"] = [{"id": "e1", "by": "chat", "kind": "said", "text": "the LoRa mast drone", "tags": [], "time": "", "data": {}, "state": "closed"}]
+    d = core.domain  # the Chat as the model's tool: wired straight to it and back
+    d.set_wires([w for w in d.wires if w["from"] != "chat.said"] + [{"from": "chat.said", "to": "model.in"},
+                                                                   {"from": "model.out", "to": "chat.answers"}])
     old["updated"], other["updated"] = "2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00"
     await card.save()
     found = await card.call("chats", {"search": "lora"})
     assert [c["id"] for c in found] == [old["id"]] and found[0]["first"] == "the LoRa mast drone"
     assert (await card.call("read", {"chat": old["id"]}))[0]["text"] == "the LoRa mast drone"
     assert card.current() is None  # both quiet for long: the next spoken turn would start a new chat
-    model_answers(aioclient_mock, reply(calls=[("chat__continue", {"chat": old["id"]})]), reply("Back to the drone."))
+    model_answers(aioclient_mock, reply(calls=[("continue", {"chat": old["id"]})]), reply("Back to the drone."))
     before = {c["id"] for c in card.chats()}
     chat_id, answer = await card.send("let's go on with the drone chat")
     assert chat_id == old["id"] and answer == "Back to the drone."
     assert card.current()["id"] == old["id"]
     assert {c["id"] for c in card.chats()} == before  # the asking chat is gone
-    assert [e["text"] for e in card.get(old["id"])["entries"]] == ["the LoRa mast drone"]  # the switch is not kept
+    assert [m["text"] for m in card.get(old["id"])["messages"]] == ["the LoRa mast drone"]  # the switch is not kept
 
 
 async def test_home_access_list(hass: HomeAssistant, mock_entry):
@@ -256,7 +259,7 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
         task = hass.async_create_task(log._watch())
         await asyncio.sleep(0.05)
         chat = d.cards["chat"]
-        chat._new("Talk")["entries"].append({"id": "n1", "by": "chat", "kind": "said", "text": "a new line", "tags": [], "time": "", "data": {}, "state": "closed"})
+        chat._new("Talk")["context"]["messages"].append({"id": "n1", "by": "chat", "kind": "said", "text": "a new line", "tags": [], "time": "", "data": {}, "state": "closed"})
         await asyncio.sleep(0.05)
         task.cancel()
     texts = [(x["what"], x["text"]) for x in log.data["log"]]
@@ -277,7 +280,7 @@ async def test_chat_archive(hass: HomeAssistant, mock_entry):
     core = await setup_aac(hass, mock_entry)
     card = core.domain.cards["chat"]
     chat = card._new("Old talk")
-    chat["entries"] = [{"id": "e1", "by": "chat", "kind": "said", "text": "hello", "tags": [], "time": "", "data": {}, "state": "closed"}]
+    chat["context"]["messages"] = [{"id": "e1", "by": "chat", "kind": "said", "text": "hello", "tags": [], "time": "", "data": {}, "state": "closed"}]
     await card.save()
     entry = next(e for e in card.nav()["entries"] if e["id"] == chat["id"])
     assert [a["id"] for a in entry["actions"]] == ["delete", "archive", "rename"]
