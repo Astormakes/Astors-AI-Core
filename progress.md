@@ -3,7 +3,13 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-30) – 2.3.0, live on the owner's HA
+## Current state (2026-10-30) – 2.3.2, live on the owner's HA
+
+- **2026-10-30 (2.3.1, 2.3.2):** 2.3.1 fixed the Nodes page (a removed panel helper was still called by the card type
+  info: every click there crashed). 2.3.2: the chat has three views (owner): **Chat**, **Context** (the sectioned view)
+  and **Plain text**: the newest request exactly as the model read it, written by llama-server with the model's chat
+  template (`/apply-template`, `Client.template()`; markers dimmed, each tool on its own line; else the request as plain
+  text). The Chat keeps the newest request with each chat (`last.request`, set by the Model as `context.request`).
 
 - **2026-10-30 (2.3.0): the context as a model request** (docs/v2 page 3, owner's design talk). Containers system /
   messages (said, answer with its calls, result; notes and trailers attached to their message) / tools / events
