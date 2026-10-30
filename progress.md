@@ -333,7 +333,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     then `AAC_SAVE_BACKUP=1 pytest tests/test_backups.py`
     replaces the backup. Every test also runs twice by itself (conftest `start`): on a fresh install and on one that
     starts from that backup (dated as an old install); `@pytest.mark.fresh` for the few that only make sense fresh.
-11. **Edit messages in a chat** (owner, as in v1, often used to resend; raised again 2026-10-29: "the pencil edit is missing"): a pencil under a message (yours or the
+11. ~~**Edit messages in a chat**~~ **done (2.3.7):** a pencil on what you said and on answers (on hover; always faint on a phone); edit in place, ✓ (Enter) sends, Esc cancels; your line asks Resend / Keep the rest / Cancel (`edit` in the Chat card: Resend drops what came after and runs the turn again, its attachments come again); an answer only changes. Edited lines carry `data.edited`. (owner, as in v1, often used to resend; raised again 2026-10-29: "the pencil edit is missing"): a pencil under a message (yours or the
     model's), visible when hovering the message or near the pencil. Editing keeps the message where it is on screen,
     the chat moves up and the box grows upwards; send is a checkmark (grey, green on hover), so resending is a double
     click. Editing your line runs the turn again from there; first a warning: Resend (what came after it goes) / Keep

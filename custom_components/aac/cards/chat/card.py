@@ -16,7 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Client, Context, is_stop, new_id, register
 
-VERSION = "2.1.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NO_ANSWER = "(no answer came back: is a model wired back into this chat?)"
@@ -116,6 +116,8 @@ class Chat(Card):
             return [c for c in self.chats() if c.get("archived")]
         if action == "as_read":  # Plain text: the newest request as the model read it
             return await self.as_read(str(args.get("chat_id") or ""))
+        if action == "edit":  # the pencil
+            return await self.edit(str(args["chat_id"]), str(args["id"]), str(args.get("text") or ""), bool(args.get("resend")))
         if action == "get":  # its page: one chat, writing, deleting, Stop
             return self.get(args["chat_id"])
         if action == "send":
@@ -214,6 +216,10 @@ class Chat(Card):
         held = self._context(chat)
         held.add(self.id, "said", text, ["said"], **data)
         await self._hold(chat, held)
+        return await self._turn(chat, held)
+
+    async def _turn(self, chat: dict[str, Any], held: Context) -> tuple[str, str]:
+        """What the chat holds goes out at `said` (only the last turns when set); returns (chat id, answer)."""
         context = held.branch()
         if (turns := int(self.settings.get("turns") or 0)) > 0:  # only the last turns go along
             said = [i for i, m in enumerate(context.messages) if m["kind"] == "said"]
@@ -235,6 +241,27 @@ class Chat(Card):
         held.add(self.id, "error", NO_ANSWER, ["error"])
         await self._hold(chat, held)
         return chat["id"], NO_ANSWER
+
+    async def edit(self, chat_id: str, message_id: str, text: str, resend: bool = False) -> dict[str, Any]:
+        """The pencil: a line someone said or an answer gets a new text. resend (only a said line): what came after it
+        goes and the turn runs again from there (what cards attached to it comes again too)."""
+        if (chat := self.data["chats"].get(chat_id)) is None:
+            raise ValueError("no such chat")
+        held = self._context(chat)
+        at = next((i for i, m in enumerate(held.messages) if m["id"] == message_id), None)
+        if at is None or held.messages[at]["kind"] not in ("said", "answer") or not text.strip():
+            raise ValueError("only something said or answered can be edited, and not to nothing")
+        line = held.messages[at]
+        line["text"], line["data"] = text.strip(), {**line["data"], "edited": True}
+        if not (resend and line["kind"] == "said"):
+            await self._hold(chat, held)
+            return {"chat_id": chat_id}
+        line.pop("attachments", None)
+        held.messages = held.messages[:at + 1]
+        held.events = [e for e in held.events if e.get("at", 0) <= at]
+        await self._hold(chat, held)
+        chat_id, answer = await self._turn(chat, held)
+        return {"chat_id": chat_id, "answer": answer}
 
     async def stop_chat(self, chat_id: str) -> None:
         """The chat's Stop button: its context goes out with a stop at the end (a busy model cuts its answer)."""
@@ -360,10 +387,10 @@ def shown(context: Context) -> list[dict[str, Any]]:
     results = {m["data"].get("call_id"): m["text"] for m in context.messages if m["kind"] == "result"}
     for e in context.entries:
         if e["kind"] == "said":
-            out.append({"role": "user", "text": e["text"], "time": e["time"], **({"mic": e["data"]["mic_name"]} if e["data"].get("mic_name") else {})})
+            out.append({"id": e["id"], "role": "user", "text": e["text"], "time": e["time"], **({"mic": e["data"]["mic_name"]} if e["data"].get("mic_name") else {})})
         elif e["kind"] == "answer" and e.get("state") != "open":
             calls = [{"name": c["name"], "args": c.get("args") or {}, "result": results.get(c["id"])} for c in e["data"].get("calls") or []]
-            out.append({"role": "aac", "text": e["text"], "time": e["time"], "by": e["by"],
+            out.append({"id": e["id"], "role": "aac", "text": e["text"], "time": e["time"], "by": e["by"],
                         **({"calls": calls} if calls else {}), **({"cut": True} if e.get("state") == "cut" else {})})
         elif e["kind"] == "error":
             out.append({"role": "aac", "text": e["text"], "time": e["time"], "error": True})

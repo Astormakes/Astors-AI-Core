@@ -7,6 +7,14 @@ const STYLE = `<style>
 .calls .call { margin: 4px 0 0 10px; } .calls pre { white-space: pre-wrap; word-break: break-word; margin: 2px 0 0 10px; font: inherit; opacity: .85; }
 .behind { padding: 4px 2px; }
 .toolline { align-self: flex-start; margin: 2px 0 2px 8px; }
+.bubble { position: relative; }
+.pen { position: absolute; bottom: -10px; right: 6px; border: none; background: var(--card-background-color); border-radius: 50%;
+  width: 22px; height: 22px; padding: 0; font-size: 12px; cursor: pointer; opacity: 0; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.bubble:hover .pen, .pen:focus { opacity: .9; } @media (hover: none) { .pen { opacity: .5; } }
+.bubble.editing { width: 80%; max-width: 80%; } .bubble.editing textarea { width: 100%; box-sizing: border-box; min-height: 3em; font: inherit; resize: vertical; }
+.editbar { display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px; }
+.ok { border: none; border-radius: 50%; width: 28px; height: 28px; cursor: pointer; background: #9e9e9e; color: #fff; font-size: 16px; }
+.ok:hover, .ok:focus { background: #43a047; }
 .plain { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; margin: 0; }
 .plain .tok { opacity: .45; } .plainhead { margin: 0 0 8px; }
 .plain .ans { color: var(--primary-color); }
@@ -22,13 +30,21 @@ class AacChatPage extends HTMLElement {
     this.addEventListener("keydown", (e) => {
       if (e.target.id === "input" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this._send(); }
     });
-    this.addEventListener("input", (e) => { if (e.target.id === "input") this.draft = e.target.value; }); // survives every redraw
+    this.addEventListener("input", (e) => {
+      if (e.target.id === "input") this.draft = e.target.value; // survives every redraw
+      if (e.target.id === "editbox" && this.editing) this.editing.text = e.target.value;
+    });
+    this.addEventListener("keydown", (e) => {
+      if (e.target.id !== "editbox") return;
+      if (e.key === "Escape") { this.editing = null; this.render(); }
+      else if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this._saveEdit(); }
+    });
   }
 
   async show() { // the panel set .card / .entry
     if (this.entry === "archive") { this.archived = await this.panel.ui("archived"); this._loaded = "archive"; this.render(); return; }
     if (this.entry !== this._loaded) {
-      this._loaded = this.entry; this.mode = ""; this.chat = null; this.live = ""; // nothing of the last chat stays
+      this._loaded = this.entry; this.mode = ""; this.chat = null; this.live = ""; this.editing = null; // nothing of the last chat stays
       if (this.entry) await this._get();
     }
     this.render();
@@ -90,7 +106,9 @@ class AacChatPage extends HTMLElement {
     const body = this.mode === "context" && this.chat ? `<div class="behind">${this.panel.contextView(this.chat.behind || {})}</div>`
       : this.mode === "text" && this.chat ? `<div class="behind">${this._plain()}</div>`
       : msgs.map((m) => (!m.text && m.calls?.length ? `<div class="toolline">${this._calls(m)}</div>` // it only called tools: a small line
-        : `<div class="bubble ${m.role === "user" ? "user" : "aac"} ${m.error ? "err" : ""}">${m.text ? md(m.text) : ""}${this._calls(m)}${m.cut ? '<div class="cut">stopped</div>' : ""}</div>`)).join("")
+        : this.editing?.id === m.id ? `<div class="bubble ${m.role === "user" ? "user" : "aac"} editing"><textarea id="editbox">${esc(this.editing.text)}</textarea>
+          <div class="editbar"><button class="small" data-editcancel>Cancel</button><button class="ok" data-editok title="${m.role === "user" ? "Send" : "Save"} (Enter)">✓</button></div></div>`
+        : `<div class="bubble ${m.role === "user" ? "user" : "aac"} ${m.error ? "err" : ""}">${m.text ? md(m.text) : ""}${this._calls(m)}${m.cut ? '<div class="cut">stopped</div>' : ""}${m.id && m.text && !m.error && !this.busy ? `<button class="pen" data-edit="${esc(m.id)}" title="Edit">✎</button>` : ""}</div>`)).join("")
         || `<div class="hint" style="margin:auto">${esc(card.title)}: ask anything.</div>`;
     const live = (this.busy || this.live) && !this.mode ? `<div class="bubble aac" id="live">${md(this.live || "…")}</div>` : "";
     const mode = (m, label, title) => `<button class="small" data-mode="${m}" title="${title}" ${this.mode === m ? "disabled" : ""}>${label}</button>`;
@@ -101,8 +119,9 @@ class AacChatPage extends HTMLElement {
       ${this.chat?.archived ? `<div class="composer"><span class="hint" style="flex:1">This chat is archived.</span><button id="restore">Restore</button></div>` : `<div class="composer"><textarea id="input" placeholder="Message AAC…" ${this.busy ? "disabled" : ""}>${esc(this.draft)}</textarea><button class="primary" id="send" ${this.busy ? "disabled" : ""}>Send</button></div>`}</div>`;
     const box = this.querySelector(".log");
     if (box && !this.mode) box.scrollTop = box.scrollHeight;
-    const input = this.querySelector("#input");
+    const input = this.querySelector("#editbox") || this.querySelector("#input");
     if (input && !this.busy) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+    if (this.querySelector("#editbox")) this.querySelector(".editing").scrollIntoView({ block: "nearest" }); // it stays where it was
   }
 
   async _send() {
@@ -123,8 +142,32 @@ class AacChatPage extends HTMLElement {
     this.render();
   }
 
+  async _saveEdit() { // the pencil's ✓: an answer only changes; a line of yours asks first: resend from there, or only the text
+    const ed = this.editing, m = (this.chat?.messages || []).find((x) => x.id === ed?.id), text = (ed?.text || "").trim();
+    if (!m || !text) return;
+    let resend = false;
+    if (m.role === "user") {
+      const r = await this.panel.dialog({ text: "Resend: what came after this line goes and the turn runs again from here.\nKeep the rest: only the text changes.",
+        buttons: [["cancel", "Cancel"], ["keep", "Keep the rest"], ["resend", "Resend", "primary"]] });
+      if (r.button === "cancel") return;
+      resend = r.button === "resend";
+    }
+    this.editing = null;
+    if (resend) { // as when sending: what came after goes at once, the answer grows
+      this.chat.messages = [...this.chat.messages.slice(0, this.chat.messages.indexOf(m)), { ...m, text }];
+      this.busy = true; this.live = ""; this.render();
+    }
+    try { await this.panel.ui("edit", { chat_id: this.entry, id: m.id, text, resend }); }
+    catch (err) { this.panel.alert(err.message || String(err)); }
+    this.busy = false; this.live = "";
+    await this._get(); this.render();
+  }
+
   async _click(e) {
     const t = e.target, d = t.dataset || {};
+    if (d.edit) { const m = this.chat.messages.find((x) => x.id === d.edit); this.editing = { id: d.edit, text: m?.text || "" }; return this.render(); }
+    if (d.editcancel !== undefined) { this.editing = null; return this.render(); }
+    if (d.editok !== undefined) return this._saveEdit();
     if (d.open) return this.panel.go(d.open);
     if (d.restore || d.delete) { // on the Archive page
       await this.panel.ui("nav_action", { entry: d.restore || d.delete, action: d.restore ? "restore" : "delete" });

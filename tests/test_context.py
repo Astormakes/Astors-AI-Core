@@ -94,3 +94,21 @@ async def test_plain_text_is_the_request_as_the_model_read_it(hass: HomeAssistan
     aioclient_mock.post(BASE_URL.removesuffix("/v1") + "/apply-template", status=404)
     read = await chat.ui_call("as_read", {"chat_id": chat_id})
     assert not read["template"] and read["text"].startswith("[system]\nBe kind.") and "[user]\nhello" in read["text"]
+
+
+async def test_the_pencil_edits_and_resends(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """An answer gets a new text only; a line of yours too (Keep the rest), or what came after it goes and the turn runs
+    again from there with the new text (Resend)."""
+    core = await setup_aac(hass, mock_entry)
+    chat = core.domain.cards["chat"]
+    asked = model_answers(aioclient_mock, reply("Paris."), reply("Lyon is second."), reply("Berlin."))
+    chat_id, _ = await chat.send("capital of France?")
+    await chat.send("and the second city?", chat_id)
+    shown = chat.get(chat_id)["messages"]
+    await chat.ui_call("edit", {"chat_id": chat_id, "id": shown[1]["id"], "text": "Paris, of course."})
+    await chat.ui_call("edit", {"chat_id": chat_id, "id": shown[2]["id"], "text": "and the third city?"})
+    assert [m["text"] for m in chat.get(chat_id)["messages"]] == ["capital of France?", "Paris, of course.", "and the third city?", "Lyon is second."]
+    result = await chat.ui_call("edit", {"chat_id": chat_id, "id": shown[0]["id"], "text": "capital of Germany?", "resend": True})
+    assert result == {"chat_id": chat_id, "answer": "Berlin."}
+    assert [m["text"] for m in chat.get(chat_id)["messages"]] == ["capital of Germany?", "Berlin."]  # what came after went
+    assert asked[-1]["messages"][-1]["content"].startswith("capital of Germany?")  # the turn ran again from there
