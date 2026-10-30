@@ -233,6 +233,7 @@ class AacPanel extends HTMLElement {
     });
     // one listener for what is drawn by others or redrawn often: the sidebar, a card page's ☰, the Audio page's meters
     this.shadowRoot.addEventListener("click", (e) => {
+      if (this.navMenu && !e.target.closest?.(".navacts.open, [data-navmore]")) { this.navMenu = null; this._redrawNav(); } // a click anywhere else closes ⋯
       if (e.target.id === "dlg") { this._closeDialog("cancel"); return; } // a click beside the dialog
       const dlg = e.target.closest?.("[data-dlg]");
       if (dlg) { this._closeDialog(dlg.dataset.dlg); return; }
