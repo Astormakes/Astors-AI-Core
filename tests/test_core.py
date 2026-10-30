@@ -130,7 +130,7 @@ async def test_stop_cuts_the_answer_and_stays_visible(hass: HomeAssistant, mock_
     kept = chat.get(chat_id)
     assert answer == "" and kept["messages"][-1]["cut"] and is_stop(kept["behind"]["events"][-1])
     _, answer = await chat.send("go on", chat_id)
-    assert answer == "Fine." and any(m["content"] == "[stopped]" or "[stopped]" in str(m["content"]) for m in asked[-1]["messages"])
+    assert answer == "Fine." and any("[cut off: stopped]" in str(m["content"]) for m in asked[-1]["messages"])
 
 
 def _shipped_version(stem: str) -> str:

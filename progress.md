@@ -3,7 +3,14 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-30) – 2.3.15, live on the owner's HA
+## Current state (2026-10-30) – 2.3.16, live on the owner's HA
+
+- **2026-10-30 (2.3.16): thinking, cut-offs, tokens** (owner). The client reads the server's thinking
+  (`reasoning_content`), why it stopped (`finish_reason`) and the tokens (`stream_options.include_usage`); the context
+  size once per model from `/props`. Thinking streams into the chat (a fold) and stays on the answer; a cut-off answer
+  says why (stopped, context full, Longest answer reached, the model failed), for the chat and for the model next turn;
+  Longest answer has no cap by default (the owner's essays were cut at 1024 with thinking on); tokens in the chat header
+  and Plain text; from 80 % a note to the model (Model card setting); a too-long chat gets a plain error.
 
 - **2026-10-30 (2.3.13–2.3.15):** Plain text of a turn no model read shows AAC's context itself (container by
   container, one entry per line, keys and brackets dim, answers blue). The Relay's help is written for people new to
@@ -507,3 +514,7 @@ pencil edit is missing" is item 11.
     looked at Behind the scenes). (a) A card should have only one name: the card's name is the name the model sees
     (today a function has its own tool name, e.g. the Time card's `text` renamed `get_time`). (b) Tools declared in the
     card in Python would fit better than the For models form (for a Relay: in its script).
+56. **Models page: context size per model** (owner, 2026-10-30). Show each model's context and let it be set with a
+    slider up to what the GPU can hold; the default close to the maximum. To find out first: how a llama-server router
+    loads a model with another context size (its presets set `--ctx-size`), and how to tell the GPU's maximum (VRAM,
+    the model's own limit). The chat already shows the tokens used of the context (2.3.16).

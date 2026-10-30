@@ -53,9 +53,11 @@ class Client:
             raise ModelUnreachable(str(err)) from err
 
     async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
-                   on_delta: Callable[[str], None] | None = None, **params: Any) -> dict[str, Any]:
-        """One answer, streamed (on_delta gets the text so far). Returns {"content", "tool_calls"}. A kept-alive
-        connection the server had already closed is tried once more on a fresh one (it fails before anything comes)."""
+                   on_delta: Callable[[str, str], None] | None = None, **params: Any) -> dict[str, Any]:
+        """One answer, streamed (on_delta gets the text and the thinking so far). Returns {"content", "tool_calls",
+        "thinking", "finish" (why it ended: stop, length, tool_calls …), "usage" ({prompt_tokens, completion_tokens,
+        total_tokens} when the server tells)}. A kept-alive connection the server had already closed is tried once
+        more on a fresh one (it fails before anything comes)."""
         try:
             return await self._chat(messages, tools, on_delta, **params)
         except ModelUnreachable as err:
@@ -78,11 +80,12 @@ class Client:
         return self.model["model"]
 
     async def _chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None,
-                    on_delta: Callable[[str], None] | None, **params: Any) -> dict[str, Any]:
-        body = {"model": await self.following(), "messages": messages, "stream": True, **params}
+                    on_delta: Callable[[str, str], None] | None, **params: Any) -> dict[str, Any]:
+        body = {"model": await self.following(), "messages": messages, "stream": True,
+                "stream_options": {"include_usage": True}, **params}
         if tools:
             body["tools"] = tools
-        content, calls = "", {}
+        content, thinking, calls, finish, usage = "", "", {}, None, None
         try:
             async with self.session.post(f"{self.base}/chat/completions", json=body, headers=self._headers(),
                                          timeout=aiohttp.ClientTimeout(total=600, sock_connect=4)) as resp:
@@ -90,22 +93,30 @@ class Client:
                     raise ModelError(f"HTTP {resp.status}: {(await resp.text())[:300]}")
                 if "event-stream" not in resp.headers.get("Content-Type", ""):  # the server ignored "stream"
                     data = await resp.json()
-                    msg = data["choices"][0]["message"]
+                    choice = data["choices"][0]
+                    msg = choice["message"]
                     if on_delta and msg.get("content"):
-                        on_delta(msg["content"])
-                    return {"content": msg.get("content") or "", "tool_calls": msg.get("tool_calls") or []}
+                        on_delta(msg["content"], msg.get("reasoning_content") or "")
+                    return {"content": msg.get("content") or "", "tool_calls": msg.get("tool_calls") or [],
+                            "thinking": msg.get("reasoning_content") or "", "finish": choice.get("finish_reason"),
+                            "usage": data.get("usage")}
                 async for raw in resp.content:
                     line = raw.decode("utf-8", "ignore").strip()
                     if not line.startswith("data:") or line == "data: [DONE]":
                         continue
                     try:
-                        delta = json.loads(line[5:])["choices"][0].get("delta") or {}
-                    except (ValueError, KeyError, IndexError):
+                        chunk = json.loads(line[5:])
+                    except ValueError:
                         continue
-                    if delta.get("content"):
-                        content += delta["content"]
+                    usage = chunk.get("usage") or usage  # the last piece tells the tokens
+                    choice = (chunk.get("choices") or [{}])[0]
+                    finish = choice.get("finish_reason") or finish
+                    delta = choice.get("delta") or {}
+                    if delta.get("content") or delta.get("reasoning_content"):
+                        content += delta.get("content") or ""
+                        thinking += delta.get("reasoning_content") or ""
                         if on_delta:
-                            on_delta(content)
+                            on_delta(content, thinking)
                     for tc in delta.get("tool_calls") or []:
                         call = calls.setdefault(tc.get("index", 0), {"id": tc.get("id"), "type": "function",
                                                                       "function": {"name": "", "arguments": ""}})
@@ -119,7 +130,16 @@ class Client:
             raise unreachable from err
         except aiohttp.ClientError as err:
             raise ModelError(str(err)) from err
-        return {"content": content, "tool_calls": [calls[i] for i in sorted(calls)]}
+        return {"content": content, "tool_calls": [calls[i] for i in sorted(calls)], "thinking": thinking, "finish": finish,
+                "usage": usage}
+
+    async def context_size(self) -> int | None:
+        """How many tokens the server's context holds for this model (llama-server tells); None when it does not."""
+        try:
+            props = await self._request("GET", "/props", seconds=5, params={"model": await self.following(), "autoload": "false"})
+        except ModelError:
+            return None
+        return ((props or {}).get("default_generation_settings") or {}).get("n_ctx") if isinstance(props, dict) else None
 
     # -------------------------------------------------- llama-server's router (one server, many models, see spec)
     @property

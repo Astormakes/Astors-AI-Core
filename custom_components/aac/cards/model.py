@@ -12,7 +12,7 @@ from typing import Any
 from custom_components.aac.api import (LOGGER, Card, Client, Context, ModelError, ModelUnreachable, entry, new_id, register, run,
                                       tool_spec)
 
-VERSION = "2.0.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 MAX_ROUNDS = 8  # model → tools → model … per turn
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
@@ -38,7 +38,7 @@ def conversation(context: Context, me: str, names: dict[str, str]) -> tuple[str,
         if kind == "answer" and by == me and m.get("state") != "open":
             calls = data.get("calls") or []
             mine |= {c["id"] for c in calls}
-            text = m["text"] + (" …[stopped]" if m.get("state") == "cut" else "")
+            text = m["text"] + (f" …[cut off: {data.get('cut') or 'stopped'}]" if m.get("state") == "cut" else "")
             chat.append({"role": "assistant", "content": text or None,
                          **({"tool_calls": [{"id": c["id"], "type": "function", "function": {
                              "name": c["name"], "arguments": json.dumps(c.get("args") or {})}} for c in calls]} if calls else {})})
@@ -76,7 +76,8 @@ class Model(Card):
     outputs = {"out": "text"}
     square = {"out"}
     uses_tools = True
-    tags = {"answer": "its answers (with the calls it made)", "stop": "it was stopped (its answer is cut off)",
+    tags = {"answer": "its answers (with the calls it made; its thinking in data.thinking; why one was cut off in data.cut)",
+            "stop": "it was stopped (its answer is cut off)", "context_full": "its note to the model that the context is nearly full",
             "error": "no answer came (no model available, a model failed); models never read these"}
     ports_help = {"in": "a context arrives: the model reads it and answers; a tool's result comes back here too (a stop "
                         "while it writes cuts the answer)",
@@ -86,7 +87,10 @@ class Model(Card):
     settings_schema = {
         "models": {"type": "modellist", "tag": "text", "title": "Models (in order)", "default": [], "help": "The list is run through from the top: a free model takes the context; a busy one queues it if its Queue is ticked, then the next is tried; the first that gets free takes it. Empty: every model with the tag, queued."},
         "temperature": {"type": "number", "title": "Temperature", "default": 0.7, "help": "0 = always the same, higher = more varied."},
-        "max_tokens": {"type": "number", "title": "Longest answer (tokens)", "default": 1024},
+        "max_tokens": {"type": "number", "title": "Longest answer (tokens)", "default": 0,
+                       "help": "0 or empty: no limit (only the model's context). A limit keeps answers short (voice); thinking counts too."},
+        "context_note": {"type": "bool", "title": "Tell the model when its context is nearly full", "default": True,
+                         "help": "From 80 % on, a short note is attached to the turn (visible in Context): keep it short, older parts may soon not fit."},
         "thinking": {"type": "bool", "title": "Thinking", "default": False, "help": "Let models that can, think first (slower)."},
     }
     functions = {
@@ -100,6 +104,8 @@ class Model(Card):
         self._stop: dict[str, Any] | None = None
         self._sent: asyncio.Future | None = None  # the newest snapshot on its way (they go out in order)
         self._upto: dict[str, int] = {}  # answer entry → how far its text has gone out
+        self._context_size: dict[str, int | None] = {}  # model → the tokens its context holds (the server tells)
+        self._used: dict[str, tuple[int, int]] = {}  # chat → (tokens used last time, context size)
 
     @property
     def busy(self) -> bool:
@@ -119,7 +125,7 @@ class Model(Card):
             if not self._task.cancelled():  # the whole chain is being cancelled, not a stop
                 raise
             if (last := context.last("answer")) and last["by"] == self.id:
-                last["state"] = "cut"
+                last["state"], last["data"]["cut"] = "cut", "stopped"
             stop = self._stop or entry(self.id, "signal", "stop", [self.tag("stop")])
             context.add(self.id, "signal", "stop", stop["tags"], **{**stop["data"], "done": True})  # history, no longer a running stop
         finally:
@@ -172,7 +178,7 @@ class Model(Card):
         specs = [tool_spec(t["name"], {"help": t["description"], "args": t["args"]}) for t in tools.values()]
         names = {c.id: c.name for c in self.domain.cards.values()}
         params = {"temperature": float(self.settings.get("temperature") or 0.7),
-                  "max_tokens": int(self.settings.get("max_tokens") or 1024)}
+                  **({"max_tokens": n} if (n := int(self.settings.get("max_tokens") or 0)) > 0 else {})}
         if not self.settings.get("thinking"):
             params["chat_template_kwargs"] = {"enable_thinking": False}
         pool = self.core.pool
@@ -185,6 +191,11 @@ class Model(Card):
         if not rounds:
             self._snapshot(context, step)  # under way: a chat shows the question at once (a spoken one too)
             await self._sent  # before the model is asked (only a few cards pass it on)
+        used = self._used.get(context.chat_id or context.origin or "")  # how full the context was last time
+        full = round(100 * used[0] / used[1]) if used and used[1] else 0
+        if self.settings.get("context_note", True) and not rounds:
+            context.put(self.id, "trailer", f"(This conversation fills {full} % of your context: keep answers short; older "
+                        "parts may soon not fit.)" if full >= 80 else "", "context_full")
         system, chat = conversation(context, self.id, names)
         payload = ([{"role": "system", "content": system}] if system else []) + chat
         reply, tried, dropped, failed = None, set(), False, ""
@@ -195,19 +206,23 @@ class Model(Card):
                     dropped = any(pool.usable(e["model"]) for e in left)
                     break
                 try:
-                    reply = await Client(self.hass, pool.get(model_id)).chat(
-                        payload, specs or None, on_delta=lambda t, a=answer: self._live(a, t, step), **params)
+                    client = Client(self.hass, pool.get(model_id))
+                    reply = await client.chat(payload, specs or None, on_delta=lambda t, th, a=answer: self._live(a, t, th, step), **params)
                     pool.mark_up(model_id)
+                    usage = await self._usage(context, client, model_id, reply)
                     context.request = {"model": model_id, "body": {"messages": payload, **({"tools": specs} if specs else {}), **params},
                                        "reply": {"content": reply["content"], "calls": [  # what it wrote
-                                           f"{c['function']['name']}({c['function']['arguments']})" for c in reply["tool_calls"]]}}
+                                           f"{c['function']['name']}({c['function']['arguments']})" for c in reply["tool_calls"]]},
+                                       **({"usage": usage} if usage else {})}
                     break
                 except ModelUnreachable:
                     pool.mark_down(model_id)
                     tried.add(model_id)
                 except ModelError as err:
                     LOGGER.warning("AAC: model %s failed: %s", model_id, err)
-                    failed = f"Error: the model failed ({err})."
+                    too_long = "context" in str(err).lower() and any(w in str(err).lower() for w in ("exceed", "too long", "n_ctx"))
+                    failed = ("Error: this chat is too long for the model's context. Start a new chat, or let fewer turns go "
+                              "along (the Chat card's setting)." if too_long else f"Error: the model failed ({err}).")
                     break
         if reply is None:
             if dropped:
@@ -215,12 +230,20 @@ class Model(Card):
             failed = failed or ("Error: every model was busy and none queues, so this was dropped." if dropped
                                 else "Error: no model was available.")
             if answer["text"]:  # it had begun: what came stays, cut off
-                answer["state"] = "cut"
+                answer["state"], answer["data"]["cut"] = "cut", "the model failed"
             else:
                 context.remove(answer)
             context.add(self.id, "error", failed, ["error"])  # shown and spoken, never read by a model
             return None
         answer["text"], answer["state"] = reply["content"].strip(), "closed"
+        if reply.get("thinking"):
+            answer["data"]["thinking"] = reply["thinking"].strip()
+        if reply.get("finish") == "length":  # it did not finish: why
+            u = (context.request or {}).get("usage") or {}
+            answer["state"] = "cut"
+            answer["data"]["cut"] = ("context full" if u.get("context") and u.get("total_tokens", 0) >= u["context"] - 32
+                                     else f"Longest answer reached ({params['max_tokens']} tokens)" if params.get("max_tokens")
+                                     else "length limit")
         if not reply["tool_calls"]:
             return None
         calls = []
@@ -242,9 +265,21 @@ class Model(Card):
             return [("out", pending[0]["card"])]
         return await self._round(context, step)  # only unknown tools: it hears so and tries again
 
-    def _live(self, answer: dict[str, Any], text: str, step) -> None:
+    async def _usage(self, context: Context, client: Client, model_id: str, reply: dict[str, Any]) -> dict[str, Any] | None:
+        """The tokens this request used, and how many the model's context holds (asked once per model)."""
+        if not (usage := reply.get("usage")):
+            return None
+        if model_id not in self._context_size:
+            self._context_size[model_id] = await client.context_size()
+        usage = {**usage, "context": self._context_size[model_id]}
+        self._used[context.chat_id or context.origin or ""] = (usage.get("total_tokens") or 0, usage["context"] or 0)
+        return usage
+
+    def _live(self, answer: dict[str, Any], text: str, thinking: str, step) -> None:
         answer["text"] = text
-        step.live(text)
+        if thinking:
+            answer["data"]["thinking"] = thinking
+        step.live(text, thinking)
         ends = [m.end() for m in SENTENCE.finditer(text)]
         if ends and ends[-1] > self._upto.get(answer["id"], 0):  # a sentence was finished: it goes out
             self._upto[answer["id"]] = ends[-1]
@@ -266,7 +301,8 @@ class Model(Card):
             names = {c.id: c.name for c in self.domain.cards.values()}
             system, chat = conversation(ask, self.id, names)
             payload = ([{"role": "system", "content": system}] if system else []) + chat
-            params = {"temperature": float(self.settings.get("temperature") or 0.7), "max_tokens": int(self.settings.get("max_tokens") or 1024)}
+            params = {"temperature": float(self.settings.get("temperature") or 0.7),
+                      **({"max_tokens": n} if (n := int(self.settings.get("max_tokens") or 0)) > 0 else {})}
             reply, _ = await run(self.core.pool, self.core.pool.entries(self.settings.get("models"), "text"),
                                  lambda model: Client(self.hass, model).chat(payload, **params))
             return reply["content"].strip() if reply else {"error": "no model answered"}

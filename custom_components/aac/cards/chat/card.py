@@ -16,7 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Client, Context, is_stop, new_id, register
 
-VERSION = "2.3.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.4.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NOT_WIRED = "Nothing is wired to this chat's output 'said': what you write goes nowhere."
@@ -142,7 +142,9 @@ class Chat(Card):
             return None
         context, last = self._context(chat), chat.get("last") or {}
         behind = {**context.summary(), "system": last.get("system", []), "tools": last.get("tools", [])}  # the newest turn's
-        return {**{k: v for k, v in chat.items() if k not in ("context", "last")}, "messages": shown(context), "behind": behind}
+        usage = (last.get("request") or {}).get("usage")  # the newest request's tokens, and how many fit
+        return {**{k: v for k, v in chat.items() if k not in ("context", "last")}, "messages": shown(context), "behind": behind,
+                **({"usage": usage} if usage else {})}
 
     async def as_read(self, chat_id: str) -> dict[str, Any]:
         """The chat's newest request as the model read it: the model server writes it with the model's chat template
@@ -159,7 +161,7 @@ class Chat(Card):
         text = await Client(self.hass, model).template(request["body"]) if model else None
         answers = [m["content"] for m in request["body"].get("messages") or [] if m["role"] == "assistant" and m.get("content")]
         return {"text": text or plain(request["body"]), "template": bool(text), "model": model.get("name") or request["model"],
-                "reply": request.get("reply"), "answers": answers}
+                "reply": request.get("reply"), "answers": answers, "usage": request.get("usage")}
 
     def _context(self, chat: dict[str, Any]) -> Context:
         """What a chat holds, as a context (a copy)."""
@@ -401,11 +403,12 @@ def shown(context: Context) -> list[dict[str, Any]]:
         elif e["kind"] == "answer" and e.get("state") != "open":
             calls = [{"name": c["name"], "args": c.get("args") or {}, "result": results.get(c["id"])} for c in e["data"].get("calls") or []]
             out.append({"id": e["id"], "role": "aac", "text": e["text"], "time": e["time"], "by": e["by"],
-                        **({"calls": calls} if calls else {}), **({"cut": True} if e.get("state") == "cut" else {})})
+                        **({"calls": calls} if calls else {}), **({"thinking": e["data"]["thinking"]} if e["data"].get("thinking") else {}),
+                        **({"cut": e["data"].get("cut") or "stopped"} if e.get("state") == "cut" else {})})
         elif e["kind"] == "error":
             out.append({"role": "aac", "text": e["text"], "time": e["time"], "error": True})
         elif is_stop(e) and out and out[-1]["role"] == "aac":
-            out[-1]["cut"] = True
+            out[-1]["cut"] = out[-1].get("cut") or "stopped"
     return out
 
 

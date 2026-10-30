@@ -7,6 +7,8 @@ const STYLE = `<style>
 .calls .call { margin: 4px 0 0 10px; } .calls pre { white-space: pre-wrap; word-break: break-word; margin: 2px 0 0 10px; font: inherit; opacity: .85; }
 .behind { padding: 4px 2px; }
 .toolline { align-self: flex-start; margin: 2px 0 2px 8px; }
+.think { font-size: 12px; opacity: .75; margin-bottom: 4px; } .think summary { cursor: pointer; }
+.thinktext { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0 10px; font-style: italic; max-height: 300px; overflow: auto; }
 .bubble { position: relative; }
 .pen { position: absolute; bottom: -10px; right: 6px; border: none; background: var(--card-background-color); border-radius: 50%;
   width: 22px; height: 22px; padding: 0; font-size: 12px; cursor: pointer; opacity: 0; box-shadow: 0 1px 3px rgba(0,0,0,.25);
@@ -27,7 +29,7 @@ const STYLE = `<style>
 class AacChatPage extends HTMLElement {
   constructor() {
     super();
-    this.chat = null; this.busy = false; this.live = ""; this.mode = ""; this.draft = "";
+    this.chat = null; this.busy = false; this.live = ""; this.think = ""; this.mode = ""; this.draft = "";
     this.addEventListener("click", (e) => this._click(e));
     this.addEventListener("keydown", (e) => {
       if (e.target.id === "input" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this._send(); }
@@ -46,7 +48,7 @@ class AacChatPage extends HTMLElement {
   async show() { // the panel set .card / .entry
     if (this.entry === "archive") { this.archived = await this.panel.ui("archived"); this._loaded = "archive"; this.render(); return; }
     if (this.entry !== this._loaded) {
-      this._loaded = this.entry; this.mode = ""; this.chat = null; this.live = ""; this.editing = null; // nothing of the last chat stays
+      this._loaded = this.entry; this.mode = ""; this.chat = null; this.live = ""; this.think = ""; this.editing = null; // nothing of the last chat stays
       if (this.entry) await this._get();
     }
     this.render();
@@ -91,17 +93,30 @@ class AacChatPage extends HTMLElement {
     html += marked(text.slice(at));
     const rep = r.reply, wrote = rep ? [rep.content, ...(rep.calls || []).map((c) => `[calls ${c}]`)].filter(Boolean).join("\n") : "";
     const reply = rep ? `<div class="answered"><b>The model answered:</b><pre class="wrote">${esc(wrote || "(nothing)")}</pre></div>` : "";
-    return `<p class="hint plainhead">${r.template ? `As ${esc(r.model)} read it: the model server wrote it with the model's own template (dim: its markers; blue: what the model wrote earlier).` : `The request as sent to ${esc(r.model)} (its server cannot show the model's template).`}</p><pre class="plain">${html}</pre>${reply}`;
+    return `<p class="hint plainhead">${r.template ? `As ${esc(r.model)} read it: the model server wrote it with the model's own template (dim: its markers; blue: what the model wrote earlier). ${this._tokens(r.usage)}` : `The request as sent to ${esc(r.model)} (its server cannot show the model's template).`}</p><pre class="plain">${html}</pre>${reply}`;
   }
 
   event(ev) { // what the core tells about this card
     if (ev.what === "delta" && (this.busy || (this.entry && ev.chat_id === this.entry))) { // typed here, or spoken into this chat
-      this.live = ev.text;
+      this.live = ev.text; this.think = ev.thinking || "";
       const box = this.querySelector("#live");
-      if (box) box.innerHTML = this.panel.md(ev.text); else if (!this.busy) this.render();
+      if (box) box.innerHTML = this._liveHtml(); else if (!this.busy) this.render();
     } else if (ev.what === "chat" && this.entry && !this.busy && (!ev.chat_id || ev.chat_id === this.entry)) {
-      clearTimeout(this._t); this._t = setTimeout(async () => { await this._get(); this.live = ""; this.render(); }, 150);
+      clearTimeout(this._t); this._t = setTimeout(async () => { await this._get(); this.live = ""; this.think = ""; this.render(); }, 150);
     }
+  }
+
+  _thought(text, live) { // what the model thought: small and folded (open while it is still thinking)
+    if (!text) return "";
+    return `<details class="think" ${live ? "open" : ""}><summary>💭 ${live ? "thinking…" : "thought"}</summary><div class="thinktext">${this.panel.esc(text)}</div></details>`;
+  }
+
+  _liveHtml() { return `${this._thought(this.think, !this.live)}${this.panel.md(this.live || (this.think ? "" : "…"))}`; }
+
+  _tokens(u) { // the newest request's tokens, of what the model's context holds
+    if (!u?.total_tokens) return "";
+    const f = (n) => Number(n).toLocaleString();
+    return `<span class="hint" title="Tokens of the newest request (read ${f(u.prompt_tokens || 0)}, written ${f(u.completion_tokens || 0)}) / what the model's context holds">${f(u.total_tokens)}${u.context ? ` / ${f(u.context)}` : ""} tokens</span>`;
   }
 
   _calls(m) { // the tools an answer called, small; unfolds to what was sent and what came back
@@ -120,12 +135,12 @@ class AacChatPage extends HTMLElement {
       : msgs.map((m) => (!m.text && m.calls?.length ? `<div class="toolline">${this._calls(m)}</div>` // it only called tools: a small line
         : this.editing && m.id && this.editing.id === m.id ? `<div class="bubble ${m.role === "user" ? "user" : "aac"} editing"><textarea id="editbox">${esc(this.editing.text)}</textarea>
           <div class="editbar"><button class="small" data-editcancel>Cancel</button><button class="ok" data-editok title="${m.role === "user" ? "Send" : "Save"} (Enter)">✓</button></div></div>`
-        : `<div class="bubble ${m.role === "user" ? "user" : "aac"} ${m.error ? "err" : ""}">${m.text ? md(m.text) : ""}${this._calls(m)}${m.cut ? '<div class="cut">stopped</div>' : ""}${m.id && m.text && !m.error && !this.busy ? `<button class="pen" data-edit="${esc(m.id)}" title="Edit">✎</button>` : ""}</div>`)).join("")
+        : `<div class="bubble ${m.role === "user" ? "user" : "aac"} ${m.error ? "err" : ""}">${this._thought(m.thinking, false)}${m.text ? md(m.text) : ""}${this._calls(m)}${m.cut ? `<div class="cut">${m.cut === "stopped" ? "stopped" : `cut off: ${esc(m.cut)}`}</div>` : ""}${m.id && m.text && !m.error && !this.busy ? `<button class="pen" data-edit="${esc(m.id)}" title="Edit">✎</button>` : ""}</div>`)).join("")
         || `<div class="hint" style="margin:auto">${esc(card.title)}: ask anything.</div>`;
-    const live = (this.busy || this.live) && !this.mode ? `<div class="bubble aac" id="live">${md(this.live || "…")}</div>` : "";
+    const live = (this.busy || this.live || this.think) && !this.mode ? `<div class="bubble aac" id="live">${this._liveHtml()}</div>` : "";
     const mode = (m, label, title) => `<button class="small" data-mode="${m}" title="${title}" ${this.mode === m ? "disabled" : ""}>${label}</button>`;
     const modes = this.chat ? `${mode("", "Chat", "The conversation")}${mode("context", "Context", "The newest turn's context, in sections: the system parts with the card each came from, every message with what was attached, the tools it called and what came back, the tools it had")}${mode("text", "Plain text", "The newest request exactly as the model read it")}<button class="small danger" id="delchat">Delete</button>` : "";
-    this.innerHTML = `${STYLE}<div class="chat">${header(this.chat?.title || `New chat · ${card.title}`, `${modes}<button class="small" id="chatstop" title="Stop: sends this chat's context with a stop; a model still writing cuts its answer">Stop</button>`)}
+    this.innerHTML = `${STYLE}<div class="chat">${header(this.chat?.title || `New chat · ${card.title}`, `${this._tokens(this.chat?.usage)}${modes}<button class="small" id="chatstop" title="Stop: sends this chat's context with a stop; a model still writing cuts its answer">Stop</button>`)}
       <div class="log">${body}${live}</div>
       ${(this.panel.failing?.() || []).length ? `<div class="warnline">Not answering: ${esc(this.panel.failing().join(", "))} (Settings → Models)</div>` : ""}
       ${this.chat?.archived ? `<div class="composer"><span class="hint" style="flex:1">This chat is archived.</span><button id="restore">Restore</button></div>` : `<div class="composer"><textarea id="input" placeholder="Message AAC…" ${this.busy ? "disabled" : ""}>${esc(this.draft)}</textarea><button class="primary" id="send" ${this.busy ? "disabled" : ""}>Send</button></div>`}</div>`;
@@ -139,7 +154,7 @@ class AacChatPage extends HTMLElement {
   async _send() {
     const box = this.querySelector("#input"), text = box?.value.trim();
     if (!text || this.busy) return;
-    this.busy = true; this.live = ""; this.draft = "";
+    this.busy = true; this.live = ""; this.think = ""; this.draft = "";
     this.chat = this.chat || { title: text.slice(0, 48), messages: [] };
     this.chat.messages = [...this.chat.messages, { role: "user", text }];
     this.render();
@@ -150,7 +165,7 @@ class AacChatPage extends HTMLElement {
       this.entry = r.chat_id;
       await this._get();
     } catch (e) { this.busy = false; this.chat.messages.push({ role: "aac", text: e.message || String(e), error: true }); }
-    this.live = ""; // the finished answer is in the chat now: the growing one goes
+    this.live = ""; this.think = ""; // the finished answer is in the chat now: the growing one goes
     this.render();
   }
 
@@ -167,11 +182,11 @@ class AacChatPage extends HTMLElement {
     this.editing = null;
     if (resend) { // as when sending: what came after goes at once, the answer grows
       this.chat.messages = [...this.chat.messages.slice(0, this.chat.messages.indexOf(m)), { ...m, text }];
-      this.busy = true; this.live = ""; this.render();
+      this.busy = true; this.live = ""; this.think = ""; this.render();
     }
     try { await this.panel.ui("edit", { chat_id: this.entry, id: m.id, text, resend }); }
     catch (err) { this.panel.alert(err.message || String(err)); }
-    this.busy = false; this.live = "";
+    this.busy = false; this.live = ""; this.think = "";
     await this._get(); this.render();
   }
 

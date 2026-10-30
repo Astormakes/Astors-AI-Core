@@ -56,10 +56,10 @@ class Step:
         snap.progress = True
         return self.flow.out(self.card, snap, picks)
 
-    def live(self, text: str) -> None:
-        """Text that is still growing (a model writing): open panels show it."""
+    def live(self, text: str, thinking: str = "") -> None:
+        """Text that is still growing (a model writing; its thinking too): open panels show it."""
         self.flow.domain.core.notify("delta", domain=self.flow.domain.id, chat_id=self.context.chat_id or self.context.id,
-                                     card=self.context.origin, text=text)
+                                     card=self.context.origin, text=text, thinking=thinking)
 
 
 class Flow:

@@ -87,7 +87,7 @@ async def test_plain_text_is_the_request_as_the_model_read_it(hass: HomeAssistan
     chat_id, _ = await chat.send("hello")
     aioclient_mock.post(BASE_URL.removesuffix("/v1") + "/apply-template", json={"prompt": "<|turn>user\nhello<turn|>"})
     read = await chat.ui_call("as_read", {"chat_id": chat_id})
-    assert read == {"text": "<|turn>user\nhello<turn|>", "template": True, "model": "Big", "reply": {"content": "Hi.", "calls": []}, "answers": []}
+    assert read == {"text": "<|turn>user\nhello<turn|>", "template": True, "model": "Big", "reply": {"content": "Hi.", "calls": []}, "answers": [], "usage": None}
     sent = aioclient_mock.mock_calls[-1][2]
     assert sent["messages"][-1]["content"].startswith("hello") and sent["model"] == "big"  # the request as it was sent
     aioclient_mock.clear_requests()
@@ -133,3 +133,29 @@ async def test_a_chat_without_a_model(hass: HomeAssistant, mock_entry):
     read = await chat.ui_call("as_read", {"chat_id": chat_id})
     held = read["context"]["messages"]  # AAC's context itself
     assert read["raw"] and held[0]["text"] == "ping" and held[1]["data"]["calls"][0]["name"] == "post"
+
+
+async def test_cut_off_answers_say_why_and_the_context_fills(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """An answer the server stopped early is marked with the reason (context full, or the Longest answer); its thinking is
+    kept; the chat knows the tokens; when the context is nearly full the model gets a note attached to the turn."""
+    from .conftest import BASE_URL
+
+    def long(text, total):
+        return {"choices": [{"message": {"role": "assistant", "content": text, "reasoning_content": "Let me think."},
+                             "finish_reason": "length"}], "usage": {"prompt_tokens": total - 20, "completion_tokens": 20, "total_tokens": total}}
+    aioclient_mock.get(BASE_URL.removesuffix("/v1") + "/props", json={"default_generation_settings": {"n_ctx": 170}})
+    asked = model_answers(aioclient_mock, long("The history of FPV", 150), reply("Short."), long("Part one", 60))
+    core = await setup_aac(hass, mock_entry)
+    chat = core.domain.cards["chat"]
+    chat_id, _ = await chat.send("tell me everything")
+    first = chat.get(chat_id)
+    assert first["messages"][-1]["cut"] == "context full" and first["messages"][-1]["thinking"] == "Let me think."
+    assert first["usage"]["total_tokens"] == 150 and first["usage"]["context"] == 170
+    assert "max_tokens" not in asked[0]  # no cap unless set
+    await chat.send("short please", chat_id)
+    last_user = asked[-1]["messages"][-1]["content"]
+    assert "fills 88 % of your context" in last_user  # the note, attached to the turn
+    assert "[cut off: context full]" in str(asked[-1]["messages"])  # the model reads why its answer ended
+    await core.domain.update_card("model", settings={"max_tokens": 20})
+    other, _ = await chat.send("again")
+    assert chat.get(other)["messages"][-1]["cut"] == "Longest answer reached (20 tokens)"
