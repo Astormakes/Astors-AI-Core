@@ -7,7 +7,7 @@ const py = (s) => (/\n/.test(s) && !/"""|\\/.test(s) && !s.endsWith('"') ? `"""$
 const KEYWORDS = ["def", "if", "elif", "else", "for", "in", "not", "and", "or", "is", "return", "break", "continue", "pass", "True", "False", "None"];
 const GLOBALS = [
   ["now()", "the time now: now().hour, f\"{now():%H:%M}\""], ["states(\"\")", "a Home Assistant state"], ["state_attr(\"\", \"\")", "an attribute of an entity"],
-  ["is_state(\"\", \"on\")", "True when the entity is in that state"], ["stop()", "sends stop"], ["output(\"\")", "the context goes to this output"],
+  ["is_state(\"\", \"on\")", "True when the entity is in that state"], ["stop()", "sends stop"], ["output(\"\")", "the context leaves only at this output (instead of out)"],
   ["signal(\"\")", "adds a signal entry"], ["between(e.text, \"\", \"\")", "the part between two texts"], ["print()", "shows under Last run"],
   ["context", "the whole context"], ["audio", "when AAC last spoke"], ["len()", "how long"], ["str()", "as text"], ["int()", "as a whole number"],
   ["any(… for x in …)", "True when one is"], ["re.search(r\"\", e.text, re.I)", "a pattern"], ["re.sub(r\"\", \"\", e.text)", "replace a pattern"],
@@ -19,9 +19,9 @@ const TEXT = [["replace(\"\", \"\")", "every a becomes b"], ["strip()", "spaces 
   ["split(\",\")", "a list of the parts"], ["find(\"\")", "where it is (-1: not there)"], ["count(\"\")", "how often"]];
 const CONTEXT = [["text", "the whole context as one text"], ["entries", "every entry"], ["find(\"*.said\")", "the newest entry with a tag"], ["find_all(\"*.said\")", "every entry with a tag"]];
 const SNIPPETS = [
-  ["@on", '@on("${tag}")\ndef ${name}(e):\n    ', "work on the entries with a tag"],
-  ["@new", '@new("${name}")\ndef ${name}(e):\n    e.text = """"""', "a text of its own at the start (system prompt)"],
-  ["@new end", '@new("${name}", at="end", replace=False)\ndef ${name}(e):\n    e.text = ""', "a text after the turn, read last"],
+  ["@on", '@on("${tag}")\ndef ${name}(e):\n    ', "a block that runs when an entry with that tag passes"],
+  ["@new", '@new("${name}")\ndef ${name}(e):\n    e.text = """"""', "a text of its own, in the system prompt"],
+  ["@new end", '@new("${name}", at="end", replace=False)\ndef ${name}(e):\n    e.text = ""', "a text attached after the newest thing said"],
   ["@on context", '@on("context")\ndef ${name}(context):\n    ', "once with the whole context"],
 ];
 const TESTS = { contains: "contains", is: "is exactly", starts: "starts with", ends: "ends with", always: "always" };
@@ -367,7 +367,12 @@ class AacRelayScript extends HTMLElement {
     const ins = (s) => `<code data-ins="${esc(s)}" title="Click: put it in the code">${esc(s)}</code>`;
     const tools = (this.panel.card()?.tools || []).map((id) => this._cards().find((c) => c.id === id)).filter(Boolean);
     const example = `@new("charter")\ndef charter(e):\n    e.text = """You are AAC, a helpful assistant."""\n\n@on("*.said")\ndef clean(e):\n    e.text = e.text.replace("computer", "").strip()\n    if e.text.lower().startswith("stop"):\n        stop()\n\n@new("time", at="end", replace=False)\ndef time(e):\n    e.text = f"It is {now():%H:%M}."`;
-    return `<p class="hint">Python: write <b>@on("tag")</b> above a <b>def</b> to work on the entries with that tag, or <b>@new("name")</b> for a text of its own. Words without brackets or quotes are variables. Click a name to put it in the code.</p>
+    return `<div class="note"><b>How a script works</b> (Python; no experience needed)<br>
+      • A script is made of <b>blocks</b>. A block starts with a line with <b>@</b> (when it runs), then <b>def name(e):</b>, then the lines it does, each moved in by 4 spaces.<br>
+      • <b>@on("tag")</b>: the block runs when an entry with that tag passes through the Relay. <b>e</b> is that entry: <b>e.text = "…"</b> changes its text.<br>
+      • <b>@new("name")</b>: the block writes a text of the Relay's own. Fill <b>e.text</b>.<br>
+      • The context then leaves at <b>out</b>. <b>output("x")</b> sends it out at <b>x</b> instead (the card gets that output).<br>
+      • Text goes in quotes; <b>#</b> starts a note that does not run. Click any name below to put it in the code; the Simple view writes code from forms.</div>
       <b>Example</b><pre class="ex">${esc(example)}</pre>
       <div class="note"><b>Speed:</b> the model server keeps what it has already read (its cache). A change near the start or the middle of the context (the system prompt, earlier turns) makes it read everything from there again: answers take longer. Change texts at the end (the newest turn, at="end"); a text at the start is replaced in place and stays fast as long as it stays the same.</div>
       <div class="note"><b>Streams:</b> entries no block works on pass at once, piece by piece. An entry a block works on is held back until its card closes it; then the block runs once. live=True runs it on every piece instead (a stop word mid-sentence).</div>

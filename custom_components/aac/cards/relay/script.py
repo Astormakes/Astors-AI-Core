@@ -40,25 +40,36 @@ MISSING = {"id": "", "by": "", "kind": "", "text": "", "tags": [], "data": {}, "
 
 # what the ? panel and models read: (group, signature, what it does, example)
 REFERENCE = [
-    ("Blocks", '@on("chat.said")', "Runs when an entry with this tag is closed (finished). `e` is that entry.",
-     '@on("chat.said")\ndef clean(e):\n    e.text = e.text.replace("computer", "")'),
-    ("Blocks", '@on("*.said")', "* is any card: every card's said. Several tags: @on(\"chat.said\", \"ears.heard\").", ""),
-    ("Blocks", '@on("chat.said", which="first")', "Which entry: \"last\" (the newest, default), \"first\" or \"all\".", ""),
-    ("Blocks", '@on("*", kind="said")', "Only entries of a kind: system, said, answer, result, note, trailer.", ""),
-    ("Blocks", '@on("*.heard", live=True)', "Runs on every piece while the entry still grows (a stop word mid-sentence). "
-     "Without live, an entry it works on is held back until it is closed.", ""),
-    ("Blocks", '@on("context")', "Runs once with the whole context (waits until everything is closed).", ""),
-    ("Blocks", '@new("charter")', "Makes this card's own entry (tag <card>.charter): a part of the system prompt. "
-     "Replaced in place each time, so the model server's cache keeps working.",
-     '@new("charter")\ndef charter(e):\n    e.text = """You are AAC."""'),
-    ("Blocks", '@new("time", at="end")', "Attached to the newest thing said, after it (what matters for this turn). "
-     "A new one each turn (replace=True: only one, on the newest).",
-     '@new("time", at="end")\ndef time(e):\n    e.text = f"It is {now():%H:%M}."'),
-    ("Blocks", '@new("room", before="chat.said")', "Attached just before (or after=) the newest entry with that tag.", ""),
-    ("Entry", "e.text", "Its text. Set it to change it: e.text = \"…\"", ""),
+    ("Basics", "def name(e):", "A block: the lines under it that are moved in (4 spaces) belong to it. It does nothing by itself: the line "
+     "with @ right above it says when it runs. The name is only for you; e is what it works on.",
+     '@on("chat.said")\ndef shout(e):\n    e.text = e.text.upper()'),
+    ("Basics", "if … :", "Only when it is true, the moved-in lines under it run (elif: else if, else: otherwise).",
+     'if "stop" in e.text.lower():\n    stop()\nelse:\n    print("no stop")'),
+    ("Basics", '"text"', "Text goes in quotes. Long text over several lines: three quotes \"\"\"…\"\"\". f\"It is {now():%H:%M}\" "
+     "puts values into a text.", ""),
+    ("Basics", "x = 5   x == 5", "= gives something a name (x is 5 from now on); == asks (is x 5?).", ""),
+    ("Basics", "for x in list:", "The moved-in lines run once for each item.", 'for word in ["computer", "assistent"]:\n    if word in e.text.lower():\n        output("yes")'),
+    ("Basics", "# a note", "Everything after # is a note for you; it does not run.", ""),
+    ("Blocks", '@on("chat.said")', "Runs the block when an entry with this tag passes through the Relay (once it is finished). "
+     "e is that entry.", '@on("chat.said")\ndef clean(e):\n    e.text = e.text.replace("computer", "")'),
+    ("Blocks", '@on("*.said")', "* means any card: everyone's said. Several tags: @on(\"chat.said\", \"ears.heard\").", ""),
+    ("Blocks", '@on("chat.said", which="all")', "Which matching entry: \"last\" (the newest, if you leave it out), \"first\" or "
+     "\"all\" (the block runs once for each).", ""),
+    ("Blocks", '@on("*", kind="said")', "Only entries of one kind: said (what someone said), answer (a model's), result (a "
+     "tool's), system (the system prompt), note / trailer (attached before / after a message).", ""),
+    ("Blocks", '@on("*.heard", live=True)', "Runs on every piece while the entry is still being written (a stop word in the "
+     "middle of a sentence). Without it the Relay waits until the entry is finished.", ""),
+    ("Blocks", '@on("context")', "Runs once with the whole context instead of one entry.", ""),
+    ("Blocks", '@new("charter")', "Writes a text of this Relay's own: set e.text. It becomes part of the system prompt (what "
+     "a model reads first), replaced in place each turn so the model server stays fast. The name in quotes is its tag "
+     "and the name of its function for models (For models).", '@new("charter")\ndef charter(e):\n    e.text = """You are AAC."""'),
+    ("Blocks", '@new("time", at="end")', "Attached after the newest thing said: what matters for this turn. A new one each "
+     "turn; replace=True keeps only one, on the newest.", '@new("time", at="end")\ndef time(e):\n    e.text = f"It is {now():%H:%M}."'),
+    ("Blocks", '@new("room", before="chat.said")', "Attached right before (or after=) the newest entry with that tag.", ""),
+    ("Entry", "e.text", "Its text. Change it with e.text = \"…\"", ""),
     ("Entry", "e.tags", "Its tags, e.g. [\"chat.said\"]: if \"user.urgent\" in e.tags:", ""),
-    ("Entry", "e.kind", "system (the system prompt), said, answer, result (a tool's), note, trailer (attached to a "
-     "message, before / after it).", ""),
+    ("Entry", "e.kind", "What it is: said, answer, result, system, note, trailer.", ""),
+    ("Entry", "e.by", "The card that wrote it (its id).", ""),
     ("Entry", "e.calls", "An answer's tool calls: [{name, args}] (empty for others).", ""),
     ("Entry", "e.data", "What the card that wrote it added (e.g. the satellite: e.data[\"mic\"]).", ""),
     ("Entry", "e.add_tag(\"urgent\")", "Adds a tag (without a dot it becomes user.urgent).", ""),
@@ -78,18 +89,21 @@ REFERENCE = [
     ("Text", 'between(text, "from", "to")', "The part after \"from\" and before \"to\" (empty \"\": from the start / to the end).",
      'between("say: hi!", ": ", "!") → "hi"'),
     ("Text", "len(text)", "How many characters (or how many items in a list).", ""),
-    ("Text", 'f"It is {now():%H:%M}"', "A text with values in { }.", ""),
     ("Text", 're.search(r"\\bstop\\b", text, re.I)', "A pattern (regular expression); re.sub(pattern, new, text) replaces.", ""),
+    ("Actions", 'output("night")', "Picks the way out. The card gets an output called night (it appears on the card as soon "
+     "as the script uses it). When this line runs, the context leaves only there, to the cards wired from night, not at "
+     "out. When it does not run, the context leaves at out as usual. Nothing wired there: the context ends.",
+     '@on("*", kind="said")\ndef wake_word(e):\n    if "computer" in e.text.lower():\n        output("yes")   # to the cards wired from yes\n    # otherwise: to out'),
     ("Actions", "stop()", "Sends stop: every card lets go of what it holds.", ""),
-    ("Actions", 'output("night")', "The context goes to this output (it appears on the card). Not called: to out.", ""),
-    ("Actions", 'signal("done")', "Adds a signal entry (user.done) that other cards can pick up.", ""),
-    ("Actions", 'lists.add_items(list="Shopping", items=[e.text])', "Calls a function of a card wired from this Relay and back.", ""),
+    ("Actions", 'signal("done")', "Adds a signal (user.done) other cards can react to; never sent to a model.", ""),
+    ("Actions", 'lists.add_items(list="Shopping", items=[e.text])', "Calls a function of a card wired from this Relay and "
+     "back into it (the card's id, a dot, the function). The call travels along the wires; the script waits for the "
+     "result.", ""),
     ("Actions", 'print("…")', "Shows under Last run (for checking a script).", ""),
     ("Values", "now()", "The time now: now().hour, f\"{now():%A %H:%M}\".", ""),
     ("Values", 'states("sensor.x")', "A Home Assistant state (state_attr(id, \"name\"), is_state(id, \"on\")).", ""),
     ("Values", "lists.total", "A card's value (each card lists its values).", ""),
     ("Values", "audio.last.seconds", "When AAC last spoke (audio.satellites[id] per satellite).", ""),
-    ("Values", "x = \"…\"", "Your own variable: any word without brackets or quotes.", ""),
 ]
 
 

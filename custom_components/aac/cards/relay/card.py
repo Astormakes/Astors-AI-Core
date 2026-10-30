@@ -18,7 +18,7 @@ from custom_components.aac.api import LOGGER, Card, Context, new_id, register
 sys.modules.pop(f"{__name__}.script", None)  # a newer card file brings a newer script.py
 from .script import REFERENCE, Run, Script, check, reference_text  # noqa: E402
 
-VERSION = "2.2.0"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
+VERSION = "2.2.1"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
 
 KEEP_TURNS = 20  # turns whose side effects (stop, calls) are remembered, so a snapshot and the finished turn do them once
 WAIT = 20  # seconds a script may run
@@ -34,7 +34,7 @@ class Relay(Card):
     uses_tools = True
     help = ("Passes the context on. Its script (Python) adds texts (the system prompt, the time after the turn …) and "
             "changes, checks and routes what passes: @new(\"name\") makes its own entry, @on(\"tag\") works on entries "
-            "with a tag, output(\"x\") picks an output, stop() stops. With a dotted wire into 'reads' it starts from "
+            "with a tag, output(\"x\") sends the context out at x instead of out, stop() stops. With a dotted wire into 'reads' it starts from "
             "what it reads (e.g. a chat's conversation) and puts the arriving lines on top.")
     inputs = {"in": "text", "reads": "read"}
     ports_help = {"in": "a context arrives: the script runs",
