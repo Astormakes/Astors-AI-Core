@@ -87,7 +87,7 @@ async def test_plain_text_is_the_request_as_the_model_read_it(hass: HomeAssistan
     chat_id, _ = await chat.send("hello")
     aioclient_mock.post(BASE_URL.removesuffix("/v1") + "/apply-template", json={"prompt": "<|turn>user\nhello<turn|>"})
     read = await chat.ui_call("as_read", {"chat_id": chat_id})
-    assert read == {"text": "<|turn>user\nhello<turn|>", "template": True, "model": "Big", "reply": {"content": "Hi.", "calls": []}}
+    assert read == {"text": "<|turn>user\nhello<turn|>", "template": True, "model": "Big", "reply": {"content": "Hi.", "calls": []}, "answers": []}
     sent = aioclient_mock.mock_calls[-1][2]
     assert sent["messages"][-1]["content"].startswith("hello") and sent["model"] == "big"  # the request as it was sent
     aioclient_mock.clear_requests()
