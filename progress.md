@@ -435,8 +435,10 @@ pencil edit is missing" is item 11.
 33. **Nodes page: lit wires wrong.** (2.3.0: tool calls travel along the wires now, snapshots no longer go through Schedule; check again live) The lit wires do not seem right: a question that makes Gemma search the web
     reliably ("lithium is used in many antidepressant medications, how does it work…") always lights the way to
     Schedule and Chat.
-34. **Nodes page: drag several selected cards.** With several cards selected, dragging one moves only that one, not
+34. **Nodes page: select and move several cards.** With several cards selected, dragging one moves only that one, not
     all selected.
+    Owner, 2026-10-30: box select (drag a frame on the empty grid), Ctrl+click to add or remove cards from the
+    selection, and drag and drop the whole selection at once.
 35. **Nodes page: overlapping cards.** Cards can be placed overlapping; they are only moved apart when a card near
     another is moved. The "too close" check must happen consistently.
 36. **Nodes page: snap while dragging.** Snapping to columns only happens on release; while dragging, cards still
