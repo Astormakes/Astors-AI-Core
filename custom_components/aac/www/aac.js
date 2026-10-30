@@ -9,38 +9,35 @@ const W = 180, HEAD = 34, ROW = 20;
 const COL = W + 110; // one slot column (v1: a column per step in the flow)
 const KIND_NAMES = { text: "context", read: "read (dotted)", audio: "audio stream", clip: "audio clip", any: "anything" };
 const KIND_NAME = new Proxy(KIND_NAMES, { get: (t, k) => String(k).split("|").map((x) => t[x] || x).join(" or ") }); // "audio|clip": either
-// A context as the model gets it (docs/v2 page 3), in sections: the monitor and a chat's Behind the scenes show it.
+// A context as the model gets it (docs/v2 page 3), top to bottom in the order the model reads it; a colour per part
+// (system, tools, said, answer, tool result), only what belongs together folds (the tool list, a call with its result, a
+// long text); the events below, set apart. The monitor and a chat's Context view show it.
 // ctx: {system, messages, tools, events} (a context's summary); name(id): a card's name.
 const contextView = (ctx, name) => {
-  const body = (text, open) => {
+  const body = (text) => {
     const s = String(text ?? "");
-    return s.length > 280 ? `<details ${open ? "open" : ""}><summary class="cvmore">${esc(s.slice(0, 160).replace(/\s+/g, " "))}…</summary><pre class="cvtext">${esc(s)}</pre></details>`
+    return s.length > 600 ? `<details><summary class="cvmore">${esc(s.slice(0, 220).replace(/\s+/g, " "))}…</summary><pre class="cvtext">${esc(s)}</pre></details>`
       : `<pre class="cvtext">${esc(s)}</pre>`;
   };
   const tags = (e) => (e.tags || []).map((x) => `<code class="cvtag">#${esc(x)}</code>`).join(" ");
-  const head = (who, what, e) => `<div class="cvhead"><b>${esc(who)}</b> <span class="hint">${esc(what)}</span> ${tags(e)}</div>`;
-  const att = (a) => `<div class="cvatt">${head(name(a.by), a.kind === "note" ? "attached before" : "attached after", a)}${body(a.text)}</div>`;
+  const label = (kind, text, e) => `<div class="cvhead"><span class="cvlab ${kind}">${esc(text)}</span> ${e ? tags(e) : ""}</div>`;
   const results = Object.fromEntries((ctx.messages || []).filter((m) => m.kind === "result").map((m) => [m.data?.call_id, m]));
+  const att = (a) => `<div class="cvatt">${label("att", `attached by ${name(a.by)} · ${a.kind === "note" ? "before" : "after"}`, a)}${body(a.text)}</div>`;
+  const call = (c) => { const r = results[c.id]; return `<details class="cvcall"><summary><code>${esc(c.name)}(${esc(JSON.stringify(c.args || {}).slice(1, -1))})</code> <span class="hint">→ ${esc(name(c.card || ""))}${r ? "" : " · no result yet"}</span></summary>
+    ${r ? `<div class="cvpart result">${label("result", `tool result · ${name(r.by)}`, r)}${body(r.text)}</div>` : ""}</details>`; };
   const msg = (m) => {
-    if (m.kind === "result") return "";  // shown under the call it answers
-    const att_ = m.attachments || [], calls = m.data?.calls || [];
+    if (m.kind === "result") return ""; // under the call it answers
+    const kind = m.kind === "said" ? "said" : "answer", attached = m.attachments || [];
     const who = m.kind === "said" ? `${name(m.by)} · said` : `${name(m.by)} · answered${m.state === "cut" ? " (stopped)" : m.state === "open" ? " (writing…)" : ""}`;
-    return `<div class="cvmsg ${m.kind}">${att_.filter((a) => a.kind === "note").map(att).join("")}
-      ${head(...who.split(" · "), m)}${m.text ? body(m.text, true) : ""}
-      ${calls.map((c) => { const r = results[c.id]; return `<div class="cvcall"><code>${esc(c.name)}(${esc(JSON.stringify(c.args || {}).slice(1, -1))})</code> <span class="hint">→ ${esc(name(c.card || ""))}</span>
-        ${r ? `<div class="cvres">${body(r.text)}</div>` : '<div class="hint">no result yet</div>'}</div>`; }).join("")}
-      ${att_.filter((a) => a.kind !== "note").map(att).join("")}</div>`;
+    return `<div class="cvpart ${kind}">${attached.filter((a) => a.kind === "note").map(att).join("")}${label(kind, who, m)}${m.text ? body(m.text) : ""}
+      ${(m.data?.calls || []).map(call).join("")}${attached.filter((a) => a.kind !== "note").map(att).join("")}</div>`;
   };
-  const sec = (title, help, html, open = true) => `<details class="cvsec" ${open ? "open" : ""}><summary>${title}${tip(help)}</summary>${html || '<p class="hint">none</p>'}</details>`;
-  const system = sec(`System (${(ctx.system || []).length})`, "The system prompt: each part with the card that wrote it. The model reads them first, joined.",
-    (ctx.system || []).map((e) => `<div class="cvpart">${head(name(e.by), "", e)}${body(e.text)}</div>`).join(""), false);
-  const tools = sec(`Tools (${(ctx.tools || []).length})`, "What the model could call this turn: the name and description it saw (For models), from the card wired to it and back. Most templates put them right after the system prompt.",
-    (ctx.tools || []).map((x) => `<div class="cvpart"><code>${esc(x.name)}(${Object.entries(x.args || {}).map(([a, y]) => `${esc(a)}${y.required ? "" : "?"}`).join(", ")})</code> <span class="hint">${esc(name(x.card))}</span><div>${esc(x.description || "")}</div></div>`).join(""), false);
-  const talk = sec(`Conversation (${(ctx.messages || []).filter((m) => m.kind !== "result").length})`, "What was said and answered, in order; under an answer the tools it called with what came back; attached: what cards added for that turn.",
-    (ctx.messages || []).map(msg).join(""));
-  const events = `<div class="cvaac">${sec(`Events (${(ctx.events || []).length}) · AAC only, never sent to the model`, "Stops, cuts, choices, errors, a Relay's calls: for the cards and you.",
-    (ctx.events || []).map((e) => `<div class="cvpart">${head(name(e.by), e.kind, e)}${e.text ? body(e.text) : ""}</div>`).join(""), false)}</div>`;
-  return system + tools + talk + events;
+  const tools = ctx.tools || [];
+  return (ctx.system || []).map((e) => `<div class="cvpart system">${label("system", `system · ${name(e.by)}`, e)}${body(e.text)}</div>`).join("")
+    + (tools.length ? `<details class="cvpart tools"><summary>${label("tools", `tools · ${tools.length}`)}<span class="hint">${tools.map((x) => esc(x.name)).join(", ")}</span></summary>
+      ${tools.map((x) => `<div class="cvtool"><code>${esc(x.name)}(${Object.entries(x.args || {}).map(([a, y]) => `${esc(a)}${y.required ? "" : "?"}`).join(", ")})</code> <span class="hint">${esc(name(x.card))}</span><div>${esc(x.description || "")}</div></div>`).join("")}</details>` : "")
+    + (ctx.messages || []).map(msg).join("")
+    + ((ctx.events || []).length ? `<div class="cvaac"><div class="hint">AAC only, never sent to the model</div>${(ctx.events || []).map((e) => `<div class="cvpart event">${label("event", `${e.kind} · ${name(e.by)}`, e)}${e.text ? body(e.text) : ""}</div>`).join("")}</div>` : "");
 };
 
 const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", clip: "#9c27b0", any: "#ffffff" };
@@ -168,13 +165,18 @@ textarea { resize: vertical; }
 .mon .x { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; white-space: pre-wrap; }
 .mon.flash { animation: monflash .8s; } @keyframes monflash { from { box-shadow: 0 0 14px var(--primary-color); } }
 .fold { margin-top: 8px; font-size: 12px; } .fold > summary { cursor: pointer; color: var(--secondary-text-color); font-weight: 500; }
-.cvsec { margin: 6px 0; } .cvsec > summary { cursor: pointer; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--secondary-text-color); padding: 4px 0; }
-.cvpart, .cvmsg { border-left: 3px solid var(--divider-color); padding: 4px 8px; margin: 4px 0; font-size: 13px; }
-.cvmsg.said { border-left-color: var(--primary-color); } .cvmsg.answer { border-left-color: #f5a623; }
-.cvatt { margin: 4px 0 4px 12px; padding: 3px 8px; border-left: 2px dashed var(--divider-color); font-size: 12px; }
-.cvcall { margin: 4px 0 4px 12px; font-size: 12px; } .cvres { margin-left: 12px; padding-left: 8px; border-left: 2px solid #9c27b0; }
-.cvhead { font-size: 12px; } .cvaac { margin-top: 14px; padding-top: 4px; border-top: 1px dashed var(--divider-color); opacity: .8; } .cvtag { font-size: 10px; opacity: .7; } .cvmore { cursor: pointer; font-size: 12px; color: var(--secondary-text-color); }
+.cvpart { border-left: 3px solid var(--divider-color); padding: 4px 8px; margin: 6px 0; font-size: 13px; }
+.cvpart.system { border-left-color: #8e8e93; } .cvpart.tools { border-left-color: #26a69a; } .cvpart.said { border-left-color: var(--primary-color); }
+.cvpart.answer { border-left-color: #f5a623; } .cvpart.result { border-left-color: #9c27b0; margin-left: 10px; } .cvpart.event { border-left-style: dashed; }
+.cvlab { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .03em; }
+.cvlab.system { color: #8e8e93; } .cvlab.tools { color: #26a69a; } .cvlab.said { color: var(--primary-color); } .cvlab.answer { color: #f5a623; }
+.cvlab.result { color: #9c27b0; } .cvlab.att, .cvlab.event { color: var(--secondary-text-color); }
+.cvatt { margin: 4px 0 4px 10px; padding: 2px 8px; border-left: 2px dashed var(--divider-color); font-size: 12px; }
+.cvcall { margin: 4px 0 2px 10px; font-size: 12px; } .cvcall > summary, .cvpart.tools > summary { cursor: pointer; }
+.cvtool { margin: 4px 0 4px 10px; font-size: 12px; } .cvpart.tools > summary .cvhead { display: inline; margin-right: 6px; }
+.cvhead { font-size: 12px; } .cvtag { font-size: 10px; opacity: .6; } .cvmore { cursor: pointer; font-size: 12px; color: var(--secondary-text-color); }
 .cvtext { white-space: pre-wrap; word-break: break-word; margin: 2px 0; font: inherit; font-size: 12px; }
+.cvaac { margin-top: 16px; padding-top: 6px; border-top: 1px dashed var(--divider-color); opacity: .8; }
 .fnrow { border-left: 3px solid var(--divider-color); padding: 4px 8px; margin: 6px 0; } .fnrow.off { opacity: .55; }
 .fnrow input[type=text], .fnrow textarea { width: 100%; box-sizing: border-box; font-size: 12px; }
 .legend { position: absolute; right: 8px; bottom: 6px; font-size: 10px; color: var(--secondary-text-color); line-height: 1.5; opacity: .8; }
