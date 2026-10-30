@@ -32,14 +32,15 @@ const contextView = (ctx, name) => {
       ${att_.filter((a) => a.kind !== "note").map(att).join("")}</div>`;
   };
   const sec = (title, help, html, open = true) => `<details class="cvsec" ${open ? "open" : ""}><summary>${title}${tip(help)}</summary>${html || '<p class="hint">none</p>'}</details>`;
-  return sec(`System (${(ctx.system || []).length})`, "The system prompt: each part with the card that wrote it. The model reads them first, joined.",
-      (ctx.system || []).map((e) => `<div class="cvpart">${head(name(e.by), "", e)}${body(e.text)}</div>`).join(""), false)
-    + sec(`Conversation (${(ctx.messages || []).filter((m) => m.kind !== "result").length})`, "What was said and answered, in order; under an answer the tools it called with what came back; attached: what cards added for that turn.",
-      (ctx.messages || []).map(msg).join(""))
-    + sec(`Tools (${(ctx.tools || []).length})`, "What the model could call this turn: the name and description it saw (For models), from the card wired to it and back.",
-      (ctx.tools || []).map((x) => `<div class="cvpart"><code>${esc(x.name)}(${Object.entries(x.args || {}).map(([a, y]) => `${esc(a)}${y.required ? "" : "?"}`).join(", ")})</code> <span class="hint">${esc(name(x.card))}</span><div>${esc(x.description || "")}</div></div>`).join(""), false)
-    + sec(`Events (${(ctx.events || []).length})`, "Stops, cuts, choices, errors, a Relay's calls: for the cards and you; never sent to a model.",
-      (ctx.events || []).map((e) => `<div class="cvpart">${head(name(e.by), e.kind, e)}${e.text ? body(e.text) : ""}</div>`).join(""), false);
+  const system = sec(`System (${(ctx.system || []).length})`, "The system prompt: each part with the card that wrote it. The model reads them first, joined.",
+    (ctx.system || []).map((e) => `<div class="cvpart">${head(name(e.by), "", e)}${body(e.text)}</div>`).join(""), false);
+  const tools = sec(`Tools (${(ctx.tools || []).length})`, "What the model could call this turn: the name and description it saw (For models), from the card wired to it and back. Most templates put them right after the system prompt.",
+    (ctx.tools || []).map((x) => `<div class="cvpart"><code>${esc(x.name)}(${Object.entries(x.args || {}).map(([a, y]) => `${esc(a)}${y.required ? "" : "?"}`).join(", ")})</code> <span class="hint">${esc(name(x.card))}</span><div>${esc(x.description || "")}</div></div>`).join(""), false);
+  const talk = sec(`Conversation (${(ctx.messages || []).filter((m) => m.kind !== "result").length})`, "What was said and answered, in order; under an answer the tools it called with what came back; attached: what cards added for that turn.",
+    (ctx.messages || []).map(msg).join(""));
+  const events = `<div class="cvaac">${sec(`Events (${(ctx.events || []).length}) · AAC only, never sent to the model`, "Stops, cuts, choices, errors, a Relay's calls: for the cards and you.",
+    (ctx.events || []).map((e) => `<div class="cvpart">${head(name(e.by), e.kind, e)}${e.text ? body(e.text) : ""}</div>`).join(""), false)}</div>`;
+  return system + tools + talk + events;
 };
 
 const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", clip: "#9c27b0", any: "#ffffff" };
@@ -172,7 +173,7 @@ textarea { resize: vertical; }
 .cvmsg.said { border-left-color: var(--primary-color); } .cvmsg.answer { border-left-color: #f5a623; }
 .cvatt { margin: 4px 0 4px 12px; padding: 3px 8px; border-left: 2px dashed var(--divider-color); font-size: 12px; }
 .cvcall { margin: 4px 0 4px 12px; font-size: 12px; } .cvres { margin-left: 12px; padding-left: 8px; border-left: 2px solid #9c27b0; }
-.cvhead { font-size: 12px; } .cvtag { font-size: 10px; opacity: .7; } .cvmore { cursor: pointer; font-size: 12px; color: var(--secondary-text-color); }
+.cvhead { font-size: 12px; } .cvaac { margin-top: 14px; padding-top: 4px; border-top: 1px dashed var(--divider-color); opacity: .8; } .cvtag { font-size: 10px; opacity: .7; } .cvmore { cursor: pointer; font-size: 12px; color: var(--secondary-text-color); }
 .cvtext { white-space: pre-wrap; word-break: break-word; margin: 2px 0; font: inherit; font-size: 12px; }
 .fnrow { border-left: 3px solid var(--divider-color); padding: 4px 8px; margin: 6px 0; } .fnrow.off { opacity: .55; }
 .fnrow input[type=text], .fnrow textarea { width: 100%; box-sizing: border-box; font-size: 12px; }
@@ -1684,7 +1685,8 @@ class AacPanel extends HTMLElement {
     $("#title")?.addEventListener("change", async (e) => { await this.ws("aac/card/update", { card: this.sel, title: e.target.value }); await this._load(); this.render(); });
     $$("[data-set]").forEach((el) => el.addEventListener("change", () => this._saveSetting(el)));
     const fnSave = async (row, reset) => { // For models: one function's tick, name, description (empty: the card's own)
-      const c = this._card(this.sel), key = row.dataset.key, all = { ...(c.settings[key] || {}) };
+      const c = this._card(this.sel), key = row.dataset.key; // only functions the card has now (a renamed block's old entry goes)
+      const all = Object.fromEntries(Object.entries(c.settings[key] || {}).filter(([fn]) => fn in (c.functions || {})));
       const name = row.querySelector("[data-fnname]").value.trim(), help = row.querySelector("[data-fnhelp]").value.trim();
       all[row.dataset.fnrow] = { on: row.querySelector("[data-fnon]").checked, ...(reset ? {} : { ...(name ? { name } : {}), ...(help ? { help } : {}) }) };
       await this.ws("aac/card/update", { card: c.id, settings: { [key]: all } }); await this._load(); this.render();
