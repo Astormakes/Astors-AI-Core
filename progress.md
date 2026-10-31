@@ -3,7 +3,13 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.22, live on the owner's HA
+## Current state (2026-10-31) – 2.3.23, live on the owner's HA
+
+- **2026-10-31 (2.3.23): test: every card survives remove + Undo** (owner's idea). `test_every_card_survives_remove_and_undo`:
+  one card of every type, wired and placed, Lists and Chat with data; all removed at once, one Undo: setup, wires,
+  positions, titles and each card's data as before, and the chat and Lists work again (fresh and from the backup).
+  It found a real bug: AAC's unload passed `watcher.cancel` to `entry.async_on_unload`, its `True` was taken for a
+  task ("Error unloading entry AAC" whenever AAC is reloaded); now a small function that returns nothing.
 
 - **2026-10-31 (2.3.22): 🗑 and Del remove the selection** (owner: deleting belongs with the tool buttons; Del was
   pressed by habit). A round 🗑 under Select and Cut (greyed out when nothing is selected) and Del / Backspace remove the

@@ -96,6 +96,40 @@ async def test_undo_slots_and_clone(hass: HomeAssistant, mock_entry):
     assert core.domain.id == "test" and "Project Portfolio" in [li["name"] for li in core.domain.cards["lists"].data["lists"]]
 
 
+async def test_every_card_survives_remove_and_undo(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """One card of every type, wired, placed and with data: all removed at once, one Undo brings everything back as it
+    was (settings, wires, positions, each card's own data), and the cards work again."""
+    from copy import deepcopy
+
+    from custom_components.aac.cards import CARD_TYPES
+
+    core = await setup_aac(hass, mock_entry)
+    domain = core.domain
+    model_answers(aioclient_mock, reply("Hello!"), reply("Still here."))
+    for i, card_type in enumerate(sorted(set(CARD_TYPES) - {c.type for c in domain.cards.values()})):
+        await domain.add_card(card_type, at={"x": 290 * (i % 6), "y": 600 + 200 * (i // 6)})
+    ids = list(domain.cards)
+    wires = len(domain.wires)
+    domain.set_wires([*domain.wires, *({"from": f"{a}.out", "to": f"{b}.in"} for a, b in zip(ids, ids[1:]))])
+    assert len(domain.wires) > wires  # only the wires of matching kinds stay
+    await domain.cards["lists"].call("add_items", {"list": "Project Portfolio", "items": ["Survives Undo"]})
+    chat_id, answer = await domain.cards["chat"].send("hi")
+    assert answer == "Hello!"
+    before = {"setup": domain.export(), "data": {i: deepcopy(c.data) for i, c in domain.cards.items()},
+              "titles": {i: c.title for i, c in domain.cards.items()}}
+
+    await domain.remove_card(*ids)
+    assert not domain.cards and not domain.wires and not domain.positions
+    assert await domain.undo_last()
+
+    assert domain.export() == before["setup"]
+    assert {i: c.data for i, c in domain.cards.items()} == before["data"]
+    assert {i: c.title for i, c in domain.cards.items()} == before["titles"]
+    _, answer = await domain.cards["chat"].send("still there?", chat_id)
+    assert answer == "Still here." and len(domain.cards["chat"].get(chat_id)["messages"]) == 4
+    assert "Survives Undo" in str(await domain.cards["lists"].call("read_list", {"list": "Project Portfolio"}))
+
+
 async def test_setup_file_round_trip(hass: HomeAssistant, mock_entry, aioclient_mock):
     """Save file → change → Load file brings the setup back; Undo goes back to before the load."""
     core = await setup_aac(hass, mock_entry)
