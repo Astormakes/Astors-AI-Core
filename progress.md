@@ -3,7 +3,14 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.21, live on the owner's HA
+## Current state (2026-10-31) – 2.3.22, live on the owner's HA
+
+- **2026-10-31 (2.3.22): 🗑 and Del remove the selection** (owner: deleting belongs with the tool buttons; Del was
+  pressed by habit). A round 🗑 under Select and Cut (greyed out when nothing is selected) and Del / Backspace remove the
+  selected cards or the selected wire. `aac/card/remove` takes `cards` (a list) and `Domain.remove_card(*ids)` removes
+  them in one Undo step that also keeps their positions (before, Undo brought a removed card back at 0,0). Test in
+  test_core; checked on the local test HA (Del on two framed cards, one Undo back with wires and positions; 🗑 on a card
+  and on a wire) and on the live HA (the button follows the selection; nothing removed).
 
 - **2026-10-31 (2.3.21): round tool buttons on the grid, long press** (owner: the mouse drags the view; round buttons
   for actions such as select; a cut line for wires; long press on a phone did not select). Left-drag pans again (2.3.20's

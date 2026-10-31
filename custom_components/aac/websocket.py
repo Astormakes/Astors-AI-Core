@@ -84,10 +84,10 @@ async def ws_card_add(hass, connection, msg) -> None:
     connection.send_result(msg["id"], card.summary())
 
 
-@command({vol.Required("type"): "aac/card/remove", vol.Required("card"): str})
+@command({vol.Required("type"): "aac/card/remove", vol.Required("cards"): [str]})
 async def ws_card_remove(hass, connection, msg) -> None:
-    """Take a card out."""
-    await _core(hass).domain.remove_card(msg["card"])
+    """Take cards out (several: one Undo step)."""
+    await _core(hass).domain.remove_card(*msg["cards"])
     connection.send_result(msg["id"], {})
 
 

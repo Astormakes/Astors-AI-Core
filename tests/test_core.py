@@ -84,6 +84,13 @@ async def test_undo_slots_and_clone(hass: HomeAssistant, mock_entry):
     assert await domain.undo_last() and "room" not in domain.cards
     await domain.remove_card("time")
     assert await domain.load_slot("1") and "time" in domain.cards
+    wires = domain.wires
+    await domain.add_card("buffer", "Room", at={"x": 580, "y": 300})
+    positions = dict(domain.positions)
+    await domain.remove_card("time", "room")  # several: one Undo step brings both back
+    assert "time" not in domain.cards and "room" not in domain.cards and not any("time." in w["from"] + w["to"] for w in domain.wires)
+    assert await domain.undo_last() and "time" in domain.cards and "room" in domain.cards and domain.wires == wires
+    assert domain.positions == positions
     new_id = await core.clone("Test")
     await core.switch(new_id)
     assert core.domain.id == "test" and "Project Portfolio" in [li["name"] for li in core.domain.cards["lists"].data["lists"]]

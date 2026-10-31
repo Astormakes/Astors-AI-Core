@@ -186,6 +186,7 @@ textarea { resize: vertical; }
 .fnrow input[type=text], .fnrow textarea { width: 100%; box-sizing: border-box; font-size: 12px; }
 .tools { position: absolute; left: 30px; top: 10px; z-index: 6; display: flex; flex-direction: column; gap: 8px; }
 .tools button { width: 36px; height: 36px; border-radius: 50%; padding: 0; font-size: 17px; line-height: 1; cursor: pointer; border: 1px solid var(--divider-color); background: var(--card-background-color, #fff); color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.tools button:disabled { opacity: .35; cursor: default; }
 .tools button.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
 .grid.tool-select svg, .grid.tool-cut svg { cursor: crosshair; }
 .wire.cut { stroke: #e53935 !important; stroke-width: 3.5; stroke-dasharray: 6 4; }
@@ -983,11 +984,11 @@ class AacPanel extends HTMLElement {
     const info = t ? `<b>${esc(t.title)}</b> <span class="hint">v${esc(t.version)}</span><p style="margin:6px 0">${esc(t.help)}</p>${ports("Takes", t.inputs)}${ports("Outputs", t.outputs)}${Object.keys(t.functions || {}).length ? `<label>Functions (for models: For models on the card)</label>${Object.entries(t.functions).map(([n, f]) => `<div class="fn"><code>${esc(n)}(${Object.entries(f.args || {}).map(([a, x]) => `${esc(a)}${x.required ? "" : "?"}`).join(", ")})</code> ${esc(f.help || "")}</div>`).join("")}` : ""}<p class="hint">Click in the grid to place it. <button class="small" id="unpick" title="Put it back (Esc, or click the type again)">Cancel</button></p>`
       : '<span class="hint">Pick a card type above, then click in the grid to place it.</span>';
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
-    return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it. The round buttons: Select (⬚) draws a frame around cards and adds or removes cards by a click (or Ctrl+click and Ctrl+drag without it, a long press on a phone); drag one of them and they all move. Cut (✂) removes every wire a drawn line crosses. Esc turns them off.")}
+    return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it. The round buttons: Select (⬚) draws a frame around cards and adds or removes cards by a click (or Ctrl+click and Ctrl+drag without it, a long press on a phone); drag one of them and they all move. Cut (✂) removes every wire a drawn line crosses. Esc turns them off. 🗑 (or Del) removes the selected cards or wire.")}
         <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="redo" ${d.redo ? "" : "disabled"} title="What the last Undo took back">Redo</button><button class="small" id="fit">Fit</button><button class="small ${this.showValues ? "on" : ""}" id="values" title="The value pool: what scripts can read now (card.value), live">Values</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
       <div class="nodes ${this.palOpen ? "" : "nopal"} ${this.sideOpen ? "" : "noside"}"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
         <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
-        <div class="grid ${this.tool ? `tool-${this.tool}` : ""}" id="grid"><div class="tools">${[["select", "⬚", "Select: drag a frame around cards, or click cards to add or remove them; drag one of them and they all move"], ["cut", "✂", "Cut wires: draw a line across the wires that should go (Undo brings them back)"]].map(([k, icon, t]) => `<button class="${this.tool === k ? "on" : ""}" data-tool="${k}" title="${t}">${icon}</button>`).join("")}</div><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}
+        <div class="grid ${this.tool ? `tool-${this.tool}` : ""}" id="grid"><div class="tools">${[["select", "⬚", "Select: drag a frame around cards, or click cards to add or remove them; drag one of them and they all move"], ["cut", "✂", "Cut wires: draw a line across the wires that should go (Undo brings them back)"]].map(([k, icon, t]) => `<button class="${this.tool === k ? "on" : ""}" data-tool="${k}" title="${t}">${icon}</button>`).join("")}<button id="delsel" title="Remove the selected cards or wire (Del; Undo brings them back)" ${this._picked().size || this.selWire ? "" : "disabled"}>🗑</button></div><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}
           <button class="edge left" id="paltog" title="${this.palOpen ? "Hide" : "Show"} the card types">${this.palOpen ? "‹" : "›"}</button>
           <button class="edge right" id="sidetog" title="${this.sideOpen ? "Hide" : "Show"} the settings">${this.sideOpen ? "›" : "‹"}</button></div>
         <div class="grip" data-grip="side" data-target=".side" data-side="left" title="Drag: width (double-click: back to normal)"></div>
@@ -1041,10 +1042,10 @@ class AacPanel extends HTMLElement {
       ${groups.join("") || '<p class="hint">No card offers values.</p>'}<label>The core: when AAC last spoke</label>${audio}`;
   }
 
-  async _removeCard() { // no question: Undo brings it back
-    const card = this.sel;
+  async _removeCards() { // the selected cards, no question: Undo brings them back (several in one step)
+    const cards = [...this._picked()];
     this.sel = null;
-    await this.ws("aac/card/remove", { card });
+    await this.ws("aac/card/remove", { cards });
     await this._load(); this.render();
   }
 
@@ -1159,7 +1160,7 @@ class AacPanel extends HTMLElement {
       return `<b>Wire</b><p class="hint">${esc(this.selWire.from)} → ${esc(this.selWire.to)}</p>
         <div class="row" style="gap:8px"><button class="small" id="monitor" title="A window above the wire with what passes it, live">${on ? "Stop monitoring" : "Monitor"}</button><button class="small danger" id="unwire">Remove wire</button></div>`;
     }
-    if (this.many.size) return `<b>${this.many.size} cards selected</b><p class="hint">Drag one of them and they all move. With Select on (⬚), a click on a card or a long press on a phone adds or removes it (Ctrl+click without it), a frame adds the cards in it. Esc or a click on the empty grid lets go.</p>
+    if (this.many.size) return `<b>${this.many.size} cards selected</b><p class="hint">Drag one of them and they all move, 🗑 or Del removes them. With Select on (⬚), a click on a card or a long press on a phone adds or removes it (Ctrl+click without it), a frame adds the cards in it. Esc or a click on the empty grid lets go.</p>
       ${[...this.many].map((id) => `<div class="item" data-selcard="${esc(id)}" style="cursor:pointer">${esc(this._card(id)?.title || id)}</div>`).join("")}`;
     const c = this.sel && this._card(this.sel);
     if (!c) {
@@ -1752,6 +1753,7 @@ class AacPanel extends HTMLElement {
     $("#undo")?.addEventListener("click", async () => { await this.ws("aac/undo"); await this._load(); this.render(); });
     $("#redo")?.addEventListener("click", async () => { await this.ws("aac/redo"); await this._load(); this.render(); });
     $("#fit")?.addEventListener("click", () => this._fit());
+    $("#delsel")?.addEventListener("click", () => this.selWire ? this._unwire() : this._removeCards());
     $$("[data-tool]").forEach((el) => el.addEventListener("click", () => { this.tool = this.tool === el.dataset.tool ? null : el.dataset.tool; this.render(); }));
     $("#unpick")?.addEventListener("click", () => this._unpick());
     $$("[data-selcard]").forEach((el) => el.addEventListener("click", () => { this.sel = el.dataset.selcard; this.render(); }));
@@ -1801,7 +1803,7 @@ class AacPanel extends HTMLElement {
       const key = el.dataset.tag, tags = [...$$(`[data-tag="${key}"]`)].filter((x) => x.checked).map((x) => x.value);
       await this.ws("aac/card/update", { card: this.sel, settings: { [key]: tags } }); await this._load(); this.render();
     }));
-    $("#remove")?.addEventListener("click", () => this._removeCard());
+    $("#remove")?.addEventListener("click", () => this._removeCards());
     $("#unwire")?.addEventListener("click", () => this._unwire());
     // schedule entries and watches: the whole list is saved on any change
     const collect = (sel, attr) => [...$$(sel)].map((box) => {
@@ -1845,7 +1847,7 @@ class AacPanel extends HTMLElement {
     this._bindMonitorSide();
     if (!this._keys) {
       this._keys = true;
-      window.addEventListener("keydown", (e) => { // Delete: the selected wire or card goes (Undo brings it back)
+      window.addEventListener("keydown", (e) => { // Delete: the selected wire or cards go (Undo brings them back)
         if (this.view.kind !== "nodes" || /INPUT|TEXTAREA|SELECT/.test(e.composedPath()[0]?.tagName)) return;
         if (e.key === "Escape") { // put back a picked card type, or let go of the selected card or wire
           if (this.selType) this._unpick();
@@ -1855,7 +1857,7 @@ class AacPanel extends HTMLElement {
         }
         if (!(e.key === "Delete" || e.key === "Backspace")) return;
         if (this.selWire) this._unwire();
-        else if (this.sel) this._removeCard();
+        else if (this._picked().size) this._removeCards();
       });
     }
     if (this.view.kind === "nodes") { this._gridEvents(); if (!this._fitted) { this._fitted = true; requestAnimationFrame(() => this._fit()); } }

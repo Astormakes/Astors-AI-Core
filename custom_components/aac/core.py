@@ -152,16 +152,20 @@ class Domain:
         self.core.notify("setup", domain=self.id)
         return card
 
-    async def remove_card(self, card_id: str) -> None:
-        """Take a card out (its data stays stored until the card comes back or the domain is cleared)."""
-        if card_id not in self._specs:
+    async def remove_card(self, *card_ids: str) -> None:
+        """Take cards out, several in one Undo step (their data stays stored until they come back or the domain is
+        cleared)."""
+        gone = [c for c in dict.fromkeys(card_ids) if c in self._specs]
+        if not gone:
             return
         self._remember()
-        self._specs.pop(card_id)
-        if card := self.cards.pop(card_id, None):
-            await self._end(card)
-        self.wires = [w for w in self.wires if w["from"].split(".")[0] != card_id and w["to"].split(".")[0] != card_id]
-        self.positions.pop(card_id, None)
+        self.undo[-1]["positions"] = deepcopy(self.positions)  # Undo puts them back where they were
+        for card_id in gone:
+            self._specs.pop(card_id)
+            if card := self.cards.pop(card_id, None):
+                await self._end(card)
+            self.positions.pop(card_id, None)
+        self.wires = [w for w in self.wires if w["from"].split(".")[0] not in gone and w["to"].split(".")[0] not in gone]
         self.save()
         self.core.notify("setup", domain=self.id)
 
