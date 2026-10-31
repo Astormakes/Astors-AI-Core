@@ -3,7 +3,11 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.23, live on the owner's HA
+## Current state (2026-10-31) – 2.3.24, live on the owner's HA
+
+- **2026-10-31 (2.3.24): the grid's round buttons on the right, smaller (30 px), drawn line icons** (owner: plain
+  symbols, not the emoji bin; `ICON` in aac.js). Their box is `.gridtools`: 2.3.21–2.3.23 called it `.tools`, which
+  also matched the chat Context view's tools part (`.cvpart.tools`, `.cvlab.tools`) and pulled it out of place.
 
 - **2026-10-31 (2.3.23): test: every card survives remove + Undo** (owner's idea). `test_every_card_survives_remove_and_undo`:
   one card of every type, wired and placed, Lists and Chat with data; all removed at once, one Undo: setup, wires,

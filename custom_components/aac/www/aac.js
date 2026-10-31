@@ -44,6 +44,11 @@ const contextView = (ctx, name) => {
     + ((ctx.events || []).length ? `<div class="cvaac"><div class="hint">AAC only, never sent to the model</div>${(ctx.events || []).map((e) => `<div class="cvpart event">${label("event", `${e.kind} · ${name(e.by)}`, e)}${e.text ? body(e.text) : ""}</div>`).join("")}</div>` : "");
 };
 
+const ICON = { // the grid's round buttons (drawn, so they look the same everywhere)
+  select: '<svg viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1" stroke-dasharray="2.5 2"/></svg>',
+  cut: '<svg viewBox="0 0 16 16"><circle cx="4" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><path d="M5.5 10.5 12 2M10.5 10.5 4 2"/></svg>',
+  bin: '<svg viewBox="0 0 16 16"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v5M9.2 6.5v5"/></svg>',
+};
 const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", clip: "#9c27b0", any: "#ffffff" };
 const DAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
@@ -184,10 +189,11 @@ textarea { resize: vertical; }
 .cvaac { margin-top: 16px; padding-top: 6px; border-top: 1px dashed var(--divider-color); opacity: .8; }
 .fnrow { border-left: 3px solid var(--divider-color); padding: 4px 8px; margin: 6px 0; } .fnrow.off { opacity: .55; }
 .fnrow input[type=text], .fnrow textarea { width: 100%; box-sizing: border-box; font-size: 12px; }
-.tools { position: absolute; left: 30px; top: 10px; z-index: 6; display: flex; flex-direction: column; gap: 8px; }
-.tools button { width: 36px; height: 36px; border-radius: 50%; padding: 0; font-size: 17px; line-height: 1; cursor: pointer; border: 1px solid var(--divider-color); background: var(--card-background-color, #fff); color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0,0,0,.2); }
-.tools button:disabled { opacity: .35; cursor: default; }
-.tools button.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
+.gridtools { position: absolute; right: 30px; top: 10px; z-index: 6; display: flex; flex-direction: column; gap: 6px; }
+.gridtools button { width: 30px; height: 30px; border-radius: 50%; padding: 0; display: grid; place-items: center; cursor: pointer; border: 1px solid var(--divider-color); background: var(--card-background-color, #fff); color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.gridtools svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.gridtools button:disabled { opacity: .35; cursor: default; }
+.gridtools button.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
 .grid.tool-select svg, .grid.tool-cut svg { cursor: crosshair; }
 .wire.cut { stroke: #e53935 !important; stroke-width: 3.5; stroke-dasharray: 6 4; }
 #cutline { fill: none; stroke: #e53935; stroke-width: 2; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; }
@@ -984,11 +990,11 @@ class AacPanel extends HTMLElement {
     const info = t ? `<b>${esc(t.title)}</b> <span class="hint">v${esc(t.version)}</span><p style="margin:6px 0">${esc(t.help)}</p>${ports("Takes", t.inputs)}${ports("Outputs", t.outputs)}${Object.keys(t.functions || {}).length ? `<label>Functions (for models: For models on the card)</label>${Object.entries(t.functions).map(([n, f]) => `<div class="fn"><code>${esc(n)}(${Object.entries(f.args || {}).map(([a, x]) => `${esc(a)}${x.required ? "" : "?"}`).join(", ")})</code> ${esc(f.help || "")}</div>`).join("")}` : ""}<p class="hint">Click in the grid to place it. <button class="small" id="unpick" title="Put it back (Esc, or click the type again)">Cancel</button></p>`
       : '<span class="hint">Pick a card type above, then click in the grid to place it.</span>';
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
-    return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it. The round buttons: Select (⬚) draws a frame around cards and adds or removes cards by a click (or Ctrl+click and Ctrl+drag without it, a long press on a phone); drag one of them and they all move. Cut (✂) removes every wire a drawn line crosses. Esc turns them off. 🗑 (or Del) removes the selected cards or wire.")}
+    return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it. The round buttons (top right): Select (dashed square) draws a frame around cards and adds or removes cards by a click (or Ctrl+click and Ctrl+drag without it, a long press on a phone); drag one of them and they all move. Cut (scissors) removes every wire a drawn line crosses. Esc turns them off. The bin (or Del) removes the selected cards or wire.")}
         <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="redo" ${d.redo ? "" : "disabled"} title="What the last Undo took back">Redo</button><button class="small" id="fit">Fit</button><button class="small ${this.showValues ? "on" : ""}" id="values" title="The value pool: what scripts can read now (card.value), live">Values</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
       <div class="nodes ${this.palOpen ? "" : "nopal"} ${this.sideOpen ? "" : "noside"}"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
         <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
-        <div class="grid ${this.tool ? `tool-${this.tool}` : ""}" id="grid"><div class="tools">${[["select", "⬚", "Select: drag a frame around cards, or click cards to add or remove them; drag one of them and they all move"], ["cut", "✂", "Cut wires: draw a line across the wires that should go (Undo brings them back)"]].map(([k, icon, t]) => `<button class="${this.tool === k ? "on" : ""}" data-tool="${k}" title="${t}">${icon}</button>`).join("")}<button id="delsel" title="Remove the selected cards or wire (Del; Undo brings them back)" ${this._picked().size || this.selWire ? "" : "disabled"}>🗑</button></div><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}
+        <div class="grid ${this.tool ? `tool-${this.tool}` : ""}" id="grid"><div class="gridtools">${[["select", ICON.select, "Select: drag a frame around cards, or click cards to add or remove them; drag one of them and they all move"], ["cut", ICON.cut, "Cut wires: draw a line across the wires that should go (Undo brings them back)"]].map(([k, icon, t]) => `<button class="${this.tool === k ? "on" : ""}" data-tool="${k}" title="${t}">${icon}</button>`).join("")}<button id="delsel" title="Remove the selected cards or wire (Del; Undo brings them back)" ${this._picked().size || this.selWire ? "" : "disabled"}>${ICON.bin}</button></div><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}
           <button class="edge left" id="paltog" title="${this.palOpen ? "Hide" : "Show"} the card types">${this.palOpen ? "‹" : "›"}</button>
           <button class="edge right" id="sidetog" title="${this.sideOpen ? "Hide" : "Show"} the settings">${this.sideOpen ? "›" : "‹"}</button></div>
         <div class="grip" data-grip="side" data-target=".side" data-side="left" title="Drag: width (double-click: back to normal)"></div>
@@ -1160,7 +1166,7 @@ class AacPanel extends HTMLElement {
       return `<b>Wire</b><p class="hint">${esc(this.selWire.from)} → ${esc(this.selWire.to)}</p>
         <div class="row" style="gap:8px"><button class="small" id="monitor" title="A window above the wire with what passes it, live">${on ? "Stop monitoring" : "Monitor"}</button><button class="small danger" id="unwire">Remove wire</button></div>`;
     }
-    if (this.many.size) return `<b>${this.many.size} cards selected</b><p class="hint">Drag one of them and they all move, 🗑 or Del removes them. With Select on (⬚), a click on a card or a long press on a phone adds or removes it (Ctrl+click without it), a frame adds the cards in it. Esc or a click on the empty grid lets go.</p>
+    if (this.many.size) return `<b>${this.many.size} cards selected</b><p class="hint">Drag one of them and they all move, the bin or Del removes them. With Select on, a click on a card or a long press on a phone adds or removes it (Ctrl+click without it), a frame adds the cards in it. Esc or a click on the empty grid lets go.</p>
       ${[...this.many].map((id) => `<div class="item" data-selcard="${esc(id)}" style="cursor:pointer">${esc(this._card(id)?.title || id)}</div>`).join("")}`;
     const c = this.sel && this._card(this.sel);
     if (!c) {
