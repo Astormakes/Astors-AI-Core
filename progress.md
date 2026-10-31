@@ -3,14 +3,22 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.20, live on the owner's HA
+## Current state (2026-10-31) – 2.3.21, live on the owner's HA
+
+- **2026-10-31 (2.3.21): round tool buttons on the grid, long press** (owner: the mouse drags the view; round buttons
+  for actions such as select; a cut line for wires; long press on a phone did not select). Left-drag pans again (2.3.20's
+  frame on the left button is gone). Top left of the grid: **Select** (⬚: a drag on the empty grid draws the frame, a
+  click on a card adds or removes it) and **Cut** (✂: a drawn line, freehand, removes every wire it crosses; the wires
+  turn red while drawing; one `aac/wires`, Undo brings them back). A tool stays on until pressed again or Esc. Without
+  one, Ctrl+click and Ctrl+drag still select. On a phone a long press (500 ms, the finger held within 8 px) adds or
+  removes a card (a short buzz); a finger that moves still drags the card. Checked with real mouse and touch input on
+  the local test HA (cut, long press, moving) and the live HA (pan, Select, Esc; nothing changed there).
 
 - **2026-10-31 (2.3.20): select and move several cards (item 34).** A frame drawn with the mouse on the empty grid
   selects the cards it touches (Ctrl held: adds them); Ctrl+click adds or removes one; dragging a selected card moves
   them all and they snap as one block (`_snap(id, group)`: the dragged card into its column, the rest keep their places,
   pushed down together if they would cover another card). With several selected the side panel lists them (no settings);
-  Esc or a click on the empty grid lets go. Mouse panning moved to the middle or right button (left draws the frame);
-  a finger still pans. `sel` is a setter: picking one card or none clears the several (`many`). Delete only removes a
+  Esc or a click on the empty grid lets go. (2.3.21: the frame and Ctrl+click moved to the Select button.) `sel` is a setter: picking one card or none clears the several (`many`). Delete only removes a
   single selected card. Checked with real mouse input on the local test HA (moving) and the live HA (selecting only).
 
 - **2026-10-31 (2.3.19): bug 57 fixed.** On a phone the SETTINGS heading went straight to the Audio page (its `data-go`;

@@ -7,6 +7,10 @@ const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+
 const tip = (html) => `<span class="qm" tabindex="0">?<span class="tip">${html}</span></span>`;
 const W = 180, HEAD = 34, ROW = 20;
 const COL = W + 110; // one slot column (v1: a column per step in the flow)
+const crosses = (a, b, c, d) => { // do the segments a–b and c–d cross
+  const side = (p, q, r) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  return side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0;
+};
 const KIND_NAMES = { text: "context", read: "read (dotted)", audio: "audio stream", clip: "audio clip", any: "anything" };
 const KIND_NAME = new Proxy(KIND_NAMES, { get: (t, k) => String(k).split("|").map((x) => t[x] || x).join(" or ") }); // "audio|clip": either
 // A context as the model gets it (docs/v2 page 3), top to bottom in the order the model reads it; a colour per part
@@ -180,6 +184,12 @@ textarea { resize: vertical; }
 .cvaac { margin-top: 16px; padding-top: 6px; border-top: 1px dashed var(--divider-color); opacity: .8; }
 .fnrow { border-left: 3px solid var(--divider-color); padding: 4px 8px; margin: 6px 0; } .fnrow.off { opacity: .55; }
 .fnrow input[type=text], .fnrow textarea { width: 100%; box-sizing: border-box; font-size: 12px; }
+.tools { position: absolute; left: 30px; top: 10px; z-index: 6; display: flex; flex-direction: column; gap: 8px; }
+.tools button { width: 36px; height: 36px; border-radius: 50%; padding: 0; font-size: 17px; line-height: 1; cursor: pointer; border: 1px solid var(--divider-color); background: var(--card-background-color, #fff); color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.tools button.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
+.grid.tool-select svg, .grid.tool-cut svg { cursor: crosshair; }
+.wire.cut { stroke: #e53935 !important; stroke-width: 3.5; stroke-dasharray: 6 4; }
+#cutline { fill: none; stroke: #e53935; stroke-width: 2; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; }
 .legend { position: absolute; right: 8px; bottom: 6px; font-size: 10px; color: var(--secondary-text-color); line-height: 1.5; opacity: .8; }
 .legend div { display: flex; align-items: center; gap: 4px; } .grid .legend svg { flex: none; width: 20px; height: 8px; }
 .warn { color: var(--error-color, #db4437); font-size: 12px; margin: 4px 0; }
@@ -973,11 +983,11 @@ class AacPanel extends HTMLElement {
     const info = t ? `<b>${esc(t.title)}</b> <span class="hint">v${esc(t.version)}</span><p style="margin:6px 0">${esc(t.help)}</p>${ports("Takes", t.inputs)}${ports("Outputs", t.outputs)}${Object.keys(t.functions || {}).length ? `<label>Functions (for models: For models on the card)</label>${Object.entries(t.functions).map(([n, f]) => `<div class="fn"><code>${esc(n)}(${Object.entries(f.args || {}).map(([a, x]) => `${esc(a)}${x.required ? "" : "?"}`).join(", ")})</code> ${esc(f.help || "")}</div>`).join("")}` : ""}<p class="hint">Click in the grid to place it. <button class="small" id="unpick" title="Put it back (Esc, or click the type again)">Cancel</button></p>`
       : '<span class="hint">Pick a card type above, then click in the grid to place it.</span>';
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
-    return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it. A frame drawn on the empty grid selects several cards (Ctrl+click adds or removes one); drag one of them and they all move. The middle or right mouse button (or a finger) moves the view.")}
+    return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it. The round buttons: Select (⬚) draws a frame around cards and adds or removes cards by a click (or Ctrl+click and Ctrl+drag without it, a long press on a phone); drag one of them and they all move. Cut (✂) removes every wire a drawn line crosses. Esc turns them off.")}
         <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="redo" ${d.redo ? "" : "disabled"} title="What the last Undo took back">Redo</button><button class="small" id="fit">Fit</button><button class="small ${this.showValues ? "on" : ""}" id="values" title="The value pool: what scripts can read now (card.value), live">Values</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
       <div class="nodes ${this.palOpen ? "" : "nopal"} ${this.sideOpen ? "" : "noside"}"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
         <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
-        <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}
+        <div class="grid ${this.tool ? `tool-${this.tool}` : ""}" id="grid"><div class="tools">${[["select", "⬚", "Select: drag a frame around cards, or click cards to add or remove them; drag one of them and they all move"], ["cut", "✂", "Cut wires: draw a line across the wires that should go (Undo brings them back)"]].map(([k, icon, t]) => `<button class="${this.tool === k ? "on" : ""}" data-tool="${k}" title="${t}">${icon}</button>`).join("")}</div><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}
           <button class="edge left" id="paltog" title="${this.palOpen ? "Hide" : "Show"} the card types">${this.palOpen ? "‹" : "›"}</button>
           <button class="edge right" id="sidetog" title="${this.sideOpen ? "Hide" : "Show"} the settings">${this.sideOpen ? "›" : "‹"}</button></div>
         <div class="grip" data-grip="side" data-target=".side" data-side="left" title="Drag: width (double-click: back to normal)"></div>
@@ -1149,7 +1159,7 @@ class AacPanel extends HTMLElement {
       return `<b>Wire</b><p class="hint">${esc(this.selWire.from)} → ${esc(this.selWire.to)}</p>
         <div class="row" style="gap:8px"><button class="small" id="monitor" title="A window above the wire with what passes it, live">${on ? "Stop monitoring" : "Monitor"}</button><button class="small danger" id="unwire">Remove wire</button></div>`;
     }
-    if (this.many.size) return `<b>${this.many.size} cards selected</b><p class="hint">Drag one of them and they all move. Ctrl+click a card adds or removes it, a frame drawn with Ctrl held adds the cards in it. Esc or a click on the empty grid lets go.</p>
+    if (this.many.size) return `<b>${this.many.size} cards selected</b><p class="hint">Drag one of them and they all move. With Select on (⬚), a click on a card or a long press on a phone adds or removes it (Ctrl+click without it), a frame adds the cards in it. Esc or a click on the empty grid lets go.</p>
       ${[...this.many].map((id) => `<div class="item" data-selcard="${esc(id)}" style="cursor:pointer">${esc(this._card(id)?.title || id)}</div>`).join("")}`;
     const c = this.sel && this._card(this.sel);
     if (!c) {
@@ -1568,24 +1578,30 @@ class AacPanel extends HTMLElement {
       fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (fingers.size >= 2) { // a second finger: whatever the first began becomes a pinch
         if (drag?.kind === "move" && drag.moved) { this._snap(drag.id, Object.keys(drag.from)); this._savePositions(); }
-        this.shadowRoot.querySelector("#frame")?.remove();
-        drag = null; this._dragging = false; this.shadowRoot.querySelector("#tmpwire")?.remove();
+        if (drag?.kind === "cut") this._drawGrid();
+        clearTimeout(drag?.press); this.shadowRoot.querySelectorAll("#frame, #cutline, #tmpwire").forEach((x) => x.remove());
+        drag = null; this._dragging = false;
         pinch = { ...two(), vp: { ...this.vp } };
         return;
       }
+      if (this.tool === "cut") { drag = { kind: "cut", trail: [this._world(e)], lines: this._wireLines(), hits: new Set() }; return; } // the knife cuts across cards too
       if (node && out) { drag = { kind: "wire", from: `${node.dataset.node}.${out}`, type: e.target.dataset.kind }; return; }
       if (hit) { const [from, to] = hit.split("|"); this.selWire = { from, to }; this.sel = null; this.selMon = null; this.showValues = false; this.render(); return; }
       if (node) { // a card in the selection takes the others along
         const id = node.dataset.node, pos = this.state.domain.positions, p = pos[id] || (pos[id] = { x: 0, y: 0 }), w = this._world(e);
         const group = this.many.has(id) ? [...this.many] : [id];
-        drag = { kind: "move", id, dx: w.x - p.x, dy: w.y - p.y, moved: false, add: e.ctrlKey || e.metaKey, from: Object.fromEntries(group.filter((g) => pos[g]).map((g) => [g, { ...pos[g] }])) };
+        drag = { kind: "move", id, dx: w.x - p.x, dy: w.y - p.y, moved: false, add: e.ctrlKey || e.metaKey || this.tool === "select", at: [e.clientX, e.clientY], from: Object.fromEntries(group.filter((g) => pos[g]).map((g) => [g, { ...pos[g] }])) };
+        if (e.pointerType === "touch") { const d = drag; d.press = setTimeout(() => { // a long press: in or out of the selection
+          if (drag !== d || d.moved) return;
+          d.long = true; navigator.vibrate?.(20); this._toggle(id);
+        }, 500); }
         return;
       }
       if (this.selType) { const w = this._world(e); this._place(this.selType, w); return; }
-      if (e.pointerType === "mouse" && e.button === 0) { drag = { kind: "frame", at: this._world(e), screen: [e.clientX, e.clientY], add: e.ctrlKey || e.metaKey, had: this._picked() }; return; } // a frame selects (a finger, the middle or right button pans)
+      if (this.tool === "select" || e.ctrlKey || e.metaKey) { drag = { kind: "frame", at: this._world(e), screen: [e.clientX, e.clientY], add: e.ctrlKey || e.metaKey, had: this._picked() }; return; }
       drag = { kind: "pan", x: e.clientX - this.vp.x, y: e.clientY - this.vp.y, at: [e.clientX, e.clientY] };
     });
-    svg.addEventListener("contextmenu", (e) => e.preventDefault()); // the right button pans
+    svg.addEventListener("contextmenu", (e) => e.preventDefault()); // a long press on a phone selects, no menu
     svg.addEventListener("pointermove", (e) => {
       if (fingers.has(e.pointerId)) fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pinch) {
@@ -1598,6 +1614,7 @@ class AacPanel extends HTMLElement {
       }
       if (!drag) { this._ghost(e); return; }
       if (drag.kind === "pan") { this.vp.x = e.clientX - drag.x; this.vp.y = e.clientY - drag.y; this._view(); }
+      if (drag.kind === "move" && !drag.moved && (drag.long || (e.pointerType === "touch" && Math.hypot(e.clientX - drag.at[0], e.clientY - drag.at[1]) < 8))) return; // a finger holds still (long press)
       if (drag.kind === "move") {
         const w = this._world(e), pos = this.state.domain.positions, p = pos[drag.id];
         p.x = Math.round((w.x - drag.dx) / 20) * 20; p.y = Math.round((w.y - drag.dy) / 20) * 20; drag.moved = true; this._dragging = true;
@@ -1615,6 +1632,15 @@ class AacPanel extends HTMLElement {
         const on = new Set(drag.add ? [...drag.had, ...drag.hits] : drag.hits);
         for (const n of this.shadowRoot.querySelectorAll("#cards .node")) n.classList.toggle("sel", on.has(n.dataset.node));
       }
+      if (drag.kind === "cut") {
+        const w = this._world(e), last = drag.trail.at(-1);
+        drag.trail.push(w); this._dragging = true;
+        for (const [key, pts] of Object.entries(drag.lines)) if (!drag.hits.has(key) && pts.some((q, i) => i && crosses(last, w, pts[i - 1], q))) drag.hits.add(key);
+        let line = this.shadowRoot.querySelector("#cutline");
+        if (!line) { line = document.createElementNS("http://www.w3.org/2000/svg", "polyline"); line.id = "cutline"; this.shadowRoot.querySelector("#world").appendChild(line); }
+        line.setAttribute("points", drag.trail.map((q) => `${q.x},${q.y}`).join(" "));
+        for (const el of this.shadowRoot.querySelectorAll("#wires path.wire")) el.classList.toggle("cut", drag.hits.has(`${el.dataset.from}|${el.dataset.to}`));
+      }
       if (drag.kind === "wire") {
         const w = this._world(e), [a, ap] = drag.from.split("."), c = this._card(a), p = this.state.domain.positions[a] || { x: 0, y: 0 };
         const oy = p.y + HEAD + ROW * Object.keys(c.outputs).indexOf(ap) + ROW / 2;
@@ -1624,12 +1650,25 @@ class AacPanel extends HTMLElement {
       }
     });
     svg.addEventListener("pointerleave", () => this.shadowRoot.querySelector("#ghost")?.remove());
-    svg.addEventListener("pointercancel", (e) => { fingers.delete(e.pointerId); if (fingers.size < 2) pinch = null; drag = null; this._dragging = false; this.shadowRoot.querySelector("#frame")?.remove(); });
+    svg.addEventListener("pointercancel", (e) => {
+      fingers.delete(e.pointerId); if (fingers.size < 2) pinch = null;
+      if (drag?.kind === "cut") this._drawGrid();
+      clearTimeout(drag?.press); drag = null; this._dragging = false; this.shadowRoot.querySelectorAll("#frame, #cutline").forEach((x) => x.remove());
+    });
     svg.addEventListener("pointerup", async (e) => {
       fingers.delete(e.pointerId);
       if (pinch) { if (!fingers.size) pinch = null; return; } // a pinch ends when the last finger lifts
       const d = drag; drag = null; this._dragging = false;
       if (!d) return;
+      clearTimeout(d.press);
+      if (d.kind === "cut") { // the wires the knife crossed go (Undo brings them back)
+        this.shadowRoot.querySelector("#cutline")?.remove();
+        if (!d.hits.size) { this._drawGrid(); return; }
+        if (this.selWire && d.hits.has(`${this.selWire.from}|${this.selWire.to}`)) this.selWire = null;
+        await this.ws("aac/wires", { wires: this.state.domain.wires.filter((w) => !d.hits.has(`${w.from}|${w.to}`)) });
+        await this._load(); this.render(); return;
+      }
+      if (d.long) return; // the long press already did it
       if (d.kind === "frame") this.shadowRoot.querySelector("#frame")?.remove();
       if (d.kind === "frame" && d.moved) { this._pick(d.add ? [...d.had, ...d.hits] : d.hits); this.selWire = this.selMon = null; this.showValues = false; this.render(); return; }
       if ((d.kind === "pan" && Math.hypot(e.clientX - d.at[0], e.clientY - d.at[1]) < 4) || (d.kind === "frame" && !d.add)) { // a tap on empty grid lets go (on a phone it closes the panels too)
@@ -1639,7 +1678,7 @@ class AacPanel extends HTMLElement {
       }
       if (d.kind === "move") {
         if (d.moved) { this._snap(d.id, Object.keys(d.from)); this._drawGrid(); await this._savePositions(); }
-        else if (d.add) { const s = this._picked(); if (!s.delete(d.id)) s.add(d.id); this._pick(s); this.selWire = this.selMon = null; this.showValues = false; this.render(); } // Ctrl+click: in or out of the selection
+        else if (d.add) this._toggle(d.id); // Ctrl+click or the Select tool: in or out of the selection
         else { this.sel = d.id; this.selWire = null; this.selMon = null; this.showValues = false; if (!this.sideOpen) this._panel("side", true); else this.render(); }
       }
       if (d.kind === "wire") {
@@ -1651,6 +1690,17 @@ class AacPanel extends HTMLElement {
         }
       }
     });
+  }
+
+  _toggle(id) { const s = this._picked(); if (!s.delete(id)) s.add(id); this._pick(s); this.selWire = this.selMon = null; this.showValues = false; this.render(); }
+
+  _wireLines() { // each wire as a line of points (world), for the knife
+    const lines = {};
+    for (const el of this.shadowRoot.querySelectorAll("#wires path.hit")) {
+      const len = el.getTotalLength(), n = Math.max(2, Math.ceil(len / 8));
+      lines[el.dataset.wire] = Array.from({ length: n + 1 }, (_, i) => el.getPointAtLength(len * i / n));
+    }
+    return lines;
   }
 
   _spot(at) { return { x: Math.round((at.x - W / 2) / COL) * COL, y: Math.round(at.y / 20) * 20 }; } // where a new card lands
@@ -1702,6 +1752,7 @@ class AacPanel extends HTMLElement {
     $("#undo")?.addEventListener("click", async () => { await this.ws("aac/undo"); await this._load(); this.render(); });
     $("#redo")?.addEventListener("click", async () => { await this.ws("aac/redo"); await this._load(); this.render(); });
     $("#fit")?.addEventListener("click", () => this._fit());
+    $$("[data-tool]").forEach((el) => el.addEventListener("click", () => { this.tool = this.tool === el.dataset.tool ? null : el.dataset.tool; this.render(); }));
     $("#unpick")?.addEventListener("click", () => this._unpick());
     $$("[data-selcard]").forEach((el) => el.addEventListener("click", () => { this.sel = el.dataset.selcard; this.render(); }));
     $$("[data-skin]").forEach((el) => el.addEventListener("change", async () => { await this.ws("aac/appearance/set", { skin: el.dataset.skin }); }));
@@ -1798,6 +1849,7 @@ class AacPanel extends HTMLElement {
         if (this.view.kind !== "nodes" || /INPUT|TEXTAREA|SELECT/.test(e.composedPath()[0]?.tagName)) return;
         if (e.key === "Escape") { // put back a picked card type, or let go of the selected card or wire
           if (this.selType) this._unpick();
+          else if (this.tool) { this.tool = null; this.render(); }
           else if (this._picked().size || this.selWire || this.selMon || this.showValues) { this.sel = this.selWire = this.selMon = null; this.showValues = false; this.render(); }
           return;
         }
