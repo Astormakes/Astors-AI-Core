@@ -459,9 +459,10 @@ class Core:
         first = not self.data
         self.data.setdefault("models", [])
         self.data.setdefault("benches", {})  # the last benchmark of each server's model ("<address> <model>")
+        self.data.setdefault("facts", {})  # what llama.cpp said about each server's model while it was loaded (same keys)
         self.data.setdefault("servers", [])
         self.data.setdefault("domains", [])
-        self.pool = ModelPool(self.hass, self.data["models"], self.data["benches"], self.data["servers"])
+        self.pool = ModelPool(self.hass, self.data["models"], self.data["benches"], self.data["servers"], self.data["facts"], self.save)
         for model in self.data["models"]:  # every model belongs to a server (its address and key come from it)
             self._give_server(model)
         if first:

@@ -140,7 +140,7 @@ textarea { resize: vertical; }
 .fields { padding: 1px 0 3px 26px; display: flex; flex-wrap: wrap; gap: 4px; }
 .chip { font-size: 11px; background: rgba(127,127,127,.12); border-radius: 10px; padding: 1px 7px; cursor: pointer; }
 .card { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
-.models td { padding: 4px 8px; border-bottom: 1px solid var(--divider-color); font-size: 14px; }
+.models td { padding: 4px 8px; border-bottom: 1px solid var(--divider-color); font-size: 14px; } .models tr.hint td { font-size: 12px; }
 .srvrows { width: 100%; border-collapse: collapse; margin-top: 6px; } .srvrows td { padding: 6px 4px; border-top: 1px solid var(--divider-color); vertical-align: top; }
 .srvrows tr:hover td { background: rgba(127,127,127,.07); } /* a model's buttons sit far right: the row shows what they belong to */
 /* the Cards page */
@@ -216,7 +216,7 @@ textarea { resize: vertical; }
   .cardsview .palette, .cardsview .side { position: absolute; top: 0; bottom: 0; z-index: 8; width: min(85vw, 320px); background: var(--primary-background-color); box-shadow: 0 0 12px rgba(0,0,0,.3); }
   .cardsview .palette { left: 0; } .cardsview .side { right: 0; }
   .cardsview:not(.nopal) .edge.left { left: min(85vw, 320px); } .cardsview:not(.noside) .edge.right { right: min(85vw, 320px); }
-  .models tr { display: flex; flex-wrap: wrap; align-items: baseline; border-bottom: 1px solid var(--divider-color); } .models td { border: none; padding: 2px 8px; } }
+  .models tr { display: flex; flex-wrap: wrap; align-items: baseline; border-bottom: 1px solid var(--divider-color); } .models td { border: none; padding: 2px 8px; } .models tr.hint { display: none; } }
 `;
 
 class AacPanel extends HTMLElement {
@@ -865,12 +865,17 @@ class AacPanel extends HTMLElement {
   // ------------------------------------------------------------------ models
   _models() { // on top only the models; servers below, each with what it offers and AAC's models on it (their settings)
     const srv = (id) => (this.servers || []).find((x) => x.id === id);
+    const facts = (m) => { // what the server's model is (a router says it; kept from its last load)
+      const x = (srv(m.server)?.models || []).find((y) => y.id === m.model);
+      return x ? [x.params ? `${(x.params / 1e9).toFixed(1)} B parameters` : "", x.context ? `context ${x.context.toLocaleString()}` : ""].filter(Boolean).join(" · ") : "";
+    };
     const rows = this.state.models.map((m) => `<tr><td><b>${esc(m.name)}</b></td><td class="hint">${esc(srv(m.server)?.name || "")}</td>
-      <td class="hint">${m.follow ? `follows what is loaded · now <b>${esc(m.model)}</b>` : esc(m.model)}</td>
+      <td>${m.follow ? `<span class="hint">follows what is loaded:</span> ` : ""}${esc(m.model)}<div class="hint">${esc(facts(m))}</div></td>
       <td>${(m.tags || []).map((t) => `<code>${esc(t)}</code>`).join(" ")}</td>
-      <td>${m.failing ? `<span style="color:var(--error-color,#db4437)">✗ not answering${m.up ? " (tried again with the next request)" : " (skipped for a minute)"}</span>` : "✓"}<div class="hint">${m.busy || 0}/${m.parallel || 1} running${m.waiting ? ` · ${m.waiting} waiting` : ""}</div></td></tr>`).join("");
+      <td style="white-space:nowrap">${m.failing ? `<span style="color:var(--error-color,#db4437);white-space:normal">✗ not answering${m.up ? " (tried again with the next request)" : " (skipped for a minute)"}</span>` : "✓ ok"}<div class="hint">${m.busy ? `busy ${m.busy} of ${m.parallel || 1}` : "idle"}${m.waiting ? ` · ${m.waiting} waiting` : ""}</div></td></tr>`).join("");
+    const head = '<tr class="hint"><td>Name in AAC</td><td>Server</td><td>The server\'s model</td><td>Can do</td><td>Now</td></tr>';
     return `${this._header("Models", tip("The models AAC may use, for all domains (each card that uses models picks from these by what they can do, their tags). They are set up below, on their servers: any OpenAI-compatible server works (llama.cpp, Ollama, vLLM, LM Studio, cloud APIs); a llama-server router also lists, loads, downloads and deletes its models here."))}
-      <div class="content"><div class="card models"><table style="width:100%;border-collapse:collapse">${rows || '<tr><td class="hint">No models yet: add a server below, then its models.</td></tr>'}</table></div>
+      <div class="content"><div class="card models"><table style="width:100%;border-collapse:collapse">${rows ? head + rows : '<tr><td class="hint">No models yet: add a server below, then its models.</td></tr>'}</table></div>
       ${this.srvForm === "new" ? this._srvForm(null) : '<button data-srvadd="1" style="margin-bottom:12px">+ Add a server</button>'}
       ${this._servers()}</div>`;
   }

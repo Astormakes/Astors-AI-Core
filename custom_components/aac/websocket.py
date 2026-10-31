@@ -313,6 +313,8 @@ async def ws_models_router(hass, connection, msg) -> None:
             core.save()
         else:
             await server["client"].router_do(msg["action"], msg["name"], msg.get("sidecars"))
+            if msg["action"] == "delete":
+                core.pool.forget(server["client"], msg["name"])
     except ModelError as err:
         return await _fail(connection, msg, err)
     connection.send_result(msg["id"], {"models": core.pool.summary()})

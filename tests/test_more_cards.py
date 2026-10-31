@@ -335,6 +335,7 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert big["status"] == "loaded" and big["quant"] == "Q4_0" and big["tools"] and big["speed"] == {"read": 1044, "write": 45}
     assert big["context"] == 16384 and big["context_max"] == 262144
     assert new["status"] == "downloading" and new["progress"] == 25 and new["can_remove"]
+    assert core.data["facts"][f"{root} big"] == {"params": 11.9e9, "size": 6.7e9, "quant": "Q4_0"}  # kept for when it is not loaded
 
     await client.send_json({"id": 2, "type": "aac/models/router", "server_id": sid, "action": "load", "name": "big"})
     assert (await client.receive_json())["success"]
@@ -344,8 +345,10 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert (await client.receive_json())["success"]
     assert any(m[0] == "POST" and str(m[1]) == f"{root}/models" and m[2] == {"model": "user/new-GGUF:Q4_K_M", "sidecars": ["mtp"]}
                for m in aioclient_mock.mock_calls)
+    core.data["facts"][f"{root} user/new-GGUF:Q4_K_M"] = {"params": 3e9}
     await client.send_json({"id": 4, "type": "aac/models/router", "server_id": sid, "action": "delete", "name": "user/new-GGUF:Q4_K_M"})
     assert (await client.receive_json())["success"]
+    assert f"{root} user/new-GGUF:Q4_K_M" not in core.data["facts"]  # deleted: what AAC kept about it goes
     assert any(m[0] == "DELETE" and m[1].query.get("model") == "user/new-GGUF:Q4_K_M" for m in aioclient_mock.mock_calls)
 
     assert all(m[1].query.get("autoload") == "false" for m in aioclient_mock.mock_calls if m[1].path in ("/props", "/metrics"))
@@ -360,9 +363,11 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert not core.pool.heard  # nothing asked yet
     core.pool.mark_down("m_small", "timeout")  # a request that got no answer, then one that did (the same server)
     core.pool.mark_up("m_big")
+    core.data["facts"][f"{root} slow"] = {"params": 3e9, "quant": "Q8_0"}  # from an earlier load
     await client.send_json({"id": 6, "type": "aac/models/servers"})
     listed = (await client.receive_json())["result"]["servers"][0]
     assert listed["models"][0]["bench"]["write"] == 107
+    assert listed["models"][2]["params"] == 3e9 and listed["models"][2]["quant"] == "Q8_0"  # loading: shown from what was kept
     assert listed["heard"]["error"] == "timeout" and listed["heard"]["answered"] >= listed["heard"]["failed"]
     core.pool.mark_up("m_small")
 

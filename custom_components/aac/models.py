@@ -310,12 +310,16 @@ class ModelPool:
     that does not answer is skipped a minute."""
 
     def __init__(self, hass: HomeAssistant, models: list[dict[str, Any]], benches: dict[str, Any] | None = None,
-                 servers: list[dict[str, Any]] | None = None) -> None:
-        """Initialize with the stored lists: models, the last benchmarks, the servers the models are on."""
+                 servers: list[dict[str, Any]] | None = None, facts: dict[str, Any] | None = None,
+                 save: Callable[[], None] = lambda: None) -> None:
+        """Initialize with the stored lists: models, the last benchmarks, the servers the models are on, what each
+        server's models are (kept from when they were loaded); `save` keeps them."""
         self.hass = hass
         self.models = models
         self.benches = benches if benches is not None else {}
         self.server_list = servers if servers is not None else []
+        self.facts = facts if facts is not None else {}
+        self._save = save
         self._down: dict[str, float] = {}
         self.progress: dict[str, int] = {}  # "<server> <model>" → its last download / load progress (router())
         self.heard: dict[str, dict[str, Any]] = {}  # server id → when it last answered / failed (since AAC started)
@@ -451,6 +455,12 @@ class ModelPool:
         self.benches[f"{client.root} {name}"] = result
         return result
 
+    def forget(self, client: Client, name: str) -> None:
+        """A server's model is gone (deleted): what AAC kept about it goes too."""
+        key = f"{client.root} {name}"
+        if [self.benches.pop(key, None), self.facts.pop(key, None)] != [None, None]:
+            self._save()
+
     def find(self, name: str) -> dict[str, Any] | None:
         """A pool model by id or name (as a model or a Relay's script writes it)."""
         name = (name or "").strip().lower()
@@ -476,8 +486,15 @@ class ModelPool:
             except ModelError as err:
                 out.update(router=False, models=None, error=str(err))
             for m in out["models"] or []:
-                if bench := self.benches.get(f"{server['address']} {m['id']}"):
+                key = f"{server['address']} {m['id']}"
+                if bench := self.benches.get(key):
                     m["bench"] = bench
+                if m.get("params"):  # llama.cpp says what a model is while it is loaded: kept for when it is not
+                    if self.facts.get(key) != (found := {k: m[k] for k in ("params", "size", "quant") if m.get(k)}):
+                        self.facts[key] = found
+                        self._save()
+                else:
+                    m.update(self.facts.get(key, {}))
             loaded = next((m["id"] for m in out["models"] or [] if m["status"] in ("loaded", "loading", "sleeping")), None)
             for model, use in zip(server["uses"], out["uses"]):
                 if model.get("follow") and loaded:  # a model that follows the server uses what it has loaded

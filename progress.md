@@ -3,7 +3,20 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.30, live on the owner's HA
+## Current state (2026-10-31) – 2.3.32, live on the owner's HA
+
+- **2026-10-31 (2.3.31, 2.3.32): item 29, Models page.** The top list has headings (Name in AAC, Server, The server's
+  model, Can do, Now; hidden on a phone, where rows wrap), each AAC model shows what the server's model is (parameters,
+  context) and its state in words (✓ ok / ✗ not answering; idle / busy n of m / waiting). A router's numbers for a
+  loaded model (params, size, quant) are kept in core data `facts` ("<address> <model>", like `benches`) and shown
+  while it is not loaded; a model deleted on the server loses its facts and bench (`pool.forget`). Models never loaded
+  since show none (only llama.cpp says it). Item 28 dropped (owner: the order and queues are set in the Model card).
+  Item 56 (context per model): the router cannot load a model with another context (`/models/load` takes only the
+  name; the context is the preset's `ctx-size`, read at start), and only the machine can estimate memory
+  (`llama-fit-params --fit-print`, tried on the PC: Gemma 26B-A4B 13.6 GB + context 0.9 GB at 32 k, 2.9 GB at 128 k,
+  5.4 GB at 262 k + 0.6–0.8 GB compute). The owner does not want a helper on the machines ("maybe that can be a card at
+  some point"): the page shows the context and the model's maximum, and that is it. GPUs: PC = RTX 5070 Ti, CT 110 =
+  RX 7800 XT.
 
 - **2026-10-31 (2.3.30): items 15 and 52.** Undo steps stay whole in memory; stored, each keeps only what differs from
   the setup after it (`packed` / `unpacked` in core.py: its card ids, changed cards and wires, positions as they are; a
@@ -583,9 +596,9 @@ pencil edit is missing" is item 11.
     (wired as its tool, out to in and back) it could, so it was not aware of the card: fix that if possible. (c)
     `card: name = "ID"`? (d) The model called `time__text({})` to get the Time card to append the time, then answered
     with it: correct, but a cumbersome way to call it.
-28. **Models page: model order and unavailable servers.** A clearer way to set the order in which models are used,
+28. ~~**Models page: model order and unavailable servers.**~~ **dropped (owner, 2026-10-31: set in the Model card).** A clearer way to set the order in which models are used,
     and a tick that it is no issue when a compute resource is not available.
-29. **Models page: top list and parameter counts.** The top list is not really clear; models in the server lists
+29. ~~**Models page: top list and parameter counts.**~~ **done (2.3.31).** The top list is not really clear; models in the server lists
     should show their parameter count if llama.cpp gives it.
 30. ~~**Models page: last spoken to per server.**~~ **done (2.3.27).** A "last spoken to" per compute server, so it is visible when RAM
     overfills and a server stops answering.
@@ -649,7 +662,7 @@ pencil edit is missing" is item 11.
     looked at Behind the scenes). (a) A card should have only one name: the card's name is the name the model sees
     (today a function has its own tool name, e.g. the Time card's `text` renamed `get_time`). (b) Tools declared in the
     card in Python would fit better than the For models form (for a Relay: in its script).
-56. **Models page: context size per model** (owner, 2026-10-30). Show each model's context and let it be set with a
+56. ~~**Models page: context size per model**~~ **settled (2.3.31): shown, not set** (no helper on the machines; maybe a card some day). (owner, 2026-10-30). Show each model's context and let it be set with a
     slider up to what the GPU can hold; the default close to the maximum. To find out first: how a llama-server router
     loads a model with another context size (its presets set `--ctx-size`), and how to tell the GPU's maximum (VRAM,
     the model's own limit). The chat already shows the tokens used of the context (2.3.16).
