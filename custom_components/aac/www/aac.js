@@ -462,7 +462,7 @@ class AacPanel extends HTMLElement {
     this._bind();
     if (this._wave) this._drawWave(); // and the waveforms view
     if (this._dialog) this._drawDialog(); // a redraw keeps an open dialog
-    if (v.kind === "nodes") this._drawGrid();
+    if (v.kind === "nodes") { if (!this._dragging && this._settle()) this._savePositions(); this._drawGrid(); } // no card stays on another
     this._fieldElements();
     const el = v.kind === "card" && this._els[v.card];
     if (el) this.shadowRoot.querySelector("#cardhost")?.replaceChildren(el); // a redraw keeps the page as it is
@@ -990,7 +990,7 @@ class AacPanel extends HTMLElement {
     const info = t ? `<b>${esc(t.title)}</b> <span class="hint">v${esc(t.version)}</span><p style="margin:6px 0">${esc(t.help)}</p>${ports("Takes", t.inputs)}${ports("Outputs", t.outputs)}${Object.keys(t.functions || {}).length ? `<label>Functions (for models: For models on the card)</label>${Object.entries(t.functions).map(([n, f]) => `<div class="fn"><code>${esc(n)}(${Object.entries(f.args || {}).map(([a, x]) => `${esc(a)}${x.required ? "" : "?"}`).join(", ")})</code> ${esc(f.help || "")}</div>`).join("")}` : ""}<p class="hint">Click in the grid to place it. <button class="small" id="unpick" title="Put it back (Esc, or click the type again)">Cancel</button></p>`
       : '<span class="hint">Pick a card type above, then click in the grid to place it.</span>';
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
-    return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it. The round buttons (top right): Select (dashed square) draws a frame around cards and adds or removes cards by a click (or Ctrl+click and Ctrl+drag without it, a long press on a phone); drag one of them and they all move. Cut (scissors) removes every wire a drawn line crosses. Esc turns them off. The bin (or Del) removes the selected cards or wire.")}
+    return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it. Cards never lie on each other: a dropped or new card goes into its column below what it would cover, and a card that grows pushes the ones under it down. The round buttons (top right): Select (dashed square) draws a frame around cards and adds or removes cards by a click (or Ctrl+click and Ctrl+drag without it, a long press on a phone); drag one of them and they all move. Cut (scissors) removes every wire a drawn line crosses. Esc turns them off. The bin (or Del) removes the selected cards or wire.")}
         <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="redo" ${d.redo ? "" : "disabled"} title="What the last Undo took back">Redo</button><button class="small" id="fit">Fit</button><button class="small ${this.showValues ? "on" : ""}" id="values" title="The value pool: what scripts can read now (card.value), live">Values</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
       <div class="nodes ${this.palOpen ? "" : "nopal"} ${this.sideOpen ? "" : "noside"}"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
         <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
@@ -1375,24 +1375,41 @@ class AacPanel extends HTMLElement {
     return found;
   }
 
+  // No card lies on or right against another (10 px apart at least): a card that would goes below the one it covers
+  _hit(x, y, h, among) { // the card of `among` that a card at x, y (h high) would cover
+    const d = this.state.domain;
+    return among.find((o) => d.positions[o.id] && Math.abs(d.positions[o.id].x - x) < W && d.positions[o.id].y < y + h + 10 && y < d.positions[o.id].y + this._height(o) + 10);
+  }
+
+  _under(o) { return Math.round((this.state.domain.positions[o.id].y + this._height(o) + 20) / 20) * 20; } // the first free y below a card
+
   _snap(id, group = [id]) {
-    // dropped cards go into the nearest column, on the 20 px grid, below any card they would cover there; the cards
-    // dropped together (the one dragged and the rest of the selection) move as one and keep their places to each other
+    // dragged cards go into the nearest column, on the 20 px grid, below any card they would cover there; the cards
+    // dragged together (the one held and the rest of the selection) move as one and keep their places to each other
     const d = this.state.domain, p = d.positions[id], ours = group.filter((g) => d.positions[g] && this._card(g));
     if (!p || !this._card(id)) return;
     const shift = (dx, dy) => { for (const g of ours) { d.positions[g].x += dx; d.positions[g].y += dy; } };
     shift(Math.round(p.x / COL) * COL - p.x, Math.round(p.y / 20) * 20 - p.y);
+    const others = d.cards.filter((o) => !ours.includes(o.id));
     for (let tries = 0; tries < 50; tries++) {
-      let below = null;
-      for (const g of ours) {
-        const q = d.positions[g], c = this._card(g);
-        const hit = d.cards.find((o) => !ours.includes(o.id) && d.positions[o.id] && Math.abs(d.positions[o.id].x - q.x) < W
-          && d.positions[o.id].y < q.y + this._height(c) + 10 && q.y < d.positions[o.id].y + this._height(o) + 10);
-        if (hit) { below = Math.round((d.positions[hit.id].y + this._height(hit) + 20) / 20) * 20 - q.y; break; }
-      }
-      if (below === null) break;
-      shift(0, below);
+      const g = ours.find((x) => this._hit(d.positions[x].x, d.positions[x].y, this._height(this._card(x)), others));
+      if (!g) break;
+      const q = d.positions[g];
+      shift(0, this._under(this._hit(q.x, q.y, this._height(this._card(g)), others)) - q.y);
     }
+  }
+
+  _settle() { // cards on each other (one grew, or came without a place, e.g. from a model): the lower one moves down; true if any moved
+    const d = this.state.domain, done = [];
+    let moved = false;
+    const placed = d.cards.filter((c) => d.positions[c.id]).sort((a, b) => d.positions[a.id].y - d.positions[b.id].y || d.positions[a.id].x - d.positions[b.id].x);
+    for (const c of [...placed, ...d.cards.filter((c) => !d.positions[c.id])]) {
+      if (!d.positions[c.id]) { d.positions[c.id] = { x: 0, y: 0 }; moved = true; } // no place yet: the first column, below what is there
+      const p = d.positions[c.id];
+      for (let tries = 0, hit; tries < 50 && (hit = this._hit(p.x, p.y, this._height(c), done)); tries++) { p.y = this._under(hit); moved = true; }
+      done.push(c);
+    }
+    return moved;
   }
 
   _routes(wires, port) {
@@ -1627,6 +1644,7 @@ class AacPanel extends HTMLElement {
         p.x = Math.round((w.x - drag.dx) / 20) * 20; p.y = Math.round((w.y - drag.dy) / 20) * 20; drag.moved = true; this._dragging = true;
         const a = drag.from[drag.id];
         for (const [g, f] of Object.entries(drag.from)) pos[g] = { x: f.x + p.x - a.x, y: f.y + p.y - a.y };
+        this._snap(drag.id, Object.keys(drag.from)); // shown where it lands: in its column, below what it would cover
         this._drawGrid();
       }
       if (drag.kind === "frame") {
@@ -1710,13 +1728,17 @@ class AacPanel extends HTMLElement {
     return lines;
   }
 
-  _spot(at) { return { x: Math.round((at.x - W / 2) / COL) * COL, y: Math.round(at.y / 20) * 20 }; } // where a new card lands
+  _spot(at, h) { // where a new card (h high) lands: in a column, below any card it would cover
+    const p = { x: Math.round((at.x - W / 2) / COL) * COL, y: Math.round(at.y / 20) * 20 };
+    for (let tries = 0, hit; tries < 50 && (hit = this._hit(p.x, p.y, h, this.state.domain.cards)); tries++) p.y = this._under(hit);
+    return p;
+  }
 
   _ghost(e) { // the picked card type, see-through, where a click would place it
     const t = this.selType && this._type(this.selType);
     let g = this.shadowRoot.querySelector("#ghost");
     if (!t) { g?.remove(); return; }
-    const p = this._spot(this._world(e)), h = this._height({ inputs: t.inputs, outputs: t.outputs });
+    const h = this._height({ inputs: t.inputs, outputs: t.outputs }), p = this._spot(this._world(e), h);
     if (!g) { g = document.createElementNS("http://www.w3.org/2000/svg", "g"); g.id = "ghost"; g.setAttribute("pointer-events", "none"); this.shadowRoot.querySelector("#cards").appendChild(g); }
     g.setAttribute("transform", `translate(${p.x},${p.y})`);
     g.innerHTML = `<rect class="box" width="${W}" height="${h}" rx="8" style="opacity:.45;stroke-dasharray:5 4"></rect><text x="10" y="18" style="opacity:.6">${esc(t.title)}</text>`;
@@ -1725,7 +1747,7 @@ class AacPanel extends HTMLElement {
   _unpick() { this.selType = null; this.shadowRoot.querySelector("#ghost")?.remove(); this.render(); }
 
   async _place(type, at) {
-    const card = await this.ws("aac/card/add", { card_type: type, ...this._spot(at) });
+    const t = this._type(type), card = await this.ws("aac/card/add", { card_type: type, ...this._spot(at, this._height({ inputs: t.inputs, outputs: t.outputs })) });
     this.selType = null; this.sel = card.id;
     await this._load(); this.render();
   }

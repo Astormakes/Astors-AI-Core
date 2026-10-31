@@ -3,7 +3,16 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.24, live on the owner's HA
+## Current state (2026-10-31) – 2.3.25, live on the owner's HA
+
+- **2026-10-31 (2.3.25): no card on another, snapping while dragging (items 35, 36).** One check (`_hit`, `_under`):
+  a card may not lie on or within 10 px of another in its column range; the one that would goes below. Dragging: the
+  card (or the selection) snaps into its column and below what it covers while it moves, so it lands where it is shown.
+  A new card lands below what it would cover (the ghost shows it). `_settle()` runs whenever the Nodes page draws (not
+  while dragging): cards on each other (a card grew, positions from elsewhere) – the lower one moves down; cards
+  without a place (the Node editor and the voice chain add them without one, they all sat at 0,0) get the first column,
+  below what is there; saved if anything moved. Checked on the local test HA (drag onto a card, a new card onto one,
+  two cards on one spot, a card without a place) and on the live HA (the owner's 23 cards: none touched, none moved).
 
 - **2026-10-31 (2.3.24): the grid's round buttons on the right, smaller (30 px), drawn line icons** (owner: plain
   symbols, not the emoji bin; `ICON` in aac.js). Their box is `.gridtools`: 2.3.21–2.3.23 called it `.tools`, which
@@ -520,9 +529,9 @@ pencil edit is missing" is item 11.
     all selected.
     Owner, 2026-10-30: box select (drag a frame on the empty grid), Ctrl+click to add or remove cards from the
     selection, and drag and drop the whole selection at once.
-35. **Nodes page: overlapping cards.** Cards can be placed overlapping; they are only moved apart when a card near
+35. ~~**Nodes page: overlapping cards.**~~ **done (2.3.25).** Cards can be placed overlapping; they are only moved apart when a card near
     another is moved. The "too close" check must happen consistently.
-36. **Nodes page: snap while dragging.** Snapping to columns only happens on release; while dragging, cards still
+36. ~~**Nodes page: snap while dragging.**~~ **done (2.3.25).** Snapping to columns only happens on release; while dragging, cards still
     move in the old raster (a leftover).
 37. **Naming: cards, not nodes.** Cards are called cards or nodes interchangeably; they should just be called cards
     (with their interchangeability now).
