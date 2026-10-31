@@ -567,7 +567,7 @@ pencil edit is missing" is item 11.
 30. ~~**Models page: last spoken to per server.**~~ **done (2.3.27).** A "last spoken to" per compute server, so it is visible when RAM
     overfills and a server stops answering.
 31. ~~**Models page: Delete misaligned.**~~ **done (2.3.26):** rows with lines, the hovered row marked. The Delete per model does not seem to line up with the actual models.
-32. ~~**Models page: deleted downloads go on.**~~ **fixed as far as found (2.3.26):** a poll without a live event showed 0 %; not reproduced otherwise (check again on a big download). A stopped and deleted download seems to go on: the next model's
+32. ~~**Models page: deleted downloads go on.**~~ **fixed (2.3.26, the owner confirmed it on 2026-10-31):** a poll without a live event showed 0 %. A stopped and deleted download seems to go on: the next model's
     progress jumps between 0 % and ~12 %. Happens with every model (first seen after stopping a base Gemma 3 31B
     download for a quantised one).
 33. ~~**Nodes page: lit wires wrong.**~~ **fixed (2.3.0, the owner confirmed it on 2026-10-31).** (2.3.0: tool calls travel along the wires now, snapshots no longer go through Schedule; check again live) The lit wires do not seem right: a question that makes Gemma search the web
@@ -597,7 +597,7 @@ pencil edit is missing" is item 11.
     `undo_remove` exists: check the page).
 44. ~~**Lists: edit entries.**~~ **done (was there: a click on the text; 2.3.26 says so on hover).** Entries cannot be edited (check against the current page).
 45. ~~**Lists: sidebar folded open.**~~ **done (2.3.26).** The Lists entry in the sidebar should be folded open.
-46. ~~**Settings: entities UI on the phone.**~~ **done (2.3.26), owner to confirm on the phone.** The entities UI in settings is broken on the phone.
+46. ~~**Settings: entities UI on the phone.**~~ **done (2.3.26, the owner confirmed it on 2026-10-31).** The entities UI in settings is broken on the phone.
 47. **Node editor: draft mode** (owner idea, 2026-10-30; talk through first). A model plans a new card setup as a
     draft, puts it live to test it, and then decides whether it works: the Node editor keeps the context while the
     cards are rebuilt to the model's design, and expects the model to say "keep" within ~120 s, otherwise the old
