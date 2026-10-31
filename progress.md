@@ -9,6 +9,8 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   Audio clipper hearing the room): one rotation of 5,000 would have pushed errors and changes out within two hours. Now
   the newest 5,000 of what passed the wires (flow) stay, and the newest 5,000 of everything else. A context with only
   signals (the clipper's cuts) is written as its newest signal's kind and tags instead of "(no text)".
+  Owner (2026-10-31): Schedule and Heartbeat keep their own history of what fired and what came back (on their pages),
+  apart from the log.
 
 - **2026-10-31 (2.3.33): item 38, AAC's own log** (owner and a friend: a proper logging mechanism in AAC itself).
   `log.py` `DomainLog` per domain, `<config>/aac/data/<domain>/log.jsonl` (appended every 2 s, written anew past 6,000
