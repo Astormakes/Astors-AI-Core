@@ -16,7 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Client, Context, is_stop, new_id, register
 
-VERSION = "2.4.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.4.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NOT_WIRED = "Nothing is wired to this chat's output 'said': what you write goes nowhere."
@@ -96,7 +96,7 @@ class Chat(Card):
         chats = self.chats()
         live = [{"id": c["id"], "title": c["title"], "actions": acts(False)} for c in chats if not c.get("archived")]
         old = [c for c in chats if c.get("archived")]
-        return {"add": "New chat", "entries": live + ([{"id": ARCHIVE, "title": f"Archive ({len(old)})"}] if old else [])}
+        return {"add": "New chat", "fold": "arrow", "entries": live + ([{"id": ARCHIVE, "title": f"Archive ({len(old)})"}] if old else [])}
 
     async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
         if action == "nav_action":  # from its sidebar entries: delete, archive, restore, rename

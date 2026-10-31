@@ -94,9 +94,10 @@ nav .item { position: relative; } .item .navacts { display: none; position: abso
 .navmenu { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 8px; margin: 4px 0; padding: 2px 0;
   box-shadow: 0 4px 12px rgba(0,0,0,.2); clear: both; }
 .permhead { margin: 0; cursor: pointer; user-select: none; } .card .permhead + * { margin-top: 10px; }
-.access .acclist { max-height: 420px; overflow-y: auto; border: 1px solid var(--divider-color); border-radius: 8px; }
+.access { container-type: inline-size; } .access .acclist { max-height: min(420px, 60vh); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--divider-color); border-radius: 8px; }
 .accrow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--divider-color); }
 .accrow .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; } .accrow .seg { display: flex; gap: 2px; flex: 0 0 auto; }
+@container (max-width: 380px) { .accrow { flex-wrap: wrap; gap: 2px 8px; } .accrow .t { flex-basis: 100%; } .accrow .seg { margin-left: auto; } } /* narrow (side panel, phone): the name gets the whole line */
 .dmenu .item.danger { color: var(--error-color, #db4437); }
 h4.fold { cursor: pointer; user-select: none; border-radius: 6px; } h4.fold:hover { background: rgba(127,127,127,.1); }
 h4.fold.lit { color: var(--primary-color); background: rgba(3,169,244,.12); } h4.fold .arrow { display: inline-block; width: 12px; }
@@ -137,6 +138,8 @@ textarea { resize: vertical; }
 .chip { font-size: 11px; background: rgba(127,127,127,.12); border-radius: 10px; padding: 1px 7px; cursor: pointer; }
 .card { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
 .models td { padding: 4px 8px; border-bottom: 1px solid var(--divider-color); font-size: 14px; }
+.srvrows { width: 100%; border-collapse: collapse; margin-top: 6px; } .srvrows td { padding: 6px 4px; border-top: 1px solid var(--divider-color); vertical-align: top; }
+.srvrows tr:hover td { background: rgba(127,127,127,.07); } /* a model's buttons sit far right: the row shows what they belong to */
 /* nodes */
 .nodes { display: flex; height: 100%; min-height: 0; }
 .palette { width: var(--pal-w, 190px); flex: none; border-right: 1px solid var(--divider-color); display: flex; flex-direction: column; }
@@ -209,7 +212,8 @@ textarea { resize: vertical; }
   .grip { display: none; }
   .nodes .palette, .nodes .side { position: absolute; top: 0; bottom: 0; z-index: 8; width: min(85vw, 320px); background: var(--primary-background-color); box-shadow: 0 0 12px rgba(0,0,0,.3); }
   .nodes .palette { left: 0; } .nodes .side { right: 0; }
-  .nodes:not(.nopal) .edge.left { left: min(85vw, 320px); } .nodes:not(.noside) .edge.right { right: min(85vw, 320px); } }
+  .nodes:not(.nopal) .edge.left { left: min(85vw, 320px); } .nodes:not(.noside) .edge.right { right: min(85vw, 320px); }
+  .models tr { display: flex; flex-wrap: wrap; align-items: baseline; border-bottom: 1px solid var(--divider-color); } .models td { border: none; padding: 2px 8px; } }
 `;
 
 class AacPanel extends HTMLElement {
@@ -455,10 +459,12 @@ class AacPanel extends HTMLElement {
     const skin = this.look?.skins.find((k) => k.id && k.id === this.look.skin);
     const page = `${v.kind}/${v.card || ""}`, before = this.shadowRoot.querySelector("main .content");
     const scrolled = before && this._page === page ? before.scrollTop : 0; // a redraw of the same page stays where it was
+    const lists = [...this.shadowRoot.querySelectorAll("[data-accbox]")].map((b) => [b.dataset.accbox, b.querySelector(".acclist")?.scrollTop || 0]); // and so do access lists
     Object.values(this._fieldEls || {}).forEach((el) => el.remember?.()); // an editor being typed in keeps its caret
     this.shadowRoot.innerHTML = `<style>${STYLE}</style>${skin ? `<link rel="stylesheet" href="${esc(skin.url)}?v=${esc(this.state.version)}">` : ""}<div class="root ${this.navOpen ? "navopen" : ""}">${this._nav()}<div class="scrim" id="scrim"></div><div class="grip" data-grip="nav" data-target="nav" title="Drag: width of the sidebar (double-click: back to normal)"></div><main>${main}</main></div>`;
     this._page = page;
     if (scrolled) this.shadowRoot.querySelector("main .content")?.scrollTo(0, scrolled);
+    for (const [box, top] of lists) this.shadowRoot.querySelector(`[data-accbox="${CSS.escape(box)}"] .acclist`)?.scrollTo(0, top);
     this._bind();
     if (this._wave) this._drawWave(); // and the waveforms view
     if (this._dialog) this._drawDialog(); // a redraw keeps an open dialog
@@ -704,7 +710,9 @@ class AacPanel extends HTMLElement {
     return fs.map(([k, f]) => { const v = c.settings[k] ?? f.default;
       if (f.type === "bool") return `${v ? "✓" : "✗"} ${f.title.toLowerCase()}`;
       if (f.type === "access") { const n = Object.values(v || {}); return `${n.filter((x) => x === "read").length} read-only, ${n.filter((x) => x === "full").length} full`; }
-      return `${f.title}: ${v}`; }).join(" · ");
+      if (f.type === "functions") { const fns = Object.keys(c.functions || {}), defOn = this._type(c.type)?.offers !== false;
+        return fns.length ? `${fns.filter((fn) => (v || {})[fn]?.on ?? defOn).length} of ${fns.length} functions for models` : ""; }
+      return `${f.title}: ${v}`; }).filter(Boolean).join(" · ") || "no functions";
   }
 
   _permissionsView() { // every setting a card marks as a permission, all cards of this domain on one page
@@ -732,7 +740,7 @@ class AacPanel extends HTMLElement {
 
   _failing() { return (this.state?.models || []).filter((m) => m.failing).map((m) => m.name); }
 
-  _foldMode(key) { return this.look?.folds?.[key] || (key === "chat" ? "arrow" : "auto"); } // how a sidebar group folds
+  _foldMode(key) { return this.look?.folds?.[key] || this.nav.find((n) => n.card === key)?.nav?.fold || "auto"; } // how a sidebar group folds (the card's nav may say its default)
 
   _nav() { // the cards' pages and their entries, then Nodes and the core's settings
     const s = this.state, v = this.view, folds = this._folds();
@@ -869,7 +877,7 @@ class AacPanel extends HTMLElement {
 
   _servers() {
     if (!this.servers) return '<div class="card"><p class="hint">Asking the servers …</p></div>';
-    return this.servers.map((s) => `<div class="card"><div class="row"><h3 style="margin:0">${esc(s.name)}</h3><span class="hint">${esc(s.base_url)}</span>
+    return this.servers.map((s) => `<div class="card"><div class="row" style="flex-wrap:wrap"><h3 style="margin:0">${esc(s.name)}</h3><span class="hint">${esc(s.base_url)}</span>
         <span style="margin-left:auto"></span><button class="small" data-srvedit="${esc(s.id)}">Edit</button><button class="small danger" data-srvdel="${esc(s.id)}">Delete</button></div>
       ${this.srvForm === s.id ? this._srvForm(s) : ""}
       <div data-srvlist="${esc(s.id)}">${this._serverRows(s)}</div>
@@ -915,12 +923,12 @@ class AacPanel extends HTMLElement {
       const act = (a, label, cls = "", title = "") => `<button class="small ${cls}" data-ract="${a}" data-srv="${esc(s.id)}" data-rname="${esc(m.id)}" ${title ? `title="${esc(title)}"` : ""}>${label}</button>`;
       const del = !m.can_remove ? `<button class="small" disabled title="Set up on the server itself (its preset file or models folder): it can't be deleted from here, only downloaded models can">Delete</button>`
         : st === "loaded" ? '<button class="small" disabled title="Unload it first">Delete</button>' : act("delete", "Delete", "danger");
-      const buttons = st === "downloading" ? act("unload", "Pause") : st === "incomplete" ? `${act("download", "Resume")} ${act("delete", "Delete", "danger")}`
+      const buttons = st === "downloading" ? act("unload", "Stop", "", "Stops the download. Some llama-server builds keep what came so far (Resume, or Delete), others throw it away") : st === "incomplete" ? `${act("download", "Resume")} ${act("delete", "Delete", "danger")}`
         : `${on && st !== "loading" ? (benching ? '<button class="small" disabled>Benching …</button>' : act("bench", "Bench", "", "A short fixed test: reads ~1,500 tokens, writes 256; the result is kept")) : ""} ${del}`;
       const tick = st === "downloading" || st === "incomplete" ? "" : `<input type="checkbox" data-rload="1" data-srv="${esc(s.id)}" data-rname="${esc(m.id)}" ${on ? "checked" : ""} ${st === "loading" ? "disabled" : ""} title="Loaded (with one model at a time, ticking another unloads this one)">`;
-      return `<tr><td style="width:28px;vertical-align:top">${tick}</td><td><b>${esc(m.id)}</b>${users.length ? ` <span class="hint">← ${users.map((u) => esc(u.name)).join(", ")}</span>` : ""}<div class="hint">${esc(facts)}</div>${benchLine}</td><td style="text-align:right;white-space:nowrap;vertical-align:top">${buttons}</td></tr>`;
+      return `<tr><td style="width:28px">${tick}</td><td><b>${esc(m.id)}</b>${users.length ? ` <span class="hint">← ${users.map((u) => esc(u.name)).join(", ")}</span>` : ""}<div class="hint">${esc(facts)}</div>${benchLine}</td><td style="text-align:right;white-space:nowrap">${buttons}</td></tr>`;
     }).join("");
-    return `<table style="width:100%;border-collapse:collapse;margin-top:6px"><tr><th class="hint" style="text-align:left;font-weight:normal">loaded</th><th></th><th></th></tr>${rows || '<tr><td></td><td class="hint">It offers no models.</td><td></td></tr>'}</table>`;
+    return `<table class="srvrows"><tr><th class="hint" style="text-align:left;font-weight:normal">loaded</th><th></th><th></th></tr>${rows || '<tr><td></td><td class="hint">It offers no models.</td><td></td></tr>'}</table>`;
   }
 
   async _loadServers() {

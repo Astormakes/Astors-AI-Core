@@ -115,8 +115,9 @@ without shadow DOM, so the panel's look and skins apply. The panel hands it:
 It may define `event(ev)` (what the card tells open panels: `core.notify(what, card=self.id, …)`) and `add()` (the
 `+` in its sidebar group). The element is kept while the page is open elsewhere, so its state survives.
 
-In Python: `nav()` gives its sidebar entries (`{"entries": [{id, title, children?, actions?}], "add": "New list"}`;
-None: one item). An entry's `actions` (`[{id, label, icon?, ask?, confirm?}]`) show in the sidebar: one with an icon
+In Python: `nav()` gives its sidebar entries (`{"entries": [{id, title, children?, actions?}], "add": "New list", "fold": "arrow"}`;
+None: one item). `fold: "arrow"`: its group stays open until its arrow closes it (Chat, Lists); without it the group
+opens while one of its pages is in use. The owner can change either in Appearance. An entry's `actions` (`[{id, label, icon?, ask?, confirm?}]`) show in the sidebar: one with an icon
 as a button, the others in its ⋯ menu; `ask` asks for a value first, `confirm` asks first. The panel then calls
 `ui_call("nav_action", {entry, action, value})`, and `ui_call(action, args)` answers its page for what is not a function for models (a Chat's send).
 

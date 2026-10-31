@@ -375,6 +375,24 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert "error" in await card.call("use", {"aac_model": "nobody", "model": "big"})
 
 
+async def test_download_progress_holds_between_events(hass: HomeAssistant, aioclient_mock):
+    """The router's live events come about once a second and AAC listens a moment: a round that hears nothing keeps
+    the last progress (it showed 0 % now and then); a finished download forgets it."""
+    from custom_components.aac.models import Client
+    root, known = "http://llm.local:8080", {}
+    client = Client(hass, {"base_url": f"{root}/v1", "model": ""})
+    def serve(status, sse):
+        aioclient_mock.clear_requests()
+        aioclient_mock.get(f"{root}/models", json={"data": [{"id": "new", "status": {"value": status}, "can_remove": True}]})
+        aioclient_mock.get(f"{root}/models/sse", text=sse)
+    serve("downloading", 'data: {"model": "new", "event": "download_progress", "data": {"progress": {"u": {"done": 12, "total": 100}}}}\n\n')
+    assert (await client.router(known))[0]["progress"] == 12
+    serve("downloading", "")  # no event this round
+    assert (await client.router(known))[0]["progress"] == 12
+    serve("unloaded", "")
+    assert "progress" not in (await client.router(known))[0] and not known
+
+
 
 async def test_servers_and_their_models(hass: HomeAssistant, mock_entry):
     """Every model is on a server: a new one by its server (address and key come from it), deleting a server takes its

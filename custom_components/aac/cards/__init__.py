@@ -178,8 +178,8 @@ class Card:
                 "version": cls.version, "offers": cls.offers}
 
     def nav(self) -> dict[str, Any] | None:
-        """Its entries in the sidebar (a card with a page): {"entries": [{id, title, children?}], "add": "New …"};
-        None: the card is one item there."""
+        """Its entries in the sidebar (a card with a page): {"entries": [{id, title, children?}], "add": "New …",
+        "fold": "arrow" (its group stays open or closed by the arrow; default: opens while in use)}; None: one item there."""
         return None
 
     async def ui_call(self, action: str, args: dict[str, Any]) -> Any:

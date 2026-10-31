@@ -164,9 +164,10 @@ class Client:
         except (aiohttp.ClientError, TimeoutError) as err:
             raise ModelUnreachable(str(err) or type(err).__name__) from err
 
-    async def router(self) -> list[dict[str, Any]] | None:
+    async def router(self, known: dict[str, int] | None = None) -> list[dict[str, Any]] | None:
         """What a llama-server router offers, each with its state and, once loaded, what it is and how fast it ran.
-        None: the server is no router (one fixed model)."""
+        None: the server is no router (one fixed model). `known`: the last progress per download / load (kept by the
+        caller), used when the live events said nothing this time (else it showed 0 % now and then)."""
         try:
             found = (await self._request("GET", "/models")).get("data") or []
         except ModelError as err:
@@ -188,10 +189,18 @@ class Client:
                      "can_remove": bool(m.get("can_remove")), "source": m.get("source"),
                      "context_max": m.get("context_length"), "inputs": (m.get("architecture") or {}).get("input_modalities") or [],
                      "context": int(args[args.index("--ctx-size") + 1]) if "--ctx-size" in args else None}
+            key = f"{self.root} {m['id']}"
             if files := status.get("progress"):
                 entry["progress"] = _percent(files)
             elif m["id"] in progress:
                 entry["progress"] = progress[m["id"]]
+            elif known is not None and m["id"] in busy and key in known:
+                entry["progress"] = known[key]
+            if known is not None:
+                if entry["status"] in ("downloading", "loading") and "progress" in entry:
+                    known[key] = entry["progress"]
+                else:
+                    known.pop(key, None)
             if m["id"] in loaded:
                 info = meta.get(m["id"], {})
                 entry.update(params=info.get("n_params"), size=info.get("size"), quant=info.get("ftype"), context=info.get("n_ctx") or entry["context"])
@@ -308,6 +317,7 @@ class ModelPool:
         self.benches = benches if benches is not None else {}
         self.server_list = servers if servers is not None else []
         self._down: dict[str, float] = {}
+        self.progress: dict[str, int] = {}  # "<server> <model>" → its last download / load progress (router())
         self.failing: set[str] = set()  # models that did not answer last time (until they answer again): the panel warns
         self._busy: dict[str, int] = {}  # requests running per model
         self._queues: dict[str, list[asyncio.Future]] = {}  # contexts waiting per model (one queue, every card and domain)
@@ -446,7 +456,7 @@ class ModelPool:
                    "uses": [{"id": m["id"], "name": m["name"], "model": m["model"], "follow": bool(m.get("follow")),
                              "tags": self.tags(m["id"]), "parallel": m.get("parallel") or 1} for m in server["uses"]]}
             try:
-                out["models"] = await server["client"].router()
+                out["models"] = await server["client"].router(self.progress)
                 out["router"] = out["models"] is not None
                 if not out["router"]:  # one fixed model (or a few): what its /v1/models says, if it says anything
                     try:

@@ -31,7 +31,7 @@ class AacListsPage extends HTMLElement {
     const { esc } = this.panel;
     return `<ul>${items.map((it) => `<li><div class="row">
         <input type="checkbox" style="width:auto" data-done="${esc(it.id)}" data-list="${esc(list)}" ${it.done ? "checked" : ""}>
-        <span class="t ${it.done ? "done" : ""}" data-edit="${esc(it.id)}" data-list="${esc(list)}">${esc(it.text)}</span>
+        <span class="t ${it.done ? "done" : ""}" data-edit="${esc(it.id)}" data-list="${esc(list)}" title="Click to change" style="cursor:text">${esc(it.text)}</span>
         <span class="acts"><button class="small" data-sub="${esc(it.id)}" data-list="${esc(list)}" title="Add a sub-entry">+</button>
           <button class="small" data-addfield="${esc(it.id)}" data-list="${esc(list)}" title="Add a field">field</button>
           <button class="small danger" data-del="${esc(it.id)}" data-list="${esc(list)}">✕</button></span></div>

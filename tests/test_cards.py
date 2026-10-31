@@ -130,6 +130,23 @@ async def test_lists_functions_and_undo(hass: HomeAssistant, mock_entry):
     assert (await lists.call("read_list", {"list": "Car"}))["items"][0]["text"] == "Radio"
 
 
+async def test_lists_undo_puts_entries_back_in_place(hass: HomeAssistant, mock_entry):
+    """Undo brings entries back where they were (a sub-entry under its parent, in its place), and a list too."""
+    core = await setup_aac(hass, mock_entry)
+    lists = await core.domain.add_card("lists", "Mine")
+    await lists.call("add_items", {"list": "Car", "items": ["Radio", "Seats", "Tyres"]})
+    await lists.call("add_items", {"list": "Car", "items": ["Bezel", "Knob", "Cable"], "under": "radio"})
+    before = (await lists.call("read_list", {"list": "Car"}))["items"]
+    await lists.call("remove_items", {"list": "Car", "items": ["Seats", "Knob", "Cable"]})
+    assert [i["text"] for i in (await lists.call("read_list", {"list": "Car"}))["items"]] == ["Radio", "Tyres"]
+    await lists.call("undo_remove", {})
+    assert (await lists.call("read_list", {"list": "Car"}))["items"] == before
+    await lists.call("create_list", {"list": "House"})
+    await lists.call("delete_list", {"list": "Car"})
+    await lists.call("undo_remove", {})
+    assert [x["name"] for x in await lists.call("lists", {})] == ["Car", "House"]
+
+
 async def test_home_assistant_card_access(hass: HomeAssistant, mock_entry):
     """Hidden entities do not exist for AAC; read-only can be seen; only full may be switched."""
     core = await setup_aac(hass, mock_entry)

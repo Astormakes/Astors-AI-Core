@@ -9,18 +9,18 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, register
 
-VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 ARG_LIST = {"type": "string", "help": "The list's name.", "required": True}
 
 
-def _find(items: list[dict[str, Any]], key: str) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
-    """An entry by id or text (case does not matter), anywhere in the tree: (its siblings, it)."""
+def _find(items: list[dict[str, Any]], key: str, parent: str | None = None) -> tuple[list[dict[str, Any]], dict[str, Any], str | None] | None:
+    """An entry by id or text (case does not matter), anywhere in the tree: (its siblings, it, its parent's id)."""
     low = key.strip().lower()
     for it in items:
         if it["id"] == key or it["text"].strip().lower() == low:
-            return items, it
-        if found := _find(it.get("children") or [], key):
+            return items, it, parent
+        if found := _find(it.get("children") or [], key, it["id"]):
             return found
     return None
 
@@ -79,7 +79,7 @@ class Lists(Card):
         return {"lists": []}
 
     def nav(self) -> dict[str, Any]:
-        return {"add": "New list", "entries": [{"id": li["name"], "title": li["name"]} for li in self.data.get("lists") or []]}
+        return {"add": "New list", "fold": "arrow", "entries": [{"id": li["name"], "title": li["name"]} for li in self.data.get("lists") or []]}
 
     def _list(self, name: str, create: bool = False) -> dict[str, Any]:
         low = str(name).strip().lower()
@@ -108,17 +108,21 @@ class Lists(Card):
             li = self._list(args["list"], create=True)
         elif function == "delete_list":
             li = self._list(args["list"])
+            self.data["removed"] = {"list": li, "at": self.data["lists"].index(li)}
             self.data["lists"].remove(li)
-            self.data["removed"] = {"list": li}
         elif function == "undo_remove":
             removed = self.data.pop("removed", None)
             if not removed:
                 return {"error": "Nothing to bring back."}
             if "list" in removed:
-                self.data["lists"].append(removed["list"])
-            else:
+                self.data["lists"].insert(removed.get("at", len(self.data["lists"])), removed["list"])
+            else:  # each entry back where it was: under its parent (if it is still there), at its place
                 li = self._list(removed["from"])
-                li["items"].extend(removed["items"])
+                places = removed.get("places") or [[None, len(li["items"])]] * len(removed["items"])
+                for it, (under, at) in reversed(list(zip(removed["items"], places))):
+                    parent = under and _find(li["items"], under)
+                    where = parent[1].setdefault("children", []) if parent else li["items"]
+                    where.insert(min(at, len(where)), it)
         else:
             li = self._list(args["list"], create=function == "add_items")
             if function == "add_items":
@@ -145,12 +149,13 @@ class Lists(Card):
                         it.get("fields", {}).pop(args["field"], None)
                 it["updated"] = dt_util.utcnow().isoformat()
             elif function == "remove_items":
-                gone = []
+                gone, places = [], []
                 for key in args.get("items") or []:
                     if found := _find(li["items"], str(key)):
+                        places.append([found[2], found[0].index(found[1])])
                         found[0].remove(found[1])
                         gone.append(found[1])
-                self.data["removed"] = {"from": li["name"], "items": gone}
+                self.data["removed"] = {"from": li["name"], "items": gone, "places": places}
             else:
                 return await super().call(function, args, context)
             li["updated"] = dt_util.utcnow().isoformat()

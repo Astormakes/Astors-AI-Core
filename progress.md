@@ -3,7 +3,23 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.25, live on the owner's HA
+## Current state (2026-10-31) – 2.3.26, live on the owner's HA
+
+- **2026-10-31 (2.3.26): open items 31, 32, 42–46.** Lists (43, 44): Undo remove and editing (a click on the text)
+  were there and work (real clicks, desktop and touch); Undo now puts entries back where they were (a sub-entry under
+  its parent, at its place; a deleted list at its place; before, all at the end of the top level), the text shows
+  "Click to change". Sidebar (45): a card's `nav()` may say `"fold": "arrow"` (stays open until its arrow closes it);
+  Chat and Lists do (the core's hidden `key === "chat"` is gone). Access list (42): a redraw keeps its own scroll (it
+  jumped to the top on every click). Phone (46): narrower than 380 px (side panel, phone) a row puts the name on its
+  own line, the buttons below; the list does not hand its scroll to the page. Permissions page: "For models: [object
+  Object]" → "4 of 4 functions for models". Models page (31): a line between the models and the hovered row marked
+  (the Delete far right was hard to match); on a phone the top table wraps and server headers wrap (it scrolled
+  sideways). 32: not reproduced on either router (PC build 11429, CT 110 529ac89; download, stop, delete, the next
+  download: no cross-talk). What did happen: AAC listens to the live events 1.5 s per poll and they come every
+  1–1.9 s, so a poll without an event showed 0 % (the jumping); the pool keeps the last progress (`pool.progress`).
+  On the PC's build Stop throws the download away (no "incomplete" entry), on CT 110 it stays incomplete:
+  "Pause" became "Stop" with a tooltip saying so. Checked: local test HA (taps at 390 px, list scroll, Lists clicks),
+  live HA (sidebar, Permissions, scroll on a redraw, a real message sent and its chat deleted).
 
 - **2026-10-31 (2.3.25): no card on another, snapping while dragging (items 35, 36).** One check (`_hit`, `_under`):
   a card may not lie on or within 10 px of another in its column range; the one that would goes below. Dragging: the
@@ -518,8 +534,8 @@ pencil edit is missing" is item 11.
     should show their parameter count if llama.cpp gives it.
 30. **Models page: last spoken to per server.** A "last spoken to" per compute server, so it is visible when RAM
     overfills and a server stops answering.
-31. **Models page: Delete misaligned.** The Delete per model does not seem to line up with the actual models.
-32. **Models page: deleted downloads go on.** A stopped and deleted download seems to go on: the next model's
+31. ~~**Models page: Delete misaligned.**~~ **done (2.3.26):** rows with lines, the hovered row marked. The Delete per model does not seem to line up with the actual models.
+32. ~~**Models page: deleted downloads go on.**~~ **fixed as far as found (2.3.26):** a poll without a live event showed 0 %; not reproduced otherwise (check again on a big download). A stopped and deleted download seems to go on: the next model's
     progress jumps between 0 % and ~12 %. Happens with every model (first seen after stopping a base Gemma 3 31B
     download for a quantised one).
 33. ~~**Nodes page: lit wires wrong.**~~ **fixed (2.3.0, the owner confirmed it on 2026-10-31).** (2.3.0: tool calls travel along the wires now, snapshots no longer go through Schedule; check again live) The lit wires do not seem right: a question that makes Gemma search the web
@@ -544,12 +560,12 @@ pencil edit is missing" is item 11.
 40. **File: several files.** The File card has only one file. Owner imagined accessing different files, but likes the
     single file too: maybe a File system card (with a whitelist of paths) next to the File card.
 41. **File: provides output.** The File card should have a provides (read) output.
-42. **Home card: list jumps.** Clicking something in the Home card makes the list jump.
-43. **Lists: undo a removal.** Removing an entry cannot be undone; maybe show an Undo button (a function
+42. ~~**Home card: list jumps.**~~ **fixed (2.3.26).** Clicking something in the Home card makes the list jump.
+43. ~~**Lists: undo a removal.**~~ **done (was there; 2.3.26 puts entries back in place).** Removing an entry cannot be undone; maybe show an Undo button (a function
     `undo_remove` exists: check the page).
-44. **Lists: edit entries.** Entries cannot be edited (check against the current page).
-45. **Lists: sidebar folded open.** The Lists entry in the sidebar should be folded open.
-46. **Settings: entities UI on the phone.** The entities UI in settings is broken on the phone.
+44. ~~**Lists: edit entries.**~~ **done (was there: a click on the text; 2.3.26 says so on hover).** Entries cannot be edited (check against the current page).
+45. ~~**Lists: sidebar folded open.**~~ **done (2.3.26).** The Lists entry in the sidebar should be folded open.
+46. ~~**Settings: entities UI on the phone.**~~ **done (2.3.26), owner to confirm on the phone.** The entities UI in settings is broken on the phone.
 47. **Node editor: draft mode** (owner idea, 2026-10-30; talk through first). A model plans a new card setup as a
     draft, puts it live to test it, and then decides whether it works: the Node editor keeps the context while the
     cards are rebuilt to the model's design, and expects the model to say "keep" within ~120 s, otherwise the old
