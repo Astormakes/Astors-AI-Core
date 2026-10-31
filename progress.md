@@ -3,8 +3,13 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.35, live on the owner's HA
+## Current state (2026-10-31) – 2.3.36, live on the owner's HA
 
+- **2026-10-31 (2.3.36): Schedule 1.3.1, and a Notify card on live.** Run now rings like an entry at its time (the
+  same instruction, watched for an answer; a one-time entry stays). Nothing wired to its output: it goes out at
+  'unanswered' at once ("nothing is wired to its output"). Owner: models may make entries (allowed stays); live got a
+  Notify card (notify.mobile_app_cph2581, the owner's phone) wired from schedule.unanswered; the test notification
+  arrived.
 - **2026-10-31 (2.3.35): item 39, Schedule like v1, and AAC's calendar in the core** (owner: cards only use interfaces
   the core offers; the calendar was hardwired). `calendars.py`: the core keeps no entries, only who offers them
   (`core.calendar.offer(card, query, create, change, remove)`; `entries`, `add`, `change`, `remove` by uid
