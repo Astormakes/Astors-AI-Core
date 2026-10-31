@@ -3,7 +3,20 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.29, live on the owner's HA
+## Current state (2026-10-31) – 2.3.30, live on the owner's HA
+
+- **2026-10-31 (2.3.30): items 15 and 52.** Undo steps stay whole in memory; stored, each keeps only what differs from
+  the setup after it (`packed` / `unpacked` in core.py: its card ids, changed cards and wires, positions as they are; a
+  step stored whole loads as it is). Owner's store computed offline: Undo 453 KB → 31 KB (the Home card's 16 KB access
+  list was in every step); local test HA 112 KB → 30 KB. A removed card's data and files stay while the setup, Undo,
+  Redo or a slot knows it, then go (`_on_top` trims, `_tidy` → `_drop_data(only_unused)`, after the change: HA starts
+  tasks eagerly, so `eager_start=False`); Redo is not kept over unload. The owner removing cards whose data differs from
+  `default_data()` (summary `has_data`; the panel reloads first) is asked: Cancel / Keep (Undo brings it back with it) /
+  Delete the data (`aac/card/remove` `drop_data`: Undo brings the card back empty). A model removing a card keeps it.
+  Tried in the local test HA and live in a throwaway copy of the domain (question, Keep + Undo, Delete + Undo, a real
+  message answered, copy deleted). Backup before: `/config/aac/bak-v2-2.3.29/` (2.3.27 removed). The owner's store
+  packs at its next change. Left over from before: `aac2.card.assistant.log` (a Log card removed before Undo knew it,
+  Oct 29): ask the owner.
 
 - **2026-10-31 (2.3.29): a domain's id is its name too** (owner: "it's always ids and show names or the name is the id";
   things work by the default rules, as few special cases as possible). `Core`: `fits(id, name)` (shared with cards),
@@ -497,7 +510,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     (context, `-ub`) and a VRAM check before loading: on the 7800 XT a model without 1–2 GB of headroom froze the host
     three times (2026-10-25, see the CT 110 notes). To check: whether the router can fetch from Hugging Face itself
     (`-hf`), else a small helper on the machine. Later AAC decides what to load (the broker idea from v1).
-15. **Smaller undo history** (review 2026-10-30: the undo steps are 462 KB of the 712 KB domain store): the domain's store is ~720 KB because every undo step and slot is a whole copy of the
+15. ~~**Smaller undo history**~~ **done (2.3.30).** (review 2026-10-30: the undo steps are 462 KB of the 712 KB domain store): the domain's store is ~720 KB because every undo step and slot is a whole copy of the
     setup (the Home card's access list alone is big), and it is written on every change. Keep changes instead of
     copies, or leave big settings out of the undo steps. Also: a removed card's data stays stored (for Undo); stores of
     cards that are long gone should go (owner's no-dead-weight rule).
@@ -624,7 +637,7 @@ pencil edit is missing" is item 11.
     Model card (a hidden contract); it should be the card's own ui_call.
 51. **Review: cards may not import each other** (owner, 2026-10-31: talk through first). The loader makes `aac_cards` a package so card files can import one
     another; that invites cards to depend on each other. Remove it (folders keep their own relative imports).
-52. **Review: removing a card asks about its data** (page 1, rule 3). Today its data stays stored forever, silently.
+52. ~~**Review: removing a card asks about its data**~~ **done (2.3.30).** (page 1, rule 3). Today its data stays stored forever, silently.
     Ties in with 15 (stores of long-gone cards).
 53. ~~**Review: signals besides stop.**~~ **done (2.3.0): events.** Page 1 says stop is the only signal, but Decide writes its choice and the Audio
     clipper its cuts as `signal` entries (the Level card reads the cuts). Either page 1 or the code changes.

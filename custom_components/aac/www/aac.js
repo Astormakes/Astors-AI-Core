@@ -1073,10 +1073,20 @@ class AacPanel extends HTMLElement {
       ${groups.join("") || '<p class="hint">No card offers values.</p>'}<label>The core: when AAC last spoke</label>${audio}`;
   }
 
-  async _removeCards() { // the selected cards, no question: Undo brings them back (several in one step)
+  async _removeCards() { // the selected cards (several in one Undo step); cards with data of their own ask what happens to it
     const cards = [...this._picked()];
+    await this._load(); // whether they hold data now
+    const held = cards.map((id) => this._card(id)).filter((c) => c?.has_data);
+    let drop = false;
+    if (held.length) {
+      const one = held.length === 1, names = held.map((c) => `"${c.title}"`).join(", ");
+      const { button } = await this.dialog({ title: "Remove", text: `${names} ${one ? "has data of its" : "have data of their"} own (chats, lists, memories …).\n\nKeep: Undo brings ${one ? "it" : "them"} back with it. Kept data goes once Undo can no longer bring ${one ? "the card" : "them"} back.\nDelete: the data goes now; Undo brings ${one ? "the card" : "them"} back empty.`,
+        buttons: [["cancel", "Cancel"], ["keep", "Keep", "primary"], ["drop", "Delete the data", "danger"]] });
+      if (button === "cancel") return this.render();
+      drop = button === "drop";
+    }
     this.sel = null;
-    await this.ws("aac/card/remove", { cards });
+    await this.ws("aac/card/remove", { cards, drop_data: drop });
     await this._load(); this.render();
   }
 

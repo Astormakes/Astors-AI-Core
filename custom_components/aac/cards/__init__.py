@@ -252,6 +252,7 @@ class Card:
         ins, outs, square = self.ports()
         return {"id": self.id, "type": self.type, "title": self.name, "settings": self.settings, "functions": self.functions,
                 "inputs": ins, "outputs": outs, "square": sorted(square), "ui": self.ui_url, "view": self._view(),
+                "has_data": self.keeps_data and self.data != self.default_data(),
                 **({"tools": [c.id for c in self.domain.flow.tools(self.id)]} if self.uses_tools else {}),
                 "tags": {self.tag(t): what for t, what in self.tags.items()}}
 

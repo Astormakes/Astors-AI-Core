@@ -37,6 +37,34 @@ def fits(an_id: str, name: str) -> bool:
     return re.fullmatch(rf"{re.escape(slug(name))}(_\d+)?", an_id) is not None
 
 
+def packed(steps: list[dict[str, Any]], now: dict[str, Any]) -> list[dict[str, Any]]:
+    """Undo steps as they are stored: each only what differs from the setup after it (its card ids, the cards and wires
+    that changed; positions as they are), so a big setting that stays the same is stored once."""
+    out, newer = [], now
+    for step in reversed(steps):
+        kept = {"ids": list(step["cards"]), "cards": {k: v for k, v in step["cards"].items() if newer["cards"].get(k) != v}}
+        if step["wires"] != newer["wires"]:
+            kept["wires"] = step["wires"]
+        if "positions" in step:
+            kept["positions"] = step["positions"]
+        out.append(kept)
+        newer = step
+    return out[::-1]
+
+
+def unpacked(steps: list[dict[str, Any]], now: dict[str, Any]) -> list[dict[str, Any]]:
+    """Stored Undo steps as whole setups again (a step stored whole has every card and its wires)."""
+    out, newer = [], now
+    for kept in reversed(steps):
+        cards = {k: kept["cards"][k] if k in kept["cards"] else newer["cards"].get(k) for k in kept.get("ids", kept["cards"])}
+        step = {"cards": {k: v for k, v in cards.items() if v is not None}, "wires": kept.get("wires", newer["wires"])}
+        if "positions" in kept:
+            step["positions"] = kept["positions"]
+        out.append(step)
+        newer = step
+    return deepcopy(out[::-1])
+
+
 def move_folder(src: Path, dst: Path) -> None:
     """Files kept under an id go with it (what was left under the new id is gone)."""
     if src.is_dir():
@@ -73,7 +101,7 @@ class Domain:
         self._specs = data.get("cards", {})
         self.wires = data.get("wires", [])
         self.positions = data.get("positions", {})
-        self.undo = data.get("undo", [])
+        self.undo = unpacked(data.get("undo", []), {"cards": self._specs, "wires": self.wires})
         self.redo: list[dict[str, Any]] = []  # what Undo took back (until the next change; not kept over a restart)
         self.slots = data.get("slots", {})
         self.user_tags = data.get("user_tags", [])
@@ -89,8 +117,10 @@ class Domain:
             await card.start()
 
     async def unload(self) -> None:
-        """Another domain runs (or AAC stops): every card ends its timers."""
+        """Another domain runs (or AAC stops): every card ends its timers; Redo is not kept."""
         self.running = False
+        self._tidy(i for step in self.redo for i in step["cards"])
+        self.redo = []
         for card in list(self.cards.values()):
             await self._end(card)
 
@@ -117,8 +147,8 @@ class Domain:
         return card
 
     def _data(self) -> dict[str, Any]:
-        return {"cards": self._specs, "wires": self.wires, "positions": self.positions, "undo": self.undo[-UNDO_STEPS:],
-                "slots": self.slots, "user_tags": self.user_tags}
+        return {"cards": self._specs, "wires": self.wires, "positions": self.positions,
+                "undo": packed(self.undo, {"cards": self._specs, "wires": self.wires}), "slots": self.slots, "user_tags": self.user_tags}
 
     def save(self) -> None:
         """Keep the setup (soon)."""
@@ -146,8 +176,28 @@ class Domain:
         return deepcopy({"cards": self._specs, "wires": self.wires})
 
     def _remember(self) -> None:
-        self.undo = [*self.undo, self._snapshot()][-UNDO_STEPS:]
+        self.undo = self._on_top(self.undo, self._snapshot())
+        self._tidy(i for step in self.redo for i in step["cards"])
         self.redo = []  # a new change: what was undone cannot come back
+
+    def _on_top(self, steps: list[dict[str, Any]], step: dict[str, Any]) -> list[dict[str, Any]]:
+        """A step on top of Undo or Redo; the oldest beyond UNDO_STEPS goes."""
+        steps = [*steps, step]
+        self._tidy(i for old in steps[:-UNDO_STEPS] for i in old["cards"])
+        return steps[-UNDO_STEPS:]
+
+    def _tidy(self, card_ids: Any) -> None:
+        """These cards may have left every setup (now, Undo, Redo, the slots): then their data and files go (soon,
+        once the change that let them go is done)."""
+        if found := set(card_ids):
+            self.hass.async_create_task(self._drop_data(found, only_unused=True), eager_start=False)
+
+    async def _drop_data(self, card_ids: set[str], only_unused: bool = False) -> None:
+        """Cards' stored data and files go (only_unused: of those no setup knows any more)."""
+        for card_id in card_ids - (self._ids_taken() if only_unused else set()):
+            await self._card_store(card_id).async_remove()
+            self._card_stores.pop(card_id, None)
+            await self.hass.async_add_executor_job(shutil.rmtree, self.core.folder(self.id, card_id), True)
 
     async def add_card(self, card_type: str, title: str = "", settings: dict[str, Any] | None = None,
                        at: dict[str, float] | None = None) -> Card:
@@ -165,9 +215,9 @@ class Domain:
         self.core.notify("setup", domain=self.id)
         return card
 
-    async def remove_card(self, *card_ids: str) -> None:
-        """Take cards out, several in one Undo step (their data stays stored until they come back or the domain is
-        cleared)."""
+    async def remove_card(self, *card_ids: str, drop_data: bool = False) -> None:
+        """Take cards out, several in one Undo step. Their data and files stay for Undo (until no setup knows them any
+        more), or go now (drop_data: Undo brings them back empty)."""
         gone = [c for c in dict.fromkeys(card_ids) if c in self._specs]
         if not gone:
             return
@@ -179,6 +229,8 @@ class Domain:
                 await self._end(card)
             self.positions.pop(card_id, None)
         self.wires = [w for w in self.wires if w["from"].split(".")[0] not in gone and w["to"].split(".")[0] not in gone]
+        if drop_data:
+            await self._drop_data(set(gone))
         self.save()
         self.core.notify("setup", domain=self.id)
 
@@ -224,7 +276,7 @@ class Domain:
         if not self.undo:
             return False
         last = self.undo.pop()
-        self.redo = [*self.redo, self._snapshot()][-UNDO_STEPS:]
+        self.redo = self._on_top(self.redo, self._snapshot())
         await self._restore(last)
         return True
 
@@ -233,7 +285,7 @@ class Domain:
         if not self.redo:
             return False
         nxt = self.redo.pop()
-        self.undo = [*self.undo, self._snapshot()][-UNDO_STEPS:]
+        self.undo = self._on_top(self.undo, self._snapshot())
         await self._restore(nxt)
         return True
 
@@ -258,6 +310,7 @@ class Domain:
 
     def save_slot(self, slot: str) -> None:
         """Keep the setup (cards, wires, positions) in one of three slots."""
+        self._tidy((self.slots.get(slot) or {}).get("cards") or {})
         self.slots[slot] = {**self._snapshot(), "positions": deepcopy(self.positions)}
         self.save()
 
@@ -277,7 +330,7 @@ class Domain:
         """A setup from a file replaces this one (Undo brings it back)."""
         if not isinstance(setup.get("cards"), dict) or not isinstance(setup.get("wires"), list):
             raise ValueError("not an AAC setup file")
-        self.undo = [*self.undo, {**self._snapshot(), "positions": deepcopy(self.positions)}][-UNDO_STEPS:]
+        self.undo = self._on_top(self.undo, {**self._snapshot(), "positions": deepcopy(self.positions)})
         await self._restore({"cards": setup["cards"], "wires": setup["wires"], "positions": setup.get("positions") or {}})
 
     # ------------------------------------------------------------------ a card's id is its name
@@ -519,7 +572,8 @@ class Core:
     @staticmethod
     def _stored_cards(data: dict[str, Any]) -> set[str]:
         """The cards a domain's store knows (the setup, its Undo steps and slots): those that may have data stored."""
-        return {i for setup in [data, *data.get("undo", []), *(data.get("slots") or {}).values()] for i in (setup or {}).get("cards") or {}}
+        steps = unpacked(data.get("undo", []), {"cards": data.get("cards", {}), "wires": data.get("wires", [])})
+        return {i for setup in [data, *steps, *(data.get("slots") or {}).values()] for i in (setup or {}).get("cards") or {}}
 
     async def _move(self, old: str, new: str) -> None:
         """A domain's id moves (its name did): its store, its cards' stores and files, the running mark; a running domain

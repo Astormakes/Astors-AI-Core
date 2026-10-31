@@ -84,10 +84,10 @@ async def ws_card_add(hass, connection, msg) -> None:
     connection.send_result(msg["id"], card.summary())
 
 
-@command({vol.Required("type"): "aac/card/remove", vol.Required("cards"): [str]})
+@command({vol.Required("type"): "aac/card/remove", vol.Required("cards"): [str], vol.Optional("drop_data", default=False): bool})
 async def ws_card_remove(hass, connection, msg) -> None:
-    """Take cards out (several: one Undo step)."""
-    await _core(hass).domain.remove_card(*msg["cards"])
+    """Take cards out (several: one Undo step); drop_data: their data goes now, not when Undo forgets them."""
+    await _core(hass).domain.remove_card(*msg["cards"], drop_data=msg["drop_data"])
     connection.send_result(msg["id"], {})
 
 

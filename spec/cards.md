@@ -73,7 +73,8 @@ wired from the model (even when it is a tool too), else to every wired card but 
 More a card may define: `busy` (a property: True while it works on something; a newer version of its file waits),
 `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
 self.save()`), `self.folder` (where it keeps files: `<config>/aac/data/<domain>/<card>`, moved with a rename, gone with
-its domain), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop(stop_entry) -> bool` (a stop
+its domain; a removed card's data and files stay while Undo, Redo or a slot can bring it back, then go; the owner
+removing a card whose data differs from `default_data()` is asked: keep it, or let it go now), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop(stop_entry) -> bool` (a stop
 arrived: True when it was busy and sent its own context on), `held(port)` (what a dotted wire from that read output
 reads), `current()` (its values), `ui = True` (a page of its own, see below). A setting of type `modellist` with a
 `tag` gives it a list of models with queues. A setting may say `min` (and `off`, the value that turns it off),

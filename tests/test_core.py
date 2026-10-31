@@ -96,6 +96,72 @@ async def test_undo_slots_and_clone(hass: HomeAssistant, mock_entry):
     assert core.domain.id == "test" and "Project Portfolio" in [li["name"] for li in core.domain.cards["lists"].data["lists"]]
 
 
+async def test_undo_is_stored_as_changes(hass: HomeAssistant, mock_entry, hass_storage):
+    """Each stored Undo step keeps only what differs from the setup after it (a big setting that stays is stored once);
+    after a restart every step comes back whole, and a step stored whole (as before) still loads."""
+    import json
+
+    from custom_components.aac.core import UNDO_STEPS, unpacked
+
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    big = {"light.x": "x" * 5000}
+    await d.update_card("charter", settings={"levels": big})
+    for i in range(UNDO_STEPS + 3):
+        await d.update_card("time", settings={"step": i % 2})
+    await d.remove_card("lists")
+    whole = json.loads(json.dumps(d.undo))
+    await d.save_now()
+    stored = hass_storage[f"aac2.domain.{d.id}"]["data"]["undo"]
+    assert len(stored) == UNDO_STEPS and len(json.dumps(stored)) < len(json.dumps(whole)) / 4
+    assert sum(json.dumps(step).count("x" * 5000) for step in stored) <= 1
+    assert unpacked(stored, {"cards": d._specs, "wires": d.wires}) == whole  # noqa: SLF001
+    assert unpacked(whole, {"cards": {}, "wires": []}) == whole  # whole steps stay as they are
+    await d.unload()
+    await d.load()
+    assert d.undo == whole
+    assert await d.undo_last() and "lists" in d.cards
+
+
+async def test_removed_cards_data_stays_for_undo_or_goes(hass: HomeAssistant, mock_entry, hass_storage):
+    """A removed card's data stays while Undo (or Redo, a slot) can bring the card back, then goes; the owner can let it
+    go at once (Undo brings the card back empty)."""
+    from custom_components.aac.core import UNDO_STEPS
+
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    key = lambda card: f"aac2.card.{d.id}.{card}"  # noqa: E731
+    await d.cards["lists"].call("add_items", {"list": "Car", "items": ["Radio"]})
+    assert d.cards["lists"].summary()["has_data"] and not d.cards["time"].summary()["has_data"]
+    await d.remove_card("lists")
+    await hass.async_block_till_done()
+    assert key("lists") in hass_storage
+    assert await d.undo_last() and "Car" in [li["name"] for li in d.cards["lists"].data["lists"]]
+
+    await d.remove_card("lists", drop_data=True)
+    assert key("lists") not in hass_storage
+    assert await d.undo_last() and "lists" in d.cards and "Car" not in str(d.cards["lists"].data)
+
+    await d.cards["lists"].call("add_items", {"list": "Car", "items": ["Radio"]})
+    await d.remove_card("lists")
+    for i in range(UNDO_STEPS - 1):
+        await d.update_card("time", settings={"step": i % 2})
+        await hass.async_block_till_done()
+        assert key("lists") in hass_storage  # an Undo step still knows it
+    await d.update_card("time", settings={"step": 2})
+    await hass.async_block_till_done()
+    assert key("lists") not in hass_storage  # no setup knows it any more
+
+    added = await d.add_card("lists", "Errands")  # only Redo knows it after Undo: a new change lets it go
+    await added.call("add_items", {"list": "Shop", "items": ["Milk"]})
+    assert key("errands") in hass_storage and await d.undo_last()
+    await hass.async_block_till_done()
+    assert key("errands") in hass_storage
+    await d.update_card("time", settings={"step": 3})
+    await hass.async_block_till_done()
+    assert key("errands") not in hass_storage
+
+
 async def test_every_card_survives_remove_and_undo(hass: HomeAssistant, mock_entry, aioclient_mock):
     """One card of every type, wired, placed and with data: all removed at once, one Undo brings everything back as it
     was (settings, wires, positions, each card's own data), and the cards work again."""
