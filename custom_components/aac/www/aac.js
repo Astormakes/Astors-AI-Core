@@ -312,6 +312,9 @@ class AacPanel extends HTMLElement {
   async _load() {
     [this.state, this.audio, this.look, this.nav] = await Promise.all([this.ws("aac/state"), this.ws("aac/audio").catch(() => null),
       this.ws("aac/appearance").catch(() => ({ skins: [], skin: "" })), this.ws("aac/nav").then((r) => r.nav).catch(() => [])]);
+    const ids = new Set(this.state.domain.cards.map((c) => c.id)); // a selected card that is gone (removed, Undo moved its id back) lets go
+    if (this._sel && !ids.has(this._sel)) this._sel = null;
+    this.many = new Set([...(this.many || [])].filter((id) => ids.has(id)));
   }
   _folds() { try { return JSON.parse(localStorage.getItem("aac.folds") || "{}"); } catch (err) { return {}; } }
   _setFolds(f) { try { localStorage.setItem("aac.folds", JSON.stringify(f)); } catch (err) { /* private window */ } }
@@ -1819,7 +1822,7 @@ class AacPanel extends HTMLElement {
       else await this.ws("aac/slot", { slot, action: "save" });
       await this._load(); this.render();
     }));
-    $("#title")?.addEventListener("change", async (e) => { await this.ws("aac/card/update", { card: this.sel, title: e.target.value }); await this._load(); this.render(); });
+    $("#title")?.addEventListener("change", async (e) => { this.sel = (await this.ws("aac/card/update", { card: this.sel, title: e.target.value })).id; await this._load(); this.render(); }); // its id follows the name
     $$("[data-set]").forEach((el) => el.addEventListener("change", () => this._saveSetting(el)));
     const fnSave = async (row, reset) => { // For models: one function's tick, name, description (empty: the card's own)
       const c = this._card(this.sel), key = row.dataset.key; // only functions the card has now (a renamed block's old entry goes)

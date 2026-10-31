@@ -150,6 +150,14 @@ Through `self.core`:
 Through `self.domain`: `flow.send(context, self.id, port)` (start a context at an output), `cards` (other cards, used
 only through what they offer: `call`, `current()`, `held()`, `dated()`), `template_values()` (every card's values: the Values panel, a Relay's script).
 
+**A card's id is its name** (lowercase, other characters `_`: "Speech to text" is `speech_to_text`; a second card of
+that name `speech_to_text_2`), so a card is called the same everywhere. Renamed (by the owner, the Card editor, Undo,
+a slot, a file; or loaded with an id that does not fit), its id moves everywhere: wires, positions, Undo steps and
+slots, its stored data, the sidebar's fold, and what the other cards keep about it: their settings through the class
+method `renamed_settings(settings, old, new)` (by default a script's references `old.tag` and `cards['old']`; a card
+with ids in a setting of its own adds them, as the Calendar does for `lists`) and their data through
+`async renamed(old, new)` (by default stored entries: `by`, `tags`, a call's `card`).
+
 A context (`Context`, docs/v2 page 3) has the shape of a model request: `system` (parts), `messages` (said, answer,
 result; an answer's calls in `data["calls"]`, a result's `data["call_id"]`; a message's `attachments`: note before
 its text, trailer after), `tools` (`{name, card, function, description, args}`, filled by a Model), `events` (signal,

@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
 
-from .cards import CARD_TYPES, Card
+from .cards import CARD_TYPES, Card, renamed_refs
 from .const import LOGGER, SIGNAL
 from .flow import Flow
 from .models import ModelPool
@@ -65,6 +65,7 @@ class Domain:
         self.cards = {}
         for card_id, spec in list(self._specs.items()):  # a card made here may add another
             await self._make(card_id, spec)
+        await self.follow_names()
 
     async def start(self) -> None:
         """Run: the cards start their timers and listeners."""
@@ -134,15 +135,12 @@ class Domain:
         self.redo = []  # a new change: what was undone cannot come back
 
     async def add_card(self, card_type: str, title: str = "", settings: dict[str, Any] | None = None,
-                       at: dict[str, float] | None = None, card_id: str | None = None) -> Card:
-        """A new card."""
+                       at: dict[str, float] | None = None) -> Card:
+        """A new card (its id is its name, see follow_names)."""
         if card_type not in CARD_TYPES:
             raise ValueError(f"No card type {card_type}")
         title = title or CARD_TYPES[card_type].title
-        base = card_id or slug(title)
-        new, n = base, 2
-        while new in self._specs:
-            new, n = f"{base}_{n}", n + 1
+        new = self._free(slug(title), self._ids_taken())
         self._remember()
         self._specs[new] = {"type": card_type, "title": title, "settings": dict(settings or {})}
         card = await self._make(new, self._specs[new])
@@ -182,6 +180,8 @@ class Domain:
         if settings is not None:
             spec["settings"] = {**spec.get("settings", {}), **settings}
         card = await self._make(card_id, spec)
+        if title is not None and (new := self._wanted(card_id, spec["title"])):
+            card = await self._move(card_id, new)
         self.save()
         self.core.notify("setup", domain=self.id)
         return card
@@ -237,6 +237,7 @@ class Domain:
             await self._make(card_id, spec)
         if "positions" in setup:
             self.positions = deepcopy(setup["positions"])
+        await self.follow_names()  # a name Undo (or a slot, a file) brought back takes its id along
         self.save()
         self.core.notify("setup", domain=self.id)
 
@@ -263,6 +264,78 @@ class Domain:
             raise ValueError("not an AAC setup file")
         self.undo = [*self.undo, {**self._snapshot(), "positions": deepcopy(self.positions)}][-UNDO_STEPS:]
         await self._restore({"cards": setup["cards"], "wires": setup["wires"], "positions": setup.get("positions") or {}})
+
+    # ------------------------------------------------------------------ a card's id is its name
+    def _ids_taken(self) -> set[str]:
+        """Every card id in the setup, its Undo steps and its slots (a new or moved id meets none of them)."""
+        return {i for setup in [{"cards": self._specs}, *self.undo, *self.redo, *self.slots.values()] for i in setup.get("cards") or {}}
+
+    @staticmethod
+    def _free(base: str, taken: set[str]) -> str:
+        new, n = base, 2
+        while new in taken:
+            new, n = f"{base}_{n}", n + 1
+        return new
+
+    def _wanted(self, card_id: str, title: str) -> str | None:
+        """The id a card's name asks for (its slug; a number after it when the name is taken), None: it has it."""
+        base = slug(title)
+        return None if re.fullmatch(rf"{re.escape(base)}(_\d+)?", card_id) else self._free(base, self._ids_taken())
+
+    async def follow_names(self) -> None:
+        """Every card's id is its name, so a card is called the same everywhere (wires, tags, scripts, its data): an id
+        that no longer fits its name moves."""
+        moved = False
+        for card_id, spec in list(self._specs.items()):
+            if new := self._wanted(card_id, spec.get("title") or ""):
+                await self._move(card_id, new)
+                moved = True
+        if moved:
+            self.save()
+            self.core.notify("setup", domain=self.id)
+
+    @staticmethod
+    def _moved_setup(setup: dict[str, Any], old: str, new: str) -> dict[str, Any]:
+        """One setup (the current one, an Undo step, a slot) with a card's id moved: its key, wires, positions, and
+        what the cards' settings say about it (each card type knows its own)."""
+        end = lambda ref: f"{new}{ref[len(old):]}" if ref.startswith(f"{old}.") else ref  # noqa: E731
+        def settings(spec: dict[str, Any]) -> dict[str, Any]:
+            kind = CARD_TYPES.get(spec.get("type", ""))
+            found = dict(spec.get("settings") or {})
+            return kind.renamed_settings(found, old, new) if kind else renamed_refs(found, old, new)
+        out = {**setup, "cards": {(new if k == old else k): {**spec, "settings": settings(spec)} for k, spec in setup["cards"].items()},
+               "wires": [{"from": end(w["from"]), "to": end(w["to"])} for w in setup.get("wires") or []]}
+        if "positions" in setup:
+            out["positions"] = {(new if k == old else k): v for k, v in setup["positions"].items()}
+        return out
+
+    async def _move(self, old: str, new: str) -> Card | None:
+        """A card's id moves everywhere: the setup, its Undo steps and slots, its stored data, what the other cards keep
+        about it (their settings and data), the sidebar's fold, what dotted wires last saw."""
+        now = self._moved_setup({"cards": self._specs, "wires": self.wires, "positions": self.positions}, old, new)
+        self._specs, self.wires, self.positions = now["cards"], now["wires"], now["positions"]
+        self.undo = [self._moved_setup(s, old, new) for s in self.undo]
+        self.redo = [self._moved_setup(s, old, new) for s in self.redo]
+        self.slots = {k: self._moved_setup(s, old, new) for k, s in self.slots.items()}
+        if card := self.cards.pop(old, None):
+            await self._end(card)
+        store = self._card_store(old)
+        if (data := await store.async_load()) is not None:
+            await self._card_store(new).async_save(data)
+            await store.async_remove()
+        self._card_stores.pop(old, None)
+        for card_id, other in list(self.cards.items()):  # the others whose settings name it: made again with them
+            if any(other.settings.get(k) != v for k, v in (self._specs[card_id].get("settings") or {}).items()):
+                await self._make(card_id, self._specs[card_id])
+        card = await self._make(new, self._specs[new]) if new in self._specs else None
+        for other in list(self.cards.values()):  # stored entries name it (its own too)
+            await other.renamed(old, new)
+        self.flow.held = {(f"{new}{k[len(old):]}" if k.startswith(f"{old}.") else k): v for k, v in self.flow.held.items()}
+        if old in (folds := self.core.data.get("folds") or {}):
+            folds[new] = folds.pop(old)
+            self.core.save()
+        LOGGER.info("AAC: card %s is now %s (its name)", old, new)
+        return card
 
     # ------------------------------------------------------------------ the rest
     def template_values(self) -> dict[str, Any]:

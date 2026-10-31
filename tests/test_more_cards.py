@@ -20,8 +20,8 @@ async def test_a_schedule_fires_at_its_time(hass: HomeAssistant, mock_entry, aio
     core = await setup_aac(hass, mock_entry)
     d = core.domain
     schedule = await d.add_card("schedule", "Schedule", {"entries": [{"name": "Bed light", "at": "05:25", "weekdays": [],
-                                                                       "text": "Turn on the bed light.", "enabled": True}]}, card_id="schedule")
-    d.set_wires([*d.wires, {"from": "schedule.out", "to": "charter.in"}, {"from": "model.out", "to": "schedule.answers"}])
+                                                                       "text": "Turn on the bed light.", "enabled": True}]})
+    d.set_wires([*d.wires, {"from": f"{schedule.id}.out", "to": "charter.in"}, {"from": "model.out", "to": f"{schedule.id}.answers"}])
     at = (dt_util.now() + timedelta(days=1)).replace(hour=5, minute=25, second=0, microsecond=0)  # always ahead
     freezer.move_to(dt_util.as_utc(at))
     async_fire_time_changed(hass)

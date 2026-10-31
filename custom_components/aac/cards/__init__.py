@@ -33,6 +33,37 @@ FUNCTIONS = {"type": "functions", "title": "For models", "default": {}, "fold": 
 CATEGORIES = ["In and out", "Text", "Logic", "Models", "Data", "Home Assistant", "Audio", "Other"]
 
 
+def renamed_refs(value: Any, old: str, new: str) -> Any:
+    """A card's id changed (its name did): in texts that refer to it, as a script does: `old.said` (a tag, a value, a
+    call) and `cards['old']`. A word alone is left (`e.data.get("mic")` is not the card mic)."""
+    if isinstance(value, str):
+        return re.sub(rf"(?<![\w.]){re.escape(old)}(?=\.\w)|(?<=cards\[[\"']){re.escape(old)}(?=[\"']\])", new, value)
+    if isinstance(value, dict):
+        return {k: renamed_refs(v, old, new) for k, v in value.items()}
+    if isinstance(value, list):
+        return [renamed_refs(v, old, new) for v in value]
+    return value
+
+
+def renamed_entries(value: Any, old: str, new: str) -> Any:
+    """A card's id changed: in stored entries (who wrote it, its tags, the card a call went to); nothing else (a data
+    field may be called like a card: the Lists card keeps "lists")."""
+    if isinstance(value, list):
+        return [renamed_entries(v, old, new) for v in value]
+    if not isinstance(value, dict):
+        return value
+    out = {}
+    for k, v in value.items():
+        if k in ("by", "card") and v == old:
+            v = new
+        elif k == "tags" and isinstance(v, list):
+            v = [f"{new}.{t[len(old) + 1:]}" if isinstance(t, str) and t.startswith(f"{old}.") else t for t in v]
+        else:
+            v = renamed_entries(v, old, new)
+        out[k] = v
+    return out
+
+
 def register(cls: type[Card]) -> type[Card]:
     """Make a card type available (decorator); a later one with the same type replaces it (your folder after AAC's)."""
     if (old := CARD_TYPES.get(cls.type)) is not None and old.__module__ != cls.__module__:
@@ -110,6 +141,18 @@ class Card:
         """Keep its own data."""
         if self.keeps_data:
             await self.domain.save_card_data(self.id, self.data)
+
+    @classmethod
+    def renamed_settings(cls, settings: dict[str, Any], old: str, new: str) -> dict[str, Any]:
+        """A card's id changed (it was renamed): this card's settings refer to it by the new one (a script's
+        references; a card with ids in a setting of its own adds them)."""
+        return renamed_refs(settings, old, new)
+
+    async def renamed(self, old: str, new: str) -> None:
+        """A card's id changed: its data refers to it by the new one (stored entries: authors, tags, calls)."""
+        if self.keeps_data and (data := renamed_entries(self.data, old, new)) != self.data:
+            self.data = data
+            await self.save()
 
     # ------------------------------------------------------------------ ports and work
     def ports(self) -> tuple[dict[str, str], dict[str, str], set[str]]:

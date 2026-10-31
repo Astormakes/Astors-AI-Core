@@ -88,29 +88,29 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
     core.data["voice_chain"] = False
     await async_voice_chain(core)
     d = core.domain
-    assert {"mic", "cut", "ears", "stop_word", "wake", "follow_up", "spoken", "followed", "answer", "speaker"} <= set(d.cards)
-    assert {"from": "chat.provides", "to": "spoken.reads"} in d.wires and {"from": "model.out", "to": "answer.in"} in d.wires
+    assert {"microphone", "audio_clipper", "speech_to_text", "stop_word", "wake_word", "follow_up", "spoken_turn", "follow_up_turn", "answer", "speaker"} <= set(d.cards)
+    assert {"from": "chat.provides", "to": "spoken_turn.reads"} in d.wires and {"from": "model.out", "to": "answer.in"} in d.wires
     assert {"from": "model.out", "to": "chat.answers"} not in d.wires
 
     async def route(card, text, seconds=1.0):
         m = Context()
-        m.add("ears", "said", text, mic="pc", seconds=seconds)
+        m.add("speech_to_text", "said", text, mic="pc", seconds=seconds)
         return await d.cards[card].handle(m, "in", Step(d.flow, d.cards[card], "in", m)), m
-    assert (await route("wake", "Computer, lights on"))[0] == [("yes", "spoken")]
-    assert (await route("wake", "see you in the next video"))[0] == []
+    assert (await route("wake_word", "Computer, lights on"))[0] == [("yes", "spoken_turn")]
+    assert (await route("wake_word", "see you in the next video"))[0] == []
     out, m = await route("stop_word", "stop it")
     assert out == [("stop", "charter")] and m.stopped
     assert (await route("follow_up", "and the kitchen too"))[0] == []  # AAC has not spoken
     core.audio._spoke["pc"] = __import__("time").time()
-    assert (await route("follow_up", "and the kitchen too"))[0] == [("yes", "followed")]
+    assert (await route("follow_up", "and the kitchen too"))[0] == [("yes", "follow_up_turn")]
     assert (await route("follow_up", "computer, and the kitchen"))[0] == []  # the Wake word takes that one
     if start == "fresh":  # the window counts from where you started talking (the backup keeps its older rule)
         core.audio._spoke["pc"] = __import__("time").time() - 25
-        assert (await route("follow_up", "a long answer", seconds=22))[0] == [("yes", "followed")]  # began 3 s after
+        assert (await route("follow_up", "a long answer", seconds=22))[0] == [("yes", "follow_up_turn")]  # began 3 s after
         assert (await route("follow_up", "something later", seconds=2))[0] == []  # began 23 s after
         core.audio._spoke["pc"] = __import__("time").time()
         m = Context()
-        m.add("ears", "said", "thank you", mic="pc", seconds=1.0, aac_spoke=True)  # began while AAC spoke: its own voice
+        m.add("speech_to_text", "said", "thank you", mic="pc", seconds=1.0, aac_spoke=True)  # began while AAC spoke: its own voice
         assert await d.cards["follow_up"].handle(m, "in", Step(d.flow, d.cards["follow_up"], "in", m)) == []
 
 
@@ -150,7 +150,7 @@ async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, m
         speaker = await core.domain.add_card("speaker", "Speaker")
         core.domain.set_wires([*core.domain.wires, {"from": f"{voice.id}.out", "to": f"{speaker.id}.in"}])
         m = Context()
-        m.add("ears", "said", "computer, tell me a story", mic="pc")
+        m.add("speech_to_text", "said", "computer, tell me a story", mic="pc")
         m.add("model", "answer", "Once upon a time …")
         await voice.handle(m, "in", Step(core.domain.flow, voice, "in", m))
         assert (await ws.receive_json())["text"] == "Once upon a time …" and await ws.receive_bytes() == spoken
@@ -221,7 +221,7 @@ async def test_a_level_card_keeps_the_size_of_any_card(hass, mock_entry):
         level.stream("in", audio((LOUD, 0.1)), {"source": "pc"})
         for data in ({"cut": "start", "utterance": "u1", "ago": 0.3}, {"cut": "end", "utterance": "u1", "parts": 1}):
             c = Context()
-            c.add("cut", "signal", f"cut: {data['cut']}", [data["cut"]], **data)
+            c.add("audio_clipper", "signal", f"cut: {data['cut']}", [data["cut"]], **data)
             assert await level.handle(c, "cuts", None) is None  # on at 'cuts'
 
     assert len(shown) == 3 and -40 < shown[0]["db"] < 0
@@ -264,28 +264,28 @@ async def test_phrase_joiner_and_its_wiring(hass, mock_entry):
     core.data["voice_chain"] = False
     await async_voice_chain(core)
     d = core.domain
-    wake_x, ears = d.positions["wake"]["x"], dict(d.positions["ears"])
-    await d.update_card("cut", settings={"phrase": 250})
+    wake_x, ears = d.positions["wake_word"]["x"], dict(d.positions["speech_to_text"])
+    await d.update_card("audio_clipper", settings={"phrase": 250})
     await hass.async_block_till_done()
     joiner = next(c for c in d.cards.values() if c.type == "phrase_joiner")
-    assert d.positions["wake"]["x"] == wake_x + 290 and d.positions[joiner.id] == {"x": ears["x"] + 290, "y": ears["y"]}
-    assert {"from": "cut.cuts", "to": f"{joiner.id}.cuts"} in d.wires and {"from": "ears.out", "to": f"{joiner.id}.lines"} in d.wires
-    assert {"from": f"{joiner.id}.out", "to": "wake.in"} in d.wires and {"from": "ears.out", "to": "wake.in"} not in d.wires
-    d.set_wires([w for w in d.wires if w["from"] != "cut.cuts"])  # its cuts wire lost (a port renamed): no second joiner
-    await d.update_card("cut", settings={"pause": 700})
+    assert d.positions["wake_word"]["x"] == wake_x + 290 and d.positions[joiner.id] == {"x": ears["x"] + 290, "y": ears["y"]}
+    assert {"from": "audio_clipper.cuts", "to": f"{joiner.id}.cuts"} in d.wires and {"from": "speech_to_text.out", "to": f"{joiner.id}.lines"} in d.wires
+    assert {"from": f"{joiner.id}.out", "to": "wake_word.in"} in d.wires and {"from": "speech_to_text.out", "to": "wake_word.in"} not in d.wires
+    d.set_wires([w for w in d.wires if w["from"] != "audio_clipper.cuts"])  # its cuts wire lost (a port renamed): no second joiner
+    await d.update_card("audio_clipper", settings={"pause": 700})
     await hass.async_block_till_done()
     assert [c.id for c in d.cards.values() if c.type == "phrase_joiner"] == [joiner.id]
-    assert {"from": "cut.cuts", "to": f"{joiner.id}.cuts"} in d.wires
+    assert {"from": "audio_clipper.cuts", "to": f"{joiner.id}.cuts"} in d.wires
     sent = []
     with patch.object(d.flow, "send", AsyncMock(side_effect=lambda ctx, card, port: sent.append(ctx))):
         for part, text in ((2, "what time is it?"), (1, "computer,")):  # out of order
             c = Context()
-            c.add("ears", "said", text, ["heard"], mic="pc", utterance="u1", part=part, seconds=0.6)
+            c.add("speech_to_text", "said", text, ["heard"], mic="pc", utterance="u1", part=part, seconds=0.6)
             assert await joiner.handle(c, "lines", None) == []
         assert sent == []
         for data in ({"cut": "phrase", "utterance": "u1", "part": 2}, {"cut": "end", "utterance": "u1", "parts": 2}):
             c = Context()
-            c.add("cut", "signal", f"cut: {data['cut']}", [data["cut"]], **data)
+            c.add("audio_clipper", "signal", f"cut: {data['cut']}", [data["cut"]], **data)
             assert await joiner.handle(c, "cuts", None) == []
             assert (sent == []) == (data["cut"] == "phrase")  # only the end counts
     (whole,) = sent
@@ -302,7 +302,7 @@ async def test_undo_with_phrases_makes_every_card(hass, mock_entry):
     core.data["voice_chain"] = False
     await async_voice_chain(core)
     d = core.domain
-    await d.update_card("cut", settings={"phrase": 300})
+    await d.update_card("audio_clipper", settings={"phrase": 300})
     await hass.async_block_till_done()
     joiners = [c.id for c in d.cards.values() if c.type == "phrase_joiner"]
     await d.update_card("follow_up", settings={"script": ""})  # one more change, then Undo

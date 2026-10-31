@@ -66,7 +66,9 @@ async def test_the_backup_still_loads(hass: HomeAssistant, mock_entry, aioclient
     d = core.domain
     assert [k["id"] for k in core.audio.settings.get("known", [])] == ["pc"]  # the core's own store came back
     setup = json.loads((SAVED / "setup.json").read_text())
-    assert set(setup["cards"]) <= set(d.cards), f"cards of {SAVED.name} that do not load: {set(setup['cards']) - set(d.cards)}"
+    names = lambda: sorted(c.name for c in d.cards.values())  # noqa: E731 - by name: an id that did not fit its name moved
+    saved = sorted(spec["title"] for spec in setup["cards"].values())
+    assert not set(saved) - set(names()), f"cards of {SAVED.name} that do not load: {set(saved) - set(names())}"
     chat = d.cards["chat"]
     assert any(m["text"] == "It is noon." for c in chat.chats() for m in chat.get(c["id"])["messages"])
     assert (await d.cards["lists"].call("read_list", {"list": "Shopping"}))["items"][0]["text"] == "Oat milk"
@@ -75,4 +77,4 @@ async def test_the_backup_still_loads(hass: HomeAssistant, mock_entry, aioclient
     _, answer = await chat.send("still there?")
     assert answer == "Still here."
     await d.import_setup(setup)
-    assert set(setup["cards"]) <= set(d.cards)
+    assert names() == saved

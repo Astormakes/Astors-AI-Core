@@ -3,7 +3,23 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.27, live on the owner's HA
+## Current state (2026-10-31) – 2.3.28, live on the owner's HA
+
+- **2026-10-31 (2.3.28): a card's id is its name** (owner: "clean all the way, consistent"; after 2.3.27 kept the
+  id `node_editor` for the renamed Card editor). `slug(title)`, a number after it when two share a name. `Domain`:
+  `follow_names()` (at load, after Undo / Redo / a slot / a file), `_wanted()`, `_move(old, new)`: the setup, Undo
+  and Redo steps, slots, the card's store (moved), the other cards' settings (class method `renamed_settings`: by
+  default a script's `old.tag` and `cards['old']`, not a word alone: `e.data.get("mic")` is a field; the Calendar
+  adds its `lists`, also at its default) and data (`renamed`: entries' `by`, `tags`, a call's `card`; not keys: Lists
+  keeps a field "lists"), the sidebar fold, `flow.held`. New ids never meet one in the history (a removed card coming
+  back). `add_card` lost `card_id`; defaults.py builds from the ids cards get. The panel follows a rename (`sel`) and
+  lets go of a selection whose card is gone. Live: tried first on a copy of the owner's domain in the local test HA
+  (23 cards, 34 wires, 20 Undo steps; mic, cut, ears, spoken, followed, node_editor moved; the chat store's 74
+  references all carried over; rename + Undo through the real Name field), then deployed: the same 6 moved, a real
+  message and an Assist turn answered (both test chats deleted). test123 moves when it is next opened. Backup before:
+  `/config/aac/bak-v2-2.3.27/` (the older 2.2.2 one removed: newest only). Backup test compares cards by name.
+  Open: domain ids work the same way (made from the name, kept on rename): ask the owner. Item 58 added (Relay
+  rework, owner).
 
 - **2026-10-31 (2.3.27): items 37, 30, 41** (owner: do them; 51 needs a talk first). **37:** cards are only called
   cards: the Nodes page is the **Cards** page (view kind `cards`, `_cardsView()`, CSS `.cardsview`, a card on the
@@ -618,3 +634,6 @@ pencil edit is missing" is item 11.
     group opens it and the Audio entry, which then lies under the finger, gets pressed at once. To check: the group
     re-renders the nav on the first event of the tap and the rest of the tap (or a ghost click) lands on the new
     entry; fix so one tap does one thing, then try it on the real page on a phone.
+58. **Relay rework** (owner, 2026-10-31; talk through first). Working with the Relay is still unclear to the owner:
+    when something is output, where and how. That a Relay with nothing programmed just passes the context on was
+    done on purpose, but now looks like a bad idea: it makes it confusing what leaves a Relay and when.

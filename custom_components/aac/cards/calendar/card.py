@@ -11,7 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, register
 
-VERSION = "1.1.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 def parse(value: Any) -> date | datetime | None:
     """A date or a time from text (local)."""
@@ -59,6 +59,15 @@ class Calendar(Card):
                                                         "end": {"type": "string"}, "description": {"type": "string"}}},
         "remove": {"help": "Delete an entry.", "args": {"uid": {"type": "string", "help": "Its id.", "required": True}}},
     }
+
+    @classmethod
+    def renamed_settings(cls, settings: dict[str, Any], old: str, new: str) -> dict[str, Any]:
+        """Its lists setting names cards by id (also when it was left at its default)."""
+        settings = super().renamed_settings(settings, old, new)
+        ids = [x.strip() for x in str(settings.get("lists", cls.settings_schema["lists"]["default"])).split(",") if x.strip()]
+        if old in ids:
+            settings["lists"] = ", ".join(new if x == old else x for x in ids)
+        return settings
 
     def current(self) -> dict[str, Any]:
         now = dt_util.now()

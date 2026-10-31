@@ -451,3 +451,47 @@ async def test_redo_and_buffer_provides(hass: HomeAssistant, mock_entry):
     assert [e["text"] for e in held.entries] == ["first", "second"] and held.entries[0]["id"] == buf.held("provides").entries[0]["id"]
     d.set_wires([*d.wires, {"from": "room.provides", "to": "other.reads"}])
     assert {"from": "room.provides", "to": "other.reads"} in d.wires
+
+
+async def test_a_card_id_is_its_name(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """A card is called the same everywhere: renaming it moves its id through wires, positions, its data, the other
+    cards' settings (a script's references, the Calendar's lists) and stored entries, slots too; Undo and Redo move it
+    back and forth; an id that does not fit its name moves when the domain loads."""
+    import json
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    model_answers(aioclient_mock, reply("Hi."))
+    chat = d.cards["chat"]
+    await chat.send("hi")
+    await d.cards["lists"].call("add_items", {"list": "Car", "items": ["Radio"]})
+    script = '@on("time.time")\ndef seen(e):\n    e.text = e.text + str(lists.total) + str(e.data.get("lists")) + str(cards["lists"])\n'
+    await d.add_card("relay", "Watcher", {"script": script})
+    d.save_slot("1")
+    where = d.positions.get("lists")
+
+    await d.update_card("lists", title="Projects")
+    assert "projects" in d.cards and "lists" not in d.cards and d.cards["projects"].name == "Projects"
+    assert {"from": "model.out", "to": "projects.in"} in d.wires and not any("lists." in w["from"] + w["to"] for w in d.wires)
+    assert d.positions.get("projects") == where
+    assert [li["name"] for li in d.cards["projects"].data["lists"]] == [li["name"] for li in (await d.load_card_data("projects"))["lists"]]
+    assert "Car" in [li["name"] for li in d.cards["projects"].data["lists"]] and await d.load_card_data("lists") is None
+    watcher = d.cards["watcher"].settings["script"]
+    assert 'str(projects.total)' in watcher and 'e.data.get("lists")' in watcher and 'cards["projects"]' in watcher
+    assert d.cards["calendar"].settings["lists"] == "projects"
+    assert "projects" in d.slots["1"]["cards"] and "lists" not in d.slots["1"]["cards"]
+
+    await d.update_card("time", title="Clock")
+    stored = json.dumps(chat.data)
+    assert '"by": "clock"' in stored and '"clock.time"' in stored and '"by": "time"' not in stored
+    assert d.cards["watcher"].settings["script"].startswith('@on("clock.time")')
+    assert await d.undo_last() and "time" in d.cards and "clock" not in d.cards and d.cards["time"].name == "Time"
+    assert '"by": "time"' in json.dumps(d.cards["chat"].data) and d.cards["watcher"].settings["script"].startswith('@on("time.time")')
+    assert await d.redo_last() and "clock" in d.cards and '"by": "clock"' in json.dumps(d.cards["chat"].data)  # Undo made the cards again
+
+    d._specs["charter"]["title"] = "Rules"  # noqa: SLF001 - as an older AAC left it: a name its id does not fit
+    await d.save_now()
+    await d.unload()
+    await d.load()
+    assert "rules" in d.cards and "charter" not in d.cards and {"from": "chat.said", "to": "rules.in"} in d.wires
+    await d.add_card("buffer", "Rules")  # a second card with that name
+    assert "rules_2" in d.cards
