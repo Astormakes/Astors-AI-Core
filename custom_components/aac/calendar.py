@@ -1,4 +1,5 @@
-"""AAC's calendar in Home Assistant: the entries of the running domain's Calendar cards (`calendar.aac_calendar`)."""
+"""AAC's calendar in Home Assistant (`calendar.aac_calendar`): the entries the running domain's cards offer, asked
+through the core (calendars.py), never a card."""
 
 from __future__ import annotations
 
@@ -7,6 +8,7 @@ from typing import Any
 
 from homeassistant.components.calendar import CalendarEntity, CalendarEntityFeature, CalendarEvent
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
@@ -24,7 +26,7 @@ def _event(e: dict[str, Any]) -> CalendarEvent:
 
 
 class AACCalendar(CalendarEntity):
-    """The Calendar cards' entries."""
+    """The cards' calendar entries."""
 
     _attr_has_entity_name = True
     _attr_name = "AAC calendar"
@@ -35,9 +37,9 @@ class AACCalendar(CalendarEntity):
         self._attr_unique_id = f"{entry.entry_id}_calendar_assistant"
         self._event: CalendarEvent | None = None
 
-    def _cards(self):
-        core = self.hass.data.get(DOMAIN)
-        return [card for card, _ in core.subscribers("ha_calendar")] if core else []  # cards on the core's channel
+    @property
+    def _calendar(self):
+        return self.hass.data[DOMAIN].calendar
 
     async def async_added_to_hass(self) -> None:
         """Follow changes."""
@@ -55,27 +57,32 @@ class AACCalendar(CalendarEntity):
     async def async_update(self) -> None:
         """Find the next entry."""
         now = dt_util.now()
-        upcoming = [e for card in self._cards() for e in card.events(now, now.replace(year=now.year + 1))]
+        upcoming = self._calendar.entries(now, now.replace(year=now.year + 1)) if DOMAIN in self.hass.data else []
         self._event = _event(upcoming[0]) if upcoming else None
 
     async def async_get_events(self, hass: HomeAssistant, start_date: datetime, end_date: datetime) -> list[CalendarEvent]:
         """Entries in a range."""
-        return [_event(e) for card in self._cards() for e in card.events(start_date, end_date)]
+        return [_event(e) for e in self._calendar.entries(start_date, end_date)]
 
     async def async_create_event(self, **kwargs: Any) -> None:
-        """A new entry from HA (into the first Calendar card)."""
-        if cards := self._cards():
-            await cards[0].call("add", {"summary": kwargs["summary"], "start": str(kwargs["dtstart"]),
-                                        "end": str(kwargs.get("dtend") or ""), "description": kwargs.get("description")})
+        """A new entry from HA (into the first card that takes new ones: a Calendar card)."""
+        await self._do(self._calendar.add({"summary": kwargs["summary"], "start": str(kwargs["dtstart"]),
+                                           "end": str(kwargs.get("dtend") or ""), "description": kwargs.get("description")}))
 
     async def async_update_event(self, uid: str, event: dict[str, Any], recurrence_id: str | None = None,
                                  recurrence_range: str | None = None) -> None:
-        """Change an entry from HA."""
-        for card in self._cards():
-            await card.call("change", {"uid": uid, "summary": event.get("summary"), "start": str(event["dtstart"]) if event.get("dtstart") else None,
-                                       "end": str(event["dtend"]) if event.get("dtend") else None, "description": event.get("description")})
+        """Change an entry from HA (where it lives)."""
+        await self._do(self._calendar.change(uid, {"summary": event.get("summary"), "description": event.get("description"),
+                                                   "start": str(event["dtstart"]) if event.get("dtstart") else None,
+                                                   "end": str(event["dtend"]) if event.get("dtend") else None}))
 
     async def async_delete_event(self, uid: str, recurrence_id: str | None = None, recurrence_range: str | None = None) -> None:
-        """Delete an entry from HA."""
-        for card in self._cards():
-            await card.call("remove", {"uid": uid})
+        """Delete an entry from HA (where it lives)."""
+        await self._do(self._calendar.remove(uid))
+
+    @staticmethod
+    async def _do(job) -> None:
+        try:
+            await job
+        except ValueError as err:  # a card that does not offer it says so
+            raise HomeAssistantError(str(err)) from err

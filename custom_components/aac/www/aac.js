@@ -53,7 +53,6 @@ const ICON = { // the grid's round buttons (drawn, so they look the same everywh
   bin: '<svg viewBox="0 0 16 16"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v5M9.2 6.5v5"/></svg>',
 };
 const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", clip: "#9c27b0", any: "#ffffff" };
-const DAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
 // AAC's log (Settings → Logs, the Log card's page): entries come oldest first and show newest first; name(id): a card's name,
 // extra(entry): html before its text (the Log card's ▶ for a kept clip).
@@ -1256,12 +1255,6 @@ class AacPanel extends HTMLElement {
     if (f.type === "player") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">the satellite the line came from</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)} (satellite)</option>`).join("")}${Object.keys(this._hass.states).filter((e) => e.startsWith("media_player.") && !e.startsWith("media_player.aac_satellite_")).sort().map((e) => `<option value="${esc(e)}" ${e === v ? "selected" : ""}>${esc(this._hass.states[e].attributes.friendly_name || e)}</option>`).join("")}</select>`;
     if (f.type === "source") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="${key === "source" && c.type === "microphone" ? "any" : ""}">${esc(f.empty || (c.type === "microphone" ? "any satellite" : "where the line came from"))}</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)}</option>`).join("")}</select>`;
     if (f.type === "outputs") return `<label>${esc(f.title)}${h}</label><textarea rows="4" data-set="${esc(key)}" data-outputs>${esc((v || []).map((o) => `${o.name}: ${o.description || ""}`).join("\n"))}</textarea>`;
-    if (f.type === "schedule") return `<label>${esc(f.title)}${h}</label>${(v || []).map((e, i) => `<div class="card" style="padding:8px" data-entry="${i}">
-        <div class="row"><input data-e="name" value="${esc(e.name)}" placeholder="Name"><input data-e="at" value="${esc(e.at)}" style="width:80px" placeholder="HH:MM"></div>
-        <div class="row" style="margin:4px 0;flex-wrap:wrap">${DAYS.map((d, n) => `<label class="check" style="font-size:12px"><input type="checkbox" data-day="${n}" ${(e.weekdays || []).includes(n) ? "checked" : ""}>${d}</label>`).join("")}</div>
-        <textarea rows="2" data-e="text" placeholder="What to do">${esc(e.text)}</textarea>
-        <div class="row"><label class="check"><input type="checkbox" data-e="enabled" ${e.enabled !== false ? "checked" : ""}>on</label><button class="small danger" data-delentry="${i}" style="margin-left:auto">Remove</button></div></div>`).join("")}
-      <button class="small" id="addentry">Add an entry</button>`;
     if (f.type === "watches") return `<label>${esc(f.title)}${h}</label>${(v || []).map((w, i) => `<div class="card" style="padding:8px" data-watch="${i}">
         <div class="row"><input data-w="name" value="${esc(w.name)}" placeholder="Name"><input data-w="cooldown" value="${esc(w.cooldown ?? 300)}" style="width:70px" title="Cooldown (s)"></div>
         <input data-w="entity_id" value="${esc(w.entity_id)}" placeholder="entity, e.g. binary_sensor.door" style="margin-top:4px">
@@ -1977,20 +1970,16 @@ class AacPanel extends HTMLElement {
     }));
     $("#remove")?.addEventListener("click", () => this._removeCards());
     $("#unwire")?.addEventListener("click", () => this._unwire());
-    // schedule entries and watches: the whole list is saved on any change
+    // watches: the whole list is saved on any change
     const collect = (sel, attr) => [...$$(sel)].map((box) => {
       const o = {};
       box.querySelectorAll(`[${attr}]`).forEach((el) => { o[el.getAttribute(attr)] = el.type === "checkbox" ? el.checked : el.value; });
-      if (attr === "data-e") o.weekdays = [...box.querySelectorAll("[data-day]")].filter((x) => x.checked).map((x) => Number(x.dataset.day));
       if (o.cooldown !== undefined) o.cooldown = Number(o.cooldown) || 300;
       return o;
     });
     const saveList = async (key, list) => { await this.ws("aac/card/update", { card: this.sel, settings: { [key]: list } }); await this._load(); this.render(); };
-    $$("[data-entry] input, [data-entry] textarea").forEach((el) => el.addEventListener("change", () => saveList("entries", collect("[data-entry]", "data-e"))));
     $$("[data-watch] input, [data-watch] textarea").forEach((el) => el.addEventListener("change", () => saveList("watches", collect("[data-watch]", "data-w"))));
-    $("#addentry")?.addEventListener("click", () => saveList("entries", [...collect("[data-entry]", "data-e"), { name: "New", at: "08:00", weekdays: [], text: "", enabled: true }]));
     $("#addwatch")?.addEventListener("click", () => saveList("watches", [...collect("[data-watch]", "data-w"), { name: "New", entity_id: "", to: "", text: "", cooldown: 300 }]));
-    $$("[data-delentry]").forEach((el) => el.addEventListener("click", () => saveList("entries", collect("[data-entry]", "data-e").filter((_, i) => i !== Number(el.dataset.delentry)))));
     $$("[data-delwatch]").forEach((el) => el.addEventListener("click", () => saveList("watches", collect("[data-watch]", "data-w").filter((_, i) => i !== Number(el.dataset.delwatch)))));
     // memory, file
     // audio

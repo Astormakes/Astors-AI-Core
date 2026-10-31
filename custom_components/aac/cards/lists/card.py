@@ -9,7 +9,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, register
 
-VERSION = "1.2.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 ARG_LIST = {"type": "string", "help": "The list's name.", "required": True}
 
@@ -64,13 +64,16 @@ class Lists(Card):
         open_ = {li["name"]: count(li["items"]) for li in self.data.get("lists") or []}
         return {"lists": list(open_), "open": open_, "total": sum(open_.values())}
 
-    def dated(self) -> list[dict[str, Any]]:
-        """Open entries with a date (a field when, date or due): what a Calendar card shows (any card may offer dated())."""
+    async def start(self) -> None:
+        self.core.calendar.offer(self, self._dated)  # its dated entries are on AAC's calendar (read only there)
+
+    def _dated(self, start: Any = None, end: Any = None) -> list[dict[str, Any]]:
+        """Open entries with a date (a field when, date or due), for AAC's calendar (the core picks the period)."""
         def walk(items):
             for it in items:
                 yield it
                 yield from walk(it.get("children") or [])
-        return [{"uid": f"list:{it['id']}", "summary": f"{it['text']} ({li['name']})", "start": value}
+        return [{"key": it["id"], "summary": f"{it['text']} ({li['name']})", "start": value}
                 for li in self.data.get("lists") or [] for it in walk(li.get("items") or [])
                 if not it.get("done") and (value := next((it.get("fields", {}).get(f) for f in ("when", "date", "due")
                                                           if it.get("fields", {}).get(f)), None))]

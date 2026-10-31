@@ -19,6 +19,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
 
+from .calendars import Calendars
 from .cards import CARD_TYPES, Card, renamed_refs
 from .const import LOGGER, SIGNAL
 from .flow import Flow
@@ -139,11 +140,15 @@ class Domain:
         if kind is None:
             self.log.write("warning", f"Card type {spec.get('type')} is not available: the card is left out", card=card_id, what="missing")
             return None
+        before, made_with = None, spec.get("version") or "0"
         if spec.get("version") != kind.version:  # saved by another version of the card's file
-            spec["settings"] = kind.upgrade(dict(spec.get("settings") or {}), spec.get("version") or "0")
+            before = dict(spec.get("settings") or {})
+            spec["settings"] = kind.upgrade(dict(before), made_with)
             spec["version"] = kind.version
         card = kind(self, card_id, spec.get("title", ""), spec.get("settings"))
         await card.load()
+        if before is not None:
+            await card.upgrade_data(before, made_with)
         if old := self.cards.get(card_id):
             await self._end(old)
         self.cards[card_id] = card
@@ -470,6 +475,7 @@ class Core:
         self.domain: Domain | None = None
         from .audio import AudioHub  # noqa: PLC0415
         self.audio = AudioHub(self)
+        self.calendar = Calendars(self)
 
     async def load(self) -> None:
         """Read the core; the first time, build the default domain."""
@@ -542,8 +548,8 @@ class Core:
     # ------------------------------------------------------------------ channels (design rule: the core never asks for a card type)
     @callback
     def subscribe(self, channel: str, card: Card, handler: Callable[..., Any]) -> None:
-        """A card takes what comes in on a core channel ("audio": satellite audio, "ha_conversation": HA's Assist,
-        "ha_calendar": HA's calendar entity). Any card may: a card of your own can replace a built-in one."""
+        """A card takes what comes in on a core channel ("audio": satellite audio, "ha_conversation": HA's Assist).
+        Any card may: a card of your own can replace a built-in one."""
         self._channels.setdefault(channel, []).append((card, handler))
 
     @callback
@@ -551,6 +557,7 @@ class Core:
         """A card stops taking anything (called when it unloads)."""
         for channel, subs in self._channels.items():
             self._channels[channel] = [(c, h) for c, h in subs if c is not card]
+        self.calendar.forget(card)
 
     def subscribers(self, channel: str) -> list[tuple[Card, Callable[..., Any]]]:
         """Who takes a channel (cards of the running domain), in the order they subscribed."""

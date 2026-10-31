@@ -93,6 +93,8 @@ class Client:
                     raise ModelError(f"HTTP {resp.status}: {(await resp.text())[:300]}")
                 if "event-stream" not in resp.headers.get("Content-Type", ""):  # the server ignored "stream"
                     data = await resp.json()
+                    if not data.get("choices"):  # an error in a 200 answer (some servers do that)
+                        raise ModelError(f"no answer: {str(data.get('error') or data)[:300]}")
                     choice = data["choices"][0]
                     msg = choice["message"]
                     if on_delta and msg.get("content"):

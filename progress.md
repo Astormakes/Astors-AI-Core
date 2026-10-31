@@ -3,8 +3,23 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.34, live on the owner's HA
+## Current state (2026-10-31) – 2.3.35, live on the owner's HA
 
+- **2026-10-31 (2.3.35): item 39, Schedule like v1, and AAC's calendar in the core** (owner: cards only use interfaces
+  the core offers; the calendar was hardwired). `calendars.py`: the core keeps no entries, only who offers them
+  (`core.calendar.offer(card, query, create, change, remove)`; `entries`, `add`, `change`, `remove` by uid
+  "<card>:<key>"); HA's `calendar.aac_calendar`, the Calendar card and models ask there. The `ha_calendar` channel and
+  `dated()` are gone; the Calendar card (1.3.0) offers its own entries (all four ways) and lost its "lists" setting
+  (every card's entries show); Lists (1.3.0) offers its dated entries (read only). Schedule 1.3.0: entries are data (no
+  Undo step; `upgrade_data`, a new generic card hook, moved them out of the settings as the owner's), each says who
+  made it (owner / aac); a model may add, change, remove only its own, at most 20, as the setting "Entries a model
+  makes" allows (allowed / ask: waits for Allow on its page / off: no add/change/remove offered; a permission);
+  days as names ("Mon-Fri", "weekend"); quiet hours (fold) make AAC's entries wait; the fired line says what to do
+  with a reminder; an entry nobody answered within "Unanswered after" (30 min) or that a model failed on goes out at
+  the new output 'unanswered' (an answer, for a Notify card) and into the log; its times are on AAC's calendar (read
+  only there). Its editor moved from the core panel to its page (Allow / Refuse, Run now). Found by the new log: a
+  200 answer without choices crashed the client (KeyError); now a model error. Cooldown (v1, for state triggers) does
+  not apply to fixed times; the HA event card has its own.
 - **2026-10-31 (2.3.34): the log rotates in two lanes.** Live, the voice chain wrote ~40 entries a minute (mostly the
   Audio clipper hearing the room): one rotation of 5,000 would have pushed errors and changes out within two hours. Now
   the newest 5,000 of what passed the wires (flow) stay, and the newest 5,000 of everything else. A context with only
@@ -657,7 +672,7 @@ pencil edit is missing" is item 11.
       text; when: in, out or both). Wire monitors read from it.
     - Settings → Logs shows it. Cards may read the log per permission (a per-card grant, see 20); the Log card puts
       entries into the log and reads it as a function and through an output.
-39. **Schedule: like v1.** Schedule should work more like it did in v1 (talk through: what exactly). Review: its
+39. ~~**Schedule: like v1.**~~ **done (2.3.35).** Schedule should work more like it did in v1 (talk through: what exactly). Review: its
     entries are settings, so every reminder a model adds or a one-time entry that fires makes an Undo step and remakes
     the card (reminders push the owner's undo steps out).
 40. **File: several files.** The File card has only one file. Owner imagined accessing different files, but likes the

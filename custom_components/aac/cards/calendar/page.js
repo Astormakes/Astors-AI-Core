@@ -1,5 +1,5 @@
-// The Calendar card's page (spec/cards.md "A card's page"; v1's calendar): its own entries, the dated entries of
-// lists and the Home Assistant calendars picked in its settings. Views: week grid, table, month, agenda; the view
+// The Calendar card's page (spec/cards.md "A card's page"; v1's calendar): AAC's calendar (every card's entries) and
+// the Home Assistant calendars picked in its settings. Views: week grid, table, month, agenda; the view
 // and the number of days are the card's settings (the same on every device).
 
 const VIEWS = [["week", "Week grid"], ["table", "Table"], ["month", "Month"], ["agenda", "Agenda"]];
@@ -25,7 +25,7 @@ const STYLE = `
   aac-card-calendar .dnum { font-size: .8em; color: var(--secondary-text-color); margin-bottom: 2px; }
   aac-card-calendar .cchip { font-size: .85em; padding: 1px 5px; margin: 2px 0; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     background: rgba(3,169,244,.14); border-left: 3px solid var(--primary-color); }
-  aac-card-calendar .cchip.lists { background: rgba(76,175,80,.14); border-left-color: #4caf50; }
+  aac-card-calendar .cchip.card { background: rgba(76,175,80,.14); border-left-color: #4caf50; }
   aac-card-calendar .cchip.own { background: rgba(156,39,176,.14); border-left-color: #9c27b0; }
   aac-card-calendar .cchip.error { background: rgba(219,68,55,.14); border-left-color: var(--error-color, #db4437); }
   aac-card-calendar h3.cday { font-size: 14px; margin: 14px 0 4px; }
@@ -73,7 +73,7 @@ class AacCalendarPage extends HTMLElement {
     return by;
   }
 
-  _label(e) { return e.source === "ha" ? e.calendar : e.source === "lists" ? "list" : e.source === "own" ? this.card.title : "error"; }
+  _label(e) { return e.source === "own" ? this.card.title : e.source === "error" ? "error" : e.calendar; }
   _time(e) { return e.all_day ? "all day" : new Date(e.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
   _chip(e) {
     const { esc } = this.panel;
@@ -128,14 +128,14 @@ class AacCalendarPage extends HTMLElement {
     const title = view === "month" ? addDays(start, 15).toLocaleDateString([], { month: "long", year: "numeric" })
       : `${start.toLocaleDateString([], { day: "numeric", month: "short" })} – ${end.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}`;
     const body = view === "week" ? this._week(start, days) : view === "table" ? this._table() : view === "month" ? this._month(start) : this._agenda();
-    this.innerHTML = `<style>${STYLE}</style>${header(this.card.title, tip("Its own entries, the dated entries of lists (a field when/date/due) and the Home Assistant calendars picked in its settings (Cards → the card)."))}
+    this.innerHTML = `<style>${STYLE}</style>${header(this.card.title, tip("AAC's calendar: this card's own entries and those other cards offer (dated list entries, a Schedule's times), and the Home Assistant calendars picked in its settings (Cards → the card)."))}
       <div class="content"><div class="card">
         <div class="cbar"><button class="small" data-nav="-1" title="Back">◀</button><button class="small" data-nav="0">Today</button><button class="small" data-nav="1" title="Forward">▶</button>
           <span class="grow">${esc(title)}</span>
           <select id="cal-view">${VIEWS.map(([v, l]) => `<option value="${v}" ${v === view ? "selected" : ""}>${l}</option>`).join("")}</select>
           ${view === "month" ? "" : `<label class="check" style="margin:0">Days <input id="cal-days" type="number" min="1" max="31" value="${days}" style="width:4.5em"></label>`}</div>
         ${body}
-        <p class="hint" style="margin-top:10px">Colours: <span class="cchip ha" style="display:inline-block">HA calendars</span> <span class="cchip lists" style="display:inline-block">lists</span> <span class="cchip own" style="display:inline-block">${esc(this.card.title)}</span></p>
+        <p class="hint" style="margin-top:10px">Colours: <span class="cchip ha" style="display:inline-block">HA calendars</span> <span class="cchip card" style="display:inline-block">other cards (lists, Schedule …)</span> <span class="cchip own" style="display:inline-block">${esc(this.card.title)}</span></p>
         ${this.error ? `<p class="hint" style="color:var(--error-color)">${esc(this.error)}</p>` : ""}</div></div>`;
   }
 

@@ -72,7 +72,9 @@ wired from the model (even when it is a tool too), else to every wired card but 
 
 More a card may define: `busy` (a property: True while it works on something; a newer version of its file waits),
 `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
-self.save()`), `self.folder` (where it keeps files: `<config>/aac/data/<domain>/<card>`, moved with a rename, gone with
+self.save()`; `async upgrade_data(settings, made_with)`: made from a setup saved by another version of its file, after
+`upgrade()` and loading its data, it gets the settings as they were saved, e.g. to move entries from a setting into its
+data), `self.folder` (where it keeps files: `<config>/aac/data/<domain>/<card>`, moved with a rename, gone with
 its domain; a removed card's data and files stay while Undo, Redo or a slot can bring it back, then go; the owner
 removing a card whose data differs from `default_data()` is asked: keep it, or let it go now), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop(stop_entry) -> bool` (a stop
 arrived: True when it was busy and sent its own context on), `held(port)` (what a dotted wire from that read output
@@ -128,9 +130,19 @@ as a button, the others in its ⋯ menu; `ask` asks for a value first, `confirm`
 Through `self.core`:
 
 - `subscribe(channel, card, handler)`: take what comes in on a channel. `audio` (handler `(chunk, meta)`: satellite
-  audio), `ha_conversation` (handler `async (text, conversation_id, where) -> answer`: Home Assistant's Assist),
-  `ha_calendar` (handler `events(start, end)`: Home Assistant's calendar entity). Subscriptions end when the card
-  unloads.
+  audio), `ha_conversation` (handler `async (text, conversation_id, where) -> answer`: Home Assistant's Assist).
+  Subscriptions end when the card unloads.
+- `calendar`: AAC's calendar (v1's design: the core keeps no entries, only who offers them). A card offers its entries
+  with `calendar.offer(card, query, create=None, change=None, remove=None)` (usually in `start()`; it ends when the card
+  unloads): `query(start, end)` gives the entries of a period `[{key, summary, start, end?, description?}]` (start and
+  end "YYYY-MM-DD" or a time; repeating entries once per occurrence), `async create(entry) -> key`, `async change(key,
+  changes)`, `async remove(key)`; what it leaves out it does not offer, and asking for it gives a clear "cannot".
+  `calendar.entries(start, end)` collects every card's entries at that moment, by start: `{uid ("<card>:<key>"),
+  summary, start, end, description, source (the card), all_day, start_v, end_v, can}`; `await calendar.add(entry)`
+  (into the first card that takes new ones), `change(uid, changes)`, `remove(uid)` (where the entry lives). Home
+  Assistant's `calendar.aac_calendar`, the Calendar card and models ask here, never a card. `parse_when(text)` from
+  the api reads a date or a time. Offered today: the Calendar card (its own entries, all four ways), Lists (dated
+  entries: a field when / date / due; read only), Schedule (each time an entry rings; read only).
 - `pool`: the models. `pool.entries(list, tag)` (a card's list of models doing a job), `async with pool.slot(entries)
   as model_id` (a free model, else the queues), `pool.tags(model_id)`, `pool.find(name)` (a model by id or name),
   `await pool.offers()` (every server behind the pool and what it offers: a llama-server router lists its models and
@@ -169,7 +181,7 @@ Logs (filters, Save as text, Clear); a wire's monitor shows the entries of its o
 `aac/log/clear`).
 
 Through `self.domain`: `flow.send(context, self.id, port)` (start a context at an output), `cards` (other cards, used
-only through what they offer: `call`, `current()`, `held()`, `dated()`), `template_values()` (every card's values: the Values panel, a Relay's script).
+only through what they offer: `call`, `current()`, `held()`), `template_values()` (every card's values: the Values panel, a Relay's script).
 
 **A card's id is its name** (lowercase, other characters `_`: "Speech to text" is `speech_to_text`; a second card of
 that name `speech_to_text_2`), so a card is called the same everywhere. Renamed (by the owner, the Card editor, Undo,

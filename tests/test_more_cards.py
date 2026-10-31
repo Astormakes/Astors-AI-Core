@@ -15,12 +15,17 @@ from .conftest import model_answers, reply, setup_aac
 
 
 async def test_a_schedule_fires_at_its_time(hass: HomeAssistant, mock_entry, aioclient_mock, freezer: FrozenDateTimeFactory):
-    """A Schedule entry at 05:25 wakes the chain; the answer lands in its log."""
+    """A Schedule entry at 05:25 wakes the chain; the answer lands in its log. Entries saved as a setting (before 1.3.0)
+    become its data, the owner's."""
     asked = model_answers(aioclient_mock, reply("The bed light is on."))
     core = await setup_aac(hass, mock_entry)
     d = core.domain
-    schedule = await d.add_card("schedule", "Schedule", {"entries": [{"name": "Bed light", "at": "05:25", "weekdays": [],
-                                                                       "text": "Turn on the bed light.", "enabled": True}]})
+    schedule = await d.add_card("schedule", "Schedule")
+    old = {"entries": [{"name": "Bed light", "at": "05:25", "weekdays": [], "text": "Turn on the bed light.", "enabled": True}]}
+    d._specs[schedule.id].update(version="1.2.0", settings=old)  # as 1.2.0 saved it
+    await d.save_card_data(schedule.id, {"log": []})
+    schedule = await d.remake(schedule.id)
+    assert "entries" not in d._specs[schedule.id]["settings"] and [(e["name"], e["by"]) for e in schedule.entries] == [("Bed light", "owner")]
     d.set_wires([*d.wires, {"from": f"{schedule.id}.out", "to": "charter.in"}, {"from": "model.out", "to": f"{schedule.id}.answers"}])
     at = (dt_util.now() + timedelta(days=1)).replace(hour=5, minute=25, second=0, microsecond=0)  # always ahead
     freezer.move_to(dt_util.as_utc(at))
@@ -28,6 +33,74 @@ async def test_a_schedule_fires_at_its_time(hass: HomeAssistant, mock_entry, aio
     await hass.async_block_till_done(wait_background_tasks=True)
     assert "Turn on the bed light." in asked[-1]["messages"][-1]["content"]
     assert schedule.data["log"][-1]["answer"] == "The bed light is on."
+
+
+async def test_schedule_like_v1(hass: HomeAssistant, mock_entry, aioclient_mock, freezer: FrozenDateTimeFactory):
+    """v1's time triggers (progress 39): entries are data (no Undo step), each says who made it; AAC touches only its own,
+    at most 20, as the owner allows (ask: it waits for the OK); day names; AAC's entries wait out quiet hours; an entry
+    the model fails on goes out at 'unanswered'; its times are on AAC's calendar (through the core)."""
+    from custom_components.aac.cards.schedule.card import days
+
+    assert days("Mon-Fri") == [0, 1, 2, 3, 4] and days("weekend") == [5, 6] and days(["mo", "Thursday"]) == [0, 3]
+    assert days("Fr-Mo") == [0, 4, 5, 6] and days("") == [] and days([1, 2]) == [1, 2]
+    model_answers(aioclient_mock, {"error": "boom"})
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    s = await d.add_card("schedule", "Schedule", {"quiet_from": "22:00", "quiet_to": "07:00", "answer_within": 5})
+    await d.add_card("relay", "Catch")
+    d.set_wires([*d.wires, {"from": "schedule.out", "to": "charter.in"}, {"from": "model.out", "to": "schedule.answers"},
+                 {"from": "schedule.unanswered", "to": "catch.in"}])
+    await s.ui_call("save", {"entry": {"name": "Alarm", "at": "06:30", "weekdays": [0, 1, 2, 3, 4], "text": "Wake up."}})
+    undo = len(d.undo)
+    assert (await s.call("add", {"name": "Tea", "at": "23:15", "text": "Say: the tea is ready.", "days": "daily"}))["done"] == "add"
+    assert len(d.undo) == undo  # an entry is no Undo step
+    assert "owner's entry" in (await s.call("remove", {"name": "Alarm"}))["error"]
+    assert "owner's entry" in (await s.call("change", {"name": "Alarm", "at": "07:00"}))["error"]
+    assert (await s.call("change", {"name": "Tea", "days": "Mon-Fri"}))["done"] == "change"
+    assert next(e for e in s.entries if e["name"] == "Tea")["weekdays"] == [0, 1, 2, 3, 4]
+    assert "HH:MM" in (await s.call("add", {"name": "Bad", "at": "soon", "text": "x"}))["error"]
+
+    s = await d.update_card("schedule", settings={"plans": "ask"})
+    got = await s.call("add", {"name": "Plants", "at": "18:00", "text": "Water the plants.", "date": "2099-01-05"})
+    plants = next(e for e in s.entries if e["name"] == "Plants")
+    assert got["waiting"] and plants["proposed"] and not plants["enabled"]
+    await s.ui_call("allow", {"id": plants["id"], "ok": True})
+    assert plants["enabled"] and "proposed" not in plants
+    s = await d.update_card("schedule", settings={"plans": "off"})
+    assert "add" not in s.offered() and "run" in s.offered() and "not allow" in (await s.call("add", {"name": "X", "at": "10:00", "text": "x"}))["error"]
+    s = await d.update_card("schedule", settings={"plans": "allowed"})
+    for i in range(19):
+        await s.call("add", {"name": f"P{i}", "at": "12:00", "text": "x", "date": "2099-01-01"})
+    assert f"{20} entries" in (await s.call("add", {"name": "One more", "at": "12:00", "text": "x"}))["error"]
+
+    from datetime import datetime as dt_
+    start = dt_util.start_of_local_day(dt_.fromisoformat("2099-01-05"))
+    on_cal = [e for e in core.calendar.entries(start, start + timedelta(days=1)) if e["source"] == "schedule"]
+    assert {e["summary"] for e in on_cal} >= {"Alarm", "Tea", "Plants"} and all(not e["can"] for e in on_cal)
+
+    tea_at = (dt_util.now() + timedelta(days=7 - dt_util.now().weekday())).replace(hour=23, minute=15, second=0, microsecond=0)  # a Monday
+    freezer.move_to(dt_util.as_utc(tea_at))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert not any(x["name"] == "Tea" for x in s.data["log"]) and s.data["waiting"]  # quiet: AAC's entry waits
+    freezer.move_to(dt_util.as_utc(tea_at.replace(hour=7, minute=0) + timedelta(days=1)))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    tea = next(x for x in s.data["log"] if x["name"] == "Tea")
+    assert not s.data["waiting"] and tea["failed"] and tea["unanswered"]  # the model failed: it went out at 'unanswered'
+    sent = d.flow.last["schedule.unanswered"]["messages"][-1]
+    assert sent["kind"] == "answer" and "Not answered" in sent["text"] and "the tea is ready" in sent["text"]
+    assert d.log.read(card="schedule", what="unanswered") and not d.log.read(levels=["error"])  # a model error, no crash
+
+    d.set_wires([w for w in d.wires if w["to"] != "schedule.answers"])  # nothing comes back at all: after 5 minutes
+    s._ring(next(e for e in s.entries if e["name"] == "Alarm"), "07:00")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    alarm = s.data["log"][-1]
+    assert alarm["answer"] is None and not alarm.get("unanswered")
+    freezer.tick(timedelta(minutes=6))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert alarm["unanswered"] and "failed" not in alarm and "Wake up." in d.flow.last["schedule.unanswered"]["messages"][-1]["text"]
 
 
 async def test_ha_event_and_heartbeat_fire(hass: HomeAssistant, mock_entry, aioclient_mock):

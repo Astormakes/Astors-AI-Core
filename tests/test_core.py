@@ -542,7 +542,7 @@ async def test_redo_and_buffer_provides(hass: HomeAssistant, mock_entry):
 
 async def test_a_card_id_is_its_name(hass: HomeAssistant, mock_entry, aioclient_mock):
     """A card is called the same everywhere: renaming it moves its id through wires, positions, its data, the other
-    cards' settings (a script's references, the Calendar's lists) and stored entries, slots too; Undo and Redo move it
+    cards' settings (a script's references) and stored entries, slots too; Undo and Redo move it
     back and forth; an id that does not fit its name moves when the domain loads."""
     import json
     core = await setup_aac(hass, mock_entry)
@@ -564,7 +564,6 @@ async def test_a_card_id_is_its_name(hass: HomeAssistant, mock_entry, aioclient_
     assert "Car" in [li["name"] for li in d.cards["projects"].data["lists"]] and await d.load_card_data("lists") is None
     watcher = d.cards["watcher"].settings["script"]
     assert 'str(projects.total)' in watcher and 'e.data.get("lists")' in watcher and 'cards["projects"]' in watcher
-    assert d.cards["calendar"].settings["lists"] == "projects"
     assert "projects" in d.slots["1"]["cards"] and "lists" not in d.slots["1"]["cards"]
 
     await d.update_card("time", title="Clock")

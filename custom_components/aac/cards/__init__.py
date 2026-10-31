@@ -230,6 +230,10 @@ class Card:
         """A card was saved by another version of its file (`made_with`): its settings as this version wants them."""
         return settings
 
+    async def upgrade_data(self, settings: dict[str, Any], made_with: str) -> None:
+        """Made from a setup saved by another version of its file, after upgrade() and load(): its data as this version
+        wants it (settings: as they were saved, e.g. entries that moved from its settings into its data)."""
+
     async def start(self) -> None:
         """The card is in a running domain: start its timers and listeners."""
 
