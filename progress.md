@@ -533,3 +533,7 @@ pencil edit is missing" is item 11.
     slider up to what the GPU can hold; the default close to the maximum. To find out first: how a llama-server router
     loads a model with another context size (its presets set `--ctx-size`), and how to tell the GPU's maximum (VRAM,
     the model's own limit). The chat already shows the tokens used of the context (2.3.16).
+57. **Bug: on a phone, tapping Settings also presses Audio** (owner, 2026-10-31). Tapping the sidebar's SETTINGS
+    group opens it and the Audio entry, which then lies under the finger, gets pressed at once. To check: the group
+    re-renders the nav on the first event of the tap and the rest of the tap (or a ghost click) lands on the new
+    entry; fix so one tap does one thing, then try it on the real page on a phone.
