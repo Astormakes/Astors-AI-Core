@@ -10,6 +10,8 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   positions, titles and each card's data as before, and the chat and Lists work again (fresh and from the backup).
   It found a real bug: AAC's unload passed `watcher.cancel` to `entry.async_on_unload`, its `True` was taken for a
   task ("Error unloading entry AAC" whenever AAC is reloaded); now a small function that returns nothing.
+  Also run on the live HA on a copy of the owner's domain (23 cards, 37 wires): all removed, one Undo, cards, wires,
+  positions and every card's data as before, Lists and Chat answer; the copy deleted, the main domain untouched (4 s).
 
 - **2026-10-31 (2.3.22): 🗑 and Del remove the selection** (owner: deleting belongs with the tool buttons; Del was
   pressed by habit). A round 🗑 under Select and Cut (greyed out when nothing is selected) and Del / Backspace remove the
