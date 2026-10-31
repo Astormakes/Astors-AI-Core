@@ -487,7 +487,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
    sends frames only while a Nodes page shows the card (`aac/view/watch`, said every 8 s). First one: Scope (Audio:
    level bars, waveform, spectrum with numpy; passes the audio on). Next: Gain, Compressor.
 3. ~~Faster lights~~ **done (2.1.1):** wire levels 10×/s, only while a Nodes page is open.
-4. **Audio delay** (2.1.32: a spoken turn shows in the chat at once, the answer grows live there; a turn answered "nothing" goes again): measure each stage first (clip end → text → model → speech → playing), then: the satellite
+4. ~~**Audio delay**~~ **done (owner, 2026-10-31: 2.1.4 timing, 2.1.5 phrases, 2.1.28 muting in the Microphone, 2.1.32 the spoken turn at once, 2.1.44–2.1.48 echo).** (2.1.32: a spoken turn shows in the chat at once, the answer grows live there; a turn answered "nothing" goes again): measure each stage first (clip end → text → model → speech → playing), then: the satellite
    plays a stream instead of whole WAVs; sentence-wise speech (item 1); the Audio clipper's pause. Found: the
    Microphone → Speaker loop sounded broken because AAC ignores a satellite's microphone while it plays (no talking
    to itself) and the Speaker plays a stream in separate 2 s pieces; needs echo cancellation (best in the satellite)
@@ -536,9 +536,9 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     processed residue (the sweep gone, beeps ringing; no linear relation), so subtraction can't help there and isn't
     needed: Speex already stops AAC hearing itself. The add-on runs `echo_cancel` on, `reference` off. For devices that
     give the raw echo (a cheap USB speakerphone on a Pi).
-17. **Ideas, not started:** AAC's own output as the echo reference, lined up per answer by correlation (any satellite,
+17. ~~**Ideas, not started:**~~ **settled (2026-10-31):** RAM/VRAM needs a helper on the machines (owner: no, maybe a card some day, see 56); the echo reference is not needed while the satellite's Speex echo cancellation keeps AAC from hearing itself (16). Was: AAC's own output as the echo reference, lined up per answer by correlation (any satellite,
     and another room's speaker); RAM/VRAM on the Models page (llama-server's API has none: a helper on each machine).
-18. **Chat rework** (owner, 2026-10-26: "needs to be reworked a little"; what exactly: talk through first). Related
+18. ~~**Chat rework**~~ **done as far as known (2.3.0: items 22–27, Chat + Behind the scenes; 2.3.7: item 11).** (owner, 2026-10-26: "needs to be reworked a little"; what exactly: talk through first). Related
     and still open: item 11 (edit messages, resend).
 19. **Measures against code injection** (owner, 2026-10-26). Since 2.2.0 Relay scripts are code a model can write
     (the Node editor's `change_card`), and models read untrusted text (web pages, mails, chat lines), so a planted
