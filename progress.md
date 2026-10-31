@@ -3,7 +3,15 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.19, live on the owner's HA
+## Current state (2026-10-31) – 2.3.20, live on the owner's HA
+
+- **2026-10-31 (2.3.20): select and move several cards (item 34).** A frame drawn with the mouse on the empty grid
+  selects the cards it touches (Ctrl held: adds them); Ctrl+click adds or removes one; dragging a selected card moves
+  them all and they snap as one block (`_snap(id, group)`: the dragged card into its column, the rest keep their places,
+  pushed down together if they would cover another card). With several selected the side panel lists them (no settings);
+  Esc or a click on the empty grid lets go. Mouse panning moved to the middle or right button (left draws the frame);
+  a finger still pans. `sel` is a setter: picking one card or none clears the several (`many`). Delete only removes a
+  single selected card. Checked with real mouse input on the local test HA (moving) and the live HA (selecting only).
 
 - **2026-10-31 (2.3.19): bug 57 fixed.** On a phone the SETTINGS heading went straight to the Audio page (its `data-go`;
   a page closes the sidebar), so Models and Appearance could not be reached. Now on a phone it only opens the group in
@@ -481,7 +489,7 @@ pencil edit is missing" is item 11.
 33. **Nodes page: lit wires wrong.** (2.3.0: tool calls travel along the wires now, snapshots no longer go through Schedule; check again live) The lit wires do not seem right: a question that makes Gemma search the web
     reliably ("lithium is used in many antidepressant medications, how does it work…") always lights the way to
     Schedule and Chat.
-34. **Nodes page: select and move several cards.** With several cards selected, dragging one moves only that one, not
+34. ~~**Nodes page: select and move several cards.**~~ **done (2.3.20).** With several cards selected, dragging one moves only that one, not
     all selected.
     Owner, 2026-10-30: box select (drag a frame on the empty grid), Ctrl+click to add or remove cards from the
     selection, and drag and drop the whole selection at once.

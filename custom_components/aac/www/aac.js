@@ -146,6 +146,7 @@ textarea { resize: vertical; }
 .fn { font-size: 12px; margin: 6px 0; } .fn code { font-size: 12px; }
 .node rect.box { fill: var(--card-background-color); stroke: var(--divider-color); stroke-width: 1.2; }
 .node.sel rect.box { stroke: var(--primary-color); stroke-width: 2.4; }
+#frame { fill: var(--primary-color); fill-opacity: .08; stroke: var(--primary-color); stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; pointer-events: none; }
 .node text { fill: var(--primary-text-color); font-size: 13px; } .node text.sub { fill: var(--secondary-text-color); font-size: 10px; } .node text.port { font-size: 10px; fill: var(--secondary-text-color); }
 .dot { cursor: crosshair; }
 .wire { fill: none; stroke-width: 2; opacity: .7; } .wire.read { stroke-dasharray: 4 4; } .wire.sel { stroke-width: 4; opacity: 1; }
@@ -290,6 +291,10 @@ class AacPanel extends HTMLElement {
   }
   _folds() { try { return JSON.parse(localStorage.getItem("aac.folds") || "{}"); } catch (err) { return {}; } }
   _setFolds(f) { try { localStorage.setItem("aac.folds", JSON.stringify(f)); } catch (err) { /* private window */ } }
+  get sel() { return this._sel; } // the card whose settings show; picking one (or none) lets go of several
+  set sel(id) { this._sel = id; this.many = new Set(); }
+  _picked() { return this.many.size ? this.many : new Set(this.sel ? [this.sel] : []); } // the selected cards on the Nodes page
+  _pick(ids) { const s = new Set(ids); if (s.size > 1) { this.sel = null; this.many = s; } else this.sel = [...s][0] || null; } // several: no settings, they move together
   _card(id) { return (this.state?.domain.cards || []).find((c) => c.id === id); }
   _type(t) { return (this.state?.types || []).find((x) => x.type === t); }
 
@@ -968,7 +973,7 @@ class AacPanel extends HTMLElement {
     const info = t ? `<b>${esc(t.title)}</b> <span class="hint">v${esc(t.version)}</span><p style="margin:6px 0">${esc(t.help)}</p>${ports("Takes", t.inputs)}${ports("Outputs", t.outputs)}${Object.keys(t.functions || {}).length ? `<label>Functions (for models: For models on the card)</label>${Object.entries(t.functions).map(([n, f]) => `<div class="fn"><code>${esc(n)}(${Object.entries(f.args || {}).map(([a, x]) => `${esc(a)}${x.required ? "" : "?"}`).join(", ")})</code> ${esc(f.help || "")}</div>`).join("")}` : ""}<p class="hint">Click in the grid to place it. <button class="small" id="unpick" title="Put it back (Esc, or click the type again)">Cancel</button></p>`
       : '<span class="hint">Pick a card type above, then click in the grid to place it.</span>';
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
-    return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it.")}
+    return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it. A frame drawn on the empty grid selects several cards (Ctrl+click adds or removes one); drag one of them and they all move. The middle or right mouse button (or a finger) moves the view.")}
         <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="redo" ${d.redo ? "" : "disabled"} title="What the last Undo took back">Redo</button><button class="small" id="fit">Fit</button><button class="small ${this.showValues ? "on" : ""}" id="values" title="The value pool: what scripts can read now (card.value), live">Values</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
       <div class="nodes ${this.palOpen ? "" : "nopal"} ${this.sideOpen ? "" : "noside"}"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
         <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
@@ -1144,6 +1149,8 @@ class AacPanel extends HTMLElement {
       return `<b>Wire</b><p class="hint">${esc(this.selWire.from)} → ${esc(this.selWire.to)}</p>
         <div class="row" style="gap:8px"><button class="small" id="monitor" title="A window above the wire with what passes it, live">${on ? "Stop monitoring" : "Monitor"}</button><button class="small danger" id="unwire">Remove wire</button></div>`;
     }
+    if (this.many.size) return `<b>${this.many.size} cards selected</b><p class="hint">Drag one of them and they all move. Ctrl+click a card adds or removes it, a frame drawn with Ctrl held adds the cards in it. Esc or a click on the empty grid lets go.</p>
+      ${[...this.many].map((id) => `<div class="item" data-selcard="${esc(id)}" style="cursor:pointer">${esc(this._card(id)?.title || id)}</div>`).join("")}`;
     const c = this.sel && this._card(this.sel);
     if (!c) {
       const groups = {};
@@ -1197,7 +1204,7 @@ class AacPanel extends HTMLElement {
     this.shadowRoot.querySelector("#cards").innerHTML = d.cards.map((c) => {
       const p = pos(c.id), ins = Object.entries(c.inputs), outs = Object.entries(c.outputs), m = mirror.has(c.id);
       const inX = m ? W : 0, outX = m ? 0 : W, inT = m ? `x="${W - 10}" text-anchor="end"` : 'x="10"', outT = m ? 'x="10"' : `x="${W - 10}" text-anchor="end"`;
-      return `<g class="node ${this.sel === c.id ? "sel" : ""}" data-node="${esc(c.id)}" transform="translate(${p.x},${p.y})">
+      return `<g class="node ${this.sel === c.id || this.many.has(c.id) ? "sel" : ""}" data-node="${esc(c.id)}" transform="translate(${p.x},${p.y})">
         <rect class="box" width="${W}" height="${height(c)}" rx="8"></rect>
         <text x="10" y="18">${esc(c.title)}</text><text class="sub" x="10" y="30">${esc(this._sub(c))}</text>
         ${ins.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-in="${esc(n)}" data-kind="${k}" points="${this._tri(inX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : k.includes("|") ? this._halves(inX, HEAD + ROW * i + ROW / 2, n, k) : `<circle class="dot" data-in="${esc(n)}" data-kind="${k}" cx="${inX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${inT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
@@ -1351,16 +1358,23 @@ class AacPanel extends HTMLElement {
     return found;
   }
 
-  _snap(id) {
-    // a dropped card goes into the nearest column, on the 20 px grid, below any card it would cover there
-    const d = this.state.domain, p = d.positions[id], c = this._card(id);
-    if (!p || !c) return;
-    p.x = Math.round(p.x / COL) * COL; p.y = Math.round(p.y / 20) * 20;
+  _snap(id, group = [id]) {
+    // dropped cards go into the nearest column, on the 20 px grid, below any card they would cover there; the cards
+    // dropped together (the one dragged and the rest of the selection) move as one and keep their places to each other
+    const d = this.state.domain, p = d.positions[id], ours = group.filter((g) => d.positions[g] && this._card(g));
+    if (!p || !this._card(id)) return;
+    const shift = (dx, dy) => { for (const g of ours) { d.positions[g].x += dx; d.positions[g].y += dy; } };
+    shift(Math.round(p.x / COL) * COL - p.x, Math.round(p.y / 20) * 20 - p.y);
     for (let tries = 0; tries < 50; tries++) {
-      const hit = d.cards.find((o) => o.id !== id && d.positions[o.id] && Math.abs(d.positions[o.id].x - p.x) < W
-        && d.positions[o.id].y < p.y + this._height(c) + 10 && p.y < d.positions[o.id].y + this._height(o) + 10);
-      if (!hit) break;
-      p.y = Math.round((d.positions[hit.id].y + this._height(hit) + 20) / 20) * 20;
+      let below = null;
+      for (const g of ours) {
+        const q = d.positions[g], c = this._card(g);
+        const hit = d.cards.find((o) => !ours.includes(o.id) && d.positions[o.id] && Math.abs(d.positions[o.id].x - q.x) < W
+          && d.positions[o.id].y < q.y + this._height(c) + 10 && q.y < d.positions[o.id].y + this._height(o) + 10);
+        if (hit) { below = Math.round((d.positions[hit.id].y + this._height(hit) + 20) / 20) * 20 - q.y; break; }
+      }
+      if (below === null) break;
+      shift(0, below);
     }
   }
 
@@ -1553,21 +1567,25 @@ class AacPanel extends HTMLElement {
       svg.setPointerCapture(e.pointerId);
       fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (fingers.size >= 2) { // a second finger: whatever the first began becomes a pinch
-        if (drag?.kind === "move" && drag.moved) { this._snap(drag.id); this._savePositions(); }
+        if (drag?.kind === "move" && drag.moved) { this._snap(drag.id, Object.keys(drag.from)); this._savePositions(); }
+        this.shadowRoot.querySelector("#frame")?.remove();
         drag = null; this._dragging = false; this.shadowRoot.querySelector("#tmpwire")?.remove();
         pinch = { ...two(), vp: { ...this.vp } };
         return;
       }
       if (node && out) { drag = { kind: "wire", from: `${node.dataset.node}.${out}`, type: e.target.dataset.kind }; return; }
       if (hit) { const [from, to] = hit.split("|"); this.selWire = { from, to }; this.sel = null; this.selMon = null; this.showValues = false; this.render(); return; }
-      if (node) {
-        const id = node.dataset.node, p = this.state.domain.positions[id] || (this.state.domain.positions[id] = { x: 0, y: 0 }), w = this._world(e);
-        drag = { kind: "move", id, dx: w.x - p.x, dy: w.y - p.y, moved: false };
+      if (node) { // a card in the selection takes the others along
+        const id = node.dataset.node, pos = this.state.domain.positions, p = pos[id] || (pos[id] = { x: 0, y: 0 }), w = this._world(e);
+        const group = this.many.has(id) ? [...this.many] : [id];
+        drag = { kind: "move", id, dx: w.x - p.x, dy: w.y - p.y, moved: false, add: e.ctrlKey || e.metaKey, from: Object.fromEntries(group.filter((g) => pos[g]).map((g) => [g, { ...pos[g] }])) };
         return;
       }
       if (this.selType) { const w = this._world(e); this._place(this.selType, w); return; }
+      if (e.pointerType === "mouse" && e.button === 0) { drag = { kind: "frame", at: this._world(e), screen: [e.clientX, e.clientY], add: e.ctrlKey || e.metaKey, had: this._picked() }; return; } // a frame selects (a finger, the middle or right button pans)
       drag = { kind: "pan", x: e.clientX - this.vp.x, y: e.clientY - this.vp.y, at: [e.clientX, e.clientY] };
     });
+    svg.addEventListener("contextmenu", (e) => e.preventDefault()); // the right button pans
     svg.addEventListener("pointermove", (e) => {
       if (fingers.has(e.pointerId)) fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pinch) {
@@ -1581,9 +1599,21 @@ class AacPanel extends HTMLElement {
       if (!drag) { this._ghost(e); return; }
       if (drag.kind === "pan") { this.vp.x = e.clientX - drag.x; this.vp.y = e.clientY - drag.y; this._view(); }
       if (drag.kind === "move") {
-        const w = this._world(e), p = this.state.domain.positions[drag.id];
+        const w = this._world(e), pos = this.state.domain.positions, p = pos[drag.id];
         p.x = Math.round((w.x - drag.dx) / 20) * 20; p.y = Math.round((w.y - drag.dy) / 20) * 20; drag.moved = true; this._dragging = true;
+        const a = drag.from[drag.id];
+        for (const [g, f] of Object.entries(drag.from)) pos[g] = { x: f.x + p.x - a.x, y: f.y + p.y - a.y };
         this._drawGrid();
+      }
+      if (drag.kind === "frame") {
+        const w = this._world(e), x = Math.min(w.x, drag.at.x), y = Math.min(w.y, drag.at.y), fw = Math.abs(w.x - drag.at.x), fh = Math.abs(w.y - drag.at.y);
+        drag.hits = this.state.domain.cards.filter((c) => { const p = this.state.domain.positions[c.id]; return p && p.x < x + fw && x < p.x + W && p.y < y + fh && y < p.y + this._height(c); }).map((c) => c.id);
+        drag.moved ||= Math.hypot(e.clientX - drag.screen[0], e.clientY - drag.screen[1]) >= 4; this._dragging = true;
+        let r = this.shadowRoot.querySelector("#frame");
+        if (!r) { r = document.createElementNS("http://www.w3.org/2000/svg", "rect"); r.id = "frame"; this.shadowRoot.querySelector("#world").appendChild(r); }
+        r.setAttribute("x", x); r.setAttribute("y", y); r.setAttribute("width", fw); r.setAttribute("height", fh);
+        const on = new Set(drag.add ? [...drag.had, ...drag.hits] : drag.hits);
+        for (const n of this.shadowRoot.querySelectorAll("#cards .node")) n.classList.toggle("sel", on.has(n.dataset.node));
       }
       if (drag.kind === "wire") {
         const w = this._world(e), [a, ap] = drag.from.split("."), c = this._card(a), p = this.state.domain.positions[a] || { x: 0, y: 0 };
@@ -1594,19 +1624,22 @@ class AacPanel extends HTMLElement {
       }
     });
     svg.addEventListener("pointerleave", () => this.shadowRoot.querySelector("#ghost")?.remove());
-    svg.addEventListener("pointercancel", (e) => { fingers.delete(e.pointerId); if (fingers.size < 2) pinch = null; drag = null; this._dragging = false; });
+    svg.addEventListener("pointercancel", (e) => { fingers.delete(e.pointerId); if (fingers.size < 2) pinch = null; drag = null; this._dragging = false; this.shadowRoot.querySelector("#frame")?.remove(); });
     svg.addEventListener("pointerup", async (e) => {
       fingers.delete(e.pointerId);
       if (pinch) { if (!fingers.size) pinch = null; return; } // a pinch ends when the last finger lifts
       const d = drag; drag = null; this._dragging = false;
       if (!d) return;
-      if (d.kind === "pan" && Math.hypot(e.clientX - d.at[0], e.clientY - d.at[1]) < 4) { // a tap on empty grid lets go (on a phone it closes the panels too)
+      if (d.kind === "frame") this.shadowRoot.querySelector("#frame")?.remove();
+      if (d.kind === "frame" && d.moved) { this._pick(d.add ? [...d.had, ...d.hits] : d.hits); this.selWire = this.selMon = null; this.showValues = false; this.render(); return; }
+      if ((d.kind === "pan" && Math.hypot(e.clientX - d.at[0], e.clientY - d.at[1]) < 4) || (d.kind === "frame" && !d.add)) { // a tap on empty grid lets go (on a phone it closes the panels too)
         const closed = this._phone() && this._closePanels();
-        if (this.sel || this.selWire) { this.sel = this.selWire = null; this.render(); return; }
+        if (this._picked().size || this.selWire) { this.sel = this.selWire = null; this.render(); return; }
         if (closed) return;
       }
       if (d.kind === "move") {
-        if (d.moved) { this._snap(d.id); this._drawGrid(); await this._savePositions(); }
+        if (d.moved) { this._snap(d.id, Object.keys(d.from)); this._drawGrid(); await this._savePositions(); }
+        else if (d.add) { const s = this._picked(); if (!s.delete(d.id)) s.add(d.id); this._pick(s); this.selWire = this.selMon = null; this.showValues = false; this.render(); } // Ctrl+click: in or out of the selection
         else { this.sel = d.id; this.selWire = null; this.selMon = null; this.showValues = false; if (!this.sideOpen) this._panel("side", true); else this.render(); }
       }
       if (d.kind === "wire") {
@@ -1765,7 +1798,7 @@ class AacPanel extends HTMLElement {
         if (this.view.kind !== "nodes" || /INPUT|TEXTAREA|SELECT/.test(e.composedPath()[0]?.tagName)) return;
         if (e.key === "Escape") { // put back a picked card type, or let go of the selected card or wire
           if (this.selType) this._unpick();
-          else if (this.sel || this.selWire || this.selMon || this.showValues) { this.sel = this.selWire = this.selMon = null; this.showValues = false; this.render(); }
+          else if (this._picked().size || this.selWire || this.selMon || this.showValues) { this.sel = this.selWire = this.selMon = null; this.showValues = false; this.render(); }
           return;
         }
         if (!(e.key === "Delete" || e.key === "Backspace")) return;
