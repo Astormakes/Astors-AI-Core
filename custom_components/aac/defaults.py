@@ -17,16 +17,16 @@ CHARTER = """Charter (the owner's values; you follow it and never change it):
 - What you learn about me stays private.
 - Limits are not puzzles: if a rule stops you, say so instead of working around it."""
 TIME = """context = input("in")
-context.attach_last("time", f"Local time: {now():%A %Y-%m-%d %H:%M}")
+context.attach("time", f"Local time: {now():%A %Y-%m-%d %H:%M}")
 output("out", context)
 """
 
 
 def new_text(name: str, text: str, at: str = "first", reads: str | None = None) -> str:
-    """A Relay script that writes one text and passes the context on: at the beginning (written in place when it is
-    there already) or at the end (a new one each turn); reads: a dotted input whose context comes first."""
+    """A Relay script that writes one text and passes the context on: as the first part of the system prompt, or
+    attached to the last entry (what was just said: this turn); reads: a dotted input whose context comes first."""
     arrived = f'input("{reads}", read=True) + input("in")' if reads else 'input("in")'
-    write = f'context.set("{name}", """{text}""", at="first")' if at == "first" else f'context.attach_last("{name}", """{text}""")'
+    write = f'context.add("{name}", """{text}""", at="first", role="system")' if at == "first" else f'context.attach("{name}", """{text}""")'
     return f'context = {arrived}\n{write}\noutput("out", context)\n'
 
 
@@ -92,7 +92,7 @@ FOLLOW_UP_TURN = f"""context = input("chat", read=True) + input("in")
 heard = context.get("EARS.heard")
 if heard:
     heard.text = "{FOLLOW_UP}" + heard.text
-context.attach_last("rules", \"\"\"RULES\"\"\")
+context.attach("rules", \"\"\"RULES\"\"\")
 output("out", context)
 """
 

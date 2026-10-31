@@ -3,7 +3,16 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.4.0, live on the owner's HA
+## Current state (2026-10-31) – 2.5.0, live on the owner's HA
+
+- **2026-10-31 (2.5.0): where a Relay writes says what a model reads it as** (owner: his Wake word's `attach_first`
+  landed in the system prompt, visible only in Plain text). `add(tag, text, at="last"|"first", role="user"|"system")`
+  makes a new entry (a user message, or a part of the system prompt, which a model always reads first);
+  `attach(tag, text, at=)` adds onto the last / first entry a model reads, in its role (no more silent fallback to the
+  system prompt); `set(…, at=, role=)` adds like `add` when the tag is missing; `remove(tag, at="all"|"first"|"last")`;
+  `e.role`. One pattern (`at=`) for every "where"; `read=True` stays a bool. No `role="tool"` (only an answer to a
+  call) or `"assistant"` (a model reads another card's answer as a user message). Docstrings stay plain Python, not
+  marked (owner). Backup broke: 2.5.0 (I had said 2.4.1; the backup test decided).
 
 - **2026-10-31 (2.4.0): item 58, the Relay rework** (owner's design, talked through first: docs/v2/04-relay.md). A
   Relay's script is plain Python that runs top to bottom every time something arrives, every piece of a model's

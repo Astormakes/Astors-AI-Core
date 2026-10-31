@@ -215,10 +215,11 @@ nothing leaves unless `output("name", what)` runs. Its ports are what it names: 
 else (a text, an entry, a list) as the Relay's answer (tag `<relay>.answer`) in the context that arrived.
 
 To the script the context is a list of entries (`ContextView`): `get(tag)`, `[tag]`, `tag in context`, `all(tag)`
-(`.text`: their texts as one), `text`, `attach_first` (a system part at the start), `attach_last` (a trailer on the
-newest message, a new one each time), `set(tag, text, at="last"|"first")` (written in place; none: a new one),
-`remove` / `remove_first` / `remove_last`, `a + b` (b's turn, belonging where a does). A tag without a dot is the
-Relay's own (`<relay>.<name>`), `*` stands for anything. An entry: `text` (settable), `tags`, `by`, `data`. Other
+(`.text`: their texts as one), `text`, `add(tag, text, at="last"|"first", role="user"|"system")` (a message, or a
+part of the system prompt), `attach(tag, text, at="last"|"first")` (onto the last / first entry a model reads: a
+trailer on its message, or a system part after it), `set(tag, text, at=, role=)` (written in place; none: as `add`),
+`remove(tag, at="all"|"first"|"last")`, `a + b` (b's turn, belonging where a does). A tag without a dot is the
+Relay's own (`<relay>.<name>`), `*` stands for anything. An entry: `text` (settable), `tags`, `by`, `data`, `role` (how a model reads it). Other
 names: `stop()` (the context becomes a stop; on a piece every card lets go), `signal()`, `print()` (the editor's
 Printed panel), `print_log()` (AAC's log), `now()`, `states()`, `re`, `audio`, and every card by its id: its values
 (`lists.total`) and, for a card in the Relay's loop, its functions (`lists.add_items(...)`, arguments in order or by

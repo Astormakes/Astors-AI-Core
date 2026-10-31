@@ -53,22 +53,24 @@ if said and "computer" in said.text.lower():
 
 
 async def test_relay_context_is_a_list_of_tagged_texts(hass: HomeAssistant, mock_entry):
-    """attach_first / attach_last / set / remove …, reading by tag (own tags without a dot, * for any), the whole text,
-    a + b (the left one says where it belongs)."""
+    """add / attach / set / remove (where, with at=; what a model reads it as, with role=), reading by tag (own tags
+    without a dot, * for any), the whole text, a + b (the left one says where it belongs)."""
     core = await setup_aac(hass, mock_entry)
     d = core.domain
     relay = await d.add_card("relay", "Texts", {"script": '''
 context = input("in")
-context.set("role", "You are AAC.", at="first")
-context.attach_first("first", "Read me first.")
-context.attach_last("time", f"Asked: {context['chat.said'].text}")
+context.set("role", "You are AAC.", at="first", role="system")
+context.add("first", "Read me first.", at="first", role="system")
+context.attach("time", f"Asked: {context['chat.said'].text}")
 context.set("note", "A note.")
 context.set("note", "The note.")
-context.remove_first("noise.heard")
+context.attach("rule", "Be brief.", at="first")
+context.remove("noise.heard", at="first")
+print([e.role for e in context])
 print(len(context.all("*.said")), "said;", "role" in context, "chat.said" in context, context.get("nothing"))
 print(context.all("*").text.splitlines()[0], "|", context[-1].text, "|", context.text.count("hi"))
 both = input("chat", read=True) + context
-both.attach_last("both", "x")
+both.add("both", "x")
 output("out", both)
 '''})
     assert relay.ports()[0] == {"in": "text", "chat": "read"}
@@ -79,9 +81,11 @@ output("out", both)
     context.add("chat", "said", "hi", ["said"])
     await relay.handle(context, "in", None)
     assert [(e["kind"], e["text"]) for e in context.entries] == [
-        ("system", "Read me first."), ("system", "You are AAC."), ("said", "hi"), ("trailer", "Asked: hi"), ("trailer", "The note.")]
-    assert {"texts.role", "texts.time", "texts.note", "texts.first", "texts.both"} <= {t["tag"] for t in d.tag_pool()}
-    assert [p["text"] for p in relay.printed] == ["1 said; True True None", "Read me first. | The note. | 2"]
+        ("system", "Read me first."), ("system", "Be brief."), ("system", "You are AAC."), ("said", "hi"), ("trailer", "Asked: hi"),
+        ("said", "The note.")]
+    assert {"texts.role", "texts.time", "texts.note", "texts.first", "texts.both", "texts.rule"} <= {t["tag"] for t in d.tag_pool()}
+    assert [p["text"] for p in relay.printed] == ["['system', 'system', 'system', 'user', 'user', 'user']", "1 said; True True None",
+                                                 "Read me first. | The note. | 2"]
     sent = d.flow.held["texts.out"]
     assert sent.origin == "chat" and sent.id == context.id and sent.entries[-1]["text"] == "x"  # files into the chat
 

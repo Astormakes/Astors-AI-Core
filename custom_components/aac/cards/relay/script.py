@@ -17,7 +17,7 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.api import Context, entry
+from custom_components.aac.api import EVENTS, Context, entry
 
 ALLOWED = {
     ast.Module, ast.FunctionDef, ast.arguments, ast.arg, ast.Return, ast.Assign, ast.AugAssign, ast.Expr, ast.If,
@@ -41,7 +41,9 @@ BUILTINS = ("len", "str", "int", "float", "bool", "round", "min", "max", "abs", 
             "list", "dict", "set", "tuple", "enumerate", "zip", "isinstance", "range")
 OWN = {"input", "output", "stop", "signal", "print", "print_log", "now", "states", "state_attr", "is_state", "re",
        "audio", "cards", *BUILTINS}  # the script's own names: they win over a card with that id (it is cards["id"])
-EDITS = ("attach_first", "attach_last", "set")  # the context's methods that write an entry with a tag
+EDITS = ("add", "attach", "set")  # the context's methods that write an entry with a tag
+ROLES = ("user", "system")  # what add makes: a message, or a part of the system prompt
+ROLE = {"system": "system", "said": "user", "note": "user", "trailer": "user", "answer": "assistant", "result": "tool"}
 
 DEFAULT = 'context = input("in")\noutput("out", context)\n'
 
@@ -55,7 +57,7 @@ REFERENCE = [
      "everything on.", 'context = input("in")\noutput("out", context)'),
     ("Start here", "a whole example", "Adds the time at the end of every turn, and sends the turn to yes when someone "
      "said computer, otherwise to no.",
-     'context = input("in")\ncontext.attach_last("time", f"It is {now():%H:%M}.")\nsaid = context.get("*.said")\n'
+     'context = input("in")\ncontext.attach("time", f"It is {now():%H:%M}.")\nsaid = context.get("*.said")\n'
      'if said and "computer" in said.text.lower():\n    output("yes", context)\nelse:\n    output("no", context)'),
     ("Python basics", "x = 5   x == 5", "= gives something a name (x is 5 from now on); == asks (is x 5?).", ""),
     ("Python basics", "if … :", "Only when it is true, the moved-in lines under it run (4 spaces). elif: else if, else: "
@@ -81,21 +83,28 @@ REFERENCE = [
      'if "lights" in context.text.lower():\n    print("lights came up")'),
     ("The context", "for e in context:", "Every entry, oldest first. context[0] is the first, context[-1] the newest, "
      "len(context) how many.", ""),
-    ("The context", 'context.attach_first("charter", text)', "A new entry at the very beginning: what a model reads "
-     "first (the system prompt).", ""),
-    ("The context", 'context.attach_last("time", text)', "A new entry at the very end: what a model reads last. Always "
-     "a new one (each turn keeps its own).", 'context.attach_last("time", f"Local time: {now():%A %H:%M}")'),
-    ("The context", 'context.set("charter", text, at="first")', "Writes the entry with that tag, wherever it is; when "
-     "there is none, a new one at the end (at=\"first\": at the beginning).",
-     'context.set("charter", """You are AAC, a helpful assistant.""", at="first")'),
-    ("The context", 'context.remove("speech_to_text.heard")', "Takes out every entry with that tag. remove_first / "
-     "remove_last: only the oldest / newest.", ""),
+    ("The context", "what a model reads", "Top to bottom: the system prompt (role system: who it is, the same every "
+     "turn), then the conversation (role user: what was said; assistant: a model's answers; tool: what its tools gave "
+     "back). e.role tells an entry's. Speed: the model server keeps what it has read; a change at the beginning or in "
+     "the middle (the system prompt, older messages) makes it read everything from there again. The end is cheap.", ""),
+    ("The context", 'context.add("note", text)', "A new entry: a message from the user, at the end. at=\"first\": at the "
+     "beginning of the conversation. role=\"system\": a part of the system prompt instead (at=\"first\": its first part), "
+     "which a model always reads first.", 'context.add("charter", """You are AAC, a helpful assistant.""", at="first", role="system")'),
+    ("The context", 'context.attach("time", text)', "Adds a text onto the last entry (at=\"first\": the first one): read "
+     "together with it, in its role. On what was just said, it goes with this turn. Each call adds a new one.",
+     'context.attach("time", f"Local time: {now():%A %H:%M}")'),
+    ("The context", 'context.set("charter", text)', "Writes the entry with that tag, wherever it is; when there is none, "
+     "a new one, as add makes it (at= and role= the same).", 'context.set("charter", text, at="first", role="system")'),
+    ("The context", 'context.remove("speech_to_text.heard")', "Takes out every entry with that tag. at=\"first\" / "
+     "at=\"last\": only the oldest / newest.", ""),
     ("The context", "a + b", "One context: a's entries, then b's (a chat's conversation, then the new lines).",
      'context = input("chat", read=True) + input("in")'),
     ("An entry", "e.text", "Its text. e.text = \"…\" changes it.", 'said.text = said.text.replace("computer", "").strip()'),
     ("An entry", "e.tags", "Its tags, e.g. [\"chat.said\"].", ""),
     ("An entry", "e.by", "The card that wrote it (its id).", ""),
     ("An entry", "e.data", "What its card added (the satellite that heard it: e.data.get(\"mic\")).", ""),
+    ("An entry", "e.role", "How a model reads it: system, user, assistant or tool (None: never sent to a model, like a "
+     "stop).", ""),
     ("Text", 'text.replace("a", "b")', "Every a becomes b (capitals count).", '"Hi computer".replace("computer", "AAC") → "Hi AAC"'),
     ("Text", "text.lower()", "Small letters (upper(): capitals). Use it to ignore capitals: \"stop\" in text.lower().", ""),
     ("Text", "text.strip()", "Spaces and empty lines off both ends.", ""),
@@ -334,6 +343,11 @@ class Entry:
         """What its card added."""
         return Values(dict(self._e.get("data") or {}))
 
+    @property
+    def role(self) -> str | None:
+        """How a model reads it: system, user, assistant, tool; None: never sent to a model (a stop, an error)."""
+        return ROLE.get(self._e["kind"])  # an attachment is read with its message: as the user's
+
     def __contains__(self, part: Any) -> bool:
         raise ScriptError(f"to look for {part!r} in an entry, look in its text: {part!r} in e.text")
 
@@ -368,6 +382,11 @@ def joined(a: Context, b: Context) -> Context:
     if a.origin:
         out.origin, out.chat_id = a.origin, a.chat_id
     return out
+
+
+def _at(at: str) -> None:
+    if at not in ("first", "last"):
+        raise ScriptError(f'at="first" or at="last" (not {at!r})')
 
 
 class ContextView:
@@ -433,47 +452,58 @@ class ContextView:
     def _new(self, tag: Any, text: Any, kind: str) -> dict[str, Any]:
         return entry(self._run.relay.id, kind, str(text), [self._tag(tag)])
 
-    def attach_first(self, tag: Any, text: Any) -> None:
-        """A new entry at the very beginning (the system prompt)."""
-        self._c.system.insert(0, self._new(tag, text, "system"))
-
-    def attach_last(self, tag: Any, text: Any) -> None:
-        """A new entry at the very end (on the newest message: read last)."""
-        item = self._new(tag, text, "trailer")
-        if self._c.messages:
-            self._c.messages[-1].setdefault("attachments", []).append(item)
+    def add(self, tag: Any, text: Any, at: str = "last", role: str = "user") -> None:
+        """A new entry: role user (a message) or system (a part of the system prompt, which is always read first);
+        at the beginning or the end (of the conversation, or of the system prompt)."""
+        _at(at)
+        if role not in ROLES:
+            raise ScriptError(f'add(…, role="user") or role="system" (not {role!r})')
+        c = self._c
+        if role == "system":
+            item = self._new(tag, text, "system")
+            c.system.insert(0, item) if at == "first" else c.system.append(item)
+        elif at == "first":
+            c.messages.insert(0, self._new(tag, text, "said"))
+            for e in c.events:  # they stay after the messages they followed
+                e["at"] = e.get("at", 0) + 1
         else:
-            self._c.system.append({**item, "kind": "system"})
+            c.messages.append(self._new(tag, text, "said"))
 
-    def set(self, tag: Any, text: Any, at: str = "last") -> None:
-        """Writes the newest entry with that tag where it is; none: a new one at the end (at="first": the beginning)."""
-        if at not in ("first", "last"):
-            raise ScriptError('set(…, at="first") or at="last"')
+    def attach(self, tag: Any, text: Any, at: str = "last") -> None:
+        """Adds a text onto the last (or first) entry a model reads: read together with it, in its role."""
+        _at(at)
+        c = self._c
+        read = [e for e in c.entries if e["kind"] not in EVENTS]
+        if not read:
+            raise ScriptError("attach: the context is empty, there is nothing to attach to (add makes a new entry)")
+        target = read[-1] if at == "last" else read[0]
+        if target["kind"] == "system":  # onto a part of the system prompt: right after it, in the system prompt
+            c.system.insert(next(i for i, e in enumerate(c.system) if e is target) + 1, self._new(tag, text, "system"))
+            return
+        item = self._new(tag, text, "trailer")
+        message = next(m for m in c.messages if m is target or any(a is target for a in m.get("attachments", [])))
+        attached = message.setdefault("attachments", [])
+        attached.insert(next((i + 1 for i, a in enumerate(attached) if a is target), len(attached)), item)
+
+    def set(self, tag: Any, text: Any, at: str = "last", role: str = "user") -> None:
+        """Writes the newest entry with that tag where it is; none: a new one, as add makes it."""
+        _at(at)
         if found := self._found(tag):
             found[-1]["text"] = str(text)
-        elif at == "first":
-            self.attach_first(tag, text)
         else:
-            self.attach_last(tag, text)
+            self.add(tag, text, at, role)
 
-    def remove(self, tag: Any) -> None:
-        """Takes out every entry with that tag."""
-        for e in self._found(tag):
+    def remove(self, tag: Any, at: str = "all") -> None:
+        """Takes out every entry with that tag (at="first" / "last": only the oldest / newest)."""
+        if at not in ("all", "first", "last"):
+            raise ScriptError('remove(…, at="first"), at="last" or nothing (every one)')
+        found = self._found(tag)
+        for e in found if at == "all" else found[:1] if at == "first" else found[-1:]:
             self._c.remove(e)
-
-    def remove_first(self, tag: Any) -> None:
-        """Takes out the oldest entry with that tag."""
-        if found := self._found(tag):
-            self._c.remove(found[0])
-
-    def remove_last(self, tag: Any) -> None:
-        """Takes out the newest entry with that tag."""
-        if found := self._found(tag):
-            self._c.remove(found[-1])
 
     def __add__(self, other: Any) -> ContextView:
         if not isinstance(other, ContextView):
-            raise ScriptError("a context + another context (input(…) + input(…)); to add a text use attach_last")
+            raise ScriptError("a context + another context (input(…) + input(…)); to add a text use add or attach")
         return ContextView(joined(self._c, other._c), self._run)
 
     def __bool__(self) -> bool:

@@ -14,17 +14,17 @@
    "type": "relay",
    "title": "Charter",
    "settings": {
-    "script": "context = input(\"in\")\ncontext.set(\"charter\", \"\"\"Be kind.\"\"\", at=\"first\")\noutput(\"out\", context)\n"
+    "script": "context = input(\"in\")\ncontext.add(\"charter\", \"\"\"Be kind.\"\"\", at=\"first\", role=\"system\")\noutput(\"out\", context)\n"
    },
-   "version": "3.0.0"
+   "version": "3.1.0"
   },
   "time": {
    "type": "relay",
    "title": "Time",
    "settings": {
-    "script": "context = input(\"in\")\ncontext.attach_last(\"time\", f\"Local time: {now():%A %Y-%m-%d %H:%M}\")\noutput(\"out\", context)\n"
+    "script": "context = input(\"in\")\ncontext.attach(\"time\", f\"Local time: {now():%A %Y-%m-%d %H:%M}\")\noutput(\"out\", context)\n"
    },
-   "version": "3.0.0"
+   "version": "3.1.0"
   },
   "model": {
    "type": "model",
@@ -90,7 +90,7 @@
    "settings": {
     "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard and \"stop\" in heard.text.lower():\n    stop()\n    output(\"stop\", context)\n"
    },
-   "version": "3.0.0"
+   "version": "3.1.0"
   },
   "wake_word": {
    "type": "relay",
@@ -98,7 +98,7 @@
    "settings": {
     "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard and any(word in heard.text.lower() for word in [\"computer\"]):\n    output(\"yes\", context)\n"
    },
-   "version": "3.0.0"
+   "version": "3.1.0"
   },
   "follow_up": {
    "type": "relay",
@@ -106,29 +106,29 @@
    "settings": {
     "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard:\n    # you started talking less than 6 s after AAC spoke at that satellite (long answers too)\n    spoke = audio.satellites.get(heard.data.get(\"mic\"), {}).get(\"seconds\", 999999)\n    said_for = heard.data.get(\"seconds\") or 0\n    named = any(word in heard.text.lower() for word in [\"stop\", \"computer\"])\n    if not heard.data.get(\"aac_spoke\") and spoke - said_for < 6 and not named:\n        output(\"yes\", context)\n"
    },
-   "version": "3.0.0"
+   "version": "3.1.0"
   },
   "spoken_turn": {
    "type": "relay",
    "title": "Spoken turn",
    "settings": {
-    "script": "context = input(\"chat\", read=True) + input(\"in\")\ncontext.attach_last(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
+    "script": "context = input(\"chat\", read=True) + input(\"in\")\ncontext.attach(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
    },
-   "version": "3.0.0"
+   "version": "3.1.0"
   },
   "follow_up_turn": {
    "type": "relay",
    "title": "Follow-up turn",
    "settings": {
-    "script": "context = input(\"chat\", read=True) + input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard:\n    heard.text = \"(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) \" + heard.text\ncontext.attach_last(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
+    "script": "context = input(\"chat\", read=True) + input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard:\n    heard.text = \"(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) \" + heard.text\ncontext.attach(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
    },
-   "version": "3.0.0"
+   "version": "3.1.0"
   },
   "answer": {
    "type": "relay",
    "title": "Answer",
    "settings": {},
-   "version": "3.0.0"
+   "version": "3.1.0"
   }
  },
  "wires": [

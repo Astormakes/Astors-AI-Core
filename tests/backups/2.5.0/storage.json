@@ -17,17 +17,17 @@
      "type": "relay",
      "title": "Charter",
      "settings": {
-      "script": "context = input(\"in\")\ncontext.set(\"charter\", \"\"\"Be kind.\"\"\", at=\"first\")\noutput(\"out\", context)\n"
+      "script": "context = input(\"in\")\ncontext.add(\"charter\", \"\"\"Be kind.\"\"\", at=\"first\", role=\"system\")\noutput(\"out\", context)\n"
      },
-     "version": "3.0.0"
+     "version": "3.1.0"
     },
     "time": {
      "type": "relay",
      "title": "Time",
      "settings": {
-      "script": "context = input(\"in\")\ncontext.attach_last(\"time\", f\"Local time: {now():%A %Y-%m-%d %H:%M}\")\noutput(\"out\", context)\n"
+      "script": "context = input(\"in\")\ncontext.attach(\"time\", f\"Local time: {now():%A %Y-%m-%d %H:%M}\")\noutput(\"out\", context)\n"
      },
-     "version": "3.0.0"
+     "version": "3.1.0"
     },
     "model": {
      "type": "model",
@@ -93,7 +93,7 @@
      "settings": {
       "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard and \"stop\" in heard.text.lower():\n    stop()\n    output(\"stop\", context)\n"
      },
-     "version": "3.0.0"
+     "version": "3.1.0"
     },
     "wake_word": {
      "type": "relay",
@@ -101,7 +101,7 @@
      "settings": {
       "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard and any(word in heard.text.lower() for word in [\"computer\"]):\n    output(\"yes\", context)\n"
      },
-     "version": "3.0.0"
+     "version": "3.1.0"
     },
     "follow_up": {
      "type": "relay",
@@ -109,29 +109,29 @@
      "settings": {
       "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard:\n    # you started talking less than 6 s after AAC spoke at that satellite (long answers too)\n    spoke = audio.satellites.get(heard.data.get(\"mic\"), {}).get(\"seconds\", 999999)\n    said_for = heard.data.get(\"seconds\") or 0\n    named = any(word in heard.text.lower() for word in [\"stop\", \"computer\"])\n    if not heard.data.get(\"aac_spoke\") and spoke - said_for < 6 and not named:\n        output(\"yes\", context)\n"
      },
-     "version": "3.0.0"
+     "version": "3.1.0"
     },
     "spoken_turn": {
      "type": "relay",
      "title": "Spoken turn",
      "settings": {
-      "script": "context = input(\"chat\", read=True) + input(\"in\")\ncontext.attach_last(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
+      "script": "context = input(\"chat\", read=True) + input(\"in\")\ncontext.attach(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
      },
-     "version": "3.0.0"
+     "version": "3.1.0"
     },
     "follow_up_turn": {
      "type": "relay",
      "title": "Follow-up turn",
      "settings": {
-      "script": "context = input(\"chat\", read=True) + input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard:\n    heard.text = \"(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) \" + heard.text\ncontext.attach_last(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
+      "script": "context = input(\"chat\", read=True) + input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard:\n    heard.text = \"(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) \" + heard.text\ncontext.attach(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
      },
-     "version": "3.0.0"
+     "version": "3.1.0"
     },
     "answer": {
      "type": "relay",
      "title": "Answer",
      "settings": {},
-     "version": "3.0.0"
+     "version": "3.1.0"
     }
    },
    "wires": [
@@ -321,48 +321,48 @@
   "key": "aac2.card.assistant.chat",
   "data": {
    "chats": {
-    "a0480fcbe2": {
-     "id": "a0480fcbe2",
+    "67dce1a2e0": {
+     "id": "67dce1a2e0",
      "title": "what time is it?",
      "created": "2026-01-01T12:00:00+00:00",
      "updated": "2026-01-01T12:00:00+00:00",
      "context": {
       "messages": [
        {
-        "id": "393640855c",
+        "id": "7ea414d4bc",
         "by": "chat",
         "kind": "said",
         "text": "what time is it?",
         "tags": [
          "chat.said"
         ],
-        "time": "2026-10-31T18:09:24.351264+00:00",
+        "time": "2026-10-31T20:04:05.095342+00:00",
         "data": {},
         "state": "closed",
         "attachments": [
          {
-          "id": "38b9875cd9",
+          "id": "f3b5f91db5",
           "by": "time",
           "kind": "trailer",
-          "text": "Local time: Saturday 2026-10-31 11:09",
+          "text": "Local time: Saturday 2026-10-31 13:04",
           "tags": [
            "time.time"
           ],
-          "time": "2026-10-31T18:09:24.352353+00:00",
+          "time": "2026-10-31T20:04:05.096502+00:00",
           "data": {},
           "state": "closed"
          }
         ]
        },
        {
-        "id": "42cf7e984b",
+        "id": "e50dac337a",
         "by": "model",
         "kind": "answer",
         "text": "It is noon.",
         "tags": [
          "model.answer"
         ],
-        "time": "2026-10-31T18:09:24.352955+00:00",
+        "time": "2026-10-31T20:04:05.097125+00:00",
         "data": {},
         "state": "closed"
        }
@@ -372,14 +372,14 @@
      "last": {
       "system": [
        {
-        "id": "09e16e6659",
+        "id": "89dc0c4b23",
         "by": "charter",
         "kind": "system",
         "text": "Be kind.",
         "tags": [
          "charter.charter"
         ],
-        "time": "2026-10-31T18:09:24.351853+00:00",
+        "time": "2026-10-31T20:04:05.095897+00:00",
         "data": {},
         "state": "closed"
        }
@@ -713,7 +713,7 @@
          },
          {
           "role": "user",
-          "content": "what time is it?\n\nLocal time: Saturday 2026-10-31 11:09"
+          "content": "what time is it?\n\nLocal time: Saturday 2026-10-31 13:04"
          }
         ],
         "tools": [
@@ -1172,27 +1172,27 @@
   "data": {
    "lists": [
     {
-     "id": "ebe0c97f54",
+     "id": "dcc9d6834e",
      "name": "Shopping",
      "view": "checklist",
-     "created": "2026-10-31T18:09:24.358283+00:00",
-     "updated": "2026-10-31T18:09:24.358300+00:00",
+     "created": "2026-10-31T20:04:05.101019+00:00",
+     "updated": "2026-10-31T20:04:05.101036+00:00",
      "items": [
       {
-       "id": "561a154019",
+       "id": "c1c222ae8b",
        "text": "Oat milk",
        "done": false,
        "fields": {},
-       "created": "2026-10-31T18:09:24.358292+00:00",
-       "updated": "2026-10-31T18:09:24.358292+00:00"
+       "created": "2026-10-31T20:04:05.101028+00:00",
+       "updated": "2026-10-31T20:04:05.101028+00:00"
       },
       {
-       "id": "7f4d8a3bbd",
+       "id": "5352cd751e",
        "text": "Coffee",
        "done": false,
        "fields": {},
-       "created": "2026-10-31T18:09:24.358297+00:00",
-       "updated": "2026-10-31T18:09:24.358297+00:00"
+       "created": "2026-10-31T20:04:05.101033+00:00",
+       "updated": "2026-10-31T20:04:05.101033+00:00"
       }
      ]
     }
@@ -1206,7 +1206,7 @@
   "data": {
    "events": [
     {
-     "uid": "c1709b463a",
+     "uid": "72b288c56e",
      "summary": "Dentist",
      "start": "2026-11-02T10:00",
      "end": null,
@@ -1269,8 +1269,8 @@
     ]
    },
    "satellite_app": {
-    "user_id": "59ab56d6a7e74338814e041db9687991",
-    "refresh_token_id": "8571a39182b4420c95bf1a9bab1ab609"
+    "user_id": "44201fd3b31a4cbab32ae3c728e2bfcb",
+    "refresh_token_id": "059583fdeb9047f4b3f882e88ea7cc8f"
    }
   }
  }
