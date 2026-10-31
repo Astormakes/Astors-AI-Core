@@ -3,7 +3,26 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.36, live on the owner's HA
+## Current state (2026-10-31) – 2.4.0, live on the owner's HA
+
+- **2026-10-31 (2.4.0): item 58, the Relay rework** (owner's design, talked through first: docs/v2/04-relay.md). A
+  Relay's script is plain Python that runs top to bottom every time something arrives, every piece of a model's
+  answer too: `context = input("in")`, `output("out", context)`; nothing leaves unless an output line runs (no
+  pass-through, no fallback to out; a new Relay starts with these two lines, an empty script sends nothing). Its ports
+  are what it names (`input("x")`, `input("x", read=True)` dotted, `output("x", …)`; none named: in, out). The
+  context reads as a list of tagged texts (`get`, `[tag]`, `in`, `all(…).text`, `text`, `attach_first`,
+  `attach_last`, `set(…, at=)`, `remove*`, `a + b`); a tag without a dot is the Relay's own, `*` any. `output` takes a
+  context as it is, anything else as the Relay's answer in the context that arrived. Every `def` is a function (a call
+  runs only that def; another Relay calls `relay_2.time()`); card calls take arguments in order or by name, not on a
+  piece (`context.finished`). `print` shows under Printed in the editor (half an hour), `print_log` writes into AAC's
+  log. The script's own names win over a card's id (`cards["output"]`). The Card editor (1.6.0) got `help(type)`: a
+  type's setup help from what it declares (the Relay's: its script reference); `types` is one line each. Editor
+  rewritten (suggestions per name: context / entry / text; status says when nothing leaves; Simple view rows: text,
+  if, send). Backup broke: new 2.4.0 backup. The owner's six Relays were converted by a scratchpad script, tried
+  first on a copy of the live stores (a real turn: charter as system, `localtime` called); live: a real message in
+  the browser (Time's `localtime` answered), the editor, Wide, ?, Printed and suggestions checked, the test chat
+  deleted. Time is now a toolbox (only `def time()`), Charter offers `text()` as before. The 20 Undo steps from before
+  hold old-format scripts: undoing past the conversion brings back scripts that no longer run.
 
 - **2026-10-31 (2.3.36): Schedule 1.3.1, and a Notify card on live.** Run now rings like an entry at its time (the
   same instruction, watched for an answer; a one-time entry stays). Nothing wired to its output: it goes out at
@@ -725,11 +744,11 @@ pencil edit is missing" is item 11.
     group opens it and the Audio entry, which then lies under the finger, gets pressed at once. To check: the group
     re-renders the nav on the first event of the tap and the rest of the tap (or a ghost click) lands on the new
     entry; fix so one tap does one thing, then try it on the real page on a phone.
-58. **Relay rework** (owner, 2026-10-31; design in progress: `docs/v2/04-relay.md`). The script becomes plain Python
+58. ~~**Relay rework**~~ **done (2.4.0)** (owner, 2026-10-31; `docs/v2/04-relay.md`). The script becomes plain Python
     that runs top to bottom per arriving context (`context = input("in")`, `output("out", context)`); nothing leaves
     unless sent, the context reads as a list of tagged texts (`attach_first`, `attach_last`, `set`, `remove` …),
     `print` on the card, `print_log`. With it the Card editor's `help(type)` (any card's setup help, as it declares it;
-    the Relay's script reference is its `script` setting's help). Open points on page 4.
+    the Relay's script reference is its `script` setting's help).
 59. **Card types: where they came from** (owner, 2026-10-31; talk through first). Card files sit in one shared
     `<config>/aac/cards/` for all domains, while domain data now has its own folder. Every card type should carry a
     tag saying what brought it in (shipped with AAC, downloaded, made by a model, the owner …) and when; a view that
