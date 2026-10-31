@@ -119,6 +119,11 @@ class Card:
         self.settings = {k: f.get("default") for k, f in self.settings_schema.items()} | dict(settings or {})
         self.data: dict[str, Any] = {}
 
+    @property
+    def folder(self) -> Path:
+        """Where it keeps files (<config>/aac/data/<domain>/<card>): they move with a rename and go with the domain."""
+        return self.core.folder(self.domain.id, self.id)
+
     def current(self) -> dict[str, Any]:
         """Its values now (see `values`)."""
         return {}

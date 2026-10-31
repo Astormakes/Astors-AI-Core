@@ -273,9 +273,7 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
     kept = next(x for x in log.data["log"] if x["what"] == "clip")
     assert kept["audio"].endswith(".wav") and (await log.ui_call("audio", {"file": kept["audio"]}))  # playable
     await log.ui_call("clear", {})
-    assert not list(log._folder.glob("*.wav"))  # cleared with the log
-    import shutil
-    shutil.rmtree(log._folder.parent, ignore_errors=True)  # HA's test config folder is shared: leave nothing behind
+    assert not list(log.folder.glob("*.wav"))  # cleared with the log
     assert ("context", "answer #model.answer: Hello there  [1 entries]") in texts
     assert ("clip", "1.4 s, phrase 2") in texts and ("audio", "started") in texts
     assert any(w == "audio" and t.startswith("stopped") for w, t in texts) and ("read", "said : a new line") in texts

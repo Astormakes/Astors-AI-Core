@@ -686,7 +686,10 @@ class AacPanel extends HTMLElement {
       }
       if (act === "rename") {
         const n = await this.prompt("New name", name);
-        if (n?.trim() && n.trim() !== name) await this.ws("aac/domain/rename", { domain_id: s.domain.id, name: n.trim() });
+        if (n?.trim() && n.trim() !== name) {
+          const old = s.domain.id, { id } = await this.ws("aac/domain/rename", { domain_id: old, name: n.trim() });
+          if (id !== old) { this._moved([old, id]); this._els = {}; } // its id is its name
+        }
         await this._load(); return this.render();
       }
       if (act === "delete") {
@@ -1538,6 +1541,18 @@ class AacPanel extends HTMLElement {
 
   _setMonitors(list) { try { localStorage.setItem(`aac.monitors.${this.state.domain.id}`, JSON.stringify(list)); } catch (err) { /* private window */ } }
 
+  _moved(domain, card) { // an id moved with its name ([old, new] of the domain, or of a card in it): what this browser keeps goes along
+    try {
+      const [from, to] = domain || [this.state.domain.id, this.state.domain.id];
+      const end = (ref) => (card && ref.startsWith(`${card[0]}.`) ? card[1] + ref.slice(card[0].length) : ref);
+      const list = JSON.parse(localStorage.getItem(`aac.monitors.${from}`) || "[]").map((k) => k.split("|").map(end).join("|"));
+      localStorage.removeItem(`aac.monitors.${from}`);
+      if (list.length) localStorage.setItem(`aac.monitors.${to}`, JSON.stringify(list));
+      const folds = this._folds();
+      if (card && card[0] in folds) { folds[card[1]] = folds[card[0]]; delete folds[card[0]]; this._setFolds(folds); }
+    } catch (err) { /* private window */ }
+  }
+
   async _loadMonitor(key, flash = false) {
     try { (this.monData ||= {})[key] = await this.ws("aac/monitor", { wire: key.split("|")[0] }); } catch (err) { return; }
     this._layoutMonitors();
@@ -1822,7 +1837,12 @@ class AacPanel extends HTMLElement {
       else await this.ws("aac/slot", { slot, action: "save" });
       await this._load(); this.render();
     }));
-    $("#title")?.addEventListener("change", async (e) => { this.sel = (await this.ws("aac/card/update", { card: this.sel, title: e.target.value })).id; await this._load(); this.render(); }); // its id follows the name
+    $("#title")?.addEventListener("change", async (e) => { // its id follows the name
+      const old = this.sel;
+      this.sel = (await this.ws("aac/card/update", { card: old, title: e.target.value })).id;
+      if (this.sel !== old) this._moved(null, [old, this.sel]);
+      await this._load(); this.render();
+    });
     $$("[data-set]").forEach((el) => el.addEventListener("change", () => this._saveSetting(el)));
     const fnSave = async (row, reset) => { // For models: one function's tick, name, description (empty: the card's own)
       const c = this._card(this.sel), key = row.dataset.key; // only functions the card has now (a renamed block's old entry goes)

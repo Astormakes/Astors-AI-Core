@@ -8,7 +8,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from copy import deepcopy
+from pathlib import Path
 import re
+import shutil
 import time
 from typing import Any
 
@@ -28,6 +30,19 @@ SLOTS = ("1", "2", "3")
 def slug(text: str) -> str:
     """An id from a name."""
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:30] or "card"
+
+
+def fits(an_id: str, name: str) -> bool:
+    """An id is its name: the name's slug, a number after it when another one had that name first."""
+    return re.fullmatch(rf"{re.escape(slug(name))}(_\d+)?", an_id) is not None
+
+
+def move_folder(src: Path, dst: Path) -> None:
+    """Files kept under an id go with it (what was left under the new id is gone)."""
+    if src.is_dir():
+        shutil.rmtree(dst, ignore_errors=True)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dst)
 
 
 WATCH_SECONDS = 15  # an open Cards page says every few seconds which views it shows
@@ -279,8 +294,7 @@ class Domain:
 
     def _wanted(self, card_id: str, title: str) -> str | None:
         """The id a card's name asks for (its slug; a number after it when the name is taken), None: it has it."""
-        base = slug(title)
-        return None if re.fullmatch(rf"{re.escape(base)}(_\d+)?", card_id) else self._free(base, self._ids_taken())
+        return None if fits(card_id, title) else self._free(slug(title), self._ids_taken())
 
     async def follow_names(self) -> None:
         """Every card's id is its name, so a card is called the same everywhere (wires, tags, scripts, its data): an id
@@ -310,8 +324,8 @@ class Domain:
         return out
 
     async def _move(self, old: str, new: str) -> Card | None:
-        """A card's id moves everywhere: the setup, its Undo steps and slots, its stored data, what the other cards keep
-        about it (their settings and data), the sidebar's fold, what dotted wires last saw."""
+        """A card's id moves everywhere: the setup, its Undo steps and slots, its stored data and files, what the other
+        cards keep about it (their settings and data), the sidebar's fold, what dotted wires last saw."""
         now = self._moved_setup({"cards": self._specs, "wires": self.wires, "positions": self.positions}, old, new)
         self._specs, self.wires, self.positions = now["cards"], now["wires"], now["positions"]
         self.undo = [self._moved_setup(s, old, new) for s in self.undo]
@@ -324,6 +338,7 @@ class Domain:
             await self._card_store(new).async_save(data)
             await store.async_remove()
         self._card_stores.pop(old, None)
+        await self.hass.async_add_executor_job(move_folder, self.core.folder(self.id, old), self.core.folder(self.id, new))
         for card_id, other in list(self.cards.items()):  # the others whose settings name it: made again with them
             if any(other.settings.get(k) != v for k, v in (self._specs[card_id].get("settings") or {}).items()):
                 await self._make(card_id, self._specs[card_id])
@@ -402,6 +417,9 @@ class Core:
         if not self.data["domains"]:
             self.data["domains"] = [{"id": "assistant", "name": "Assistant"}]
         self.data.setdefault("active", self.data["domains"][0]["id"])
+        for info in list(self.data["domains"]):  # a domain's id is its name, as a card's is
+            if not fits(info["id"], info["name"]):
+                await self._move(info["id"], self._free_id(info["name"]))
         await self.switch(self.data["active"])
         from .defaults import async_voice_chain  # noqa: PLC0415
         await async_voice_chain(self)
@@ -491,11 +509,44 @@ class Core:
         self.notify("setup", domain=info["id"])
         return self.domain
 
+    def folder(self, *ids: str) -> Path:
+        """Where a domain's cards keep files: <config>/aac/data/<domain>[/<card>]."""
+        return Path(self.hass.config.path("aac", "data", *ids))
+
     def _free_id(self, name: str) -> str:
-        new_id, n = slug(name) or "domain", 2
-        while any(d["id"] == new_id for d in self.data["domains"]):
-            new_id, n = f"{slug(name) or 'domain'}_{n}", n + 1
-        return new_id
+        return Domain._free(slug(name), {d["id"] for d in self.data["domains"]})  # noqa: SLF001
+
+    @staticmethod
+    def _stored_cards(data: dict[str, Any]) -> set[str]:
+        """The cards a domain's store knows (the setup, its Undo steps and slots): those that may have data stored."""
+        return {i for setup in [data, *data.get("undo", []), *(data.get("slots") or {}).values()] for i in (setup or {}).get("cards") or {}}
+
+    async def _move(self, old: str, new: str) -> None:
+        """A domain's id moves (its name did): its store, its cards' stores and files, the running mark; a running domain
+        stops and starts again under the new one."""
+        running = self.domain is not None and self.domain.id == old
+        if running:
+            await self.domain.stop()
+            await self.domain.unload()
+            await self.domain.save_now()
+            self.domain = None
+        store = Store(self.hass, 1, f"aac2.domain.{old}")
+        data = await store.async_load() or {}
+        for card_id in self._stored_cards(data):
+            card_store = Store(self.hass, 1, f"aac2.card.{old}.{card_id}")
+            if (kept := await card_store.async_load()) is not None:
+                await Store(self.hass, 1, f"aac2.card.{new}.{card_id}").async_save(kept)
+                await card_store.async_remove()
+        await Store(self.hass, 1, f"aac2.domain.{new}").async_save(data)
+        await store.async_remove()
+        await self.hass.async_add_executor_job(move_folder, self.folder(old), self.folder(new))
+        next(d for d in self.data["domains"] if d["id"] == old)["id"] = new
+        if self.data.get("active") == old:
+            self.data["active"] = new
+        self.save()
+        LOGGER.info("AAC: domain %s is now %s (its name)", old, new)
+        if running:
+            await self.switch(new)
 
     async def create(self, name: str) -> str:
         """A new, empty domain (no cards yet)."""
@@ -504,14 +555,17 @@ class Core:
         self.save()
         return new_id
 
-    async def rename(self, domain_id: str, name: str) -> None:
-        """A domain's new name."""
+    async def rename(self, domain_id: str, name: str) -> str:
+        """A domain's new name; its id follows (returns it)."""
         info = next(d for d in self.data["domains"] if d["id"] == domain_id)
         info["name"] = name
         if self.domain is not None and self.domain.id == domain_id:
             self.domain.name = name
+        if not fits(domain_id, name):
+            await self._move(domain_id, self._free_id(name))
         self.save()
-        self.notify("setup", domain=domain_id)
+        self.notify("setup", domain=info["id"])
+        return info["id"]
 
     async def delete(self, domain_id: str) -> None:
         """A domain goes, with its cards' data (not the last one; the running one first hands over to another)."""
@@ -521,9 +575,10 @@ class Core:
         if self.domain is not None and self.domain.id == domain_id:
             await self.switch(rest[0]["id"])
         store = Store(self.hass, 1, f"aac2.domain.{domain_id}")
-        for card_id in ((await store.async_load()) or {}).get("cards", {}):
+        for card_id in self._stored_cards((await store.async_load()) or {}):
             await Store(self.hass, 1, f"aac2.card.{domain_id}.{card_id}").async_remove()
         await store.async_remove()
+        await self.hass.async_add_executor_job(shutil.rmtree, self.folder(domain_id), True)
         self.data["domains"] = rest
         self.save()
         self.notify("setup", domain=self.domain.id)
@@ -539,6 +594,8 @@ class Core:
         for card_id in src._specs:  # noqa: SLF001
             if (data := await src.load_card_data(card_id)) is not None:
                 await dst.save_card_data(card_id, data)
+        if await self.hass.async_add_executor_job(self.folder(src.id).is_dir):
+            await self.hass.async_add_executor_job(shutil.copytree, self.folder(src.id), self.folder(new_id))
         self.data["domains"].append({"id": new_id, "name": name})
         self.save()
         return new_id

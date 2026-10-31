@@ -326,21 +326,42 @@ async def test_a_closed_connection_is_tried_again_and_errors_are_not_read(hass: 
 
 
 async def test_domains_new_rename_delete(hass: HomeAssistant, mock_entry, hass_storage):
-    """The domain menu: a new empty domain, rename, delete (its stores go; the running one hands over; not the last)."""
+    """The domain menu: a new empty domain, rename (its id is its name: stores and files move), delete (its stores and
+    files go; the running one hands over; not the last); a domain whose id does not fit its name moves when AAC loads."""
     core = await setup_aac(hass, mock_entry)
     first = core.domain.id
-    new = await core.create("Work")
-    await core.switch(new)
-    assert core.domain.id == new and core.domain.cards == {}
+    work = await core.create("Work")
+    await core.switch(work)
+    assert work == "work" and core.domain.id == work and core.domain.cards == {}
     await core.domain.add_card("lists", "Lists")
     await core.domain.cards["lists"].call("create_list", {"list": "Tasks"})
-    await core.rename(new, "Office")
-    assert core.domain.name == "Office" and next(d for d in core.data["domains"] if d["id"] == new)["name"] == "Office"
+    await hass.async_add_executor_job(lambda: (core.domain.cards["lists"].folder.mkdir(parents=True), (core.domain.cards["lists"].folder / "kept").write_text("x")))
+    new = await core.rename(work, "Office")
+    assert new == "office" and core.domain.id == new and core.domain.name == "Office" and core.data["active"] == new
+    assert next(d for d in core.data["domains"] if d["id"] == new)["name"] == "Office"
+    assert "Tasks" in [li["name"] for li in core.domain.cards["lists"].data["lists"]]
+    assert f"aac2.card.{new}.lists" in hass_storage and not [k for k in hass_storage if f".{work}" in k]
+    assert await hass.async_add_executor_job((core.folder(new, "lists") / "kept").is_file)
+    assert not await hass.async_add_executor_job(core.folder(work).exists)
+    assert await core.rename(new, "Office") == new  # the same name: nothing moves
+    await core.domain.update_card("lists", title="Jobs")  # a card's files go with its id too
+    assert await hass.async_add_executor_job((core.folder(new, "jobs") / "kept").is_file)
     await core.delete(new)
+    assert not await hass.async_add_executor_job(core.folder(new).exists)
     assert core.domain.id == first and all(d["id"] != new for d in core.data["domains"])
     assert not [k for k in hass_storage if k.startswith(f"aac2.card.{new}.") or k == f"aac2.domain.{new}"]
     with pytest.raises(ValueError):
         await core.delete(first)  # the last one stays
+
+    next(d for d in core.data["domains"] if d["id"] == first)["name"] = "Home"  # as an older AAC left it
+    await core.save_now()
+    await core.domain.save_now()
+    await core.domain.stop()
+    await core.domain.unload()
+    core.domain = None
+    await core.load()
+    assert core.domain.id == "home" and core.data["active"] == "home" and "chat" in core.domain.cards
+    assert "aac2.domain.home" in hass_storage and f"aac2.domain.{first}" not in hass_storage
     perms = [k for c in core.domain.cards.values() for k, f in c.settings_schema.items() if f.get("permission")]
     assert {"functions", "levels"} <= set(perms) and "default" not in perms
 

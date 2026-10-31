@@ -3,7 +3,18 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.28, live on the owner's HA
+## Current state (2026-10-31) – 2.3.29, live on the owner's HA
+
+- **2026-10-31 (2.3.29): a domain's id is its name too** (owner: "it's always ids and show names or the name is the id";
+  things work by the default rules, as few special cases as possible). `Core`: `fits(id, name)` (shared with cards),
+  `_move(old, new)` moves the domain's store, its cards' stores (setup, Undo steps, slots) and files, the active mark; a
+  running domain starts again under the new id. Rename (`aac/domain/rename` answers the id) and load (an id that does not
+  fit) move it. Cards get one generic folder, `self.folder` = `<config>/aac/data/<domain>/<card>`, moved with a card's or
+  a domain's rename, copied with Copy, gone with Delete; the Log card keeps its clips there (was `aac/log/<domain>.<card>`,
+  a special case a rename left behind; no such folder existed anywhere). The browser's wire monitors and sidebar folds
+  follow a card or domain rename (panel `_moved`). Tried in the local test HA, then live with a throwaway domain through
+  the real menu: Copy "ZZ try", Rename "ZZ renamed" (5 stores and a monitor moved), a real message answered, Delete left
+  nothing. The owner's two domains already fit their names: nothing moved. Owner confirmed 32 and 46.
 
 - **2026-10-31 (2.3.28): a card's id is its name** (owner: "clean all the way, consistent"; after 2.3.27 kept the
   id `node_editor` for the renamed Card editor). `slug(title)`, a number after it when two share a name. `Domain`:
@@ -18,8 +29,7 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   references all carried over; rename + Undo through the real Name field), then deployed: the same 6 moved, a real
   message and an Assist turn answered (both test chats deleted). test123 moves when it is next opened. Backup before:
   `/config/aac/bak-v2-2.3.27/` (the older 2.2.2 one removed: newest only). Backup test compares cards by name.
-  Open: domain ids work the same way (made from the name, kept on rename): ask the owner. Item 58 added (Relay
-  rework, owner).
+  Item 58 added (Relay rework, owner).
 
 - **2026-10-31 (2.3.27): items 37, 30, 41** (owner: do them; 51 needs a talk first). **37:** cards are only called
   cards: the Nodes page is the **Cards** page (view kind `cards`, `_cardsView()`, CSS `.cardsview`, a card on the

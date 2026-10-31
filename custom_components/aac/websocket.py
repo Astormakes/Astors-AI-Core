@@ -333,9 +333,8 @@ async def ws_domain_create(hass, connection, msg) -> None:
 @command({vol.Required("type"): "aac/domain/rename", vol.Required("domain_id"): str,
           vol.Required("name"): vol.All(str, vol.Length(min=1, max=40))})
 async def ws_domain_rename(hass, connection, msg) -> None:
-    """A domain's new name."""
-    await _core(hass).rename(msg["domain_id"], msg["name"])
-    connection.send_result(msg["id"], {})
+    """A domain's new name (its id follows: the new one)."""
+    connection.send_result(msg["id"], {"id": await _core(hass).rename(msg["domain_id"], msg["name"])})
 
 
 @command({vol.Required("type"): "aac/domain/delete", vol.Required("domain_id"): str})

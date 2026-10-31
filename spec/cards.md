@@ -72,7 +72,8 @@ wired from the model (even when it is a tool too), else to every wired card but 
 
 More a card may define: `busy` (a property: True while it works on something; a newer version of its file waits),
 `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
-self.save()`), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop(stop_entry) -> bool` (a stop
+self.save()`), `self.folder` (where it keeps files: `<config>/aac/data/<domain>/<card>`, moved with a rename, gone with
+its domain), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop(stop_entry) -> bool` (a stop
 arrived: True when it was busy and sent its own context on), `held(port)` (what a dotted wire from that read output
 reads), `current()` (its values), `ui = True` (a page of its own, see below). A setting of type `modellist` with a
 `tag` gives it a list of models with queues. A setting may say `min` (and `off`, the value that turns it off),
@@ -153,10 +154,14 @@ only through what they offer: `call`, `current()`, `held()`, `dated()`), `templa
 **A card's id is its name** (lowercase, other characters `_`: "Speech to text" is `speech_to_text`; a second card of
 that name `speech_to_text_2`), so a card is called the same everywhere. Renamed (by the owner, the Card editor, Undo,
 a slot, a file; or loaded with an id that does not fit), its id moves everywhere: wires, positions, Undo steps and
-slots, its stored data, the sidebar's fold, and what the other cards keep about it: their settings through the class
+slots, its stored data and folder, the sidebar's fold (and what the browser keeps: wire monitors, folds), and what the other cards keep about it: their settings through the class
 method `renamed_settings(settings, old, new)` (by default a script's references `old.tag` and `cards['old']`; a card
 with ids in a setting of its own adds them, as the Calendar does for `lists`) and their data through
 `async renamed(old, new)` (by default stored entries: `by`, `tags`, a call's `card`).
+
+**A domain's id is its name** too (the same rule): renamed (`aac/domain/rename` answers with the id it has then) or
+loaded with an id that does not fit, its store, its cards' stores and folders move, and a running domain starts again
+under the new id.
 
 A context (`Context`, docs/v2 page 3) has the shape of a model request: `system` (parts), `messages` (said, answer,
 result; an answer's calls in `data["calls"]`, a result's `data["call_id"]`; a message's `attachments`: note before
