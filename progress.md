@@ -12,7 +12,10 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   system prompt); `set(…, at=, role=)` adds like `add` when the tag is missing; `remove(tag, at="all"|"first"|"last")`;
   `e.role`. One pattern (`at=`) for every "where"; `read=True` stays a bool. No `role="tool"` (only an answer to a
   call) or `"assistant"` (a model reads another card's answer as a user message). Docstrings stay plain Python, not
-  marked (owner). Backup broke: 2.5.0 (I had said 2.4.1; the backup test decided).
+  marked (owner). Backup broke: 2.5.0 (I had said 2.4.1; the backup test decided). Live: the owner's Charter, Spoken
+  turn, Follow-up turn and Wake word got only the new names, same behaviour (`attach_first` → `add(…, at="first",
+  role="system")`, `attach_last` → `attach`, the Charter's `set` with `role="system"`); a real message in the browser
+  answered, Plain text starts with the charter as the system prompt; the test chat deleted.
 
 - **2026-10-31 (2.4.0): item 58, the Relay rework** (owner's design, talked through first: docs/v2/04-relay.md). A
   Relay's script is plain Python that runs top to bottom every time something arrives, every piece of a model's
