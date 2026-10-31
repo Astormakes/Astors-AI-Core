@@ -261,6 +261,7 @@ class AacPanel extends HTMLElement {
       else if (d.domgo) { this.domOpen = false; this.ws("aac/domain/switch", { domain_id: d.domgo }).then(async () => { this._els = {}; await this._load(); this.go("card", null, null); }); }
       else if (d.navadd) { e.stopPropagation(); const el = this._els[d.navadd]; if (el?.add) { this.go("card", d.navadd, this.view.card === d.navadd ? this.view.id : null).then(() => el.add()); } else this.go("card", d.navadd, null); }
       else if (d.fold) { e.stopPropagation(); const f = this._folds(); f[d.fold] = !f[d.fold]; this._setFolds(f); const n = this.shadowRoot.querySelector("nav"); if (n) n.outerHTML = this._nav(); }
+      else if (d.peek && this._phone()) { this.navPeek = this.navPeek === d.peek ? null : d.peek; this._redrawNav(); } // on a phone Settings only opens in the sidebar (a page would close it)
       else if (d.go) this.go(d.go, d.card || null, d.id || null);
       else if (t.id === "navbtn") { this.navOpen = true; this.shadowRoot.querySelector(".root").classList.add("navopen"); }
     });
@@ -373,7 +374,7 @@ class AacPanel extends HTMLElement {
       if (phone) history.pushState({ aac: "nodes" }, ""); // Back with both panels closed leaves the page
     }
     this.view = { kind, card, id };
-    this.navOpen = false; // on a phone the sidebar closes when a page is picked
+    this.navOpen = false; this.navPeek = null; // on a phone the sidebar closes when a page is picked
     if (kind === "nodes") this._watchIds = null; // say at once which views it shows
     if (kind === "card" && !this.nav.some((n) => n.card === card)) this.view.card = this.nav[0]?.card || null;
     if (kind === "models") { this.servers = null; this._loadServers(); clearInterval(this._srvLive); this._srvLive = setInterval(() => { if (this.view.kind !== "models") { clearInterval(this._srvLive); return; } this._loadServers(); }, 3000); }
@@ -718,7 +719,7 @@ class AacPanel extends HTMLElement {
       `<div class="item ${on(kind, card, id)}" data-go="${kind}" data-card="${esc(card || "")}" data-id="${esc(id || "")}" ${indent ? `style="padding-left:${12 + indent * 14}px"` : ""}>${esc(label)}</div>`;
     // a group: "auto" opens while one of its pages is in use (lit) and closes when you go elsewhere; "arrow" stays as the arrow left it
     const group = (key, title, active, body, add = "", go = "") => {
-      const auto = this._foldMode(key) === "auto", open = auto ? active : !folds[key];
+      const auto = this._foldMode(key) === "auto", open = auto ? active || this.navPeek === key : !folds[key];
       return `<h4 class="fold ${auto && active ? "lit" : ""}" ${go}>${auto ? "" : `<span class="arrow" data-fold="${esc(key)}" title="Keep it open or closed">${open ? "▾" : "▸"}</span> `}${esc(title.toUpperCase())}${add}</h4>${open ? body : ""}`;
     };
     const acts = (n, e) => { // an entry's actions (the card says which): icons at once, the rest in its ⋯ menu
@@ -737,7 +738,7 @@ class AacPanel extends HTMLElement {
     const failing = this._failing();
     const settings = group("settings", "Settings", ["audio", "models", "appearance"].includes(v.kind),
       `${item("Audio", "audio")}${item("Models", "models").replace('data-go="models"', `data-go="models" ${failing.length ? "data-warn" : ""}`)}${item("Appearance", "appearance")}`, "",
-      `data-go="${["audio", "models", "appearance"].includes(v.kind) ? v.kind : failing.length ? "models" : "audio"}" ${failing.length ? `data-alarm title="Not answering: ${esc(failing.join(", "))}"` : ""}`);
+      `data-go="${["audio", "models", "appearance"].includes(v.kind) ? v.kind : failing.length ? "models" : "audio"}" data-peek="settings" ${failing.length ? `data-alarm title="Not answering: ${esc(failing.join(", "))}"` : ""}`);
     return `<nav><div class="top"><button class="menu" id="habtn" title="Home Assistant's menu">⌂</button><b>AAC</b><span>v${esc(s.version)}</span></div>
       <div class="dom">${this._domainMenu()}</div>
       <div class="scroll">${groups}${single ? `<h4>MORE</h4>${single}` : ""}</div>

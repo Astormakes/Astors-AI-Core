@@ -3,7 +3,12 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-30) – 2.3.18, live on the owner's HA
+## Current state (2026-10-31) – 2.3.19, live on the owner's HA
+
+- **2026-10-31 (2.3.19): bug 57 fixed.** On a phone the SETTINGS heading went straight to the Audio page (its `data-go`;
+  a page closes the sidebar), so Models and Appearance could not be reached. Now on a phone it only opens the group in
+  the sidebar (`navPeek`, cleared by `go()`); a computer still opens the first settings page. Checked with real touch
+  taps at 390×844 on the live HA (☰ → SETTINGS opens, again closes, Models opens the Models page).
 
 - **2026-10-30 (2.3.18): Model card setting "Most tool rounds without an answer"** (owner: may be unlimited). Was the
   fixed MAX_ROUNDS 8; now `max_rounds`, default 8, 0 or empty = no limit (Stop still ends it; flow's MAX_STEPS 400 stays).
@@ -533,7 +538,7 @@ pencil edit is missing" is item 11.
     slider up to what the GPU can hold; the default close to the maximum. To find out first: how a llama-server router
     loads a model with another context size (its presets set `--ctx-size`), and how to tell the GPU's maximum (VRAM,
     the model's own limit). The chat already shows the tokens used of the context (2.3.16).
-57. **Bug: on a phone, tapping Settings also presses Audio** (owner, 2026-10-31). Tapping the sidebar's SETTINGS
+57. ~~**Bug: on a phone, tapping Settings also presses Audio**~~ **fixed (2.3.19).** (owner, 2026-10-31). Tapping the sidebar's SETTINGS
     group opens it and the Audio entry, which then lies under the finger, gets pressed at once. To check: the group
     re-renders the nav on the first event of the tap and the rest of the tap (or a ghost click) lands on the new
     entry; fix so one tap does one thing, then try it on the real page on a phone.
