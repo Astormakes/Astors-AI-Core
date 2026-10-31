@@ -18,7 +18,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, register
 
-VERSION = "1.3.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 MAX_PLANS = 20  # entries AAC may have at once
@@ -218,13 +218,18 @@ class Schedule(AutoCard):
         if changed:
             self.hass.async_create_task(self._saved())
 
-    def _ring(self, entry: dict[str, Any], hm: str) -> None:
-        text = (f"Scheduled ({entry['name']}, {hm}): {entry.get('text', '')}\n(It is due now. A reminder: say it now. A task: "
+    def _ring(self, entry: dict[str, Any], hm: str | None = None) -> None:
+        """An entry rings (hm: at its time; None: run now)."""
+        when = f"Scheduled ({entry['name']}, {hm})" if hm else f"Run now ({entry['name']})"
+        text = (f"{when}: {entry.get('text', '')}\n(It is due now. A reminder: say it now. A task: "
                 "do it. Something to check: only speak if it matters.)")
         message_id = self.fire(entry["name"], text)
-        if limit := float(self.settings.get("answer_within") or 0) * 60:
+        if not self.domain.flow.wired_from(self.id, "out"):  # nothing can answer
+            next(i for i in self.data["log"] if i["id"] == message_id)["failed"] = "nothing is wired to its output"
+            self._unanswered(message_id)
+        elif limit := float(self.settings.get("answer_within") or 0) * 60:
             self._watch(message_id, limit)
-        if entry.get("date"):  # a one-time entry is done once it rang
+        if hm and entry.get("date"):  # a one-time entry is done once it rang
             self.data["entries"] = [e for e in self.entries if e["id"] != entry["id"]]
 
     def _watch(self, message_id: str, seconds: float) -> None:
@@ -303,7 +308,7 @@ class Schedule(AutoCard):
         if function == "run":
             if not (found := self._named(args.get("name"))):
                 return {"error": "no such entry"}
-            self.fire(found["name"], f"Run now ({found['name']}): {found.get('text', '')}")
+            self._ring(found)
             return {"started": found["name"]}
         if function not in ("add", "change", "remove"):
             return await super().call(function, args, context)
@@ -362,7 +367,7 @@ class Schedule(AutoCard):
             else:
                 self.data["entries"] = [e for e in self.entries if e is not found]
         elif action == "run" and found:
-            self.fire(found["name"], f"Run now ({found['name']}): {found.get('text', '')}")
+            self._ring(found)
         else:
             return await super().ui_call(action, args)
         await self._saved()

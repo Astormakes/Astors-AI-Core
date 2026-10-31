@@ -6,7 +6,7 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components import conversation
 from homeassistant.core import Context as HaContext, HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pytest_homeassistant_custom_component.common import async_fire_time_changed, async_mock_service
 
 from custom_components.aac.flow import Step
 from custom_components.aac.context import Context
@@ -101,6 +101,21 @@ async def test_schedule_like_v1(hass: HomeAssistant, mock_entry, aioclient_mock,
     async_fire_time_changed(hass)
     await hass.async_block_till_done(wait_background_tasks=True)
     assert alarm["unanswered"] and "failed" not in alarm and "Wake up." in d.flow.last["schedule.unanswered"]["messages"][-1]["text"]
+    await s.call("run", {"name": "Alarm"})  # Run now is watched like a ring
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert s.data["log"][-1]["text"].startswith("Run now (Alarm): Wake up.") and not s.data["log"][-1].get("unanswered")
+    freezer.tick(timedelta(minutes=6))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert s.data["log"][-1]["unanswered"] and any(e["name"] == "Alarm" for e in s.entries)
+
+    calls = async_mock_service(hass, "notify", "mobile_app_phone")  # nothing is wired to its output: it goes out at once
+    await d.add_card("notify", "Notify", {"service": "notify.mobile_app_phone"})
+    d.set_wires([w for w in d.wires if w["from"] != "schedule.out"] + [{"from": "schedule.unanswered", "to": "notify.in"}])
+    await s.ui_call("run", {"id": next(e for e in s.entries if e["name"] == "Alarm")["id"]})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert s.data["log"][-1]["unanswered"] and "nothing is wired" in s.data["log"][-1]["failed"]
+    assert calls and "Not answered (nothing is wired to its output): Run now (Alarm): Wake up." == calls[-1].data["message"]
 
 
 async def test_ha_event_and_heartbeat_fire(hass: HomeAssistant, mock_entry, aioclient_mock):
