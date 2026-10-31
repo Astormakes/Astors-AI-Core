@@ -16,7 +16,7 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   Tried in the local test HA and live in a throwaway copy of the domain (question, Keep + Undo, Delete + Undo, a real
   message answered, copy deleted). Backup before: `/config/aac/bak-v2-2.3.29/` (2.3.27 removed). The owner's store
   packs at its next change. Left over from before: `aac2.card.assistant.log` (a Log card removed before Undo knew it,
-  Oct 29): ask the owner.
+  Oct 29): removed on the owner's word.
 
 - **2026-10-31 (2.3.29): a domain's id is its name too** (owner: "it's always ids and show names or the name is the id";
   things work by the default rules, as few special cases as possible). `Core`: `fits(id, name)` (shared with cards),
