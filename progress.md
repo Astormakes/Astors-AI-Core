@@ -727,3 +727,8 @@ pencil edit is missing" is item 11.
     `<config>/aac/cards/` for all domains, while domain data now has its own folder. Every card type should carry a
     tag saying what brought it in (shipped with AAC, downloaded, made by a model, the owner …) and when; a view that
     manages card types shows it. Ties in with 21 (unchecked cards) and 51.
+60. **Calendar: what v1 had beyond 39** (2026-10-31; talk through first). Since 2.3.35 the core gathers the entries
+    cards offer. Still missing against v1: Home Assistant's calendars (Google, CalDAV …) as an offer models can read and
+    write (today only the Calendar card's page shows them, calling HA itself; ties in with 20); one AAC calendar per
+    domain in HA (today one, the running domain's); moving or cancelling AAC's own Schedule entries from the calendar
+    (read only there now); the next 24 hours for runs nobody asked for.
