@@ -199,7 +199,7 @@ async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
     assert held["text"] == "# Hi\nmore\n" and held["tags"] == ["notes.text"]
     again = await core.domain.add_card("file", "Same", {"name": "test"})  # reads the file when it starts
     assert again.held("provides").entries[0]["text"] == "# Hi\nmore\n"
-    await core.domain.add_card("relay", "Reader")
+    await core.domain.add_card("relay", "Reader", {"script": 'context = input("in") + input("reads", read=True)\noutput("out", context)\n'})
     core.domain.set_wires([*core.domain.wires, {"from": "notes.provides", "to": "reader.reads"}])
     assert {"from": "notes.provides", "to": "reader.reads"} in core.domain.wires  # a dotted wire into a read input
     timer = await core.domain.add_card("timer", "Wait", {"seconds": 0})
@@ -208,6 +208,10 @@ async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
     added = await builder.call("add_card", {"type": "buffer", "name": "Room"})
     assert added["id"] == "room" and (await builder.call("remove_card", {"card": "room"}))["error"]
     assert (await builder.call("wire", {"from": "room.out", "to": "notes.in"}))["wired"]
+    assert any(t.startswith("relay (Relay): ") for t in await builder.call("types", {}))  # one line each
+    relay = await builder.call("help", {"type": "relay"})  # one type in full: its settings' help (the script reference)
+    assert relay.startswith("Relay (type relay") and 'output("out", context)' in relay and "Settings:\n- script" in relay
+    assert "add_items(list, items, under?)" in await builder.call("help", {"type": "lists"})
 
 
 async def test_calendar_card_and_entity(hass: HomeAssistant, mock_entry, aioclient_mock):

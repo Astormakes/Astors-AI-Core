@@ -16,16 +16,18 @@ CHARTER = """Charter (the owner's values; you follow it and never change it):
 - My decisions stay mine: you advise, I decide. Ask before anything that cannot be undone or leaves the house.
 - What you learn about me stays private.
 - Limits are not puzzles: if a rule stops you, say so instead of working around it."""
-TIME = """@new("time", at="end", replace=False)
-def time(e):
-    e.text = f"Local time: {now():%A %Y-%m-%d %H:%M}"
+TIME = """context = input("in")
+context.attach_last("time", f"Local time: {now():%A %Y-%m-%d %H:%M}")
+output("out", context)
 """
 
 
-def new_text(name: str, text: str, at: str = "start") -> str:
-    """A Relay script that writes one text."""
-    where = "" if at == "start" else ', at="end", replace=False'
-    return f'@new("{name}"{where})\ndef {name}(e):\n    e.text = """{text}"""\n'
+def new_text(name: str, text: str, at: str = "first", reads: str | None = None) -> str:
+    """A Relay script that writes one text and passes the context on: at the beginning (written in place when it is
+    there already) or at the end (a new one each turn); reads: a dotted input whose context comes first."""
+    arrived = f'input("{reads}", read=True) + input("in")' if reads else 'input("in")'
+    write = f'context.set("{name}", """{text}""", at="first")' if at == "first" else f'context.attach_last("{name}", """{text}""")'
+    return f'context = {arrived}\n{write}\noutput("out", context)\n'
 
 
 
@@ -64,31 +66,34 @@ async def build_default(domain) -> None:
 
 VOICE_RULES = ("You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look "
                "something up or do something, call the tool first, then answer.")
-STOP_WORD = """@on("*", kind="said")
-def says_stop(e):
-    if "stop" in e.text.lower():
-        stop()
-        output("stop")
+STOP_WORD = """context = input("in")
+heard = context.get("EARS.heard")
+if heard and "stop" in heard.text.lower():
+    stop()
+    output("stop", context)
 """
-WAKE_WORD = """@on("*", kind="said")
-def wake_word(e):
-    if any(word in e.text.lower() for word in [WORDS]):
-        output("yes")
+WAKE_WORD = """context = input("in")
+heard = context.get("EARS.heard")
+if heard and any(word in heard.text.lower() for word in [WORDS]):
+    output("yes", context)
 """
-FOLLOW_UP_CHECK = """@on("*", kind="said")
-def follow_up(e):
+FOLLOW_UP_CHECK = """context = input("in")
+heard = context.get("EARS.heard")
+if heard:
     # you started talking less than 6 s after AAC spoke at that satellite (long answers too)
-    spoke = audio.satellites.get(e.data.get("mic"), {}).get("seconds", 999999)
-    said_for = e.data.get("seconds") or 0
-    named = any(word in e.text.lower() for word in [WORDS])
-    if not e.data.get("aac_spoke") and spoke - said_for < 6 and not named:
-        output("yes")
+    spoke = audio.satellites.get(heard.data.get("mic"), {}).get("seconds", 999999)
+    said_for = heard.data.get("seconds") or 0
+    named = any(word in heard.text.lower() for word in [WORDS])
+    if not heard.data.get("aac_spoke") and spoke - said_for < 6 and not named:
+        output("yes", context)
 """
 FOLLOW_UP = "(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) "
-FOLLOW_UP_NOTE = f"""
-@on("EARS.heard")
-def maybe_not_for_me(e):
-    e.text = "{FOLLOW_UP}" + e.text
+FOLLOW_UP_TURN = f"""context = input("chat", read=True) + input("in")
+heard = context.get("EARS.heard")
+if heard:
+    heard.text = "{FOLLOW_UP}" + heard.text
+context.attach_last("rules", \"\"\"RULES\"\"\")
+output("out", context)
 """
 
 
@@ -119,15 +124,20 @@ async def _voice_cards(domain, names: list[str]) -> None:
     find = lambda kind: next((c.id for c in domain.cards.values() if c.type == kind), None)  # noqa: E731
     ears, voice, speaker = find("speech_to_text"), find("text_to_speech"), find("speaker")
     add = domain.add_card
-    stop = (await add("relay", "Stop word", {"script": STOP_WORD}, at={"x": 0, "y": 300})).id
-    wake = (await add("relay", "Wake word", {"script": WAKE_WORD.replace("WORDS", words)}, at={"x": 0, "y": 420})).id
-    follow = (await add("relay", "Follow-up", {"script": FOLLOW_UP_CHECK.replace("WORDS", f'"stop", {words}')}, at={"x": 0, "y": 540})).id
-    spoken = (await add("relay", "Spoken turn", {"script": new_text("rules", VOICE_RULES, "end")}, at={"x": 240, "y": 420})).id
-    followed = (await add("relay", "Follow-up turn", {"script": new_text("rules", VOICE_RULES, "end") + FOLLOW_UP_NOTE.replace("EARS", ears)},
-                          at={"x": 240, "y": 540})).id
-    answer = (await add("relay", "Answer", {}, at={"x": 1200, "y": 420})).id
+    chat = "chat" if "chat" in domain.cards else None
+    reads = "chat" if chat else None
+    stop = (await add("relay", "Stop word", {"script": STOP_WORD.replace("EARS", ears)}, at={"x": 0, "y": 300})).id
+    wake = (await add("relay", "Wake word", {"script": WAKE_WORD.replace("EARS", ears).replace("WORDS", words)}, at={"x": 0, "y": 420})).id
+    follow = (await add("relay", "Follow-up", {"script": FOLLOW_UP_CHECK.replace("EARS", ears).replace("WORDS", f'"stop", {words}')},
+                        at={"x": 0, "y": 540})).id
+    spoken = (await add("relay", "Spoken turn", {"script": new_text("rules", VOICE_RULES, "last", reads)}, at={"x": 240, "y": 420})).id
+    followed_script = FOLLOW_UP_TURN.replace("EARS", ears).replace("RULES", VOICE_RULES)
+    if not chat:
+        followed_script = followed_script.replace('input("chat", read=True) + input("in")', 'input("in")')
+    followed = (await add("relay", "Follow-up turn", {"script": followed_script}, at={"x": 240, "y": 540})).id
+    answer = (await add("relay", "Answer", at={"x": 1200, "y": 420})).id
     first = "charter" if "charter" in domain.cards else None
-    model, chat = find("model"), "chat" if "chat" in domain.cards else None
+    model = find("model")
     wires = [w for w in domain.wires if not (model and chat and w == {"from": f"{model}.out", "to": f"{chat}.answers"})]
     wires += [{"from": f"{ears}.out", "to": f"{stop}.in"}, {"from": f"{ears}.out", "to": f"{wake}.in"}, {"from": f"{ears}.out", "to": f"{follow}.in"},
               {"from": f"{wake}.yes", "to": f"{spoken}.in"}, {"from": f"{follow}.yes", "to": f"{followed}.in"},
@@ -136,7 +146,7 @@ async def _voice_cards(domain, names: list[str]) -> None:
         wires += [{"from": f"{stop}.stop", "to": f"{first}.in"}, {"from": f"{spoken}.out", "to": f"{first}.in"},
                   {"from": f"{followed}.out", "to": f"{first}.in"}]
     if chat:
-        wires += [{"from": f"{chat}.provides", "to": f"{spoken}.reads"}, {"from": f"{chat}.provides", "to": f"{followed}.reads"},
+        wires += [{"from": f"{chat}.provides", "to": f"{spoken}.chat"}, {"from": f"{chat}.provides", "to": f"{followed}.chat"},
                   {"from": f"{answer}.out", "to": f"{chat}.answers"}]
     if model:
         wires.append({"from": f"{model}.out", "to": f"{answer}.in"})

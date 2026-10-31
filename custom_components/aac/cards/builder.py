@@ -9,10 +9,34 @@ from typing import Any
 
 from custom_components.aac.api import CARD_TYPES, Card, Context, register
 
-VERSION = "1.5.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.6.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 SHORT = 80  # longer settings are shortened in the list of cards (characters)
+
+
+def setup_help(kind: Any) -> str:
+    """A card type's setup help, from what every card declares (its help, ports, settings, functions): the same as
+    the ? panel shows."""
+    t = kind.describe()
+    ports = t.get("ports_help") or {}
+    lines = [f"{t['title']} (type {t['type']}, version {t['version']}): {t['help']}"]
+    for title, found in (("Inputs", t["inputs"]), ("Outputs", t["outputs"])):
+        if found:
+            lines.append(f"{title}:")
+            lines += [f"- {p} ({k}){f': {ports[p]}' if ports.get(p) else ''}" for p, k in found.items()]
+    if ports.get("*"):
+        lines.append(f"Other ports: {ports['*']}")
+    if t["settings"]:
+        lines.append("Settings:")
+        for key, f in t["settings"].items():
+            lines.append(f"- {key} ({f.get('title') or key}, default {json.dumps(f.get('default'), ensure_ascii=False)[:200]})"
+                         + (f": {f['help']}" if f.get("help") else ""))
+    if t["functions"]:
+        lines.append("Functions:")
+        lines += [f"- {n}({', '.join(a + ('' if x.get('required') else '?') for a, x in (f.get('args') or {}).items())}): {f.get('help', '')}"
+                  for n, f in t["functions"].items()]
+    return "\n".join(lines)
 
 @register
 class Builder(Card):
@@ -31,7 +55,11 @@ class Builder(Card):
         "cards": {"help": "An overview of this domain: each card's id, type, name, inputs and outputs and settings (long "
                           "ones shortened: see card), and the wires."},
         "card": {"help": "One card with all its settings.", "args": {"card": {"type": "string", "help": "Its id.", "required": True}}},
-        "types": {"help": "The card types that can be added, with what they do and their settings."},
+        "types": {"help": "The card types that can be added, one line each (help gives one type in full)."},
+        "help": {"help": "Everything about one card type, as its ? help shows it: what it does, its inputs and outputs, "
+                         "its settings, its functions (a Relay's: how to write its script). Read it before adding or "
+                         "setting up a card of that type.",
+                 "args": {"type": {"type": "string", "help": "A type from types (e.g. relay).", "required": True}}},
         "add_card": {"help": "Add a card.", "args": {"type": {"type": "string", "help": "A type from types.", "required": True},
                                                      "name": {"type": "string", "help": "Its name."},
                                                      "settings": {"type": "object", "help": "Its settings."}}},
@@ -59,8 +87,10 @@ class Builder(Card):
             card = domain.cards.get(str(args.get("card") or ""))
             return card.summary() if card else {"error": "no such card (see cards)"}
         if function == "types":
-            return [{"type": t.type, "title": t.title, "help": t.help, "settings": {k: f"{f.get('title')}: {f['help']}" if f.get("help") else f.get("title") for k, f in t.settings_schema.items()},
-                     "inputs": t.inputs, "outputs": t.outputs} for t in CARD_TYPES.values()]
+            return [f"{t.type} ({t.title}): {t.help}" for t in CARD_TYPES.values()]
+        if function == "help":
+            kind = CARD_TYPES.get(str(args.get("type") or ""))
+            return setup_help(kind) if kind else {"error": f"no type {args.get('type')} (see types)"}
         if function == "remove_card":
             if not self.settings.get("may_remove"):
                 return {"error": "Removing cards is not allowed (the Card editor card's settings)."}

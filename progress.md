@@ -725,13 +725,22 @@ pencil edit is missing" is item 11.
     group opens it and the Audio entry, which then lies under the finger, gets pressed at once. To check: the group
     re-renders the nav on the first event of the tap and the rest of the tap (or a ghost click) lands on the new
     entry; fix so one tap does one thing, then try it on the real page on a phone.
-58. **Relay rework** (owner, 2026-10-31; talk through first). Working with the Relay is still unclear to the owner:
-    when something is output, where and how. That a Relay with nothing programmed just passes the context on was
-    done on purpose, but now looks like a bad idea: it makes it confusing what leaves a Relay and when.
+58. **Relay rework** (owner, 2026-10-31; design in progress: `docs/v2/04-relay.md`). The script becomes plain Python
+    that runs top to bottom per arriving context (`context = input("in")`, `output("out", context)`); nothing leaves
+    unless sent, the context reads as a list of tagged texts (`attach_first`, `attach_last`, `set`, `remove` …),
+    `print` on the card, `print_log`. With it the Card editor's `help(type)` (any card's setup help, as it declares it;
+    the Relay's script reference is its `script` setting's help). Open points on page 4.
 59. **Card types: where they came from** (owner, 2026-10-31; talk through first). Card files sit in one shared
     `<config>/aac/cards/` for all domains, while domain data now has its own folder. Every card type should carry a
     tag saying what brought it in (shipped with AAC, downloaded, made by a model, the owner …) and when; a view that
     manages card types shows it. Ties in with 21 (unchecked cards) and 51.
+    Owner, 2026-10-31: the Card editor will let a model look into cards, edit them and make new ones. Then (a) a card
+    keeps its own version: the Card editor raises `VERSION` on every save, not the model (today a file is loaded again
+    only when its VERSION goes up, so an edit without it never runs); (b) a version alone cannot tell "newer" from
+    "changed": with the origin tag, a shipped card someone changed is never replaced by an AAC update without asking
+    (today a shipped 2.3.0 would overwrite an edited 2.2.4), and a high number on an edit does not block AAC's fixes;
+    (c) editing card code is riskier than a setting (it runs inside HA, item 21): looking is free, a model's code
+    edit or new card waits for the owner's Allow (like Schedule's "ask").
 60. **Calendar: what v1 had beyond 39** (2026-10-31; talk through first). Since 2.3.35 the core gathers the entries
     cards offer. Still missing against v1: Home Assistant's calendars (Google, CalDAV …) as an offer models can read and
     write (today only the Calendar card's page shows them, calling HA itself; ties in with 20); one AAC calendar per

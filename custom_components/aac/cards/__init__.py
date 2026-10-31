@@ -113,7 +113,7 @@ class Card:
     ports_help: ClassVar[dict[str, str]] = {}  # port → one sentence: what goes in or comes out there
     values: ClassVar[dict[str, str]] = {}  # name → what it is: read in templates as {{ <card>.<name> }}
     offers: ClassVar[bool] = True  # its functions are ticked for models until the owner says otherwise
-    dynamic_functions: ClassVar[bool] = False  # its functions come from its settings (a Relay's @new blocks)
+    dynamic_functions: ClassVar[bool] = False  # its functions come from its settings (a Relay's defs)
     uses_tools: ClassVar[bool] = False  # it calls the functions of the cards in its loop (a Model): the panel lists them
     ui: ClassVar[bool] = False  # a page of its own: the element aac-card-<type> from the .js next to its file
     ui_url: ClassVar[str | None] = None  # where the panel loads it (set when the file is loaded)

@@ -1,12 +1,13 @@
-"""The Relay's script: Python, checked before it runs. Functions marked `@on("tag")` run on the entries with that tag
-(when they are closed, or on every piece with `live=True`); `@new("name")` makes an entry of the card's own. Only the
-parts of Python listed in ALLOWED run (no imports, no while, nothing starting with `_`); the code runs in a worker
-thread, a wired card's function is called back on HA's loop."""
+"""The Relay's script (docs/v2 page 4): plain Python, checked before it runs, that runs top to bottom every time a
+context arrives. `input("in")` is what arrived, `output("out", what)` sends; nothing leaves otherwise. A `def` is a
+function the Relay offers: a call runs only that def. Only the parts of Python listed in ALLOWED run (no imports, no
+while, nothing starting with `_`); the code runs in a worker thread, a card's function is called back on HA's loop."""
 
 from __future__ import annotations
 
 import ast
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass, field
 import fnmatch
 import re
@@ -16,7 +17,7 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.api import EVENTS, entry
+from custom_components.aac.api import Context, entry
 
 ALLOWED = {
     ast.Module, ast.FunctionDef, ast.arguments, ast.arg, ast.Return, ast.Assign, ast.AugAssign, ast.Expr, ast.If,
@@ -33,83 +34,127 @@ NOT_ALLOWED = {ast.While: "while (use for)", ast.Import: "import", ast.ImportFro
                ast.Yield: "yield", ast.YieldFrom: "yield", ast.Raise: "raise", ast.NamedExpr: ":="}
 HIDDEN_ATTRS = {"format", "format_map", "mro"}  # str.format can reach inside objects
 HIDDEN_PREFIX = ("_", "gi_", "f_", "cr_", "ag_", "tb_", "co_")
-WHICH = ("last", "first", "all")
 MAX_RANGE = 10000
 INNER_IMPORTS = {"time", "_strptime", "datetime", "calendar", "locale", "re", "_locale"}
-MISSING = {"id": "", "by": "", "kind": "", "text": "", "tags": [], "data": {}, "state": "closed"}
+PORT = re.compile(r"[a-z0-9_]+")
+BUILTINS = ("len", "str", "int", "float", "bool", "round", "min", "max", "abs", "sorted", "reversed", "any", "all",
+            "list", "dict", "set", "tuple", "enumerate", "zip", "isinstance", "range")
+OWN = {"input", "output", "stop", "signal", "print", "print_log", "now", "states", "state_attr", "is_state", "re",
+       "audio", "cards", *BUILTINS}  # the script's own names: they win over a card with that id (it is cards["id"])
+EDITS = ("attach_first", "attach_last", "set")  # the context's methods that write an entry with a tag
+
+DEFAULT = 'context = input("in")\noutput("out", context)\n'
 
 # what the ? panel and models read: (group, signature, what it does, example)
 REFERENCE = [
-    ("Basics", "def name(e):", "A block: the lines under it that are moved in (4 spaces) belong to it. It does nothing by itself: the line "
-     "with @ right above it says when it runs. The name is only for you; e is what it works on.",
-     '@on("chat.said")\ndef shout(e):\n    e.text = e.text.upper()'),
-    ("Basics", "if … :", "Only when it is true, the moved-in lines under it run (elif: else if, else: otherwise).",
-     'if "stop" in e.text.lower():\n    stop()\nelse:\n    print("no stop")'),
-    ("Basics", '"text"', "Text goes in quotes. Long text over several lines: three quotes \"\"\"…\"\"\". f\"It is {now():%H:%M}\" "
+    ("Start here", "context = input(\"in\")", "The script runs from the top to the bottom every time something arrives at "
+     "the card. input(\"in\") is what arrived at the input called in: the context, a list of entries (texts with tags: "
+     "who wrote them and what they are). The name context is your choice.", ""),
+    ("Start here", 'output("out", context)', "Sends the context out at the output called out: the cards wired there get "
+     "it. Nothing leaves the card unless a line like this runs. A new Relay starts with these two lines: it passes "
+     "everything on.", 'context = input("in")\noutput("out", context)'),
+    ("Start here", "a whole example", "Adds the time at the end of every turn, and sends the turn to yes when someone "
+     "said computer, otherwise to no.",
+     'context = input("in")\ncontext.attach_last("time", f"It is {now():%H:%M}.")\nsaid = context.get("*.said")\n'
+     'if said and "computer" in said.text.lower():\n    output("yes", context)\nelse:\n    output("no", context)'),
+    ("Python basics", "x = 5   x == 5", "= gives something a name (x is 5 from now on); == asks (is x 5?).", ""),
+    ("Python basics", "if … :", "Only when it is true, the moved-in lines under it run (4 spaces). elif: else if, else: "
+     "otherwise.", 'if "stop" in text:\n    stop()\nelse:\n    print("no stop")'),
+    ("Python basics", "for x in things:", "The moved-in lines run once for each item.",
+     'for word in ["computer", "assistant"]:\n    if word in text:\n        print("named:", word)'),
+    ("Python basics", '"text"', "Text goes in quotes. Over several lines: three quotes \"\"\"…\"\"\". f\"It is {now():%H:%M}\" "
      "puts values into a text.", ""),
-    ("Basics", "x = 5   x == 5", "= gives something a name (x is 5 from now on); == asks (is x 5?).", ""),
-    ("Basics", "for x in list:", "The moved-in lines run once for each item.", 'for word in ["computer", "assistent"]:\n    if word in e.text.lower():\n        output("yes")'),
-    ("Basics", "# a note", "Everything after # is a note for you; it does not run.", ""),
-    ("Blocks", '@on("chat.said")', "Runs the block when an entry with this tag passes through the Relay (once it is finished). "
-     "e is that entry.", '@on("chat.said")\ndef clean(e):\n    e.text = e.text.replace("computer", "")'),
-    ("Blocks", '@on("*.said")', "* means any card: everyone's said. Several tags: @on(\"chat.said\", \"ears.heard\").", ""),
-    ("Blocks", '@on("chat.said", which="all")', "Which matching entry: \"last\" (the newest, if you leave it out), \"first\" or "
-     "\"all\" (the block runs once for each).", ""),
-    ("Blocks", '@on("*", kind="said")', "Only entries of one kind: said (what someone said), answer (a model's), result (a "
-     "tool's), system (the system prompt), note / trailer (attached before / after a message).", ""),
-    ("Blocks", '@on("*.heard", live=True)', "Runs on every piece while the entry is still being written (a stop word in the "
-     "middle of a sentence). Without it the Relay waits until the entry is finished.", ""),
-    ("Blocks", '@on("context")', "Runs once with the whole context instead of one entry.", ""),
-    ("Blocks", '@new("charter")', "Writes a text of this Relay's own: set e.text. It becomes part of the system prompt (what "
-     "a model reads first), replaced in place each turn so the model server stays fast. The name in quotes is its tag "
-     "and the name of its function for models (For models).", '@new("charter")\ndef charter(e):\n    e.text = """You are AAC."""'),
-    ("Blocks", '@new("time", at="end")', "Attached after the newest thing said: what matters for this turn. A new one each "
-     "turn; replace=True keeps only one, on the newest.", '@new("time", at="end")\ndef time(e):\n    e.text = f"It is {now():%H:%M}."'),
-    ("Blocks", '@new("room", before="chat.said")', "Attached right before (or after=) the newest entry with that tag.", ""),
-    ("Entry", "e.text", "Its text. Change it with e.text = \"…\"", ""),
-    ("Entry", "e.tags", "Its tags, e.g. [\"chat.said\"]: if \"user.urgent\" in e.tags:", ""),
-    ("Entry", "e.kind", "What it is: said, answer, result, system, note, trailer.", ""),
-    ("Entry", "e.by", "The card that wrote it (its id).", ""),
-    ("Entry", "e.calls", "An answer's tool calls: [{name, args}] (empty for others).", ""),
-    ("Entry", "e.data", "What the card that wrote it added (e.g. the satellite: e.data[\"mic\"]).", ""),
-    ("Entry", "e.add_tag(\"urgent\")", "Adds a tag (without a dot it becomes user.urgent).", ""),
-    ("Entry", "e.remove()", "Takes the entry out of the context.", ""),
-    ("Other entries", "chat.said.text", "The text of the newest entry with another tag (empty when there is none).", ""),
-    ("Other entries", "context.text", "The whole context as one text.", ""),
-    ("Other entries", "context.entries", "Every entry, oldest first.", ""),
-    ("Other entries", 'context.find("*.said")', "The newest entry with a tag (which=\"first\", kind=\"said\" work too).", ""),
-    ("Other entries", 'context.find_all("*.said")', "Every entry with a tag, oldest first.", ""),
+    ("Python basics", "# a note", "Everything after # is a note for you; it does not run.", ""),
+    ("Python basics", "None", "Nothing. if x: is False for None, an empty text and an empty list.", ""),
+    ("The context", 'context.get("chat.said")', "The newest entry with that tag, or None when there is none. Tags are "
+     "card.name: chat.said is what was typed in the card chat, speech_to_text.heard what was heard, model.answer a model's "
+     "answer. The ? panel lists this domain's tags.", 'said = context.get("chat.said")\nif said:\n    print(said.text)'),
+    ("The context", '"*.said"', "* stands for anything: \"*.said\" is anyone's said, \"*\" every entry.", ""),
+    ("The context", '"time" (no dot)', "A tag without a dot is this Relay's own: on a Relay called Time, \"time\" is "
+     "time.time.", ""),
+    ("The context", 'context["chat.said"]', "The same as get, but a mistake (KeyError) when there is none.", ""),
+    ("The context", '"chat.said" in context', "True when an entry has that tag. To look for a word, look in a text: "
+     "\"stop\" in said.text.", ""),
+    ("The context", 'context.all("*.heard")', "Every entry with that tag, oldest first (a list). .text is their texts "
+     "as one, one per line.", 'heard = context.all("*.heard")\nprint(heard.text)'),
+    ("The context", "context.text", "Every entry's text as one text, one per line (the whole conversation).",
+     'if "lights" in context.text.lower():\n    print("lights came up")'),
+    ("The context", "for e in context:", "Every entry, oldest first. context[0] is the first, context[-1] the newest, "
+     "len(context) how many.", ""),
+    ("The context", 'context.attach_first("charter", text)', "A new entry at the very beginning: what a model reads "
+     "first (the system prompt).", ""),
+    ("The context", 'context.attach_last("time", text)', "A new entry at the very end: what a model reads last. Always "
+     "a new one (each turn keeps its own).", 'context.attach_last("time", f"Local time: {now():%A %H:%M}")'),
+    ("The context", 'context.set("charter", text, at="first")', "Writes the entry with that tag, wherever it is; when "
+     "there is none, a new one at the end (at=\"first\": at the beginning).",
+     'context.set("charter", """You are AAC, a helpful assistant.""", at="first")'),
+    ("The context", 'context.remove("speech_to_text.heard")', "Takes out every entry with that tag. remove_first / "
+     "remove_last: only the oldest / newest.", ""),
+    ("The context", "a + b", "One context: a's entries, then b's (a chat's conversation, then the new lines).",
+     'context = input("chat", read=True) + input("in")'),
+    ("An entry", "e.text", "Its text. e.text = \"…\" changes it.", 'said.text = said.text.replace("computer", "").strip()'),
+    ("An entry", "e.tags", "Its tags, e.g. [\"chat.said\"].", ""),
+    ("An entry", "e.by", "The card that wrote it (its id).", ""),
+    ("An entry", "e.data", "What its card added (the satellite that heard it: e.data.get(\"mic\")).", ""),
     ("Text", 'text.replace("a", "b")', "Every a becomes b (capitals count).", '"Hi computer".replace("computer", "AAC") → "Hi AAC"'),
-    ("Text", "text.strip()", "Removes spaces and empty lines at the start and the end.", '"  hi  ".strip() → "hi"'),
-    ("Text", "text.lower()", "Small letters (upper(): capitals, title(): Each Word Capital).", '"Stop".lower() → "stop"'),
-    ("Text", '"stop" in text', "True when the text contains it (use text.lower() to ignore capitals).", ""),
+    ("Text", "text.lower()", "Small letters (upper(): capitals). Use it to ignore capitals: \"stop\" in text.lower().", ""),
+    ("Text", "text.strip()", "Spaces and empty lines off both ends.", ""),
     ("Text", 'text.startswith("hey")', "True when it starts so (endswith: ends so).", ""),
     ("Text", 'text.split(",")', "A list of the parts between the commas.", '"a,b".split(",") → ["a", "b"]'),
-    ("Text", '", ".join(items)', "One text from a list, with \", \" between.", '", ".join(["a", "b"]) → "a, b"'),
-    ("Text", 'between(text, "from", "to")', "The part after \"from\" and before \"to\" (empty \"\": from the start / to the end).",
-     'between("say: hi!", ": ", "!") → "hi"'),
+    ("Text", '", ".join(items)', "One text from a list of texts, with \", \" between.", ""),
     ("Text", "len(text)", "How many characters (or how many items in a list).", ""),
-    ("Text", 're.search(r"\\bstop\\b", text, re.I)', "A pattern (regular expression); re.sub(pattern, new, text) replaces.", ""),
-    ("Actions", 'output("night")', "Picks the way out. The card gets an output called night (it appears on the card as soon "
-     "as the script uses it). When this line runs, the context leaves only there, to the cards wired from night, not at "
-     "out. When it does not run, the context leaves at out as usual. Nothing wired there: the context ends.",
-     '@on("*", kind="said")\ndef wake_word(e):\n    if "computer" in e.text.lower():\n        output("yes")   # to the cards wired from yes\n    # otherwise: to out'),
-    ("Actions", "stop()", "Sends stop: every card lets go of what it holds.", ""),
-    ("Actions", 'signal("done")', "Adds a signal (user.done) other cards can react to; never sent to a model.", ""),
-    ("Actions", 'lists.add_items(list="Shopping", items=[e.text])', "Calls a function of a card in this Relay's loop (wired "
-     "from it and back into it, straight or round; the card's id, a dot, the function). The call travels along the wires; the script waits for the "
-     "result.", ""),
-    ("Actions", 'print("…")', "Shows under Last run (for checking a script).", ""),
+    ("Text", 're.search(r"\\d+", text)', "A pattern (regular expression): .group(0) is what it found; re.sub(pattern, "
+     "new, text) replaces.", 'found = re.search(r"(\\d+) seconds", text)\nif found:\n    print(found.group(1))'),
+    ("Sending and stopping", 'output("yes", what)', "Sends at the output yes (the card gets that output as soon as the "
+     "script names it). what may be a context (it goes as it is), a text (the context that arrived goes, with that text "
+     "as this Relay's answer), an entry or a list (their texts as one). Several output lines send several times.",
+     'output("out", f"It is {now():%H:%M}.")'),
+    ("Sending and stopping", "stop()", "Stops the turn: the context becomes a stop, and the cards it reaches let go of "
+     "what they hold (send it on with output). While a card is still writing, that card stops at once.",
+     'heard = context.get("*.heard")\nif heard and "stop" in heard.text.lower():\n    stop()\n    output("stop", context)'),
+    ("Sending and stopping", 'signal("done")', "Adds a signal (tag done of this Relay) other cards can react to; never "
+     "sent to a model.", ""),
+    ("Sending and stopping", 'input("chat", read=True)', "A dotted input: wire a card's read output to it (a Chat's "
+     "provides: its conversation). It never starts the script; it is read when something arrives elsewhere.", ""),
+    ("Sending and stopping", "input()", "What just arrived, at whichever input. input(\"x\") is None when it came in at "
+     "another one; context.input is the name of the input it came in at. A script that names no input has one, in, and "
+     "one that names no output has one, out.", ""),
+    ("Sending and stopping", 'print("…")', "Shows on the card's Printed panel (for checking a script).", ""),
+    ("Sending and stopping", 'print_log("…")', "Writes into AAC's log (Settings → Logs).", ""),
+    ("Other cards", 'lists.add_items(list="Shopping", items=["milk"])', "Calls a function of another card: its id, a "
+     "dot, the function (the ? panel lists them). The card must be in this Relay's loop: wired from it and back into it. "
+     "The call travels along the wires, the script waits for the answer. It asks that card for one thing; it does not "
+     "send it the context (only output does).", ""),
+    ("Other cards", 'web.read("https://…")', "Arguments go in the order the card names them, or by name "
+     "(web.read(url=\"https://…\")).", ""),
+    ("Other cards", "lists.total", "A card's value (no brackets): each card lists its values.", ""),
+    ("Other cards", 'cards["output"]', "A card whose id is one of the script's own names (a card called Output) is "
+     "reached like this.", ""),
+    ("Your own functions", "def name(): … return …", "A function this Relay offers: to models in its loop (tick it under "
+     "For models) and to other Relays' scripts. The text in quotes under def is what a model reads about it; what it "
+     "returns is the answer.",
+     'def seconds_left():\n    """Seconds left on the climate clock."""\n    page = web.read("https://example.org/clock")\n'
+     '    found = re.search(r"([\\d,]+) seconds", page)\n    return found.group(1) if found else "unknown"'),
+    ("Your own functions", "how a call comes and goes", "A model's call travels along the wires to this Relay like any "
+     "context. Then only that def runs, not the script: it gets its arguments, not the context. What it returns travels "
+     "back along the wires to whoever asked. A Relay with only defs is a toolbox: it only answers calls.", ""),
     ("Values", "now()", "The time now: now().hour, f\"{now():%A %H:%M}\".", ""),
     ("Values", 'states("sensor.x")', "A Home Assistant state (state_attr(id, \"name\"), is_state(id, \"on\")).", ""),
-    ("Values", "lists.total", "A card's value (each card lists its values).", ""),
-    ("Values", "audio.last.seconds", "When AAC last spoke (audio.satellites[id] per satellite).", ""),
+    ("Values", "audio.last.seconds", "How long ago AAC last spoke (audio.satellites[id].seconds per satellite).", ""),
+    ("While a model writes", "context.finished", "A model's answer arrives piece by piece while it is written, and the "
+     "script runs on every piece: output sends each piece on (that is how Text to speech starts early). "
+     "context.finished is True on the last, finished one. A card call only works then: put it under if "
+     "context.finished:.", 'answer = context.get("model.answer")\nif answer:\n    answer.text = answer.text.replace("Computer", "AAC")\n'
+     'output("out", context)'),
 ]
 
 
 def reference_text() -> str:
-    """The reference as plain text (for models)."""
-    return "\n".join(f"{sig}: {what}" for _, sig, what, _ in REFERENCE)
+    """The reference as plain text (for models: the script setting's help, the Card editor's help("relay"))."""
+    out = []
+    for _, sig, what, example in REFERENCE:
+        out.append(f"{sig}: {what}" + (f"\n    {example.replace(chr(10), chr(10) + '    ')}" if example else ""))
+    return "\n".join(out)
 
 
 class ScriptError(Exception):
@@ -117,76 +162,22 @@ class ScriptError(Exception):
 
 
 @dataclass
-class Handler:
-    """One function of the script."""
-
-    name: str
-    line: int
-    new: bool
-    patterns: tuple[str, ...] = ()
-    which: str = "last"
-    kind: str | None = None
-    live: bool = False
-    tag: str = ""
-    at: str = "start"
-    before: str | None = None
-    after: str | None = None
-    replace: bool = True
-
-
-@dataclass
 class Script:
-    """A checked script: its functions, outputs and problems."""
+    """A checked script: its ports, functions, the tags it writes, problems."""
 
     source: str
-    handlers: list[Handler] = field(default_factory=list)
+    inputs: dict[str, str] = field(default_factory=dict)  # name → text or read
     outputs: list[str] = field(default_factory=list)
+    functions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    tags: dict[str, str] = field(default_factory=dict)  # its own tags (without the card) → what they mark
     names: set[str] = field(default_factory=set)
     problems: list[str] = field(default_factory=list)
     code: Any = None
-
-    @property
-    def new_tags(self) -> list[str]:
-        """The tags its @new blocks write (without the card)."""
-        return [h.tag for h in self.handlers if h.new]
-
-
-def _const(node: ast.AST, what: str) -> Any:
-    if not isinstance(node, ast.Constant):
-        raise ScriptError(f"line {node.lineno}: {what} must be written out (in quotes, or True / False)")
-    return node.value
-
-
-def _decorator(fn: ast.FunctionDef) -> Handler:
-    if len(fn.decorator_list) != 1 or not isinstance(dec := fn.decorator_list[0], ast.Call) \
-            or not isinstance(dec.func, ast.Name) or dec.func.id not in ("on", "new"):
-        raise ScriptError(f"line {fn.lineno}: put @on(\"tag\") or @new(\"name\") above def {fn.name}")
-    if len(fn.args.args) > 1 or fn.args.vararg or fn.args.kwarg or fn.args.kwonlyargs:
-        raise ScriptError(f"line {fn.lineno}: def {fn.name}(e) takes one name: the entry")
-    kw = {k.arg: _const(k.value, k.arg or "it") for k in dec.keywords}
-    args = [_const(a, "the tag") for a in dec.args]
-    if dec.func.id == "new":
-        unknown = set(kw) - {"at", "before", "after", "replace"}
-        if unknown or len(args) != 1 or not isinstance(args[0], str) or not re.fullmatch(r"[a-z0-9_]+", args[0]):
-            raise ScriptError(f"line {fn.lineno}: @new(\"name\") takes one name (small letters, digits, _) and at=, "
-                              "before=, after=, replace=")
-        at = kw.get("at", "start")
-        if at not in ("start", "end"):
-            raise ScriptError(f"line {fn.lineno}: at= is \"start\" or \"end\"")
-        return Handler(fn.name, fn.lineno, True, tag=args[0], at=at, before=kw.get("before"), after=kw.get("after"),
-                       replace=bool(kw.get("replace", at == "start" or bool(kw.get("before") or kw.get("after")))))
-    unknown = set(kw) - {"which", "kind", "live"}
-    if unknown or not args or not all(isinstance(a, str) and a for a in args):
-        raise ScriptError(f"line {fn.lineno}: @on(\"tag\", …) takes tags in quotes and which=, kind=, live=")
-    if kw.get("which", "last") not in WHICH:
-        raise ScriptError(f"line {fn.lineno}: which= is \"last\", \"first\" or \"all\"")
-    if "context" in args and len(args) > 1:
-        raise ScriptError(f"line {fn.lineno}: @on(\"context\") stands alone")
-    return Handler(fn.name, fn.lineno, False, tuple(args), kw.get("which", "last"), kw.get("kind"), bool(kw.get("live")))
+    defs: Any = None  # only the defs: what a call runs
 
 
 def check(source: str) -> Script:
-    """Read a script: its blocks, outputs and the names it uses; problems instead of code when it is not allowed."""
+    """Read a script: its inputs, outputs, functions and tags; problems instead of code when it is not allowed."""
     script = Script(source)
     if not source.strip():
         return script
@@ -208,46 +199,74 @@ def check(source: str) -> Script:
             script.names.add(node.id)
         elif kind is ast.FunctionDef and node not in tree.body:
             script.problems.append(f"line {node.lineno}: def only at the top (not inside another block)")
-        elif kind is ast.Call and isinstance(node.func, ast.Name) and node.func.id == "output":
-            if len(node.args) != 1 or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str) \
-                    or not re.fullmatch(r"[a-z0-9_]+", node.args[0].value):
-                script.problems.append(f"line {node.lineno}: output(\"name\") takes its name in quotes (small letters, digits, _)")
-            elif node.args[0].value not in script.outputs:
-                script.outputs.append(node.args[0].value)
-    names = set()
+        elif kind is ast.Call:
+            _call(node, script)
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
-            try:
-                handler = _decorator(node)
-            except ScriptError as err:
-                script.problems.append(str(err))
-                continue
-            if node.name in names:
-                script.problems.append(f"line {node.lineno}: there is already a def {node.name}")
-            names.add(node.name)
-            script.handlers.append(handler)
-            node.decorator_list = []
-        elif not isinstance(node, (ast.Assign, ast.AugAssign)) and not (
-                isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)):
-            script.problems.append(f"line {node.lineno}: at the top only def blocks and x = … (put it inside a def)")
-    if len({h.tag for h in script.handlers if h.new}) < len(script.new_tags):
-        script.problems.append("two @new blocks have the same name")
+            _function(node, script)
     if not script.problems:
-        script.code = compile(tree, "<script>", "exec")
+        try:
+            script.code = compile(tree, "<script>", "exec")
+            script.defs = compile(ast.Module([n for n in tree.body if isinstance(n, ast.FunctionDef)], []), "<script>", "exec")
+        except SyntaxError as err:  # e.g. return outside a def
+            script.problems.append(f"line {err.lineno}: {err.msg}")
     return script
 
 
+def _call(node: ast.Call, script: Script) -> None:
+    """input(…), output(…) and the context's writing methods: the ports and tags the script names."""
+    fn = node.func
+    if isinstance(fn, ast.Name) and fn.id == "input":
+        read = next((k.value for k in node.keywords if k.arg == "read"), None)
+        if any(k.arg != "read" for k in node.keywords) or (read is not None and not (isinstance(read, ast.Constant) and isinstance(read.value, bool))):
+            script.problems.append(f"line {node.lineno}: input(\"name\") takes only read=True or read=False")
+        elif not node.args:
+            pass  # input(): whatever arrived
+        elif len(node.args) > 1 or not _name(node.args[0]):
+            script.problems.append(f"line {node.lineno}: input(\"name\") takes its name in quotes (small letters, digits, _)")
+        else:
+            script.inputs[node.args[0].value] = "read" if read is not None and read.value else "text"
+    elif isinstance(fn, ast.Name) and fn.id == "output":
+        if len(node.args) != 2 or node.keywords or not _name(node.args[0]):
+            script.problems.append(f"line {node.lineno}: output(\"name\", what) takes the output's name in quotes (small "
+                                   "letters, digits, _) and what it sends (a context, a text …)")
+        else:
+            if node.args[0].value not in script.outputs:
+                script.outputs.append(node.args[0].value)
+            if not isinstance(node.args[1], ast.Name):
+                script.tags["answer"] = "a text it sends with output()"
+    elif isinstance(fn, ast.Attribute) and fn.attr in EDITS and node.args and isinstance(tag := node.args[0], ast.Constant) \
+            and isinstance(tag.value, str) and "." not in tag.value and "*" not in tag.value:
+        script.tags[tag.value] = "its own text"
+    if isinstance(fn, ast.Name) and fn.id in ("stop", "signal"):
+        script.tags["stop" if fn.id == "stop" else "signal"] = "a stop it sent" if fn.id == "stop" else "a signal it sent"
+
+
+def _name(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str) and bool(PORT.fullmatch(node.value))
+
+
+def _function(fn: ast.FunctionDef, script: Script) -> None:
+    """A def: a function the Relay offers (its arguments, its docstring for models)."""
+    if fn.decorator_list:
+        script.problems.append(f"line {fn.lineno}: @ above a def does nothing in a script (a def is a function: see ?)")
+        return
+    if fn.name in OWN:
+        script.problems.append(f"line {fn.lineno}: def {fn.name}: the name is taken (the script's own {fn.name})")
+        return
+    if fn.name in script.functions:
+        script.problems.append(f"line {fn.lineno}: there is already a def {fn.name}")
+        return
+    a = fn.args
+    if a.vararg or a.kwarg or a.kwonlyargs or a.posonlyargs:
+        script.problems.append(f"line {fn.lineno}: def {fn.name}(…) takes plain names (a, b, c=1)")
+        return
+    required = len(a.args) - len(a.defaults)
+    script.functions[fn.name] = {"help": ast.get_docstring(fn) or "",
+                                 "args": {p.arg: {"type": "string", "help": "", "required": i < required} for i, p in enumerate(a.args)}}
+
+
 # ------------------------------------------------------------------ what the script sees
-def _matches(e: dict[str, Any], patterns: tuple[str, ...], kind: str | None) -> bool:
-    if e["kind"] in EVENTS or (kind and e["kind"] != kind):
-        return False
-    return any(p == "*" or any(fnmatch.fnmatchcase(t, p) for t in e["tags"]) for p in patterns)
-
-
-def _pick(found: list[dict[str, Any]], which: str) -> list[dict[str, Any]]:
-    return found if which == "all" else found[:1] if which == "first" else found[-1:]
-
-
 class Values:
     """A card's values or the core's: read as values.x or values["x"]."""
 
@@ -284,12 +303,12 @@ def wrap(v: Any) -> Any:
 
 
 class Entry:
-    """An entry as the script sees it."""
+    """One entry: its text (to read and change), tags, the card that wrote it, its data."""
 
-    __slots__ = ("_e", "_run", "_name")
+    __slots__ = ("_e",)
 
-    def __init__(self, e: dict[str, Any], run: Run, name: str = "") -> None:
-        self._e, self._run, self._name = e, run, name
+    def __init__(self, e: dict[str, Any]) -> None:
+        self._e = e
 
     @property
     def text(self) -> str:
@@ -298,19 +317,12 @@ class Entry:
 
     @text.setter
     def text(self, value: Any) -> None:
-        if self._e is MISSING:
-            raise ScriptError(f"there is no {self._name} in this context to change")
         self._e["text"] = str(value)
 
     @property
     def tags(self) -> list[str]:
         """Its tags."""
         return list(self._e["tags"])
-
-    @property
-    def kind(self) -> str:
-        """Its kind."""
-        return self._e["kind"]
 
     @property
     def by(self) -> str:
@@ -322,85 +334,160 @@ class Entry:
         """What its card added."""
         return Values(dict(self._e.get("data") or {}))
 
-    @property
-    def state(self) -> str:
-        """open (still growing), closed or cut."""
-        return self._e.get("state", "closed")
+    def __contains__(self, part: Any) -> bool:
+        raise ScriptError(f"to look for {part!r} in an entry, look in its text: {part!r} in e.text")
+
+    def __str__(self) -> str:
+        return self.text
+
+    def __format__(self, spec: str) -> str:
+        return format(self.text, spec)
+
+    def __repr__(self) -> str:
+        return f"<entry {', '.join(self._e['tags']) or self._e['by']}: {self.text[:60]!r}>"
+
+
+class Entries(list):
+    """A list of entries (context.all): .text is their texts as one."""
 
     @property
-    def calls(self) -> list[Values]:
-        """An answer's tool calls: name, args."""
-        return [Values({"name": c.get("name"), "args": c.get("args") or {}}) for c in (self._e.get("data") or {}).get("calls") or []]
+    def text(self) -> str:
+        """Their texts, one per line."""
+        return "\n".join(e.text for e in self if e.text.strip())
 
-    def add_tag(self, tag: str) -> None:
-        """Adds a tag (without a dot: user.<tag>)."""
-        tag = str(tag) if "." in str(tag) else f"user.{tag}"
-        if self._e is not MISSING and tag not in self._e["tags"]:
-            self._e["tags"] = [*self._e["tags"], tag]
 
-    def remove(self) -> None:
-        """Takes it out of the context."""
-        if self._e is not MISSING:
-            self._run.context.remove(self._e)
+def joined(a: Context, b: Context) -> Context:
+    """One context: a's entries, then b's. It is b's turn (its id, the cards it passed); it belongs where a does (a
+    chat's conversation with the new lines on top files into that chat), else where b does."""
+    out = b.branch()
+    start = len(a.messages)
+    out.system = [*deepcopy(a.system), *out.system]
+    out.messages = [*deepcopy(a.messages), *out.messages]
+    out.events = [*deepcopy(a.events), *({**e, "at": e.get("at", 0) + start} for e in out.events)]
+    out.tools = [*deepcopy(a.tools), *out.tools]
+    if a.origin:
+        out.origin, out.chat_id = a.origin, a.chat_id
+    return out
+
+
+class ContextView:
+    """A context as the script sees it: a list of entries, oldest first, with ways to find, add and remove them."""
+
+    __slots__ = ("_c", "_run", "_port")
+
+    def __init__(self, context: Context, run: Run, port: str | None = None) -> None:
+        self._c, self._run, self._port = context, run, port
+
+    # ------------------------------------------------------------------ finding
+    def _tag(self, tag: Any) -> str:
+        tag = str(tag)
+        return tag if "." in tag or tag == "*" else f"{self._run.relay.id}.{tag}"
+
+    def _found(self, tag: Any) -> list[dict[str, Any]]:
+        pattern = self._tag(tag)
+        return [e for e in self._c.entries if pattern == "*" or any(fnmatch.fnmatchcase(t, pattern) for t in e["tags"])]
+
+    def get(self, tag: Any, default: Any = None) -> Any:
+        """The newest entry with that tag, or default (None)."""
+        found = self._found(tag)
+        return Entry(found[-1]) if found else default
+
+    def all(self, tag: Any = "*") -> Entries:
+        """Every entry with that tag, oldest first."""
+        return Entries(Entry(e) for e in self._found(tag))
+
+    def __getitem__(self, key: Any) -> Entry:
+        if isinstance(key, int):
+            return Entry(self._c.entries[key])
+        if isinstance(key, slice):
+            return Entries(Entry(e) for e in self._c.entries[key])
+        if (found := self.get(key)) is None:
+            raise KeyError(f"no entry with the tag {self._tag(key)} (context.get gives None instead)")
+        return found
+
+    def __contains__(self, tag: Any) -> bool:
+        return bool(self._found(tag))
+
+    def __iter__(self):
+        return iter([Entry(e) for e in self._c.entries])
+
+    def __len__(self) -> int:
+        return len(self._c.entries)
+
+    @property
+    def text(self) -> str:
+        """Every entry's text, one per line."""
+        return "\n".join(e["text"] for e in self._c.entries if e["text"].strip())
+
+    @property
+    def finished(self) -> bool:
+        """False while a card is still writing (a piece of its answer), True on the finished context."""
+        return not self._c.progress
+
+    @property
+    def input(self) -> str | None:
+        """The input it came in at (None: not what arrived, e.g. a read input or a + b)."""
+        return self._port
+
+    # ------------------------------------------------------------------ writing
+    def _new(self, tag: Any, text: Any, kind: str) -> dict[str, Any]:
+        return entry(self._run.relay.id, kind, str(text), [self._tag(tag)])
+
+    def attach_first(self, tag: Any, text: Any) -> None:
+        """A new entry at the very beginning (the system prompt)."""
+        self._c.system.insert(0, self._new(tag, text, "system"))
+
+    def attach_last(self, tag: Any, text: Any) -> None:
+        """A new entry at the very end (on the newest message: read last)."""
+        item = self._new(tag, text, "trailer")
+        if self._c.messages:
+            self._c.messages[-1].setdefault("attachments", []).append(item)
+        else:
+            self._c.system.append({**item, "kind": "system"})
+
+    def set(self, tag: Any, text: Any, at: str = "last") -> None:
+        """Writes the newest entry with that tag where it is; none: a new one at the end (at="first": the beginning)."""
+        if at not in ("first", "last"):
+            raise ScriptError('set(…, at="first") or at="last"')
+        if found := self._found(tag):
+            found[-1]["text"] = str(text)
+        elif at == "first":
+            self.attach_first(tag, text)
+        else:
+            self.attach_last(tag, text)
+
+    def remove(self, tag: Any) -> None:
+        """Takes out every entry with that tag."""
+        for e in self._found(tag):
+            self._c.remove(e)
+
+    def remove_first(self, tag: Any) -> None:
+        """Takes out the oldest entry with that tag."""
+        if found := self._found(tag):
+            self._c.remove(found[0])
+
+    def remove_last(self, tag: Any) -> None:
+        """Takes out the newest entry with that tag."""
+        if found := self._found(tag):
+            self._c.remove(found[-1])
+
+    def __add__(self, other: Any) -> ContextView:
+        if not isinstance(other, ContextView):
+            raise ScriptError("a context + another context (input(…) + input(…)); to add a text use attach_last")
+        return ContextView(joined(self._c, other._c), self._run)
 
     def __bool__(self) -> bool:
-        return self._e is not MISSING
+        return bool(self._c.entries)
 
     def __str__(self) -> str:
         return self.text
 
     def __repr__(self) -> str:
-        return repr(self.text)
-
-    def __format__(self, spec: str) -> str:
-        return format(self.text, spec)
-
-    def __eq__(self, other: object) -> bool:
-        return self.text == (other.text if isinstance(other, Entry) else other)
-
-    def __hash__(self) -> int:
-        return hash(self._e["id"])
-
-    def __contains__(self, part: str) -> bool:
-        return part in self.text
-
-
-class ContextView:
-    """The whole context."""
-
-    __slots__ = ("_run",)
-
-    def __init__(self, run: Run) -> None:
-        self._run = run
-
-    @property
-    def entries(self) -> list[Entry]:
-        """Every entry, oldest first (events left out)."""
-        return [Entry(e, self._run) for e in self._run.context.entries if e["kind"] not in EVENTS]
-
-    @property
-    def text(self) -> str:
-        """Every entry's text, one after the other."""
-        return "\n".join(e["text"] for e in self._run.context.entries if e["kind"] not in EVENTS and e["text"].strip())
-
-    def find(self, tag: str = "*", which: str = "last", kind: str | None = None) -> Entry:
-        """The newest (or first) entry with a tag; empty when none."""
-        found = _pick([e for e in self._run.context.entries if _matches(e, (tag,), kind)], "first" if which == "first" else "last")
-        return Entry(found[0] if found else MISSING, self._run, tag)
-
-    def find_all(self, tag: str = "*", kind: str | None = None) -> list[Entry]:
-        """Every entry with a tag, oldest first."""
-        return [Entry(e, self._run) for e in self._run.context.entries if _matches(e, (tag,), kind)]
-
-    def __str__(self) -> str:
-        return self.text
-
-    def __contains__(self, part: str) -> bool:
-        return part in self.text
+        return f"<context: {len(self)} entries{'' if self.finished else ', still being written'}>"
 
 
 class CardRef:
-    """Another card: its functions (when it is wired to the Relay and back), its values, the entries with its tags."""
+    """Another card: its functions (when it is in the Relay's loop) and its values."""
 
     __slots__ = ("_card", "_run")
 
@@ -413,52 +500,66 @@ class CardRef:
             spec = card.functions[name].get("args") or {}
 
             def call(*args: Any, **kwargs: Any) -> Any:
+                if len(args) > len(spec):
+                    raise ScriptError(f"{card.id}.{name}() takes {len(spec)} arguments: {', '.join(spec) or 'none'}")
                 kwargs.update(zip(spec, args))
                 return self._run.call(card, name, kwargs)
             return call
         values = card.current() if card.values else {}
         if name in values:
             return wrap(values[name])
-        tag = f"{card.id}.{name}"
-        found = [e for e in self._run.context.entries if tag in e["tags"]]
-        return Entry(found[-1] if found else MISSING, self._run, tag)
+        raise AttributeError(f"{card.id} has no function or value {name} (functions: {', '.join(card.functions) or 'none'}; "
+                             f"values: {', '.join(values) or 'none'})")
+
+    def __repr__(self) -> str:
+        return f"<card {self._card.id}>"
 
 
 # ------------------------------------------------------------------ running
 class Run:
-    """One run of a script on a context (in a worker thread)."""
+    """One run of a script (in a worker thread): on a context that arrived at one of its inputs, or a call of one def."""
 
-    def __init__(self, relay: Any, context: Any, snapshot: bool, done: dict[Any, Any], tools: list[Any],
-                 loop: asyncio.AbstractEventLoop, audio: Any = None) -> None:
-        self.relay, self.context, self.snapshot, self.done, self.tools, self.loop = relay, context, snapshot, done, tools, loop
-        self.audio = audio
-        self.outputs: list[str] = []
-        self.hold = False  # a snapshot that goes no further (a context block waits for everything to close)
-        self.stop_all = False  # stop() during a snapshot: the card stops the domain afterwards
-        self.ran: list[str] = []
+    def __init__(self, relay: Any, arrived: Context | None, port: str | None, reads: dict[str, Context], loop: asyncio.AbstractEventLoop,
+                 audio: Any = None, calling: Context | None = None) -> None:
+        self.relay, self.arrived, self.port, self.reads, self.loop, self.audio = relay, arrived, port, reads, loop, audio
+        self.calling = calling  # a call runs one def: its card calls travel on a copy of the caller's context
+        self.view = ContextView(arrived, self, port) if arrived is not None else None
+        self.sends: list[tuple[str, Context]] = []  # (output, what leaves there), in the order the script sent them
         self.printed: list[str] = []
+        self.logged: list[str] = []
         self.problems: list[str] = []
-        self._key: tuple[Any, ...] = ()
+        self.stop_now = False  # stop() while a card is still writing: every card lets go
 
-    def once(self, what: str, *args: Any) -> bool:
-        """A side effect happens once per turn, block and entry (a snapshot and the finished turn run it again)."""
-        key = (*self._key, what, repr(args))
-        if key in self.done:
-            return False
-        self.done[key] = True
-        return True
+    @property
+    def piece(self) -> bool:
+        """It runs on a piece of a turn still being written."""
+        return self.arrived is not None and self.arrived.progress
 
     def call(self, card: Any, name: str, args: dict[str, Any]) -> Any:
-        if card not in self.tools:
+        if card.id not in {c.id for c in self.relay.domain.flow.loop(self.relay.id)}:
             raise ScriptError(f"{card.id} is not in this Relay's loop: wire it so (from the Relay, back into it) to use {name}()")
-        key = (*self._key, "call", card.id, name, repr(args))
-        if key in self.done:
-            return self.done[key]
-        result = asyncio.run_coroutine_threadsafe(self.relay.travel(card, name, args, self.context), self.loop).result(60)
-        self.done[key] = result
-        return result
+        if self.piece:
+            raise ScriptError(f"{card.id}.{name}(): a card call waits for the finished context (put it under if context.finished:)")
+        context = self.calling.branch() if self.calling is not None else self.arrived if self.arrived is not None else Context(origin=self.relay.id)
+        return asyncio.run_coroutine_threadsafe(self.relay.travel(card, name, args, context), self.loop).result(60)
 
-    def names(self, script: Script) -> dict[str, Any]:
+    def _what(self, what: Any) -> Context:
+        """What output() sends: a context as it is; anything else as this Relay's answer in the context that arrived."""
+        if isinstance(what, ContextView):
+            return what._c.branch()  # noqa: SLF001
+        if what is None:
+            raise ScriptError("output(…) got None: nothing to send (input(\"x\") is None when the context came in at another input)")
+        if isinstance(what, Entry):
+            text = what.text
+        elif isinstance(what, (list, tuple)):
+            text = "\n".join(x.text if isinstance(x, Entry) else str(x) for x in what)
+        else:
+            text = str(what)
+        base = self.arrived.branch() if self.arrived is not None else Context(origin=self.relay.id)
+        base.add(self.relay.id, "answer", text, ["answer"])
+        return base
+
+    def names(self) -> dict[str, Any]:
         """Everything a script can use by name."""
         hass, relay = self.relay.hass, self.relay
 
@@ -473,25 +574,23 @@ class Run:
             state = hass.states.get(str(entity_id))
             return wrap(state.attributes.get(name)) if state else None
 
+        def get_input(name: str | None = None, read: bool = False) -> ContextView | None:
+            if read:
+                return ContextView(self.reads.get(str(name)) or Context(), self)
+            return self.view if name is None or name == self.port else None
+
+        def output(name: str, what: Any) -> None:
+            self.sends.append((str(name), self._what(what)))
+
         def stop() -> None:
-            if self.snapshot:
-                self.stop_all = True
-            elif self.once("stop"):
-                self.context.add(relay.id, "signal", "stop", [relay.tag("stop")])
+            if self.piece or self.arrived is None:
+                self.stop_now = True
+            elif not self.arrived.stopped:
+                self.arrived.add(relay.id, "signal", "stop", ["stop"])
 
         def signal(name: str) -> None:
-            if not self.snapshot and self.once("signal", name):
-                self.context.add(relay.id, "signal", str(name), [name if "." in str(name) else f"user.{name}"])
-
-        def output(name: str) -> None:
-            if name not in self.outputs:
-                self.outputs.append(name)
-
-        def between(text: Any, start: str = "", end: str = "") -> str:
-            text, low = str(text), str(text).lower()
-            at = low.find(start.lower()) + len(start) if start and start.lower() in low else 0
-            to = low.find(end.lower(), at) if end and end.lower() in low[at:] else len(text)
-            return text[at:to].strip()
+            if self.arrived is not None:
+                self.arrived.add(relay.id, "signal", str(name), [ContextView(self.arrived, self)._tag(name)])  # noqa: SLF001
 
         def capped_range(*args: int) -> range:
             found = range(*args)
@@ -500,93 +599,40 @@ class Run:
             return found
 
         def show(*args: Any) -> None:
-            if not self.snapshot:
-                self.printed.append(" ".join(map(str, args))[:300])
+            self.printed.append(" ".join(map(str, args))[:1000])
 
-        builtins = {n: __builtins__[n] if isinstance(__builtins__, dict) else getattr(__builtins__, n) for n in (
-            "len", "str", "int", "float", "bool", "round", "min", "max", "abs", "sorted", "reversed", "any", "all",
-            "list", "dict", "set", "tuple", "enumerate", "zip", "isinstance", "ValueError")}
+        def print_log(*args: Any) -> None:
+            self.logged.append(" ".join(map(str, args))[:1000])
+
+        builtins = {n: __builtins__[n] if isinstance(__builtins__, dict) else getattr(__builtins__, n) for n in BUILTINS if n != "range"}
         found = {
-            **builtins, "range": capped_range, "print": show, "now": now, "states": states, "state_attr": state_attr,
-            "is_state": lambda entity_id, value: states(entity_id) == str(value), "stop": stop, "signal": signal,
-            "output": output, "between": between, "context": ContextView(self),
+            **builtins, "range": capped_range, "print": show, "print_log": print_log, "now": now, "states": states,
+            "state_attr": state_attr, "is_state": lambda entity_id, value: states(entity_id) == str(value),
+            "input": get_input, "output": output, "stop": stop, "signal": signal, "audio": wrap(self.audio or {}),
             "re": SimpleNamespace(search=re.search, match=re.match, fullmatch=re.fullmatch, sub=re.sub, findall=re.findall,
                                   split=re.split, escape=re.escape, I=re.I, IGNORECASE=re.I),
         }
-        if "audio" in script.names:
-            found["audio"] = wrap(self.audio or {})
         cards = {c.id: CardRef(c, self) for c in relay.domain.cards.values()}
         found["cards"] = cards
-        for name in script.names - set(found):
-            if name in cards:
-                found[name] = cards[name]
+        for card_id, ref in cards.items():
+            found.setdefault(card_id, ref)  # the script's own names win (a card called Output is cards["output"])
         return {"__builtins__": {"__import__": _inner_import}, **found}
 
     def go(self, script: Script) -> None:
-        """Run every block of the script on the context, top to bottom."""
-        names = self.names(script)
+        """Run the script, top to bottom."""
         try:
-            exec(script.code, names)  # noqa: S102 - checked by check(): no imports, nothing starting with _
+            exec(script.code, self.names())  # noqa: S102 - checked by check(): no imports, nothing starting with _
         except Exception as err:  # noqa: BLE001
-            self.problems.append(_where(err, "the top"))
-            return
-        for n, h in enumerate(script.handlers):
-            try:
-                self._handler(names[h.name], h, n)
-            except Exception as err:  # noqa: BLE001 - one block's mistake must not stop the others
-                self.problems.append(_where(err, h.name))
+            self.problems.append(_where(err))
 
-    def _handler(self, fn: Any, h: Handler, n: int) -> None:
-        entries = self.context.entries
-        if h.new:
-            self._key = (n, "new")
-            item = {**MISSING, "id": "", "tags": [], "data": {}}
-            box = Entry(item, self, h.tag)
-            item["text"] = ""
-            fn(box) if _takes(fn) else fn()
-            self.ran.append(h.name)
-            self._place(h, item["text"].strip())
-            return
-        if h.patterns == ("context",):
-            if self.snapshot and not h.live and any(e.get("state") == "open" for e in entries):
-                self.hold = True
-                return
-            self._key = (n, "context")
-            fn(ContextView(self)) if _takes(fn) else fn()
-            self.ran.append(h.name)
-            return
-        for e in _pick([e for e in entries if _matches(e, h.patterns, h.kind)], h.which):
-            if self.snapshot and not h.live and e.get("state") == "open":
-                e["text"] = ""  # held back until it is closed
-                continue
-            self._key = (n, e["id"])
-            fn(Entry(e, self)) if _takes(fn) else fn()
-            self.ran.append(h.name)
-
-    def _place(self, h: Handler, text: str) -> None:
-        """Where a @new entry goes: at the start a system part; at the end attached after the newest thing said;
-        before= / after= attached to the message of the newest entry with that tag (a system part beside a system part)."""
-        relay, context = self.relay, self.context
-        if not (h.before or h.after):
-            context.put(relay.id, "system" if h.at == "start" else "trailer", text, h.tag, replace_it=h.replace)
-            return
-        tag = relay.tag(h.tag)
-        if h.replace:
-            for e in [e for e in context.entries if e["by"] == relay.id and tag in e["tags"]]:
-                context.remove(e)
-        anchor = next((e for e in reversed(context.entries) if _matches(e, (h.before or h.after,), None)), None)
-        if anchor is None or not text:
-            return
-        if anchor["kind"] == "system":
-            item = entry(relay.id, "system", text, [h.tag])
-            at = next(i for i, e in enumerate(context.system) if e is anchor)
-            context.system.insert(at if h.before else at + 1, item)
-            return
-        message = next((m for m in context.messages if m is anchor or any(a is anchor for a in m.get("attachments", []))), None)
-        item = entry(relay.id, "note" if h.before else "trailer", text, [h.tag])
-        attached = message.setdefault("attachments", [])
-        at = next((i for i, a in enumerate(attached) if a is anchor), len(attached) if h.after else 0)
-        attached.insert(at if h.before else at + 1, item)
+    def answer(self, script: Script, function: str, args: dict[str, Any]) -> Any:
+        """A call: only that def runs (the script's other lines do not), with the call's arguments."""
+        names = self.names()
+        exec(script.defs, names)  # noqa: S102
+        try:
+            return names[function](**args)
+        except Exception as err:
+            raise ScriptError(_where(err)) from err
 
 
 def _inner_import(name: str, *args: Any, **kwargs: Any) -> Any:
@@ -596,12 +642,8 @@ def _inner_import(name: str, *args: Any, **kwargs: Any) -> Any:
     return __import__(name, *args, **kwargs)
 
 
-def _takes(fn: Any) -> bool:
-    return fn.__code__.co_argcount == 1
-
-
-def _where(err: Exception, block: str) -> str:
+def _where(err: Exception) -> str:
     """A mistake with its line in the script."""
     lines = [f.lineno for f in traceback.extract_tb(err.__traceback__) if f.filename == "<script>"]
     what = str(err) if isinstance(err, ScriptError) else f"{type(err).__name__}: {err}"
-    return f"line {lines[-1] if lines else '?'} ({block}): {what}"
+    return f"line {lines[-1] if lines else '?'}: {what}"

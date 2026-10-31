@@ -59,7 +59,7 @@ every finished sentence and when it calls tools.
 per function `{on, name, help}`, the tick, the name a model sees and the description it reads; empty keeps the card's
 own (`offers` on the class is the tick's default; a Relay's is off). `card.offered()` gives the ticked ones as models
 see them. A card whose functions come from its settings sets `dynamic_functions = True` and `self.functions` per
-instance (a Relay: one per `@new` block). A setting may say `fold` to sit in a fold at the bottom of the card's settings.
+instance (a Relay: one per `def` in its script). A setting may say `fold` to sit in a fold at the bottom of the card's settings.
 
 **Tools** (docs/v2 page 3). A card that uses tools (`uses_tools = True`: a Model, a Relay's script) gets the functions
 of the cards in its loop (`flow.loop()`, `flow.tools()`): on a way from its outputs back into it, straight or through
@@ -206,15 +206,24 @@ error: never sent to a model). Every item is an entry `{id, by, kind, text, tags
 
 ## The Relay's script
 
-A Relay card's setting `script` is Python, checked before it runs (`cards/relay/script.py`, `check()`): only the
-parts listed there (no imports, no `while`, nothing starting with `_`). `@new("name", at="start"|"end",
-before=tag, after=tag, replace=)` above a `def` writes an entry of its own (tag `<relay>.<name>`; the start is a
-`system` part, the end a `trailer` on the newest said message, before / after a `note` / `trailer` on the message of
-that tag); `@on("tag", …, which="last"|"first"|"all",
-kind=, live=)` runs on entries with a tag (`*` = any card, `"context"` = the whole context once). Names: `context`,
-other cards (`chat.said.text`, `lists.total`, `lists.add_items(...)` for cards wired to it and back; such a call travels like a model's: an answer of the Relay
-with the call, the card's result as a tool message, and the context goes back to where it started), `now()`, `states()`,
-`stop()`, `output("name")` (the Relay gets that output), `signal()`, `between()`, `re`, `audio`. In a snapshot
-(a stream) an open entry a block works on goes on empty until it is closed; `live=True` runs on every piece.
-Side effects (stop, signals, calls) happen once per turn and entry. The full list with examples is `REFERENCE`
-there (the editor's ? panel; models read it in the setting's help).
+A Relay card's setting `script` is Python (docs/v2 page 4), checked before it runs (`cards/relay/script.py`,
+`check()`): only the parts listed there (no imports, no `while`, nothing starting with `_`). It runs top to bottom
+every time a context arrives, pieces of a turn still being written included (`context.finished` is False on those);
+nothing leaves unless `output("name", what)` runs. Its ports are what it names: `input("x")` (text),
+`input("x", read=True)` (dotted, read when something arrives elsewhere), `output("x", …)`; none named: `in`, `out`.
+`input()` is what arrived (`input("x")`: None when it came in elsewhere). `output` sends a context as it is, anything
+else (a text, an entry, a list) as the Relay's answer (tag `<relay>.answer`) in the context that arrived.
+
+To the script the context is a list of entries (`ContextView`): `get(tag)`, `[tag]`, `tag in context`, `all(tag)`
+(`.text`: their texts as one), `text`, `attach_first` (a system part at the start), `attach_last` (a trailer on the
+newest message, a new one each time), `set(tag, text, at="last"|"first")` (written in place; none: a new one),
+`remove` / `remove_first` / `remove_last`, `a + b` (b's turn, belonging where a does). A tag without a dot is the
+Relay's own (`<relay>.<name>`), `*` stands for anything. An entry: `text` (settable), `tags`, `by`, `data`. Other
+names: `stop()` (the context becomes a stop; on a piece every card lets go), `signal()`, `print()` (the editor's
+Printed panel), `print_log()` (AAC's log), `now()`, `states()`, `re`, `audio`, and every card by its id: its values
+(`lists.total`) and, for a card in the Relay's loop, its functions (`lists.add_items(...)`, arguments in order or by
+name; not on a piece). Such a call travels like a model's: an answer of the Relay with the call, the card's result
+as a tool message. The script's own names win over a card's id (`cards["output"]`). Every `def` is a function the
+Relay offers (`self.functions`: its parameters, its docstring): a call runs only the defs, then that one, with its
+arguments; its return is the result. The full list with examples is `REFERENCE` there (the editor's ? panel; the
+`script` setting's help, which the Card editor's `help("relay")` gives a model).

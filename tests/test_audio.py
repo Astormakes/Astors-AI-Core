@@ -80,6 +80,8 @@ async def test_a_spoken_round_trip(hass: HomeAssistant, hass_client, mock_entry,
 
 async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry, start):
     """Stop word, Wake word and Follow-up each get every heard line; only the right one passes it on."""
+    from unittest.mock import patch
+
     from custom_components.aac.defaults import async_voice_chain
     from custom_components.aac.flow import Step
     from custom_components.aac.context import Context
@@ -89,13 +91,20 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
     await async_voice_chain(core)
     d = core.domain
     assert {"microphone", "audio_clipper", "speech_to_text", "stop_word", "wake_word", "follow_up", "spoken_turn", "follow_up_turn", "answer", "speaker"} <= set(d.cards)
-    assert {"from": "chat.provides", "to": "spoken_turn.reads"} in d.wires and {"from": "model.out", "to": "answer.in"} in d.wires
+    assert {"from": "chat.provides", "to": "spoken_turn.chat"} in d.wires and {"from": "model.out", "to": "answer.in"} in d.wires
     assert {"from": "model.out", "to": "chat.answers"} not in d.wires
+    sent = []
 
-    async def route(card, text, seconds=1.0):
+    async def caught(card, context, picks):  # what a Relay sends, without running the cards after it
+        sent.append((picks, context))
+
+    async def route(card, text, seconds=1.0, **data):
         m = Context()
-        m.add("speech_to_text", "said", text, mic="pc", seconds=seconds)
-        return await d.cards[card].handle(m, "in", Step(d.flow, d.cards[card], "in", m)), m
+        m.add("speech_to_text", "said", text, ["heard"], mic="pc", seconds=seconds, **data)
+        sent.clear()
+        with patch.object(d.flow, "out", caught):
+            await d.cards[card].handle(m, "in", Step(d.flow, d.cards[card], "in", m))
+        return [p for picks, _ in sent for p in picks], (sent[0][1] if sent else m)
     assert (await route("wake_word", "Computer, lights on"))[0] == [("yes", "spoken_turn")]
     assert (await route("wake_word", "see you in the next video"))[0] == []
     out, m = await route("stop_word", "stop it")
@@ -109,9 +118,7 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
         assert (await route("follow_up", "a long answer", seconds=22))[0] == [("yes", "follow_up_turn")]  # began 3 s after
         assert (await route("follow_up", "something later", seconds=2))[0] == []  # began 23 s after
         core.audio._spoke["pc"] = __import__("time").time()
-        m = Context()
-        m.add("speech_to_text", "said", "thank you", mic="pc", seconds=1.0, aac_spoke=True)  # began while AAC spoke: its own voice
-        assert await d.cards["follow_up"].handle(m, "in", Step(d.flow, d.cards["follow_up"], "in", m)) == []
+        assert (await route("follow_up", "thank you", aac_spoke=True))[0] == []  # began while AAC spoke: its own voice
 
 
 async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, mock_entry, aioclient_mock):

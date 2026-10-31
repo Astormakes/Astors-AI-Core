@@ -83,7 +83,7 @@ class Context:
             self.system.append(item)
 
     def put(self, by: str, kind: str, text: str, tag: str, replace_it: bool = True) -> dict[str, Any] | None:
-        """A card's standing text (a Relay's @new, a Buffer, Memory's matches): a system part is replaced in place (the
+        """A card's standing text (a Buffer, Memory's matches, the Model's context note): a system part is replaced in place (the
         model server's cache keeps working); an attachment that replaces moves to the newest user message (only one);
         replace_it=False: a new one each time. Empty text removes it."""
         tag = tag if "." in tag else f"{by}.{tag}"

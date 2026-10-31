@@ -6,7 +6,7 @@ from custom_components.aac.context import Context
 
 from .conftest import model_answers, reply, setup_aac
 
-TIME = '@new("now")\ndef now_text(e):\n    e.text = "It is 08:41."\n'
+TIME = 'def now_text():\n    """The time."""\n    return "It is 08:41."\n'
 
 
 async def test_cards_put_things_where_a_model_expects_them(hass: HomeAssistant, mock_entry):
@@ -31,7 +31,7 @@ async def test_two_calls_travel_one_after_the_other(hass: HomeAssistant, mock_en
     model is asked again with both results; the tools are in the context, the wires lit."""
     core = await setup_aac(hass, mock_entry)
     d = core.domain
-    await d.update_card("time", settings={"script": TIME, "functions": {"now": {"on": True, "name": "get_time",
+    await d.update_card("time", settings={"script": TIME, "functions": {"now_text": {"on": True, "name": "get_time",
                                                                                 "help": "The current local time."}}})
     d.set_wires([w for w in d.wires if w != {"from": "time.out", "to": "model.in"} and w != {"from": "charter.out", "to": "time.in"}]
                 + [{"from": "charter.out", "to": "model.in"}, {"from": "model.out", "to": "time.in"}, {"from": "time.out", "to": "model.in"}])
@@ -121,7 +121,7 @@ async def test_a_chat_without_a_model(hass: HomeAssistant, mock_entry):
     await core.create("Play")
     d = await core.switch(next(x["id"] for x in core.data["domains"] if x["name"] == "Play"))
     chat = await d.add_card("chat", "Chat")
-    relay = await d.add_card("relay", "Relay", {"script": '@on("*.said")\ndef echo(e):\n    chat.post("pong")\n'})
+    relay = await d.add_card("relay", "Relay", {"script": 'context = input("in")\nchat.post("pong")\noutput("out", context)\n'})
     _, answer = await chat.send("ping")
     assert answer.startswith("Nothing is wired")  # nothing at said yet
     d.set_wires([{"from": "chat.said", "to": f"{relay.id}.in"}, {"from": f"{relay.id}.out", "to": "chat.answers"}])
@@ -180,7 +180,7 @@ async def test_a_call_travels_through_the_loop(hass: HomeAssistant, mock_entry, 
     Charter → Model); the cards between only pass it on (Answer's script does not run on it); every wire lights."""
     core = await setup_aac(hass, mock_entry)
     d = core.domain
-    marks = '@on("*", kind="answer")\ndef mark(e):\n    e.text = e.text + " (passed Answer)"\n'
+    marks = 'context = input("in")\nanswer = context.get("model.answer")\nanswer.text = answer.text + " (passed Answer)"\noutput("out", context)\n'
     a = (await d.add_card("relay", "Answer", {"script": marks})).id  # (a backup brings an Answer card of its own)
     d.set_wires([w for w in d.wires if w["from"] != "model.out" or w["to"].split(".")[0] in ("lists", "home", "calendar")]
                 + [{"from": "model.out", "to": f"{a}.in"}, {"from": f"{a}.out", "to": "chat.answers"}])
