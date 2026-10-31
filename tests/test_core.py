@@ -364,7 +364,7 @@ async def test_a_model_that_does_not_answer_is_flagged_until_it_does(hass: HomeA
 
 async def test_for_models_and_short_card_lists(hass: HomeAssistant, mock_entry, aioclient_mock):
     """For models: the owner's name and description of a function are what the model sees (the system prompt gets
-    nothing); the Node editor's list of cards counts long settings instead of listing them (so every card fits), and
+    nothing); the Card editor's list of cards counts long settings instead of listing them (so every card fits), and
     gives one card in full."""
     core = await setup_aac(hass, mock_entry)
     d = core.domain
@@ -376,7 +376,7 @@ async def test_for_models_and_short_card_lists(hass: HomeAssistant, mock_entry, 
     tools = {t["function"]["name"]: t["function"]["description"] for t in asked[0]["tools"]}
     assert tools["read_list"] == "Look here before saying you do not know." and "add_to_list" in tools
     assert "add_items" not in tools and "delete_list" not in tools and asked[0]["messages"][0]["content"] == "Be kind."
-    editor = await d.add_card("builder", "Node editor")
+    editor = await d.add_card("builder", "Card editor")
     listed = await editor.call("cards", {})
     home = next(c for c in listed["cards"] if c["id"] == "home")
     assert home["settings"]["levels"] == "(40 entries: see card)" and "chat.said -> charter.in" in listed["wires"]

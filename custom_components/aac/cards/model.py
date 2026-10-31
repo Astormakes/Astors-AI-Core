@@ -12,7 +12,7 @@ from typing import Any
 from custom_components.aac.api import (LOGGER, Card, Client, Context, ModelError, ModelUnreachable, entry, new_id, register, run,
                                       tool_spec)
 
-VERSION = "2.2.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.2.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
@@ -217,11 +217,12 @@ class Model(Card):
                                            f"{c['function']['name']}({c['function']['arguments']})" for c in reply["tool_calls"]]},
                                        **({"usage": usage} if usage else {})}
                     break
-                except ModelUnreachable:
-                    pool.mark_down(model_id)
+                except ModelUnreachable as err:
+                    pool.mark_down(model_id, str(err))
                     tried.add(model_id)
                 except ModelError as err:
                     LOGGER.warning("AAC: model %s failed: %s", model_id, err)
+                    pool.heard_from(model_id, str(err))
                     too_long = "context" in str(err).lower() and any(w in str(err).lower() for w in ("exceed", "too long", "n_ctx"))
                     failed = ("Error: this chat is too long for the model's context. Start a new chat, or let fewer turns go "
                               "along (the Chat card's setting)." if too_long else f"Error: the model failed ({err}).")

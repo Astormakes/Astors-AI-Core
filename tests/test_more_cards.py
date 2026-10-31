@@ -107,6 +107,13 @@ async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
     await file.call("write", {"text": "# Hi"})
     await file.call("append", {"text": "more"})
     assert await file.call("read", {}) == "# Hi\nmore\n"
+    (held,) = file.held("provides").entries  # its read output: the file as one entry
+    assert held["text"] == "# Hi\nmore\n" and held["tags"] == ["notes.text"]
+    again = await core.domain.add_card("file", "Same", {"name": "test"})  # reads the file when it starts
+    assert again.held("provides").entries[0]["text"] == "# Hi\nmore\n"
+    await core.domain.add_card("relay", "Reader")
+    core.domain.set_wires([*core.domain.wires, {"from": "notes.provides", "to": "reader.reads"}])
+    assert {"from": "notes.provides", "to": "reader.reads"} in core.domain.wires  # a dotted wire into a read input
     timer = await core.domain.add_card("timer", "Wait", {"seconds": 0})
     assert await timer.handle(Context(), "in", None) is None
     builder = await core.domain.add_card("builder", "Builder")
@@ -352,8 +359,14 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert (kept["read"], kept["write"], kept["prompt"], kept["written"], kept["seconds"]) == (1044, 107, 1520, 256, 3.8)
     bench_body = next(m[2] for m in aioclient_mock.mock_calls if str(m[1]).endswith("/v1/chat/completions"))
     assert bench_body["model"] == "big" and bench_body["ignore_eos"] and not bench_body["cache_prompt"]
+    assert not core.pool.heard  # nothing asked yet
+    core.pool.mark_down("m_small", "timeout")  # a request that got no answer, then one that did (the same server)
+    core.pool.mark_up("m_big")
     await client.send_json({"id": 6, "type": "aac/models/servers"})
-    assert (await client.receive_json())["result"]["servers"][0]["models"][0]["bench"]["write"] == 107
+    listed = (await client.receive_json())["result"]["servers"][0]
+    assert listed["models"][0]["bench"]["write"] == 107
+    assert listed["heard"]["error"] == "timeout" and listed["heard"]["answered"] >= listed["heard"]["failed"]
+    core.pool.mark_up("m_small")
 
     core.save_model({"id": "m_small", "follow": True, "model": "something old"})  # follows: asks for what is loaded
     from custom_components.aac.models import Client

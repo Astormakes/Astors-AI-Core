@@ -1,5 +1,5 @@
-"""Node editor: lets a model see and change the setup (cards and wires) of its domain, with your permission settings;
-every change can be undone (Nodes → Undo)."""
+"""Card editor: lets a model see and change the setup (cards and wires) of its domain, with your permission settings;
+every change can be undone (Cards → Undo)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any
 
 from custom_components.aac.api import CARD_TYPES, Card, Context, register
 
-VERSION = "1.5.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.5.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 SHORT = 80  # longer settings are shortened in the list of cards (characters)
@@ -19,10 +19,10 @@ class Builder(Card):
     """A model builds."""
 
     type = "builder"
-    title = "Node editor"
+    title = "Card editor"
     category = "Other"
     help = ("Wired from a model and back: the model can look at and change the cards and wires of this domain (e.g. "
-            "\"set up a reminder card\"). Every change can be undone in Nodes.")
+            "\"set up a reminder card\"). Every change can be undone on the Cards page.")
     settings_schema = {
         "may_change": {"type": "bool", "title": "May add cards, change settings and wires", "default": True, "permission": True},
         "may_remove": {"type": "bool", "title": "May remove cards", "default": False, "permission": True},
@@ -63,11 +63,11 @@ class Builder(Card):
                      "inputs": t.inputs, "outputs": t.outputs} for t in CARD_TYPES.values()]
         if function == "remove_card":
             if not self.settings.get("may_remove"):
-                return {"error": "Removing cards is not allowed (the Node editor card's settings)."}
+                return {"error": "Removing cards is not allowed (the Card editor card's settings)."}
             await domain.remove_card(str(args.get("card")))
             return {"removed": args.get("card")}
         if not self.settings.get("may_change", True):
-            return {"error": "Changing the setup is not allowed (the Node editor card's settings)."}
+            return {"error": "Changing the setup is not allowed (the Card editor card's settings)."}
         if function == "add_card":
             card = await domain.add_card(str(args.get("type")), str(args.get("name") or ""), args.get("settings") or {})
             return card.summary()

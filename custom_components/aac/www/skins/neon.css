@@ -22,5 +22,5 @@ h2, h3, h4, b { color: #00f0ff; text-shadow: 0 0 6px rgba(0, 240, 255, .55); }
 .card, .box, input, select, textarea, button { border-color: rgba(0, 240, 255, .45) !important; }
 .card, .box { box-shadow: 0 0 8px rgba(0, 240, 255, .18); }
 button:hover, .item.on { box-shadow: 0 0 8px rgba(255, 43, 214, .5); }
-.node.sel .box { stroke: #ff2bd6; filter: drop-shadow(0 0 4px #ff2bd6); }
+.cardbox.sel .box { stroke: #ff2bd6; filter: drop-shadow(0 0 4px #ff2bd6); }
 .wire { filter: drop-shadow(0 0 2px currentColor); }

@@ -318,6 +318,7 @@ class ModelPool:
         self.server_list = servers if servers is not None else []
         self._down: dict[str, float] = {}
         self.progress: dict[str, int] = {}  # "<server> <model>" → its last download / load progress (router())
+        self.heard: dict[str, dict[str, Any]] = {}  # server id → when it last answered / failed (since AAC started)
         self.failing: set[str] = set()  # models that did not answer last time (until they answer again): the panel warns
         self._busy: dict[str, int] = {}  # requests running per model
         self._queues: dict[str, list[asyncio.Future]] = {}  # contexts waiting per model (one queue, every card and domain)
@@ -401,16 +402,25 @@ class ModelPool:
         """Not marked down."""
         return time.monotonic() >= self._down.get(model_id, 0)
 
-    def mark_down(self, model_id: str) -> None:
+    def mark_down(self, model_id: str, error: str = "") -> None:
         """Skip it for a while."""
+        self.heard_from(model_id, error or "no answer")
         self._down[model_id] = time.monotonic() + DOWN_FOR
         LOGGER.warning("AAC: model %s does not answer, skipped for %s s", model_id, DOWN_FOR)
         if model_id not in self.failing:
             self.failing.add(model_id)
             async_dispatcher_send(self.hass, SIGNAL, {"what": "models"})
 
+    def heard_from(self, model_id: str, error: str | None = None) -> None:
+        """A request to a model ended: its server answered (error None) or not (mark_up / mark_down say it too); the
+        Models page shows when."""
+        if server := (self.get(model_id) or {}).get("server"):
+            now = dt_util.utcnow().isoformat()
+            self.heard[server] = {**self.heard.get(server, {}), **({"failed": now, "error": error} if error else {"answered": now})}
+
     def mark_up(self, model_id: str) -> None:
         """It answered."""
+        self.heard_from(model_id)
         self._down.pop(model_id, None)
         if model_id in self.failing:
             self.failing.discard(model_id)
@@ -452,7 +462,7 @@ class ModelPool:
         async def one(server: dict[str, Any]) -> dict[str, Any]:
             record = server["record"]
             out = {"id": record["id"], "name": record["name"], "base_url": record["base_url"], "has_key": bool(record.get("api_key")),
-                   "address": server["address"],
+                   "address": server["address"], "heard": self.heard.get(record["id"], {}),
                    "uses": [{"id": m["id"], "name": m["name"], "model": m["model"], "follow": bool(m.get("follow")),
                              "tags": self.tags(m["id"]), "parallel": m.get("parallel") or 1} for m in server["uses"]]}
             try:
@@ -487,10 +497,11 @@ async def run(pool: ModelPool, entries: list[dict[str, Any]], job: Callable[[dic
                 return None, any(pool.usable(e["model"]) for e in left)
             try:
                 result = await job(pool.get(model_id))
-            except ModelUnreachable:
-                pool.mark_down(model_id)
+            except ModelUnreachable as err:
+                pool.mark_down(model_id, str(err))
             except ModelError as err:
                 LOGGER.info("AAC: model %s failed: %s", model_id, err)
+                pool.heard_from(model_id, str(err))
             else:
                 pool.mark_up(model_id)
                 return result, False

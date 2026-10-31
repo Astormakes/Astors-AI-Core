@@ -128,7 +128,7 @@ class AacCalendarPage extends HTMLElement {
     const title = view === "month" ? addDays(start, 15).toLocaleDateString([], { month: "long", year: "numeric" })
       : `${start.toLocaleDateString([], { day: "numeric", month: "short" })} – ${end.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}`;
     const body = view === "week" ? this._week(start, days) : view === "table" ? this._table() : view === "month" ? this._month(start) : this._agenda();
-    this.innerHTML = `<style>${STYLE}</style>${header(this.card.title, tip("Its own entries, the dated entries of lists (a field when/date/due) and the Home Assistant calendars picked in its settings (Nodes → the card)."))}
+    this.innerHTML = `<style>${STYLE}</style>${header(this.card.title, tip("Its own entries, the dated entries of lists (a field when/date/due) and the Home Assistant calendars picked in its settings (Cards → the card)."))}
       <div class="content"><div class="card">
         <div class="cbar"><button class="small" data-nav="-1" title="Back">◀</button><button class="small" data-nav="0">Today</button><button class="small" data-nav="1" title="Forward">▶</button>
           <span class="grow">${esc(title)}</span>

@@ -3,7 +3,23 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.26, live on the owner's HA
+## Current state (2026-10-31) – 2.3.27, live on the owner's HA
+
+- **2026-10-31 (2.3.27): items 37, 30, 41** (owner: do them; 51 needs a talk first). **37:** cards are only called
+  cards: the Nodes page is the **Cards** page (view kind `cards`, `_cardsView()`, CSS `.cardsview`, a card on the
+  grid `.cardbox` / `data-cardbox`, the neon skin too; `core.cards_page_open`), the Node editor is the **Card
+  editor** (type `builder` unchanged; the owner's card retitled, its id `node_editor` kept; test123's not); help
+  texts, docstrings, spec, README, docs/v2. The Relay's "node" words are Python syntax-tree nodes and stay. **30:**
+  each server on the Models page says when it last answered and when a request last failed, and why (red when the
+  failure is newer; since AAC started, in memory: `pool.heard`, set by `mark_up` / `mark_down` / `heard_from`).
+  **41:** the File card has a read output `provides` (the file's text as one entry, the last 8,000 characters, kept
+  in memory: loaded at start, renewed by every write and read, so `held()` never touches the disk). **Found:**
+  pytest's shared test config (`…/pytest_homeassistant_custom_component/testing_config/aac`) still held card files
+  from before 2.2.1 (`tools/`, `auto/`, `audio.py`, `conditional.py`); the old `tools/` File replaced the new one,
+  so some tests ran old card code. `conftest.clean_aac_folder` empties it before every test. The local test HA had
+  the same leftovers (removed); the live HA is clean. Checked: local test HA (Cards page by real clicks, a File card
+  wired dotted into a Relay, a failing model shown red), live HA (Cards page, a real message, its chat deleted,
+  "Last answered" per server).
 
 - **2026-10-31 (2.3.26): open items 31, 32, 42–46.** Lists (43, 44): Undo remove and editing (a click on the text)
   were there and work (real clicks, desktop and touch); Undo now puts entries back where they were (a sub-entry under
@@ -532,7 +548,7 @@ pencil edit is missing" is item 11.
     and a tick that it is no issue when a compute resource is not available.
 29. **Models page: top list and parameter counts.** The top list is not really clear; models in the server lists
     should show their parameter count if llama.cpp gives it.
-30. **Models page: last spoken to per server.** A "last spoken to" per compute server, so it is visible when RAM
+30. ~~**Models page: last spoken to per server.**~~ **done (2.3.27).** A "last spoken to" per compute server, so it is visible when RAM
     overfills and a server stops answering.
 31. ~~**Models page: Delete misaligned.**~~ **done (2.3.26):** rows with lines, the hovered row marked. The Delete per model does not seem to line up with the actual models.
 32. ~~**Models page: deleted downloads go on.**~~ **fixed as far as found (2.3.26):** a poll without a live event showed 0 %; not reproduced otherwise (check again on a big download). A stopped and deleted download seems to go on: the next model's
@@ -549,7 +565,7 @@ pencil edit is missing" is item 11.
     another is moved. The "too close" check must happen consistently.
 36. ~~**Nodes page: snap while dragging.**~~ **done (2.3.25).** Snapping to columns only happens on release; while dragging, cards still
     move in the old raster (a leftover).
-37. **Naming: cards, not nodes.** Cards are called cards or nodes interchangeably; they should just be called cards
+37. ~~**Naming: cards, not nodes.**~~ **done (2.3.27).** Cards are called cards or nodes interchangeably; they should just be called cards
     (with their interchangeability now).
 38. **Cards: logging per card.** Logging per card instead of a Log card: a unified logging interface; every card has
     a dropdown what to log (whole context / only changed text) and ticks for in, out or both. The Log card should use
@@ -559,7 +575,7 @@ pencil edit is missing" is item 11.
     the card (reminders push the owner's undo steps out).
 40. **File: several files.** The File card has only one file. Owner imagined accessing different files, but likes the
     single file too: maybe a File system card (with a whitelist of paths) next to the File card.
-41. **File: provides output.** The File card should have a provides (read) output.
+41. ~~**File: provides output.**~~ **done (2.3.27).** The File card should have a provides (read) output.
 42. ~~**Home card: list jumps.**~~ **fixed (2.3.26).** Clicking something in the Home card makes the list jump.
 43. ~~**Lists: undo a removal.**~~ **done (was there; 2.3.26 puts entries back in place).** Removing an entry cannot be undone; maybe show an Undo button (a function
     `undo_remove` exists: check the page).
@@ -580,7 +596,7 @@ pencil edit is missing" is item 11.
     should be a preset the owner applies (ties in with "Presets").
 50. ~~**Review: the Request view goes through the card.**~~ **done (2.3.0): the Request view is gone.** The core's `aac/chat/request` reads `card.requests` inside the
     Model card (a hidden contract); it should be the card's own ui_call.
-51. **Review: cards may not import each other.** The loader makes `aac_cards` a package so card files can import one
+51. **Review: cards may not import each other** (owner, 2026-10-31: talk through first). The loader makes `aac_cards` a package so card files can import one
     another; that invites cards to depend on each other. Remove it (folders keep their own relative imports).
 52. **Review: removing a card asks about its data** (page 1, rule 3). Today its data stays stored forever, silently.
     Ties in with 15 (stores of long-gone cards).

@@ -11,7 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, register
 
-VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 def parse(value: Any) -> date | datetime | None:
     """A date or a time from text (local)."""

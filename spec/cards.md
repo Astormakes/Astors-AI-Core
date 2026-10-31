@@ -97,7 +97,7 @@ file is a folder: `chat/card.py` (with `VERSION`), `page.js`, `view.js`. It is c
 A card with `view = {"height": 90}` and a `view.js` in its folder shows something inside its card in the grid (the
 card grows by that height); `view = {"inline": True}` puts a small view in its first port row, between the port
 names, so the card keeps the size of any card. The file defines `aac-view-<type>`; the panel sets `.card` and calls `frame(data)` for
-every frame. The card sends frames with `self.show(data)`, which only goes out while a Nodes page shows the card
+every frame. The card sends frames with `self.show(data)`, which only goes out while a Cards page shows the card
 (`self.watched`: check it before computing anything). Keep frames small (a few dozen numbers), up to ~30 a second.
 
 ## A card's page

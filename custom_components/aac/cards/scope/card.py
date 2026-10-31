@@ -1,5 +1,5 @@
 """Scope: shows live audio inside the card in the grid (level bars, the waveform or the spectrum) and passes it on
-unchanged. Frames are made only while a Nodes page shows it."""
+unchanged. Frames are made only while a Cards page shows it."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import numpy as np
 
 from custom_components.aac.api import SAMPLE_RATE, Card, register
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.0.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 KEEP = 2048  # samples it looks at (0.13 s at 16 kHz)
 BANDS = 40  # spectrum bars, spread like hearing (log)

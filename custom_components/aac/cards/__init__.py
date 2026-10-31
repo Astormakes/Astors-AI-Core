@@ -171,7 +171,7 @@ class Card:
     # ------------------------------------------------------------------ for the panel
     @classmethod
     def describe(cls) -> dict[str, Any]:
-        """The type: for the node view's palette and the ? helper."""
+        """The type: for the Cards page's palette and the ? helper."""
         return {"type": cls.type, "title": cls.title, "category": cls.category, "help": cls.help,
                 "inputs": cls.inputs, "outputs": cls.outputs, "square": sorted(cls.square),
                 "settings": cls.settings_schema, "tags": cls.tags, "functions": cls.functions, "values": cls.values, "ports_help": cls.ports_help, "ui": cls.ui_url,
@@ -188,11 +188,11 @@ class Card:
 
     @property
     def watched(self) -> bool:
-        """An open Nodes page shows its view now (compute frames only then)."""
+        """An open Cards page shows its view now (compute frames only then)."""
         return self.core.watched(self.id)
 
     def show(self, data: Any) -> None:
-        """A frame for its view (only sent while a Nodes page shows it; keep it small, a few times a second)."""
+        """A frame for its view (only sent while a Cards page shows it; keep it small, a few times a second)."""
         if self.watched:
             self.core.notify("view", domain=self.domain.id, card=self.id, data=data)
 
@@ -200,7 +200,7 @@ class Card:
         return {"url": self.view_url, "element": f"aac-view-{self.type.replace('_', '-')}", **self.view} if self.view_url else None
 
     def summary(self) -> dict[str, Any]:
-        """This card: for the node view."""
+        """This card: for the Cards page."""
         ins, outs, square = self.ports()
         return {"id": self.id, "type": self.type, "title": self.name, "settings": self.settings, "functions": self.functions,
                 "inputs": ins, "outputs": outs, "square": sorted(square), "ui": self.ui_url, "view": self._view(),

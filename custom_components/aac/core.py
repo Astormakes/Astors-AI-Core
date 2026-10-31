@@ -30,7 +30,7 @@ def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:30] or "card"
 
 
-WATCH_SECONDS = 15  # an open Nodes page says every few seconds which views it shows
+WATCH_SECONDS = 15  # an open Cards page says every few seconds which views it shows
 CARD_FILES_EVERY = 10  # seconds between looks at the cards folder (a card file whose VERSION went up)
 
 class Domain:
@@ -303,8 +303,8 @@ class Core:
         """Initialize."""
         self.hass = hass
         self._store: Store = Store(hass, 1, "aac2.core")
-        self._watching: dict[str, float] = {}  # card → until when a Nodes page shows its view
-        self._nodes_until = 0.0  # until when a Nodes page is open
+        self._watching: dict[str, float] = {}  # card → until when a Cards page shows its view
+        self._page_until = 0.0  # until when a Cards page is open
         self.data: dict[str, Any] = {}
         self._channels: dict[str, list[tuple[Card, Callable[..., Any]]]] = {}
         self.pool = ModelPool(hass, [])
@@ -361,19 +361,19 @@ class Core:
                 self.notify("setup", domain=self.domain.id)
 
     def watch(self, cards: list[str]) -> None:
-        """An open Nodes page shows these cards' views (it says so again every few seconds)."""
+        """An open Cards page shows these cards' views (it says so again every few seconds)."""
         until = time.monotonic() + WATCH_SECONDS
-        self._nodes_until = until
+        self._page_until = until
         self._watching = {**{k: v for k, v in self._watching.items() if v > time.monotonic()}, **dict.fromkeys(cards, until)}
 
     def watched(self, card_id: str) -> bool:
-        """A Nodes page shows this card's view now."""
+        """A Cards page shows this card's view now."""
         return self._watching.get(card_id, 0) > time.monotonic()
 
     @property
-    def nodes_open(self) -> bool:
-        """A Nodes page is open (live wires are only sent then)."""
-        return self._nodes_until > time.monotonic()
+    def cards_page_open(self) -> bool:
+        """A Cards page is open (live wires are only sent then)."""
+        return self._page_until > time.monotonic()
 
     # ------------------------------------------------------------------ channels (design rule: the core never asks for a card type)
     @callback

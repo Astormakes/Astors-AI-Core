@@ -181,8 +181,8 @@ async def test_home_languages(hass, mock_entry, hass_ws_client):
 
 
 async def test_a_scope_shows_audio_only_while_watched(hass, mock_entry):
-    """A card's view: the Scope passes audio on and sends frames only while a Nodes page shows it; live wire levels
-    likewise only while a Nodes page is open."""
+    """A card's view: the Scope passes audio on and sends frames only while a Cards page shows it; live wire levels
+    likewise only while a Cards page is open."""
     from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
     from custom_components.aac.const import SIGNAL

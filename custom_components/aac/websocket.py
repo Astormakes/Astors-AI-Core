@@ -93,7 +93,7 @@ async def ws_card_remove(hass, connection, msg) -> None:
 
 @command({vol.Required("type"): "aac/view/watch", vol.Required("cards"): [str]})
 async def ws_view_watch(hass, connection, msg) -> None:
-    """An open Nodes page: which cards' views it shows (again every few seconds; live wires go only while it is open)."""
+    """An open Cards page: which cards' views it shows (again every few seconds; live wires go only while it is open)."""
     _core(hass).watch(msg["cards"])
     connection.send_result(msg["id"], {})
 
