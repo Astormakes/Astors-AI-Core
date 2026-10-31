@@ -244,8 +244,9 @@ async def test_home_access_list(hass: HomeAssistant, mock_entry):
 
 
 async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
-    """The Log card's input takes every kind; it writes down contexts, clips, audio start and stop, and what is new on
-    a dotted wire (a Chat's provides)."""
+    """The Log card's input takes every kind; it writes contexts, clips, audio start and stop, and what is new on a
+    dotted wire (a Chat's provides) into AAC's log. Its page shows what it wrote; allowed to read the log, all of it,
+    and models and dotted wires get it too."""
     import asyncio
     import time as time_mod
     from unittest.mock import patch
@@ -269,14 +270,20 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
         chat._new("Talk")["context"]["messages"].append({"id": "n1", "by": "chat", "kind": "said", "text": "a new line", "tags": [], "time": "", "data": {}, "state": "closed"})
         await asyncio.sleep(0.05)
         task.cancel()
-    texts = [(x["what"], x["text"]) for x in log.data["log"]]
-    kept = next(x for x in log.data["log"] if x["what"] == "clip")
+    own = (await log.ui_call("entries", {}))
+    texts = [(x["what"], x["text"]) for x in own["entries"]]
+    assert not own["all"] and all(x["card"] == log.id for x in own["entries"])  # not allowed: only what it wrote
+    assert ("context", "Model: answer #model.answer: Hello there  [1 entries]") in texts
+    assert ("clip", "PC: 1.4 s, phrase 2") in texts and ("audio", "PC: started") in texts
+    assert any(w == "audio" and t.startswith("PC: stopped") for w, t in texts) and ("read", "Chat.provides: said : a new line") in texts
+    kept = next(x for x in own["entries"] if x["what"] == "clip")
     assert kept["audio"].endswith(".wav") and (await log.ui_call("audio", {"file": kept["audio"]}))  # playable
-    await log.ui_call("clear", {})
-    assert not list(log.folder.glob("*.wav"))  # cleared with the log
-    assert ("context", "answer #model.answer: Hello there  [1 entries]") in texts
-    assert ("clip", "1.4 s, phrase 2") in texts and ("audio", "started") in texts
-    assert any(w == "audio" and t.startswith("stopped") for w, t in texts) and ("read", "said : a new line") in texts
+    assert "may not read" in (await log.call("read", {}))["error"] and not log.held("provides").entries
+    log = await d.update_card(log.id, settings={"may_read_log": True})  # the Permissions page
+    assert (await log.ui_call("entries", {}))["all"]
+    found = await log.call("read", {"card": "Log", "search": "phrase"})
+    assert "Log clip: PC: 1.4 s, phrase 2" in found and found.count("\n") == 0
+    assert "Added (Log)" in log.held("provides").entries[0]["text"]
 
 
 async def test_chat_archive(hass: HomeAssistant, mock_entry):

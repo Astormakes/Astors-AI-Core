@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import shutil
 import time
+from traceback import format_exc
 from typing import Any
 
 from homeassistant.core import HomeAssistant, callback
@@ -21,6 +22,7 @@ from homeassistant.helpers.storage import Store
 from .cards import CARD_TYPES, Card, renamed_refs
 from .const import LOGGER, SIGNAL
 from .flow import Flow
+from .log import DomainLog
 from .models import ModelPool
 
 UNDO_STEPS = 20
@@ -91,12 +93,14 @@ class Domain:
         self.slots: dict[str, Any] = {}
         self.user_tags: list[str] = []
         self.flow = Flow(self)
+        self.log = DomainLog(self)
         self._specs: dict[str, dict[str, Any]] = {}
         self.running = False  # its cards' timers and listeners run
 
     # ------------------------------------------------------------------ storage
     async def load(self) -> None:
         """Read the setup and make its cards."""
+        await self.log.load()
         data = await self._store.async_load() or {}
         self._specs = data.get("cards", {})
         self.wires = data.get("wires", [])
@@ -123,6 +127,7 @@ class Domain:
         self.redo = []
         for card in list(self.cards.values()):
             await self._end(card)
+        await self.log.close()
 
     async def _end(self, card: Card) -> None:
         """A card stops: its timers end (its unload) and the core channels it subscribed to forget it."""
@@ -132,7 +137,7 @@ class Domain:
     async def _make(self, card_id: str, spec: dict[str, Any]) -> Card | None:
         kind = CARD_TYPES.get(spec.get("type", ""))
         if kind is None:
-            LOGGER.warning("AAC: card type %s is not available (card %s)", spec.get("type"), card_id)
+            self.log.write("warning", f"Card type {spec.get('type')} is not available: the card is left out", card=card_id, what="missing")
             return None
         if spec.get("version") != kind.version:  # saved by another version of the card's file
             spec["settings"] = kind.upgrade(dict(spec.get("settings") or {}), spec.get("version") or "0")
@@ -211,6 +216,7 @@ class Domain:
         card = await self._make(new, self._specs[new])
         if at:
             self.positions[new] = {"x": at.get("x", 0), "y": at.get("y", 0)}
+        self.log.write("info", f"Added ({CARD_TYPES[card_type].title})", card=new, what="added")
         self.save()
         self.core.notify("setup", domain=self.id)
         return card
@@ -231,6 +237,8 @@ class Domain:
         self.wires = [w for w in self.wires if w["from"].split(".")[0] not in gone and w["to"].split(".")[0] not in gone]
         if drop_data:
             await self._drop_data(set(gone))
+        for card_id in gone:
+            self.log.write("info", "Removed" + (" with its data" if drop_data else ""), card=card_id, what="removed")
         self.save()
         self.core.notify("setup", domain=self.id)
 
@@ -245,7 +253,10 @@ class Domain:
         if title is not None:
             spec["title"] = title.strip() or spec["title"]
         if settings is not None:
+            changed = [k for k, v in settings.items() if (spec.get("settings") or {}).get(k) != v]
             spec["settings"] = {**spec.get("settings", {}), **settings}
+            if changed:
+                self.log.write("info", f"Settings changed: {', '.join(changed)}", card=card_id, what="settings")
         card = await self._make(card_id, spec)
         if title is not None and (new := self._wanted(card_id, spec["title"])):
             card = await self._move(card_id, new)
@@ -267,6 +278,8 @@ class Domain:
             if kind and (takes == "any" or kind in str(takes or "").split("|")) and {"from": w["from"], "to": w["to"]} not in found:
                 found.append({"from": w["from"], "to": w["to"]})
         self._remember()
+        if found != self.wires:
+            self.log.write("info", f"Wires changed ({len(found)} now)", what="wires")
         self.wires = found
         self.save()
         self.core.notify("setup", domain=self.id)
@@ -277,6 +290,7 @@ class Domain:
             return False
         last = self.undo.pop()
         self.redo = self._on_top(self.redo, self._snapshot())
+        self.log.write("info", "Undo", what="undo")
         await self._restore(last)
         return True
 
@@ -286,6 +300,7 @@ class Domain:
             return False
         nxt = self.redo.pop()
         self.undo = self._on_top(self.undo, self._snapshot())
+        self.log.write("info", "Redo", what="redo")
         await self._restore(nxt)
         return True
 
@@ -319,6 +334,7 @@ class Domain:
         if not (setup := self.slots.get(slot)):
             return False
         self._remember()
+        self.log.write("info", f"Slot {slot} loaded", what="slot")
         await self._restore(setup)
         return True
 
@@ -331,6 +347,7 @@ class Domain:
         if not isinstance(setup.get("cards"), dict) or not isinstance(setup.get("wires"), list):
             raise ValueError("not an AAC setup file")
         self.undo = self._on_top(self.undo, {**self._snapshot(), "positions": deepcopy(self.positions)})
+        self.log.write("info", f"Loaded from a file ({setup.get('domain') or 'no name'})", what="file")
         await self._restore({"cards": setup["cards"], "wires": setup["wires"], "positions": setup.get("positions") or {}})
 
     # ------------------------------------------------------------------ a card's id is its name
@@ -399,10 +416,11 @@ class Domain:
         for other in list(self.cards.values()):  # stored entries name it (its own too)
             await other.renamed(old, new)
         self.flow.held = {(f"{new}{k[len(old):]}" if k.startswith(f"{old}.") else k): v for k, v in self.flow.held.items()}
+        self.log.renamed(old, new)
+        self.log.write("info", f"Renamed: {old} is now {new} (its name)", card=new, what="renamed")
         if old in (folds := self.core.data.get("folds") or {}):
             folds[new] = folds.pop(old)
             self.core.save()
-        LOGGER.info("AAC: card %s is now %s (its name)", old, new)
         return card
 
     # ------------------------------------------------------------------ the rest
@@ -413,8 +431,8 @@ class Domain:
             if type(card).values:
                 try:
                     found[card.id] = card.current()
-                except Exception:  # noqa: BLE001 - one card's values must not break a template
-                    LOGGER.exception("AAC: values of %s", card.id)
+                except Exception as err:  # noqa: BLE001 - one card's values must not break a template
+                    self.log.write("error", f"Its values failed: {err!r}", card=card.id, what="failed", trace=format_exc()[-3000:])
         own = {"states", "now", "utcnow", "is_state", "state_attr", "cards", "audio", "languages"}  # HA's and the core's names win
         return {**{k: v for k, v in found.items() if k.isidentifier() and k not in own}, "cards": found,
                 "audio": self.core.audio.spoken(), "languages": self.core.languages()}
@@ -462,7 +480,8 @@ class Core:
         self.data.setdefault("facts", {})  # what llama.cpp said about each server's model while it was loaded (same keys)
         self.data.setdefault("servers", [])
         self.data.setdefault("domains", [])
-        self.pool = ModelPool(self.hass, self.data["models"], self.data["benches"], self.data["servers"], self.data["facts"], self.save)
+        self.pool = ModelPool(self.hass, self.data["models"], self.data["benches"], self.data["servers"], self.data["facts"], self.save,
+                              lambda level, text: self.log("models", level, text))
         for model in self.data["models"]:  # every model belongs to a server (its address and key come from it)
             self._give_server(model)
         if first:
@@ -544,6 +563,13 @@ class Core:
 
         return list(self.data.get("languages") or from_ha(self.hass.config.language, self.hass.config.country))
 
+    def log(self, part: str, level: str, text: str, **extra: Any) -> None:
+        """A part of AAC itself ("audio", "models" …) writes in the running domain's log (HA's log while none runs)."""
+        if self.domain is not None and not self.domain.log.closed:
+            self.domain.log.write(level, text, part=part, **extra)
+        else:
+            LOGGER.log(30 if level in ("error", "warning") else 20, "AAC %s: %s", part, text)
+
     def notify(self, what: str, **data: Any) -> None:
         """Tell open panels."""
         async_dispatcher_send(self.hass, SIGNAL, {"what": what, **data})
@@ -558,6 +584,7 @@ class Core:
         self.domain = Domain(self, info["id"], info["name"])
         await self.domain.load()
         await self.domain.start()
+        self.domain.log.write("info", f"Domain {info['name']} started ({len(self.domain.cards)} cards)", what="started")
         self.data["active"] = info["id"]
         self.save()
         self.notify("setup", domain=info["id"])
@@ -599,9 +626,9 @@ class Core:
         if self.data.get("active") == old:
             self.data["active"] = new
         self.save()
-        LOGGER.info("AAC: domain %s is now %s (its name)", old, new)
         if running:
             await self.switch(new)
+            self.domain.log.write("info", f"Renamed: {old} is now {new} (its name)", what="renamed")
 
     async def create(self, name: str) -> str:
         """A new, empty domain (no cards yet)."""
@@ -643,6 +670,7 @@ class Core:
         src = self.domain
         new_id = self._free_id(name)
         await src.save_now()
+        await src.log.flush()
         dst = Domain(self, new_id, name)
         dst._specs, dst.wires, dst.positions = deepcopy(src._specs), deepcopy(src.wires), deepcopy(src.positions)  # noqa: SLF001
         await dst.save_now()
@@ -651,6 +679,7 @@ class Core:
                 await dst.save_card_data(card_id, data)
         if await self.hass.async_add_executor_job(self.folder(src.id).is_dir):
             await self.hass.async_add_executor_job(shutil.copytree, self.folder(src.id), self.folder(new_id))
+            await self.hass.async_add_executor_job(lambda: dst.log.path.unlink(missing_ok=True))  # a copy starts its own log
         self.data["domains"].append({"id": new_id, "name": name})
         self.save()
         return new_id

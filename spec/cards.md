@@ -148,6 +148,24 @@ Through `self.core`:
   takes clips with `async clip(port, clip)` and a live stream with `stream(port, chunk, meta)`; it sends them with
   `self.domain.flow.clip(...)` / `flow.stream(...)`.
 - `notify(what, **data)`: tell open panels.
+- `log(part, level, text)`: a part of AAC itself ("audio", "models" …) writes in the running domain's log.
+
+**The log.** Each domain has AAC's own log (`self.domain.log`, the file `<config>/aac/data/<domain>/log.jsonl`: it moves
+with a rename, goes with the domain; a copy starts its own). It rotates: the newest 5,000 entries stay. An entry is
+`{id, time (epoch s), level (error, warning, info, flow), card | part, what, text (600 chars at most), port?, to?, n?
+(the same entry again right after it: counted up), trace?}`; while it is younger than 10 minutes it may carry the
+whole `context` (only in memory, never on disk). A card writes with `self.log(text, level="info", what="", context=None,
+**extra)` (the context goes along only when its Log setting says the whole context) and reads with
+`self.read_log(card=, part=, port=, what=, levels=, search=, before=, last=)` (part `"*"`: AAC itself): its own entries
+always, the rest only when the owner allowed it. Asking for that: `needs = {"read_log"}` on the class gives it the
+permission setting `may_read_log` (off; on the Permissions page). Every card has the settings `log` (`text`: what
+changed, the default; `context`: the whole context too; `nothing`) and `log_at` (`out`, the default; `in`; `both`) in
+the fold "Log": what passes its wires is written as `flow` entries (`what` in or out, `port`, `to`); snapshots are
+not. The core writes what fails (with the trace), a model that does not answer, a loop stopped, a call with no way
+back, and what the owner changes (cards added, removed, renamed, settings, wires, Undo, Redo, slots, files, the domain
+starting). HA's own log only hears about AAC running on Home Assistant (card files loading). The panel: Settings →
+Logs (filters, Save as text, Clear); a wire's monitor shows the entries of its output (`aac/monitor`; `aac/log`,
+`aac/log/clear`).
 
 Through `self.domain`: `flow.send(context, self.id, port)` (start a context at an output), `cards` (other cards, used
 only through what they offer: `call`, `current()`, `held()`, `dated()`), `template_values()` (every card's values: the Values panel, a Relay's script).

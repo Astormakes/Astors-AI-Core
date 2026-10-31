@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from custom_components.aac.api import LOGGER, SAMPLE_RATE, Card, pcm_to_wav, register
+from custom_components.aac.api import SAMPLE_RATE, Card, pcm_to_wav, register
 
-VERSION = "2.10.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.10.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 STREAM_PIECE = 2  # seconds of a live stream the Speaker plays at a time
 
@@ -64,7 +64,7 @@ class Speaker(Card):
                 "entity_id": where, "media_content_id": self.core.audio.clip_url(wav), "media_content_type": "music",
                 "announce": True}, blocking=True)
         except Exception as err:  # noqa: BLE001 - a speaker that fails must not break the chain
-            LOGGER.warning("AAC: playing on %s failed: %s", where, err)
+            self.log(f"Playing on {where} failed: {err}", "warning", what="play")
 
     async def stop(self, stop: dict[str, Any] | None = None) -> bool:
         busy = False

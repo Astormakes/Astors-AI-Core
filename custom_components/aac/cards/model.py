@@ -9,10 +9,10 @@ import json
 import re
 from typing import Any
 
-from custom_components.aac.api import (LOGGER, Card, Client, Context, ModelError, ModelUnreachable, entry, new_id, register, run,
+from custom_components.aac.api import (Card, Client, Context, ModelError, ModelUnreachable, entry, new_id, register, run,
                                       tool_spec)
 
-VERSION = "2.2.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.2.3"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
@@ -221,7 +221,7 @@ class Model(Card):
                     pool.mark_down(model_id, str(err))
                     tried.add(model_id)
                 except ModelError as err:
-                    LOGGER.warning("AAC: model %s failed: %s", model_id, err)
+                    self.log(f"Model {pool.name(model_id)} failed: {err}", "warning", what="model")
                     pool.heard_from(model_id, str(err))
                     too_long = "context" in str(err).lower() and any(w in str(err).lower() for w in ("exceed", "too long", "n_ctx"))
                     failed = ("Error: this chat is too long for the model's context. Start a new chat, or let fewer turns go "
@@ -229,7 +229,7 @@ class Model(Card):
                     break
         if reply is None:
             if dropped:
-                LOGGER.warning("AAC: %s: every model was busy and none queues; the context was dropped", self.id)
+                self.log("Every model was busy and none queues: the context was dropped", "warning", what="dropped")
             failed = failed or ("Error: every model was busy and none queues, so this was dropped." if dropped
                                 else "Error: no model was available.")
             if answer["text"]:  # it had begun: what came stays, cut off

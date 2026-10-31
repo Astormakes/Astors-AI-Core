@@ -55,6 +55,16 @@ const ICON = { // the grid's round buttons (drawn, so they look the same everywh
 const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", clip: "#9c27b0", any: "#ffffff" };
 const DAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
+// AAC's log (Settings → Logs, the Log card's page): entries come oldest first and show newest first; name(id): a card's name,
+// extra(entry): html before its text (the Log card's ▶ for a kept clip).
+const logTime = (t) => { const d = new Date(t * 1000);
+  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString() : d.toLocaleString([], { dateStyle: "short", timeStyle: "medium" }); };
+const logRows = (entries, name, extra = () => "") => entries.slice().reverse().map((e) => `<div class="logrow ${esc(e.level)}" data-logid="${e.id}">
+  <span class="lt">${esc(logTime(e.time))}</span><span class="ll">${esc(e.level)}</span>
+  <span class="lw">${esc(e.card ? name(e.card) : `AAC · ${e.part}`)} <span class="hint">${esc(e.what)}${e.port && e.port !== e.what ? ` (${esc(e.port)})` : ""}</span></span>
+  <span class="lx">${extra(e)}${esc(e.text)}${e.n ? ` <span class="hint">×${e.n}</span>` : ""}${e.context ? `<details class="fold"><summary>Whole context</summary>${contextView(e.context, name)}</details>` : ""}${e.trace ? `<details class="fold"><summary>Trace</summary><pre class="cvtext">${esc(e.trace)}</pre></details>` : ""}</span></div>`).join("");
+const logText = (entries, name) => entries.map((e) => `${new Date(e.time * 1000).toISOString()} ${e.level} ${e.card ? name(e.card) : `AAC (${e.part})`}${e.port ? ` ${e.port}` : ""} ${e.what}: ${e.text}${e.n ? ` (×${e.n})` : ""}${e.trace ? `\n  ${e.trace.trim().replace(/\n/g, "\n  ")}` : ""}`).join("\n");
+
 const STYLE = `
 :host { display: block; height: 100vh; color: var(--primary-text-color); background: var(--primary-background-color);
   font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
@@ -210,9 +220,16 @@ textarea { resize: vertical; }
 .hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
 .menu { display: none; background: none; border: none; font-size: 22px; padding: 4px 8px 4px 0; cursor: pointer; color: var(--primary-text-color); }
 .scrim { display: none; }
+.logrow { display: grid; grid-template-columns: 140px 64px 170px minmax(0, 1fr); gap: 2px 10px; padding: 5px 0; border-bottom: 1px solid var(--divider-color); font-size: 13px; align-items: baseline; }
+.logrow .lt { color: var(--secondary-text-color); font-size: 12px; white-space: nowrap; } .logrow .lx { word-break: break-word; min-width: 0; }
+.logrow .ll { justify-self: start; font-size: 11px; padding: 0 6px; border-radius: 8px; background: rgba(127,127,127,.15); }
+.logrow.error .ll { background: var(--error-color, #db4437); color: #fff; } .logrow.warning .ll { background: var(--warning-color, #ffa600); color: #000; }
+.logrow.error .lx { color: var(--error-color, #db4437); } .logrow.flow .ll { opacity: .7; }
+.logbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; } .logbar select, .logbar input { width: auto; flex: 1 1 140px; }
 @media (max-width: 800px) { nav { position: absolute; z-index: 20; height: 100%; transform: translateX(-100%); transition: transform .2s; } .root.navopen nav { transform: none; }
   .menu { display: inline-block; } .root.navopen .scrim { display: block; position: absolute; inset: 0; z-index: 15; background: rgba(0,0,0,.3); }
   .grip { display: none; }
+  .logrow { grid-template-columns: auto auto minmax(0, 1fr); } .logrow .lx { grid-column: 1 / -1; }
   .cardsview .palette, .cardsview .side { position: absolute; top: 0; bottom: 0; z-index: 8; width: min(85vw, 320px); background: var(--primary-background-color); box-shadow: 0 0 12px rgba(0,0,0,.3); }
   .cardsview .palette { left: 0; } .cardsview .side { right: 0; }
   .cardsview:not(.nopal) .edge.left { left: min(85vw, 320px); } .cardsview:not(.noside) .edge.right { right: min(85vw, 320px); }
@@ -345,6 +362,9 @@ class AacPanel extends HTMLElement {
       this.ws("aac/appearance").then((look) => { this.look = look; this.render(); });
     } else if (ev.what === "audio" && this.view.kind === "audio") {
       clearTimeout(this._at); this._at = setTimeout(async () => { this.audio = await this.ws("aac/audio"); this.render(); }, 300);
+    } else if (ev.what === "log") {
+      if (this.view.kind === "logs") this._logArrived(ev.entry);
+      if (this.view.kind === "card") this._els[this.view.card]?.event?.(ev); // a card's page that shows the log
     } else if (ev.what === "view") {
       this._viewEls?.[ev.card]?.frame?.(ev.data);
     } else if (ev.what === "level") {
@@ -410,6 +430,7 @@ class AacPanel extends HTMLElement {
     if (kind === "cards") this._watchIds = null; // say at once which views it shows
     if (kind === "card" && !this.nav.some((n) => n.card === card)) this.view.card = this.nav[0]?.card || null;
     if (kind === "models") { this.servers = null; this._loadServers(); clearInterval(this._srvLive); this._srvLive = setInterval(() => { if (this.view.kind !== "models") { clearInterval(this._srvLive); return; } this._loadServers(); }, 3000); }
+    if (kind === "logs") await this._loadLogs();
     if (kind === "audio") { this.audio = await this.ws("aac/audio"); clearInterval(this._live); this._live = setInterval(async () => { if (this.view.kind !== "audio") { clearInterval(this._live); return; } this.audio = await this.ws("aac/audio"); const b = this.shadowRoot.querySelector("#meters"); if (b) b.innerHTML = this._meters(); }, 700); }
     this.render();
     if (kind === "card") await this._showCard();
@@ -437,6 +458,7 @@ class AacPanel extends HTMLElement {
       go: (entry) => this.go("card", card, entry),
       header: (title, extra) => this._header(title, extra), cardTitle: (id) => this._card(id)?.title || id, esc, md, tip,
       contextView: (ctx) => contextView(ctx, (id) => this._card(id)?.title || id), // a context in sections
+      logRows: (entries, extra) => logRows(entries, (id) => this._card(id)?.title || id, extra), // log entries as Settings → Logs shows them
       failing: () => this._failing(), // names of models that do not answer (a page may warn)
       confirm: (text, ok, danger) => this.confirm(text, ok, danger), prompt: (text, value, multiline) => this.prompt(text, value, multiline),
       alert: (text) => this.alert(text), dialog: (o) => this.dialog(o), // AAC's own dialogs
@@ -460,7 +482,7 @@ class AacPanel extends HTMLElement {
     if (!this.state) { this.shadowRoot.innerHTML = `<style>${STYLE}</style><p style="padding:20px">Loading…</p>`; return; }
     const v = this.view;
     const main = v.kind === "cards" ? this._cardsView() : v.kind === "models" ? this._models() : v.kind === "audio" ? this._audioView()
-      : v.kind === "appearance" ? this._appearanceView() : v.kind === "permissions" ? this._permissionsView() : v.card ? '<div id="cardhost"></div>'
+      : v.kind === "appearance" ? this._appearanceView() : v.kind === "permissions" ? this._permissionsView() : v.kind === "logs" ? this._logsView() : v.card ? '<div id="cardhost"></div>'
       : `${this._header("AAC")}<div class="content"><p>No card with a page in this domain (a Chat, Lists …). Add one on the Cards page.</p></div>`;
     const skin = this.look?.skins.find((k) => k.id && k.id === this.look.skin);
     const page = `${v.kind}/${v.card || ""}`, before = this.shadowRoot.querySelector("main .content");
@@ -715,6 +737,69 @@ class AacPanel extends HTMLElement {
     this.sel = null; this._els = {}; await this._load(); this.go("cards");
   }
 
+  // ------------------------------------------------------------------ Settings → Logs: AAC's log of this domain
+  _logFilter() { const f = this.logs?.filter || {}; return { levels: f.levels ? f.levels.split(",") : undefined, card: f.who?.startsWith("card:") ? f.who.slice(5) : undefined, part: f.who === "aac" ? "*" : undefined, search: f.search || "" }; }
+
+  async _loadLogs(older = false) {
+    const keep = this.logs || { filter: { levels: "", who: "", search: "" }, entries: [] };
+    const before = older ? keep.entries[0]?.id : undefined;
+    const { entries } = await this.ws("aac/log", { ...this._logFilter(), before, last: 300 });
+    this.logs = { ...keep, entries: older ? [...entries, ...keep.entries] : entries, more: entries.length >= 300 };
+  }
+
+  _logMatches(e) {
+    const f = this._logFilter();
+    return (!f.levels || f.levels.includes(e.level)) && (!f.card || e.card === f.card) && (!f.part || e.part)
+      && (!f.search || `${e.what} ${e.text}`.toLowerCase().includes(f.search.toLowerCase()));
+  }
+
+  _logArrived(entry) { // a new entry (or a repeat counted up): in the list at once when it matches
+    if (!this.logs || !this._logMatches(entry)) return;
+    const list = this.logs.entries.filter((e) => e.id !== entry.id);
+    this.logs.entries = [...list, entry].slice(-2000);
+    clearTimeout(this._lt); this._lt = setTimeout(() => { const box = this.shadowRoot.querySelector("#logrows"); if (box) box.innerHTML = this._logList(); }, 300);
+  }
+
+  _logList() {
+    const name = (id) => this._card(id)?.title || id;
+    return (this.logs?.entries.length ? logRows(this.logs.entries, name) : '<p class="hint">Nothing in the log matches.</p>')
+      + (this.logs?.more ? '<button class="small" id="logolder" style="margin-top:8px">Show older</button>' : "");
+  }
+
+  _logsView() {
+    const f = this.logs?.filter || {}, opt = (v, label, cur) => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(label)}</option>`;
+    const levels = [["", "Everything"], ["error,warning,info", "Without what passed the wires"], ["error,warning", "Errors and warnings"], ["error", "Errors"], ["flow", "Only what passed the wires"]];
+    const who = [["", "Every card and AAC"], ["aac", "AAC itself (audio, models …)"], ...this.state.domain.cards.map((c) => [`card:${c.id}`, c.title])];
+    return `${this._header(`Log of "${this.state.domain.name}"`, `${tip("AAC's own log of this domain: what passed the cards' wires (each card's Log setting says what), what went wrong, what was changed. The newest 5,000 entries stay; a whole context stays with its entry 10 minutes and is never written to disk. A wire's monitor shows the same entries.")}
+      <button class="small" id="logsave" title="Save what the filter shows as a text file">Save</button><button class="small danger" id="logclear">Clear</button>`)}
+      <div class="content"><div class="logbar"><select id="loglevel">${levels.map(([v, l]) => opt(v, l, f.levels || "")).join("")}</select>
+        <select id="logwho">${who.map(([v, l]) => opt(v, l, f.who || "")).join("")}</select>
+        <input id="logsearch" type="search" placeholder="Search" value="${esc(f.search || "")}"></div>
+        <div id="logrows">${this.logs ? this._logList() : '<p class="hint">Loading…</p>'}</div></div>`;
+  }
+
+  _bindLogs() {
+    const $ = (s) => this.shadowRoot.querySelector(s);
+    const refilter = async () => { await this._loadLogs(); const box = $("#logrows"); if (box) box.innerHTML = this._logList(); this._bindLogs(); };
+    const set = (key, el) => { this.logs.filter = { ...this.logs.filter, [key]: el.value }; refilter(); };
+    $("#loglevel")?.addEventListener("change", (e) => set("levels", e.target));
+    $("#logwho")?.addEventListener("change", (e) => set("who", e.target));
+    const search = $("#logsearch");
+    if (search && !search._bound) { search._bound = true; search.addEventListener("input", () => { clearTimeout(this._ls); this._ls = setTimeout(() => set("search", search), 300); }); }
+    $("#logolder")?.addEventListener("click", async () => { await this._loadLogs(true); $("#logrows").innerHTML = this._logList(); this._bindLogs(); });
+    const clear = $("#logclear");
+    if (clear && !clear._bound) {
+      clear._bound = true;
+      clear.addEventListener("click", async () => { if (!(await this.confirm("Clear AAC's whole log of this domain?", "Clear", true))) return; await this.ws("aac/log/clear"); await refilter(); });
+      $("#logsave").addEventListener("click", async () => {
+        const { entries } = await this.ws("aac/log", { ...this._logFilter(), last: 5000 }), a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([logText(entries, (id) => this._card(id)?.title || id)], { type: "text/plain" }));
+        a.download = `aac-log-${this.state.domain.id}-${new Date().toISOString().slice(0, 16).replace(":", "-")}.txt`;
+        a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      });
+    }
+  }
+
   _permSummary(c, fs) { // a folded card's permissions in a few words
     return fs.map(([k, f]) => { const v = c.settings[k] ?? f.default;
       if (f.type === "bool") return `${v ? "✓" : "✗"} ${f.title.toLowerCase()}`;
@@ -775,9 +860,10 @@ class AacPanel extends HTMLElement {
       `data-go="card" data-card="${esc(n.card)}" data-id="" title="Open its page"`)).join("");
     const single = this.nav.filter((n) => !n.nav).map((n) => item(n.title, "card", n.card)).join("");
     const failing = this._failing();
-    const settings = group("settings", "Settings", ["audio", "models", "appearance"].includes(v.kind),
-      `${item("Audio", "audio")}${item("Models", "models").replace('data-go="models"', `data-go="models" ${failing.length ? "data-warn" : ""}`)}${item("Appearance", "appearance")}`, "",
-      `data-go="${["audio", "models", "appearance"].includes(v.kind) ? v.kind : failing.length ? "models" : "audio"}" data-peek="settings" ${failing.length ? `data-alarm title="Not answering: ${esc(failing.join(", "))}"` : ""}`);
+    const pages = ["audio", "models", "logs", "appearance"];
+    const settings = group("settings", "Settings", pages.includes(v.kind),
+      `${item("Audio", "audio")}${item("Models", "models").replace('data-go="models"', `data-go="models" ${failing.length ? "data-warn" : ""}`)}${item("Logs", "logs")}${item("Appearance", "appearance")}`, "",
+      `data-go="${pages.includes(v.kind) ? v.kind : failing.length ? "models" : "audio"}" data-peek="settings" ${failing.length ? `data-alarm title="Not answering: ${esc(failing.join(", "))}"` : ""}`);
     return `<nav><div class="top"><button class="menu" id="habtn" title="Home Assistant's menu">⌂</button><b>AAC</b><span>v${esc(s.version)}</span></div>
       <div class="dom">${this._domainMenu()}</div>
       <div class="scroll">${groups}${single ? `<h4>MORE</h4>${single}` : ""}</div>
@@ -1224,7 +1310,7 @@ class AacPanel extends HTMLElement {
       ${c.tools ? `<label>Its tools ${tip("The cards in its loop (wired from its output back into it, straight or round through other cards) with at least one function ticked under For models. A call goes there along the wires and comes back.")}</label>
         <div class="row" style="flex-wrap:wrap;gap:4px">${c.tools.map((id) => `<button class="small" data-selcard="${esc(id)}" title="Select it">${esc(this._card(id)?.title || id)}</button>`).join("") || '<span class="hint">none: wire a card with functions into its loop</span>'}</div>` : ""}
       ${Object.entries(Object.entries(t?.settings || {}).filter(([, f]) => f.fold).reduce((g, e) => ({ ...g, [e[1].fold]: [...(g[e[1].fold] || []), e] }), {}))
-        .map(([name, fs]) => `<details class="fold" ${fs.some(([k]) => c.settings[k]) ? "open" : ""}><summary>${esc(name)}</summary>${fs.map(field).join("")}</details>`).join("")}
+        .map(([name, fs]) => `<details class="fold" ${fs.some(([k, f]) => JSON.stringify(c.settings[k] ?? null) !== JSON.stringify(f.default ?? null)) ? "open" : ""}><summary>${esc(name)}</summary>${fs.map(field).join("")}</details>`).join("")}
       ${this._portDocs(c, t)}
       ${Object.keys(t?.values || {}).length ? `<details class="fold"><summary>Values (for scripts)</summary>${Object.entries(t.values).map(([n, h]) => `<div class="fn"><code>${esc(/^[A-Za-z_]\w*$/.test(c.id) ? c.id : `cards['${c.id}']`)}.${esc(n)}</code> ${esc(h)}</div>`).join("")}</details>` : ""}
       ${Object.keys(c.tags).length ? `<details class="fold"><summary>Tags</summary>${Object.entries(c.tags).map(([x, w]) => `<div class="fn"><code>${esc(x)}</code> ${esc(w)}</div>`).join("")}</details>` : ""}
@@ -1612,7 +1698,7 @@ class AacPanel extends HTMLElement {
       <button class="small" data-monoff="${esc(key)}">Stop monitoring</button>
       ${msg?.messages ? `<label>NEWEST CONTEXT · ${esc(new Date(msg.time * 1000).toLocaleTimeString())}</label><p class="hint">Way: ${esc((msg.way || []).map(name).join(" › "))}</p>${contextView(msg, name)}`
         : msg?.clip ? `<label>NEWEST</label><p>${esc(msg.clip)} from ${esc(msg.source)}</p>` : ""}
-      <label>PASSED LATELY</label>${recs || '<p class="hint">Nothing yet (kept 10 minutes).</p>'}`;
+      <label>PASSED LATELY ${tip("From AAC's log (Settings → Logs): what the card's Log setting writes down.")}</label>${recs || `<p class="hint">${m.off ? `${esc(name(from))}'s Log setting writes nothing going out, so nothing shows here.` : "Nothing yet."}</p>`}`;
   }
 
   _bindMonitorSide() {
@@ -1826,6 +1912,7 @@ class AacPanel extends HTMLElement {
     this._grips();
     $("#scrim")?.addEventListener("click", () => { this.navOpen = false; this.shadowRoot.querySelector(".root").classList.remove("navopen"); });
     $("#habtn")?.addEventListener("click", () => this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true })));
+    if (this.view.kind === "logs") this._bindLogs();
     // the Cards page
     $$("[data-pick]").forEach((el) => el.addEventListener("click", () => { this.selType = this.selType === el.dataset.pick ? null : el.dataset.pick; if (this.selType && this._phone()) this._panel("pal", false); else this.render(); }));
     $("#paltog")?.addEventListener("click", () => this._panel("pal", !this.palOpen));

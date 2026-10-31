@@ -30,6 +30,16 @@ UI_URL = "/aac_cards"  # a card file's UI (<stem>.js next to it) is served here
 FUNCTIONS = {"type": "functions", "title": "For models", "default": {}, "fold": "For models", "permission": True,
              "help": "A Model wired to this card and back has these functions as tools: each ticked one, under the name "
                      "and with the description written here (Reset: the card's own). The card's id never reaches the model."}
+LOG = {"log": {"type": "select", "title": "What it writes in the log", "default": "text", "fold": "Log",
+               "options": [["text", "what changed (the newest text)"], ["context", "the whole context too (kept 10 minutes)"],
+                           ["nothing", "nothing"]],
+               "help": "What passes the card's wires goes into AAC's log (Settings → Logs; a wire's monitor shows it). A whole "
+                       "context takes much room: it stays with its entry 10 minutes and is never written to disk. What goes "
+                       "wrong is always written."},
+       "log_at": {"type": "select", "title": "When", "default": "out", "fold": "Log",
+                  "options": [["out", "what goes out"], ["in", "what comes in"], ["both", "both"]]}}
+NEEDS = {"read_log": {"type": "bool", "title": "May read AAC's log", "default": False, "permission": True,
+                      "help": "The log of this domain: what passed the cards' wires, what went wrong, what was changed."}}
 CATEGORIES = ["In and out", "Text", "Logic", "Models", "Data", "Home Assistant", "Audio", "Other"]
 
 
@@ -82,6 +92,7 @@ def register(cls: type[Card]) -> type[Card]:
                                for k, f in cls.settings_schema.items()}
     if (cls.functions or cls.dynamic_functions) and "functions" not in cls.settings_schema:  # every card with functions
         cls.settings_schema = {**cls.settings_schema, "functions": FUNCTIONS}
+    cls.settings_schema = {**cls.settings_schema, **{f"may_{n}": NEEDS[n] for n in sorted(cls.needs)}, **LOG}  # every card
     CARD_TYPES[cls.type] = cls
     return cls
 
@@ -109,6 +120,7 @@ class Card:
     view: ClassVar[dict[str, Any] | None] = None  # a view inside the card in the grid ({"height": px}): view.js in its folder
     view_url: ClassVar[str | None] = None
     keeps_data: ClassVar[bool] = False
+    needs: ClassVar[set[str]] = set()  # what it asks the owner for (NEEDS): a permission setting may_<need>, off until allowed
     version: ClassVar[str] = "0"  # its file's VERSION
 
     def __init__(self, domain: Domain, card_id: str, title: str, settings: dict[str, Any] | None) -> None:
@@ -123,6 +135,19 @@ class Card:
     def folder(self) -> Path:
         """Where it keeps files (<config>/aac/data/<domain>/<card>): they move with a rename and go with the domain."""
         return self.core.folder(self.domain.id, self.id)
+
+    def log(self, text: str, level: str = "info", what: str = "", context: Context | None = None, **extra: Any) -> dict[str, Any]:
+        """A line in AAC's log from this card (level: error, warning, info); a context goes with it only when its Log
+        setting says the whole context."""
+        whole = context.summary() if context is not None and self.settings.get("log") == "context" else None
+        return self.domain.log.write(level, text, card=self.id, what=what, context=whole, **extra)
+
+    def read_log(self, **filters: Any) -> list[dict[str, Any]]:
+        """AAC's log of its domain (DomainLog.read's filters), when the owner allowed it ("read_log" in its needs); what
+        it wrote itself (card=its id) it may always read."""
+        if not self.settings.get("may_read_log") and filters.get("card") != self.id:
+            raise PermissionError(f"{self.name} may not read AAC's log (allow it on the Permissions page)")
+        return self.domain.log.read(**filters)
 
     def current(self) -> dict[str, Any]:
         """Its values now (see `values`)."""

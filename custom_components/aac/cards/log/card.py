@@ -1,23 +1,25 @@
-"""Log: writes down whatever reaches its one input, of any kind: a context (its newest entry), a clip (kept as audio to
-listen to), audio starting and stopping, and on a dotted wire what is new in what is provided there. Its page in the
-sidebar shows the log."""
+"""Log: puts whatever reaches its one input into AAC's log, of any kind: a context (its newest entry), a clip (kept as
+audio to listen to), audio starting and stopping, and on a dotted wire what is new in what is provided there. Allowed
+to read AAC's log (Permissions), it shows the whole log on its page, gives it to models and provides it on a dotted
+wire; otherwise its page shows what it wrote itself."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import re
 import time
 from typing import Any
 
-from homeassistant.util import dt as dt_util
-
 from custom_components.aac.api import SAMPLE_RATE, Card, Context, new_id, pcm_to_wav, register
 
-VERSION = "1.2.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 READ_EVERY = 2  # seconds between looks at what dotted wires provide
 QUIET = 1.5  # seconds without audio from a satellite: it stopped
+PROVIDED = 50  # the newest entries a dotted wire from 'provides' reads
+SHOWN = 300  # entries its page shows at once
 
 
 @register
@@ -27,18 +29,25 @@ class Log(Card):
     type = "log"
     title = "Log"
     category = "Data"
-    help = ("Writes down whatever reaches its input, of any kind: a context (its newest entry and where it came from), a "
-            "clip (length, satellite), audio starting and stopping, and on a dotted wire what is new in what is "
-            "provided there. Its page in the sidebar shows the log, newest first.")
+    help = ("Puts whatever reaches its input into AAC's log (Settings → Logs): a context (its newest entry and where it "
+            "came from), a clip (length, satellite), audio starting and stopping, and on a dotted wire what is new in what "
+            "is provided there. Allowed to read AAC's log (Permissions), it shows the whole log on its page, models can "
+            "read it, and 'provides' gives it to cards that read.")
     inputs = {"in": "any"}
-    outputs: dict[str, str] = {}
-    ports_help = {"in": "anything: contexts, clips, audio, a dotted wire from what a card provides"}
-    settings_schema = {"keep": {"type": "number", "title": "Entries kept", "default": 300, "min": 10},
-                       "audio": {"type": "bool", "title": "Keep clips as audio", "default": True,
+    outputs = {"provides": "read"}
+    ports_help = {"in": "anything: contexts, clips, audio, a dotted wire from what a card provides",
+                  "provides": "AAC's newest log entries, for cards that read (dotted; when it may read the log): one entry"}
+    settings_schema = {"audio": {"type": "bool", "title": "Keep clips as audio", "default": True,
                                  "help": "Each clip is saved as a WAV file (config/aac/data/<domain>/<card>/) and can be played on its page."},
                        "audio_kept": {"type": "number", "title": "Clips kept", "default": 50, "min": 1,
                                       "help": "Older clips' audio is deleted."}}
-    keeps_data = True
+    needs = {"read_log"}
+    functions = {"read": {"help": "AAC's log of this domain, newest last: what passed the cards' wires, what went wrong, "
+                                  "what was changed.",
+                          "args": {"search": {"type": "string", "help": "A word in the entry."},
+                                   "card": {"type": "string", "help": "Only what this card wrote (its name)."},
+                                   "level": {"type": "string", "help": "Only error, warning, info or flow (what passed the wires)."},
+                                   "last": {"type": "number", "help": "How many entries (default 30)."}}}}
     ui = True
 
     def __init__(self, *args: Any) -> None:
@@ -47,8 +56,10 @@ class Log(Card):
         self._seen: dict[str, set[str]] = {}  # dotted wire → entry ids already written down
         self._audio: dict[str, list[float]] = {}  # satellite → [started, last chunk]
 
-    def default_data(self) -> dict[str, Any]:
-        return {"log": []}
+    @classmethod
+    def upgrade(cls, settings: dict[str, Any], made_with: str) -> dict[str, Any]:
+        settings.pop("keep", None)  # 1.3.0: AAC's log keeps the entries
+        return settings
 
     async def start(self) -> None:
         self._task = self.hass.async_create_background_task(self._watch(), f"aac {self.id} watch")
@@ -57,12 +68,8 @@ class Log(Card):
         if self._task:
             self._task.cancel()
 
-    def _write(self, what: str, came_from: str, text: str, **extra: Any) -> None:
-        log = self.data.setdefault("log", [])
-        log.append({"time": dt_util.utcnow().isoformat(), "what": what, "from": came_from, "text": text[:600], **extra})
-        del log[:-max(10, int(self.settings.get("keep") or 300))]
-        self.hass.async_create_task(self.save())
-        self.core.notify("card", domain=self.domain.id, card=self.id)
+    def _write(self, what: str, came_from: str, text: str, context: Context | None = None, **extra: Any) -> None:
+        self.log(f"{came_from}: {text}" if came_from else text, what=what, context=context, **extra)
 
     @staticmethod
     def _entry(e: dict[str, Any]) -> str:
@@ -74,7 +81,7 @@ class Log(Card):
         came_from = context.way[-2] if len(context.way) > 1 else context.origin
         newest = context.entries[-1] if context.entries else None
         what = "snapshot" if context.progress else "context"
-        self._write(what, self._name(came_from), (self._entry(newest) if newest else "(empty)") + f"  [{len(context.entries)} entries]")
+        self._write(what, self._name(came_from), (self._entry(newest) if newest else "(empty)") + f"  [{len(context.entries)} entries]", context)
         return []
 
     async def progress(self, context: Context, port: str) -> list[Any] | None:
@@ -135,17 +142,56 @@ class Log(Card):
         card = self.domain.cards.get(card_id)
         return card.name if card else card_id
 
+    def _card_id(self, name: str) -> str | None:
+        """A card named so (or with that id)."""
+        word = name.strip().lower()
+        return next((c.id for c in self.domain.cards.values() if word in (c.id, c.name.lower())), word or None)
+
+    def _lines(self, entries: list[dict[str, Any]]) -> str:
+        """Entries as text for a model: time, level, who, what."""
+        def who(e: dict[str, Any]) -> str:
+            return self._name(e["card"]) if e.get("card") else f"AAC ({e.get('part')})"
+        return "\n".join(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(e['time']))} {e['level']} {who(e)}"
+                         f"{f' {p}' if (p := e.get('port')) else ''} {e['what']}: {e['text']}{f' (×{e['n']})' if e.get('n') else ''}"
+                         for e in entries)
+
+    async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
+        if function != "read":
+            return await super().call(function, args, context)
+        level = str(args.get("level") or "").strip().lower()
+        try:
+            found = self.read_log(search=str(args.get("search") or ""), card=self._card_id(str(args.get("card") or "")),
+                                  levels=[level] if level else None, last=max(1, min(int(args.get("last") or 30), 200)))
+        except PermissionError as err:
+            return {"error": str(err)}
+        return self._lines(found) or "Nothing in the log matches."
+
+    def held(self, port: str) -> Context | None:
+        """What a dotted wire from 'provides' reads: AAC's newest log entries as one entry (when it may read the log)."""
+        if port != "provides":
+            return None
+        context = Context(origin=self.id)
+        try:
+            found = self.read_log(levels=["error", "warning", "info"], last=PROVIDED)
+        except PermissionError:
+            return context
+        if found:
+            text = self._lines(found)
+            entry = context.add(self.id, "note", text, ["text"])
+            entry["id"] = hashlib.sha1(f"{self.id}|{text}".encode()).hexdigest()[:10]
+        return context
+
     async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
+        if action == "entries":  # for its page: the whole log when it may read it, else what it wrote itself
+            allowed = bool(self.settings.get("may_read_log"))
+            before = int(args["before"]) if args.get("before") else None
+            found = self.read_log(card=None if allowed else self.id, before=before, last=SHOWN)
+            names = {c.id: c.name for c in self.domain.cards.values()}
+            return {"entries": found, "all": allowed, "names": names}
         if action == "audio":  # one kept clip, to play
             name = str(args.get("file") or "")
             path = self.folder / name
             if not re.fullmatch(r"[0-9a-f]+\.wav", name) or not path.is_file():
                 raise ValueError("that clip is no longer kept")
             return base64.b64encode(await self.hass.async_add_executor_job(path.read_bytes)).decode()
-        if action == "clear":
-            await self.hass.async_add_executor_job(lambda: [p.unlink() for p in self.folder.glob("*.wav")] if self.folder.is_dir() else None)
-            self.data["log"] = []
-            await self.save()
-            self.core.notify("card", domain=self.domain.id, card=self.id)
-            return {"cleared": True}
         return await super().ui_call(action, args)

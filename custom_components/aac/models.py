@@ -17,7 +17,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.util import dt as dt_util
 
-from .const import LOGGER, SIGNAL
+from .const import SIGNAL
 
 DOWN_FOR = 60  # seconds a model that did not answer is skipped
 
@@ -311,15 +311,16 @@ class ModelPool:
 
     def __init__(self, hass: HomeAssistant, models: list[dict[str, Any]], benches: dict[str, Any] | None = None,
                  servers: list[dict[str, Any]] | None = None, facts: dict[str, Any] | None = None,
-                 save: Callable[[], None] = lambda: None) -> None:
+                 save: Callable[[], None] = lambda: None, log: Callable[[str, str], None] = lambda level, text: None) -> None:
         """Initialize with the stored lists: models, the last benchmarks, the servers the models are on, what each
-        server's models are (kept from when they were loaded); `save` keeps them."""
+        server's models are (kept from when they were loaded); `save` keeps them, `log(level, text)` writes in AAC's log."""
         self.hass = hass
         self.models = models
         self.benches = benches if benches is not None else {}
         self.server_list = servers if servers is not None else []
         self.facts = facts if facts is not None else {}
         self._save = save
+        self.log = log
         self._down: dict[str, float] = {}
         self.progress: dict[str, int] = {}  # "<server> <model>" → its last download / load progress (router())
         self.heard: dict[str, dict[str, Any]] = {}  # server id → when it last answered / failed (since AAC started)
@@ -330,6 +331,10 @@ class ModelPool:
     def get(self, model_id: str) -> dict[str, Any] | None:
         """A model by id."""
         return next((m for m in self.models if m["id"] == model_id), None)
+
+    def name(self, model_id: str) -> str:
+        """A model's name in AAC (its id when it is gone)."""
+        return (self.get(model_id) or {}).get("name") or model_id
 
     def tags(self, model_id: str) -> list[str]:
         """What a model can do (its tags, else a guess from its name)."""
@@ -410,7 +415,7 @@ class ModelPool:
         """Skip it for a while."""
         self.heard_from(model_id, error or "no answer")
         self._down[model_id] = time.monotonic() + DOWN_FOR
-        LOGGER.warning("AAC: model %s does not answer, skipped for %s s", model_id, DOWN_FOR)
+        self.log("warning", f"Model {self.name(model_id)} does not answer ({error or 'no answer'}): skipped for {DOWN_FOR} s")
         if model_id not in self.failing:
             self.failing.add(model_id)
             async_dispatcher_send(self.hass, SIGNAL, {"what": "models"})
@@ -517,7 +522,7 @@ async def run(pool: ModelPool, entries: list[dict[str, Any]], job: Callable[[dic
             except ModelUnreachable as err:
                 pool.mark_down(model_id, str(err))
             except ModelError as err:
-                LOGGER.info("AAC: model %s failed: %s", model_id, err)
+                pool.log("warning", f"Model {pool.name(model_id)} failed: {err}")
                 pool.heard_from(model_id, str(err))
             else:
                 pool.mark_up(model_id)

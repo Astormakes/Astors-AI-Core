@@ -582,3 +582,75 @@ async def test_a_card_id_is_its_name(hass: HomeAssistant, mock_entry, aioclient_
     assert "rules" in d.cards and "charter" not in d.cards and {"from": "chat.said", "to": "rules.in"} in d.wires
     await d.add_card("buffer", "Rules")  # a second card with that name
     assert "rules_2" in d.cards
+
+
+async def test_aacs_own_log(hass: HomeAssistant, mock_entry, hass_ws_client):
+    """AAC's log (progress 38): what passes a card's wires as its Log setting says (the monitor reads it), whole contexts
+    only a few minutes and never on disk, a repeat counted up, what fails with its trace, entries following a card's
+    rename, rotation, kept over a restart and a domain rename; a copy starts its own log."""
+    import time
+    from unittest.mock import patch
+
+    from custom_components.aac.context import Context
+
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    await d.add_card("relay", "A")
+    await d.add_card("log", "Sink")
+    d.set_wires([*d.wires, {"from": "a.out", "to": "sink.in"}])
+    first = Context(origin="a")
+    first.add("a", "said", "first line", [])
+    await d.flow.send(first, "a", "out")
+    out = d.log.read(card="a", what="out")
+    assert out[-1]["text"] == "first line" and out[-1]["port"] == "out" and out[-1]["to"] == ["sink.in"] and "context" not in out[-1]
+    assert not d.log.read(card="a", what="in")  # by default only what goes out
+
+    a = await d.update_card("a", settings={"log": "context", "log_at": "both"})
+    second = Context(origin="x")
+    second.add("x", "said", "second", [])
+    await d.flow.enter(a, "in", second)
+    got = d.log.read(card="a", levels=["flow"], last=2)
+    assert [e["what"] for e in got] == ["in", "out"] and all(e["context"]["messages"] for e in got)
+    with patch("custom_components.aac.log.time.time", return_value=time.time() + 601):  # whole contexts go
+        assert all("context" not in e for e in d.log.read(card="a"))
+
+    await d.update_card("a", settings={"log": "nothing"})
+    before = len(d.log.read(card="a", levels=["flow"]))
+    await d.flow.send(first, "a", "out")
+    assert len(d.log.read(card="a", levels=["flow"])) == before
+    client = await hass_ws_client(hass)
+    await client.send_json({"id": 1, "type": "aac/monitor", "wire": "a.out"})
+    mon = (await client.receive_json())["result"]
+    assert mon["off"] and mon["records"][-1]["text"] == "second"
+
+    for _ in range(3):
+        d.log.write("warning", "same thing", part="audio")
+    assert d.log.entries[-1]["n"] == 3 and d.log.read(part="*", levels=["warning"])[-1]["text"] == "same thing"
+
+    sink = d.cards["sink"]
+    with patch.object(type(sink), "handle", side_effect=RuntimeError("boom")):
+        await d.flow.send(first, "a", "out")
+    err = d.log.read(levels=["error"])[-1]
+    assert err["card"] == "sink" and "boom" in err["text"] and "RuntimeError" in err["trace"]
+    await d.update_card("sink", title="Drain")  # its entries follow its id
+    assert d.log.read(card="drain", levels=["error"]) and not d.log.read(card="sink", levels=["error"])
+
+    with patch("custom_components.aac.log.KEEP", 5):
+        for i in range(8):
+            d.log.write("info", f"n{i}", part="core")
+        assert [e["text"] for e in d.log.entries] == ["n3", "n4", "n5", "n6", "n7"]
+    a = await d.update_card("a", settings={"log": "context"})
+    await d.flow.send(first, "a", "out")
+    await d.log.flush()
+    on_disk = await hass.async_add_executor_job(d.log.path.read_text)
+    assert '"messages"' not in on_disk and "n7" in on_disk  # a whole context never reaches the disk
+
+    await client.send_json({"id": 2, "type": "aac/log", "search": "n7"})
+    assert [e["text"] for e in (await client.receive_json())["result"]["entries"]] == ["n7"]
+    new_id = await core.rename(d.id, "Home Base")  # the file moves with the domain and is read again
+    assert core.domain.id == new_id and core.domain.log.read(search="n7") and core.domain.log.read(what="renamed")
+    copy = await core.clone("Copy")
+    assert not await hass.async_add_executor_job((core.folder(copy) / "log.jsonl").exists)
+    await client.send_json({"id": 3, "type": "aac/log/clear"})
+    await client.receive_json()
+    assert not core.domain.log.entries and not await hass.async_add_executor_job(core.domain.log.path.read_text)

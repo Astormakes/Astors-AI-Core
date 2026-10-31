@@ -11,14 +11,15 @@ import asyncio
 import json
 import sys
 import time
+from traceback import format_exc
 from typing import Any
 
-from custom_components.aac.api import LOGGER, Card, Context, new_id, register
+from custom_components.aac.api import Card, Context, new_id, register
 
 sys.modules.pop(f"{__name__}.script", None)  # a newer card file brings a newer script.py
 from .script import REFERENCE, Run, Script, check, reference_text  # noqa: E402
 
-VERSION = "2.2.2"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
+VERSION = "2.2.3"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
 
 KEEP_TURNS = 20  # turns whose side effects (stop, calls) are remembered, so a snapshot and the finished turn do them once
 WAIT = 20  # seconds a script may run
@@ -78,7 +79,7 @@ class Relay(Card):
         if self._script is None or self._script.source != source:
             self._script = check(source)
             if self._script.problems:
-                LOGGER.warning("AAC: the script of %s: %s", self.id, "; ".join(self._script.problems))
+                self.log(f"Its script: {'; '.join(self._script.problems)}", "warning", what="script")
         return self._script
 
     def ports(self) -> tuple[dict[str, str], dict[str, str], set[str]]:
@@ -110,13 +111,13 @@ class Relay(Card):
             await asyncio.wait_for(self.hass.async_add_executor_job(run.go, script), WAIT)
         except TimeoutError:  # the thread goes on by itself; the turn does not wait for it
             run.problems.append(f"the script ran longer than {WAIT} s")
-        except Exception:  # noqa: BLE001
-            LOGGER.exception("AAC: the script of %s", self.id)
+        except Exception as err:  # noqa: BLE001
+            self.log(f"Its script failed: {err!r}", "error", what="script", trace=format_exc()[-3000:])
         if not snapshot or run.problems:
             self.last_run = {"time": time.time(), "ran": run.ran, "printed": run.printed, "problems": run.problems,
                              "outputs": run.outputs or ["out"]}
         if run.problems:
-            LOGGER.warning("AAC: the script of %s: %s", self.id, "; ".join(run.problems))
+            self.log(f"Its script: {'; '.join(run.problems)}", "warning", what="script")
         if run.stop_all:
             await self.domain.stop()
             return []

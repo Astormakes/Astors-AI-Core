@@ -3,8 +3,21 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.32, live on the owner's HA
+## Current state (2026-10-31) – 2.3.33, live on the owner's HA
 
+- **2026-10-31 (2.3.33): item 38, AAC's own log** (owner and a friend: a proper logging mechanism in AAC itself).
+  `log.py` `DomainLog` per domain, `<config>/aac/data/<domain>/log.jsonl` (appended every 2 s, written anew past 6,000
+  lines; moves with a rename, goes with the domain, a copy starts its own). Rotates at 5,000 entries; whole contexts
+  stay 10 minutes in memory only; a repeat counts up (`n`). Levels error, warning, info, flow. Every card has the fold
+  "Log" (`log`: what changed / whole context / nothing; `log_at`: out / in / both; default what changed going out);
+  `self.log(...)`, `self.read_log(...)` (own entries always, the rest with `needs = {"read_log"}` → permission
+  `may_read_log`, the start of item 20's card layer). The core writes failures with their trace, models not answering,
+  loops, no way back, failing functions, and what the owner changes; HA's log keeps only card files loading and the
+  first start. Wire monitors read the log (`aac/monitor` says `off` when the card writes nothing going out). Settings →
+  Logs: level / card filters, search, Show older, Save as text, Clear; live. Log card 1.3.0: writes into the log,
+  allowed to read it shows all of it on its page, function `read`, output `provides`; its own data store is gone.
+  A setting fold opens when a setting in it differs from its default (For models was always open). Tested locally
+  (a real message, Logs page, monitor, a throwaway Log card with and without permission, phone width).
 - **2026-10-31 (2.3.31, 2.3.32): item 29, Models page.** The top list has headings (Name in AAC, Server, The server's
   model, Can do, Now; hidden on a phone, where rows wrap), each AAC model shows what the server's model is (parameters,
   context) and its state in words (✓ ok / ✗ not answering; idle / busy n of m / waiting). A router's numbers for a
@@ -563,6 +576,9 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     domain layer lists permissions per accessible thing and decides whether cards can even see that a thing exists
     before they can ask for it. Needs a general look: a Home Assistant card cannot know the entities it should ask
     for (today the owner fills its access list beforehand and a model finds only what is not hidden).
+    Owner (2026-10-31): the domain layer comes first, on top and separate from the cards: per thing **list** (cards may
+    know it exists), **read** or **full**. A domain loaded from the internet with its own cards and wires must be under
+    precise control: what it can see and do.
 21. **Card sandboxing** (owner, 2026-10-26). Today a card file in `<config>/aac/cards/` is plain Python run inside
     Home Assistant's process (`cards/__init__.py` `_load`: `exec`): it can do anything HA can (files, network, every
     entity, other cards' data), and "only uses `api`" is a convention, not enforced. Fine for AAC's own cards, not for
@@ -622,18 +638,17 @@ pencil edit is missing" is item 11.
     move in the old raster (a leftover).
 37. ~~**Naming: cards, not nodes.**~~ **done (2.3.27).** Cards are called cards or nodes interchangeably; they should just be called cards
     (with their interchangeability now).
-38. **AAC's own log** (owner, 2026-10-31, widened from "logging per card" after a friend's advice: a proper logging
+38. ~~**AAC's own log**~~ **done (2.3.33).** (owner, 2026-10-31, widened from "logging per card" after a friend's advice: a proper logging
     mechanism in AAC itself, so it can be checked when something goes wrong). Agreed so far:
     - One log per domain, in the domain's data folder (`Core.folder(domain)`: moves on rename, goes on delete).
     - AAC's log is its own; HA's log only gets what belongs to the integration running on HA (start, stop, failing
       to load), not what happens inside AAC.
-    - Entries thin out with age only (full context first, less detail later, then gone), never by count: a card
-      that spams must not push older entries away.
+    - A rotating log (about 5,000 entries per domain; owner: a rotating log is not up for question). Whole
+      contexts in entries age out after about 10 minutes (privacy, space); the entry's line stays.
     - Cards write through one call in the api; every card has the 38 settings (what: whole context / only changed
       text; when: in, out or both). Wire monitors read from it.
     - Settings → Logs shows it. Cards may read the log per permission (a per-card grant, see 20); the Log card puts
       entries into the log and reads it as a function and through an output.
-    Open: the age stages, what stops a spamming card instead of a count, whether the per-card permission waits for 20.
 39. **Schedule: like v1.** Schedule should work more like it did in v1 (talk through: what exactly). Review: its
     entries are settings, so every reminder a model adds or a one-time entry that fires makes an Undo step and remakes
     the card (reminders push the owner's undo steps out).

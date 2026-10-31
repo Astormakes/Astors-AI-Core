@@ -5,17 +5,17 @@ send snapshots of it (`Step.progress`): they pass every card's `progress()` (by 
 turn follows through `handle()`. A card's tools are the cards with functions in its loop (on a way from its outputs
 back into it). A call travels the shortest way along the wires to the called card (the cards between only pass it on),
 which runs the function and adds the result as a tool message; the result travels back the shortest way to the caller
-(every card does it the same way, here). What passed each output is kept for the monitor, and open panels hear about
-it (live wires).
+(every card does it the same way, here). What passes a card's wires goes into AAC's log as its Log setting says (the
+monitors read it there), what goes wrong too; open panels hear about it (live wires).
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable
 import time
+from traceback import format_exc
 from typing import TYPE_CHECKING, Any
 
-from .const import LOGGER
 from .context import Context
 
 if TYPE_CHECKING:
@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from .core import Domain
 
 LEVEL_EVERY = 0.1  # seconds between an audio wire's loudness updates (only while a Cards page is open)
-KEEP_RECORDS, KEEP_SECONDS = 10, 600  # what passed an output lately (the monitor windows)
 MAX_STEPS = 400  # a context that visits more cards than this is stopped (the wiring loops; calls travel through the loop too)
 
 
@@ -70,7 +69,6 @@ class Flow:
         """Initialize."""
         self.domain = domain
         self.last: dict[str, dict[str, Any]] = {}  # "card.port" → the newest context that left there
-        self.records: dict[str, list[dict[str, Any]]] = {}  # "card.port" → what passed lately: {time, text}
         self.held: dict[str, Context] = {}  # "card.port" → a copy of the newest context that left there (dotted wires read it)
         self._level_at: dict[str, float] = {}
 
@@ -156,16 +154,31 @@ class Flow:
         key = f"{card_id}.{port}"
         self.last[key] = {**context.summary(), "time": time.time()}
         self.held[key] = context.branch()
-        newest = next((e for e in reversed(context.entries) if e["kind"] not in ("system", "signal") and e["text"].strip()), None)
-        if newest is None and (calls := next((m["data"].get("calls") for m in reversed(context.messages) if m["data"].get("calls")), None)):
-            newest = {"text": ", ".join(f"{c['name']}(…)" for c in calls)}
-        self._keep(key, newest["text"][:400] if newest else "")
+        if not context.progress:  # snapshots light the wire, the finished turn is written down
+            self._log(card_id, "out", port, self.newest(context), context, to=to)
         self.domain.core.notify("flow", domain=self.domain.id, wire=key, to=to)  # to: the inputs it went to (a square output picks)
 
-    def _keep(self, key: str, text: str) -> None:
-        now = time.time()
-        kept = [r for r in self.records.get(key, []) if now - r["time"] < KEEP_SECONDS]
-        self.records[key] = [*kept, {"time": now, "text": text}][-KEEP_RECORDS:]
+    @staticmethod
+    def newest(context: Context) -> str:
+        """What is new in a context: its newest entry with text (else the calls of its newest answer)."""
+        newest = next((e for e in reversed(context.entries) if e["kind"] not in ("system", "signal") and e["text"].strip()), None)
+        if newest is None and (calls := next((m["data"].get("calls") for m in reversed(context.messages) if m["data"].get("calls")), None)):
+            return ", ".join(f"{c['name']}(…)" for c in calls)
+        return newest["text"] if newest else ""
+
+    def _log(self, card_id: str, at: str, port: str, text: str, context: Context | None = None, **extra: Any) -> None:
+        """What passed one of a card's ports, as its Log setting says: nothing, the changed text, or with the whole context
+        (kept a few minutes); what comes in, goes out, or both."""
+        card = self.domain.cards.get(card_id)
+        what, when = (card.settings.get("log"), card.settings.get("log_at")) if card else ("text", "out")
+        if what == "nothing" or when not in (at, "both"):
+            return
+        whole = {**context.summary(), "time": time.time()} if context is not None and what == "context" else None
+        self.domain.log.write("flow", text or "(no text)", card=card_id, what=at, port=port, context=whole, **extra)
+
+    def failed(self, card_id: str, doing: str, err: Exception) -> None:
+        """A card failed: in the log with where it happened."""
+        self.domain.log.write("error", f"Failed{f' {doing}' if doing else ''}: {err!r}", card=card_id, what="failed", trace=format_exc()[-3000:])
 
     def stream(self, card_id: str, port: str, chunk: bytes, meta: dict[str, Any]) -> None:
         """Live audio on an output: handed at once to every wired card that takes a stream (no records). Open panels
@@ -180,14 +193,14 @@ class Flow:
             if hasattr(target, "stream"):
                 try:
                     target.stream(in_port, chunk, meta)
-                except Exception:  # noqa: BLE001 - one card must not stop the audio
-                    LOGGER.exception("AAC: %s failed on audio", target.id)
+                except Exception as err:  # noqa: BLE001 - one card must not stop the audio
+                    self.failed(target.id, "on audio", err)
 
     def clip(self, card_id: str, port: str, clip: dict[str, Any]) -> None:
         """An audio clip (e.g. an Audio clipper's stretch of speech): to every wired card that takes clips, in the background."""
         what = "stop" if clip.get("stop") else f"{clip.get('seconds')} s of audio"
         self.last[f"{card_id}.{port}"] = {"clip": what, "source": clip.get("name"), "time": time.time()}
-        self._keep(f"{card_id}.{port}", f"{what}{f' · {t}' if (t := clip.get('text')) else ''} ({clip.get('name') or clip.get('source') or 'any'})")
+        self._log(card_id, "out", port, f"{what}{f' · {t}' if (t := clip.get('text')) else ''} ({clip.get('name') or clip.get('source') or 'any'})")
         self.domain.core.notify("flow", domain=self.domain.id, wire=f"{card_id}.{port}")
         for target, in_port in self.wired_from(card_id, port):
             if hasattr(target, "clip"):
@@ -201,13 +214,13 @@ class Flow:
         """A context arrives at a card's input."""
         context.way.append(card.id)
         if len(context.way) > MAX_STEPS:
-            LOGGER.warning("AAC: a context visited %s cards; the wiring may loop (stopped at %s)", MAX_STEPS, card.id)
+            self.domain.log.write("warning", f"A context visited {MAX_STEPS} cards: the wiring may loop (stopped here)", card=card.id, what="loop")
             return
         if context.progress:  # a snapshot: cards that show or speak as things come answer it, the others pass it on
             try:
                 result = await card.progress(context, port)
-            except Exception:  # noqa: BLE001
-                LOGGER.exception("AAC: card %s failed on a snapshot", card.id)
+            except Exception as err:  # noqa: BLE001
+                self.failed(card.id, "on a snapshot", err)
                 return
             await self.out(card, context, result)
             return
@@ -216,13 +229,14 @@ class Flow:
                 return
             await self.out(card, context, None)
             return
+        self._log(card.id, "in", port, self.newest(context), context)
         if (call := self._call_for(card, context)) is not None:  # a call addressed to it: answered here, sent back
             await self._answer_call(card, context, *call)
             return
         try:
             result = await card.handle(context, port, Step(self, card, port, context))
-        except Exception:  # noqa: BLE001 - one broken card must not stop the domain
-            LOGGER.exception("AAC: card %s failed", card.id)
+        except Exception as err:  # noqa: BLE001 - one broken card must not stop the domain
+            self.failed(card.id, "", err)
             return
         await self.out(card, context, result)
 
@@ -244,11 +258,12 @@ class Flow:
             result = await card.call(call["function"], call.get("args") or {}, context)
         except Exception as err:  # noqa: BLE001 - a failing tool is told to the model
             result = {"error": str(err)}
+            self.domain.log.write("warning", f"Its function {call['function']} failed: {err!r}", card=card.id, what="function")
         text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
         context.add(card.id, "result", text[:8000], call_id=call["id"], name=call["name"])
         if (back := self.way(card.id, caller)) is None:
             context.add(card.id, "error", f"No way along the wires from {card.name} back to {caller}: the result cannot return")
-            LOGGER.warning("AAC: no way from %s back to %s", card.id, caller)
+            self.domain.log.write("warning", f"No way along the wires back to {caller}: the result cannot return", card=card.id, what="no way")
             return
         await self.carry(context, back)
 

@@ -201,9 +201,29 @@ async def ws_stop(hass, connection, msg) -> None:
 
 @command({vol.Required("type"): "aac/monitor", vol.Required("wire"): str})
 async def ws_monitor(hass, connection, msg) -> None:
-    """The newest context that passed an output, and what passed it lately (10 minutes)."""
-    flow = _core(hass).domain.flow
-    connection.send_result(msg["id"], {"context": flow.last.get(msg["wire"]), "records": flow.records.get(msg["wire"], [])})
+    """The newest context that passed an output, and what passed it lately (from AAC's log; off: the card's Log setting
+    writes nothing going out)."""
+    domain = _core(hass).domain
+    card_id, _, port = msg["wire"].partition(".")
+    card = domain.cards.get(card_id)
+    off = card is None or card.settings.get("log") == "nothing" or card.settings.get("log_at") not in ("out", "both")
+    records = [{"time": e["time"], "text": e["text"]} for e in domain.log.read(card=card_id, port=port, what="out", last=20)]
+    connection.send_result(msg["id"], {"context": domain.flow.last.get(msg["wire"]), "records": records, "off": off})
+
+
+@command({vol.Required("type"): "aac/log", vol.Optional("card"): str, vol.Optional("part"): str,
+          vol.Optional("levels"): [str], vol.Optional("search"): str, vol.Optional("before"): int, vol.Optional("last"): int})
+async def ws_log(hass, connection, msg) -> None:
+    """AAC's log of the running domain (Settings → Logs): the newest entries that match."""
+    filters = {k: msg[k] for k in ("card", "part", "levels", "search", "before") if k in msg}
+    connection.send_result(msg["id"], {"entries": _core(hass).domain.log.read(**filters, last=max(1, min(msg.get("last", 300), 5000)))})
+
+
+@command({vol.Required("type"): "aac/log/clear"})
+async def ws_log_clear(hass, connection, msg) -> None:
+    """Every entry of the running domain's log goes."""
+    await _core(hass).domain.log.clear()
+    connection.send_result(msg["id"], {})
 
 
 @command({vol.Required("type"): "aac/tags/add", vol.Required("tag"): str})

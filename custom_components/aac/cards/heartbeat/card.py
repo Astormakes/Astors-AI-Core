@@ -11,9 +11,9 @@ from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.api import LOGGER, Card, Context, register
+from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.2.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 
@@ -107,5 +107,4 @@ class Heartbeat(AutoCard):
         if (local.hour * 60 + local.minute) % every or self._quiet(local):
             return
         self.fire("Heartbeat", self.settings.get("text") or "")
-        LOGGER.debug("AAC: heartbeat %s", self.id)
 
