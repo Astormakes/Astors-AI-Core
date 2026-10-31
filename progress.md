@@ -559,7 +559,10 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     (`request_access(entity_ids, level, reason)`, `request_visibility`) wait outside the chat (panel badge + HA
     notification) until the owner allows all, some or none; locks, alarms, covers, valves, sirens only with the owner
     in the chat; HA's "expose to Assist" as the starting point. Ties in with 19 (what a script may call). Talk through
-    first.
+    first. (2026-10-31, owner) The per-card layer is also where a card's permission to read AAC's log goes (38); the
+    domain layer lists permissions per accessible thing and decides whether cards can even see that a thing exists
+    before they can ask for it. Needs a general look: a Home Assistant card cannot know the entities it should ask
+    for (today the owner fills its access list beforehand and a model finds only what is not hidden).
 21. **Card sandboxing** (owner, 2026-10-26). Today a card file in `<config>/aac/cards/` is plain Python run inside
     Home Assistant's process (`cards/__init__.py` `_load`: `exec`): it can do anything HA can (files, network, every
     entity, other cards' data), and "only uses `api`" is a convention, not enforced. Fine for AAC's own cards, not for
@@ -619,9 +622,18 @@ pencil edit is missing" is item 11.
     move in the old raster (a leftover).
 37. ~~**Naming: cards, not nodes.**~~ **done (2.3.27).** Cards are called cards or nodes interchangeably; they should just be called cards
     (with their interchangeability now).
-38. **Cards: logging per card.** Logging per card instead of a Log card: a unified logging interface; every card has
-    a dropdown what to log (whole context / only changed text) and ticks for in, out or both. The Log card should use
-    that.
+38. **AAC's own log** (owner, 2026-10-31, widened from "logging per card" after a friend's advice: a proper logging
+    mechanism in AAC itself, so it can be checked when something goes wrong). Agreed so far:
+    - One log per domain, in the domain's data folder (`Core.folder(domain)`: moves on rename, goes on delete).
+    - AAC's log is its own; HA's log only gets what belongs to the integration running on HA (start, stop, failing
+      to load), not what happens inside AAC.
+    - Entries thin out with age only (full context first, less detail later, then gone), never by count: a card
+      that spams must not push older entries away.
+    - Cards write through one call in the api; every card has the 38 settings (what: whole context / only changed
+      text; when: in, out or both). Wire monitors read from it.
+    - Settings → Logs shows it. Cards may read the log per permission (a per-card grant, see 20); the Log card puts
+      entries into the log and reads it as a function and through an output.
+    Open: the age stages, what stops a spamming card instead of a count, whether the per-card permission waits for 20.
 39. **Schedule: like v1.** Schedule should work more like it did in v1 (talk through: what exactly). Review: its
     entries are settings, so every reminder a model adds or a one-time entry that fires makes an Undo step and remakes
     the card (reminders push the owner's undo steps out).
@@ -673,3 +685,7 @@ pencil edit is missing" is item 11.
 58. **Relay rework** (owner, 2026-10-31; talk through first). Working with the Relay is still unclear to the owner:
     when something is output, where and how. That a Relay with nothing programmed just passes the context on was
     done on purpose, but now looks like a bad idea: it makes it confusing what leaves a Relay and when.
+59. **Card types: where they came from** (owner, 2026-10-31; talk through first). Card files sit in one shared
+    `<config>/aac/cards/` for all domains, while domain data now has its own folder. Every card type should carry a
+    tag saying what brought it in (shipped with AAC, downloaded, made by a model, the owner …) and when; a view that
+    manages card types shows it. Ties in with 21 (unchecked cards) and 51.
