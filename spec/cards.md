@@ -151,7 +151,8 @@ Through `self.core`:
 - `log(part, level, text)`: a part of AAC itself ("audio", "models" …) writes in the running domain's log.
 
 **The log.** Each domain has AAC's own log (`self.domain.log`, the file `<config>/aac/data/<domain>/log.jsonl`: it moves
-with a rename, goes with the domain; a copy starts its own). It rotates: the newest 5,000 entries stay. An entry is
+with a rename, goes with the domain; a copy starts its own). It rotates in two lanes, so a busy card cannot push the rest out: the newest 5,000
+entries of what passed the wires (level flow) stay, and the newest 5,000 of everything else. An entry is
 `{id, time (epoch s), level (error, warning, info, flow), card | part, what, text (600 chars at most), port?, to?, n?
 (the same entry again right after it: counted up), trace?}`; while it is younger than 10 minutes it may carry the
 whole `context` (only in memory, never on disk). A card writes with `self.log(text, level="info", what="", context=None,

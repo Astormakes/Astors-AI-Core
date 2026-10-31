@@ -3,11 +3,17 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.3.33, live on the owner's HA
+## Current state (2026-10-31) – 2.3.34, live on the owner's HA
+
+- **2026-10-31 (2.3.34): the log rotates in two lanes.** Live, the voice chain wrote ~40 entries a minute (mostly the
+  Audio clipper hearing the room): one rotation of 5,000 would have pushed errors and changes out within two hours. Now
+  the newest 5,000 of what passed the wires (flow) stay, and the newest 5,000 of everything else. A context with only
+  signals (the clipper's cuts) is written as its newest signal's kind and tags instead of "(no text)".
 
 - **2026-10-31 (2.3.33): item 38, AAC's own log** (owner and a friend: a proper logging mechanism in AAC itself).
   `log.py` `DomainLog` per domain, `<config>/aac/data/<domain>/log.jsonl` (appended every 2 s, written anew past 6,000
-  lines; moves with a rename, goes with the domain, a copy starts its own). Rotates at 5,000 entries; whole contexts
+  lines; moves with a rename, goes with the domain, a copy starts its own). Rotates at 5,000 entries (two lanes since
+  2.3.34); whole contexts
   stay 10 minutes in memory only; a repeat counts up (`n`). Levels error, warning, info, flow. Every card has the fold
   "Log" (`log`: what changed / whole context / nothing; `log_at`: out / in / both; default what changed going out);
   `self.log(...)`, `self.read_log(...)` (own entries always, the rest with `needs = {"read_log"}` → permission

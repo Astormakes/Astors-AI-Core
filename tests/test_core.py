@@ -635,10 +635,13 @@ async def test_aacs_own_log(hass: HomeAssistant, mock_entry, hass_ws_client):
     await d.update_card("sink", title="Drain")  # its entries follow its id
     assert d.log.read(card="drain", levels=["error"]) and not d.log.read(card="sink", levels=["error"])
 
-    with patch("custom_components.aac.log.KEEP", 5):
+    with patch("custom_components.aac.log.KEEP", 5):  # two lanes: a busy card's wires never push the rest out
         for i in range(8):
             d.log.write("info", f"n{i}", part="core")
-        assert [e["text"] for e in d.log.entries] == ["n3", "n4", "n5", "n6", "n7"]
+        assert [e["text"] for e in d.log.entries if e["level"] != "flow"] == ["n3", "n4", "n5", "n6", "n7"]
+        for i in range(8):
+            d.log.write("flow", f"f{i}", card="a", what="out", port="out")
+        assert [e["text"] for e in d.log.entries] == ["n3", "n4", "n5", "n6", "n7", "f3", "f4", "f5", "f6", "f7"]
     a = await d.update_card("a", settings={"log": "context"})
     await d.flow.send(first, "a", "out")
     await d.log.flush()

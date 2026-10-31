@@ -1,5 +1,6 @@
 """AAC's own log (spec/cards.md "The log"): one per domain, in its data folder (`log.jsonl`), so it moves with a rename
-and goes with the domain. It rotates: the newest KEEP entries stay. What passes a card's wires is written as its Log
+and goes with the domain. It rotates in two lanes, so a busy card cannot push the rest out: the newest KEEP of what
+passed the wires (level flow) stay, and the newest KEEP of everything else. What passes a card's wires is written as its Log
 setting says; a whole context stays with its entry only CONTEXT_FOR seconds and is never written to disk (privacy,
 space). Cards write through `Card.log` and read through `Card.read_log` (a permission); the core writes what goes wrong
 (a card that fails, a model that does not answer) and what the owner changes. HA's own log only hears about AAC
@@ -20,7 +21,7 @@ from homeassistant.helpers.event import async_call_later
 if TYPE_CHECKING:
     from .core import Domain
 
-KEEP = 5000  # entries; the oldest go
+KEEP = 5000  # entries per lane (what passed the wires; everything else); the oldest go
 CONTEXT_FOR = 600  # seconds a whole context stays with its entry (only in memory)
 LEVELS = ("error", "warning", "info", "flow")  # flow: what passed a card's wires
 TEXT_MAX = 600
@@ -36,9 +37,10 @@ class DomainLog:
         self.entries: list[dict[str, Any]] = []
         self._contexts: dict[int, tuple[float, dict[str, Any]]] = {}  # entry id → (when, the whole context)
         self._new: list[dict[str, Any]] = []  # entries (or a repeat's newer count) not on disk yet
-        self._lines = 0  # lines in the file (it is written anew once it holds far more than KEEP)
+        self._lines = 0  # lines in the file (it is written anew once it holds far more than both lanes)
         self._rewrite = False
         self._last_id = 0
+        self._flows = 0  # entries in the flow lane (the rest are the other lane)
         self._lock = asyncio.Lock()
         self._timer: CALLBACK_TYPE | None = None
         self.closed = False  # its domain stopped: nothing more is written (its folder may move)
@@ -52,6 +54,7 @@ class DomainLog:
         """Read what the file holds (a repeat's line came again with a newer count: the last one counts)."""
         self.entries, self._lines = await self.domain.hass.async_add_executor_job(self._read, self.path)
         self._last_id = max((e["id"] for e in self.entries), default=0)
+        self._flows = sum(e["level"] == "flow" for e in self.entries)
 
     @staticmethod
     def _read(path: Path) -> tuple[list[dict[str, Any]], int]:
@@ -66,7 +69,10 @@ class DomainLog:
                 found[int(entry["id"])] = entry
             except (ValueError, KeyError, TypeError):
                 continue
-        return sorted(found.values(), key=lambda e: e["id"])[-KEEP:], lines
+        entries = sorted(found.values(), key=lambda e: e["id"])
+        flow = [e for e in entries if e["level"] == "flow"][-KEEP:]
+        rest = [e for e in entries if e["level"] != "flow"][-KEEP:]
+        return sorted(flow + rest, key=lambda e: e["id"]), lines
 
     def write(self, level: str, text: str, card: str | None = None, part: str | None = None, what: str = "",
               context: dict[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
@@ -86,10 +92,12 @@ class DomainLog:
             entry = {"id": self._last_id, "time": now, "level": level if level in LEVELS else "info", "what": what, "text": text,
                      **({"card": card} if card else {"part": part or "core"}), **{k: v for k, v in extra.items() if v is not None}}
             self.entries.append(entry)
-            if len(self.entries) > KEEP:
-                for old in self.entries[:-KEEP]:
-                    self._contexts.pop(old["id"], None)
-                del self.entries[:-KEEP]
+            flow = entry["level"] == "flow"
+            self._flows += flow
+            while (self._flows if flow else len(self.entries) - self._flows) > KEEP:  # its lane is full: its oldest go
+                old = next(i for i, e in enumerate(self.entries) if (e["level"] == "flow") == flow)
+                self._contexts.pop(self.entries.pop(old)["id"], None)
+                self._flows -= flow
         if context is not None:
             self._contexts[entry["id"]] = (now, context)
         self._forget_contexts(now)
@@ -125,7 +133,7 @@ class DomainLog:
 
     async def clear(self) -> None:
         """Every entry goes."""
-        self.entries, self._contexts, self._new = [], {}, []
+        self.entries, self._contexts, self._new, self._flows = [], {}, [], 0
         self._rewrite = True
         await self.flush()
 
@@ -160,7 +168,7 @@ class DomainLog:
             self._timer()
             self._timer = None
         async with self._lock:
-            whole = self._rewrite or self._lines + len(self._new) > KEEP * 1.2
+            whole = self._rewrite or self._lines + len(self._new) > KEEP * 2.4
             new = list({e["id"]: e for e in self._new}.values())  # a repeat counted up twice is one line
             lines = [json.dumps(e, ensure_ascii=False) for e in (self.entries if whole else new)]
             self._new, self._rewrite = [], False

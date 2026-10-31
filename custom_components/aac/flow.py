@@ -164,6 +164,9 @@ class Flow:
         newest = next((e for e in reversed(context.entries) if e["kind"] not in ("system", "signal") and e["text"].strip()), None)
         if newest is None and (calls := next((m["data"].get("calls") for m in reversed(context.messages) if m["data"].get("calls")), None)):
             return ", ".join(f"{c['name']}(…)" for c in calls)
+        if newest is None and context.entries:  # only signals (an Audio clipper's cuts): the newest one's kind and tags
+            last = context.entries[-1]
+            return " ".join([last["kind"], *(f"#{t}" for t in last.get("tags") or [])])
         return newest["text"] if newest else ""
 
     def _log(self, card_id: str, at: str, port: str, text: str, context: Context | None = None, **extra: Any) -> None:

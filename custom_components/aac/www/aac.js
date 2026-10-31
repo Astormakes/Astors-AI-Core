@@ -770,7 +770,7 @@ class AacPanel extends HTMLElement {
     const f = this.logs?.filter || {}, opt = (v, label, cur) => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(label)}</option>`;
     const levels = [["", "Everything"], ["error,warning,info", "Without what passed the wires"], ["error,warning", "Errors and warnings"], ["error", "Errors"], ["flow", "Only what passed the wires"]];
     const who = [["", "Every card and AAC"], ["aac", "AAC itself (audio, models …)"], ...this.state.domain.cards.map((c) => [`card:${c.id}`, c.title])];
-    return `${this._header(`Log of "${this.state.domain.name}"`, `${tip("AAC's own log of this domain: what passed the cards' wires (each card's Log setting says what), what went wrong, what was changed. The newest 5,000 entries stay; a whole context stays with its entry 10 minutes and is never written to disk. A wire's monitor shows the same entries.")}
+    return `${this._header(`Log of "${this.state.domain.name}"`, `${tip("AAC's own log of this domain: what passed the cards' wires (each card's Log setting says what), what went wrong, what was changed. The newest 5,000 entries of what passed the wires stay, and apart from them the newest 5,000 of everything else (a busy card cannot push errors out); a whole context stays with its entry 10 minutes and is never written to disk. A wire's monitor shows the same entries.")}
       <button class="small" id="logsave" title="Save what the filter shows as a text file">Save</button><button class="small danger" id="logclear">Clear</button>`)}
       <div class="content"><div class="logbar"><select id="loglevel">${levels.map(([v, l]) => opt(v, l, f.levels || "")).join("")}</select>
         <select id="logwho">${who.map(([v, l]) => opt(v, l, f.who || "")).join("")}</select>
