@@ -47,7 +47,8 @@ async def async_first_start(core: Core) -> None:
 
 
 async def build_default(domain) -> None:
-    """The default setup: Chat → Charter → Time → Model → Chat; Lists, Home and Calendar as the model's tools; HA
+    """The default setup: Chat → Charter → Time → Model → Chat; Lists, Home, Calendar and the Chat as the model's
+    tools (wired from its calls output and back); HA
     Assist conversations land in the Chat (conversation.py). A card's id is its name (chat, charter, …)."""
     add = domain.add_card
     chat = (await add("chat", "Chat", {"ha_agent": True}, at={"x": 0, "y": 0})).id
@@ -59,8 +60,8 @@ async def build_default(domain) -> None:
     domain.set_wires([
         {"from": f"{chat}.said", "to": f"{charter}.in"},
         {"from": f"{charter}.out", "to": f"{time}.in"}, {"from": f"{time}.out", "to": f"{model}.in"},
-        {"from": f"{model}.out", "to": f"{chat}.answers"},
-        *[w for tool in tools for w in ({"from": f"{model}.out", "to": f"{tool}.in"}, {"from": f"{tool}.out", "to": f"{model}.in"})],
+        {"from": f"{model}.out", "to": f"{chat}.answers"}, {"from": f"{model}.calls", "to": f"{chat}.answers"},
+        *[w for tool in tools for w in ({"from": f"{model}.calls", "to": f"{tool}.in"}, {"from": f"{tool}.out", "to": f"{model}.in"})],
     ])
 
 
@@ -135,19 +136,16 @@ async def _voice_cards(domain, names: list[str]) -> None:
     if not chat:
         followed_script = followed_script.replace('input("chat", read=True) + input("in")', 'input("in")')
     followed = (await add("relay", "Follow-up turn", {"script": followed_script}, at={"x": 240, "y": 540})).id
-    answer = (await add("relay", "Answer", at={"x": 1200, "y": 420})).id
     first = "charter" if "charter" in domain.cards else None
     model = find("model")
-    wires = [w for w in domain.wires if not (model and chat and w == {"from": f"{model}.out", "to": f"{chat}.answers"})]
-    wires += [{"from": f"{ears}.out", "to": f"{stop}.in"}, {"from": f"{ears}.out", "to": f"{wake}.in"}, {"from": f"{ears}.out", "to": f"{follow}.in"},
+    wires = [*domain.wires, {"from": f"{ears}.out", "to": f"{stop}.in"}, {"from": f"{ears}.out", "to": f"{wake}.in"}, {"from": f"{ears}.out", "to": f"{follow}.in"},
               {"from": f"{wake}.yes", "to": f"{spoken}.in"}, {"from": f"{follow}.yes", "to": f"{followed}.in"},
-              {"from": f"{answer}.out", "to": f"{voice}.in"}, {"from": f"{voice}.out", "to": f"{speaker}.in"}]
+              {"from": f"{voice}.out", "to": f"{speaker}.in"}]
     if first:
         wires += [{"from": f"{stop}.stop", "to": f"{first}.in"}, {"from": f"{spoken}.out", "to": f"{first}.in"},
                   {"from": f"{followed}.out", "to": f"{first}.in"}]
     if chat:
-        wires += [{"from": f"{chat}.provides", "to": f"{spoken}.chat"}, {"from": f"{chat}.provides", "to": f"{followed}.chat"},
-                  {"from": f"{answer}.out", "to": f"{chat}.answers"}]
-    if model:
-        wires.append({"from": f"{model}.out", "to": f"{answer}.in"})
+        wires += [{"from": f"{chat}.provides", "to": f"{spoken}.chat"}, {"from": f"{chat}.provides", "to": f"{followed}.chat"}]
+    if model:  # the answer goes to every card wired from out: the Chat shows it, Text to speech speaks a heard turn's
+        wires.append({"from": f"{model}.out", "to": f"{voice}.in"})
     domain.set_wires(wires)

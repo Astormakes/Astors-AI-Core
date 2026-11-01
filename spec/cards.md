@@ -62,13 +62,15 @@ see them. A card whose functions come from its settings sets `dynamic_functions 
 instance (a Relay: one per `def` in its script). A setting may say `fold` to sit in a fold at the bottom of the card's settings.
 
 **Tools** (docs/v2 page 3). A card that uses tools (`uses_tools = True`: a Model, a Relay's script) gets the functions
-of the cards in its loop (`flow.loop()`, `flow.tools()`): on a way from its outputs back into it, straight or through
-other cards. A model's call travels the shortest way along the wires (`flow.way()`, `flow.carry()`): the cards between
+of the cards it reaches from the outputs its calls leave by (`calls_from`, empty: all its outputs; a Model's is
+`calls`), straight or through other cards, and that have a way back to it for the result (`flow.reach()`,
+`flow.tools()`). A model's call travels the shortest way along the wires (`flow.way()`, `flow.carry()`): the cards between
 only pass it on, the core runs the function at the called card (`call()`), adds the result as a `result` message and
 carries the context the shortest way back to the caller; several calls go one after the other. Tool names are the
 function's own (as For models names it); the card's name goes in front only when two cards in one model's tools offer
-the same name. The card id never reaches a model. The answer goes back to the card the context started at when that is
-wired from the model (even when it is a tool too), else to every wired card but those wired straight back.
+the same name. The card id never reaches a model. A Model's answer leaves at `out`, to every card wired there (no other
+rule); its calls leave at `calls` (square). A turn that comes back to a Model holding nothing new (a card wired from
+`out` back into it passed it on) ends there.
 
 More a card may define: `busy` (a property: True while it works on something; a newer version of its file waits),
 `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
@@ -222,7 +224,7 @@ trailer on its message, or a system part after it), `set(tag, text, at=, role=)`
 Relay's own (`<relay>.<name>`), `*` stands for anything. An entry: `text` (settable), `tags`, `by`, `data`, `role` (how a model reads it). Other
 names: `stop()` (the context becomes a stop; on a piece every card lets go), `signal()`, `print()` (the editor's
 Printed panel), `print_log()` (AAC's log), `now()`, `states()`, `re`, `audio`, and every card by its id: its values
-(`lists.total`) and, for a card in the Relay's loop, its functions (`lists.add_items(...)`, arguments in order or by
+(`lists.total`) and, for a card it reaches from one of its outputs, its functions (`lists.add_items(...)`, arguments in order or by
 name; not on a piece). Such a call travels like a model's: an answer of the Relay with the call, the card's result
 as a tool message. The script's own names win over a card's id (`cards["output"]`). Every `def` is a function the
 Relay offers (`self.functions`: its parameters, its docstring): a call runs only the defs, then that one, with its

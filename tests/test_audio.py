@@ -90,9 +90,10 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
     core.data["voice_chain"] = False
     await async_voice_chain(core)
     d = core.domain
-    assert {"microphone", "audio_clipper", "speech_to_text", "stop_word", "wake_word", "follow_up", "spoken_turn", "follow_up_turn", "answer", "speaker"} <= set(d.cards)
-    assert {"from": "chat.provides", "to": "spoken_turn.chat"} in d.wires and {"from": "model.out", "to": "answer.in"} in d.wires
-    assert {"from": "model.out", "to": "chat.answers"} not in d.wires
+    assert {"microphone", "audio_clipper", "speech_to_text", "stop_word", "wake_word", "follow_up", "spoken_turn", "follow_up_turn", "speaker"} <= set(d.cards)
+    assert "answer" not in d.cards  # the answer goes to every card wired from the Model's out: no Relay in between
+    assert {"from": "chat.provides", "to": "spoken_turn.chat"} in d.wires
+    assert {"from": "model.out", "to": "chat.answers"} in d.wires and {"from": "model.out", "to": "text_to_speech.in"} in d.wires
     sent = []
 
     async def caught(card, context, picks):  # what a Relay sends, without running the cards after it

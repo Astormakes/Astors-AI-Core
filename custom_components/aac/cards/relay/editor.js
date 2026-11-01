@@ -396,8 +396,8 @@ class AacRelayScript extends HTMLElement {
       <div class="note"><b>Speed:</b> the model server keeps what it has already read (its cache). The system prompt (role="system") is fast as long as it stays the same; a change there, or in the middle of the conversation, makes the server read everything from there again. Changes at the end (attach onto what was just said, add at the end) are cheap.</div>
       ${Object.entries(groups).map(([g, rows]) => `<h5>${esc(g)}</h5>${rows.map((r) => `<div class="fn">${ins(r.sig)} ${esc(r.what)}${r.example ? `<pre class="ex">${esc(r.example)}</pre>` : ""}</div>`).join("")}`).join("")}
       <h5>Tags in this domain</h5>${this.dom.tags.map((t) => `<div class="fn">${ins(t.tag)} <span class="hint">${esc(t.card)}: ${esc(t.what)}</span></div>`).join("")}
-      <h5>Cards in its loop (their functions)</h5>${tools.length ? tools.map((c) => Object.entries(c.functions || this.panel.type(c.type)?.functions || {}).map(([n, f]) => `<div class="fn">${ins(`${c.id}.${n}(${Object.keys(f.args || {}).map((a) => `${a}=`).join(", ")})`)} <span class="hint">${esc(f.help || "")}</span></div>`).join("")).join("")
-        : '<p class="hint">None: wire a card with functions into the loop of this Relay (from it, back into it) to call its functions.</p>'}
+      <h5>Cards it reaches (their functions)</h5>${tools.length ? tools.map((c) => Object.entries(c.functions || this.panel.type(c.type)?.functions || {}).map(([n, f]) => `<div class="fn">${ins(`${c.id}.${n}(${Object.keys(f.args || {}).map((a) => `${a}=`).join(", ")})`)} <span class="hint">${esc(f.help || "")}</span></div>`).join("")).join("")
+        : '<p class="hint">None: wire one of this Relay's outputs to a card with functions (and that card back into the Relay) to call them.</p>'}
       <h5>Values of the cards</h5>${this._cards().flatMap((c) => Object.entries(this.panel.type(c.type)?.values || {}).map(([n, w]) => `<div class="fn">${ins(`${c.id}.${n}`)} <span class="hint">${esc(w)}</span></div>`)).join("") || '<p class="hint">No card offers values.</p>'}`;
   }
 

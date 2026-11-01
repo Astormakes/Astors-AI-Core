@@ -18,7 +18,7 @@ from custom_components.aac.api import Card, Context, new_id, register
 sys.modules.pop(f"{__name__}.script", None)  # a newer card file brings a newer script.py
 from .script import DEFAULT, OWN, REFERENCE, Run, Script, check, joined, reference_text  # noqa: E402
 
-VERSION = "3.1.0"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
+VERSION = "3.1.1"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
 
 WAIT = 20  # seconds a script may run
 PRINTED = 200  # print entries it keeps
@@ -35,7 +35,7 @@ class Relay(Card):
     uses_tools = True
     help = ("A small Python script that runs every time something arrives: input(\"in\") is what arrived, "
             "output(\"out\", context) sends it on; nothing leaves otherwise. It adds texts (the system prompt, the time), "
-            "changes, checks and routes what passes, calls cards in its loop, and every def is a function models can "
+            "changes, checks and routes what passes, calls cards wired from it (and back), and every def is a function models can "
             "use. A new Relay passes everything on.")
     ports_help = {"in": "what arrives here runs the script (input(\"in\")); the script names its inputs",
                   "out": "what the script sends with output(\"out\", …); the script names its outputs",
@@ -47,7 +47,7 @@ class Relay(Card):
     }
     functions: dict[str, dict[str, Any]] = {}  # one per def (see __init__)
     dynamic_functions = True
-    offers = False  # a model in its loop gets a def only when it is ticked (For models)
+    offers = False  # a model that reaches it gets a def only when it is ticked (For models)
 
     def __init__(self, *args: Any) -> None:
         """Initialize."""

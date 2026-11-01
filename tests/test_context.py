@@ -34,7 +34,7 @@ async def test_two_calls_travel_one_after_the_other(hass: HomeAssistant, mock_en
     await d.update_card("time", settings={"script": TIME, "functions": {"now_text": {"on": True, "name": "get_time",
                                                                                 "help": "The current local time."}}})
     d.set_wires([w for w in d.wires if w != {"from": "time.out", "to": "model.in"} and w != {"from": "charter.out", "to": "time.in"}]
-                + [{"from": "charter.out", "to": "model.in"}, {"from": "model.out", "to": "time.in"}, {"from": "time.out", "to": "model.in"}])
+                + [{"from": "charter.out", "to": "model.in"}, {"from": "model.calls", "to": "time.in"}, {"from": "time.out", "to": "model.in"}])
     asked = model_answers(aioclient_mock, reply(calls=[("get_time", {}), ("lists", {})]), reply("08:41, and no lists."))
     chat = d.cards["chat"]
     chat_id, answer = await chat.send("time and lists?")
@@ -44,7 +44,7 @@ async def test_two_calls_travel_one_after_the_other(hass: HomeAssistant, mock_en
     second = asked[1]["messages"]
     assert [m["role"] for m in second[-3:]] == ["assistant", "tool", "tool"]
     assert second[-2]["content"] == "It is 08:41." and second[-1]["content"].startswith("[")  # what Lists has
-    assert {"model.out", "time.out", "lists.out"} <= set(d.flow.last)  # every hop went along a wire
+    assert {"model.calls", "time.out", "lists.out"} <= set(d.flow.last)  # every hop went along a wire
     kept = chat.get(chat_id)
     assert kept["messages"][-1]["text"] == "08:41, and no lists."
     assert [c["name"] for c in kept["messages"][-2]["calls"]] == ["get_time", "lists"]  # the chat can show the calls
@@ -174,19 +174,20 @@ async def test_tool_rounds_have_a_setting(hass: HomeAssistant, mock_entry, aiocl
     _, answer = await chat.send("lists, many times")
     assert answer == "Done at last." and len(asked) == 14  # 11 rounds of calls: past the old fixed 8
 
-async def test_a_call_travels_through_the_loop(hass: HomeAssistant, mock_entry, aioclient_mock):
-    """Chat → Charter → Model → Answer → Chat (the owner's wiring): the Chat is in the Model's loop, so its functions are
-    tools; a call takes the shortest way there (Model → Answer → Chat) and the result the shortest way back (Chat →
-    Charter → Model); the cards between only pass it on (Answer's script does not run on it); every wire lights."""
+async def test_a_call_travels_through_other_cards(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """Chat → Charter → Model → Answer → Chat, and the Model's calls into Answer too: the Chat is reachable from its
+    calls output, so its functions are tools; a call takes the shortest way there (Model → Answer → Chat) and the result
+    the shortest way back (Chat → Charter → Model); the cards between only pass it on (Answer's script does not run on
+    it); every wire lights."""
     core = await setup_aac(hass, mock_entry)
     d = core.domain
     marks = 'context = input("in")\nanswer = context.get("model.answer")\nanswer.text = answer.text + " (passed Answer)"\noutput("out", context)\n'
     a = (await d.add_card("relay", "Answer", {"script": marks})).id  # (a backup brings an Answer card of its own)
-    d.set_wires([w for w in d.wires if w["from"] != "model.out" or w["to"].split(".")[0] in ("lists", "home", "calendar")]
-                + [{"from": "model.out", "to": f"{a}.in"}, {"from": f"{a}.out", "to": "chat.answers"}])
+    d.set_wires([w for w in d.wires if not (w["from"] in ("model.out", "model.calls") and w["to"] == "chat.answers")]
+                + [{"from": "model.out", "to": f"{a}.in"}, {"from": "model.calls", "to": f"{a}.in"}, {"from": f"{a}.out", "to": "chat.answers"}])
     assert "chat" in {c.id for c in d.flow.tools("model")}
     asked = model_answers(aioclient_mock, reply(calls=[("chats", {})]), reply("You have one chat."))
     chat_id, answer = await d.cards["chat"].send("which chats do I have?")
     assert answer == "You have one chat. (passed Answer)"  # the answer went through Answer once, the call did not run it
     assert asked[1]["messages"][-1]["role"] == "tool" and "which chats" in asked[1]["messages"][-1]["content"]
-    assert {"model.out", f"{a}.out", "chat.said", "charter.out"} <= set(d.flow.last)  # the way there and back lit
+    assert {"model.calls", "model.out", f"{a}.out", "chat.said", "charter.out"} <= set(d.flow.last)  # the way there and back lit

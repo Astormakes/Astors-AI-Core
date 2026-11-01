@@ -10,12 +10,13 @@ from .conftest import BASE_URL, model_answers, reply, setup_aac
 
 @pytest.mark.fresh
 async def test_first_start_builds_the_default_domain(hass: HomeAssistant, mock_entry):
-    """A fresh install: Chat → Charter → Time → Model → back (the Chat takes HA's conversations); Lists, Home, Calendar are its tools; an
+    """A fresh install: Chat → Charter → Time → Model → back (the Chat takes HA's conversations); Lists, Home, Calendar and the Chat are its tools (from its calls output); an
     empty list of models means every model for the job, in order."""
     core = await setup_aac(hass, mock_entry)
     domain = core.domain
     assert {"chat", "charter", "time", "model", "lists", "home", "calendar"} <= set(domain.cards)
     assert {"from": "model.out", "to": "chat.answers"} in domain.wires and {"from": "calendar.out", "to": "model.in"} in domain.wires
+    assert {"from": "model.calls", "to": "calendar.in"} in domain.wires and {"from": "model.out", "to": "calendar.in"} not in domain.wires
     assert domain.cards["home"].level("light.other") == "hidden"
     assert core.pool.entries(domain.cards["model"].settings["models"], "text") == [  # an empty list: every model for text
         {"model": "m_big", "queue": True}, {"model": "m_small", "queue": True}]
@@ -49,7 +50,7 @@ async def test_tools_are_the_cards_wired_out_and_back(hass: HomeAssistant, mock_
     names = {t["function"]["name"] for t in asked[0]["tools"]}
     assert {"add_items", "find", "call_service"} <= names  # the function's own name: no card id
     assert answer == "Added milk."
-    assert {"model.out", "lists.out"} <= set(core.domain.flow.last)  # the call went along the wires and back
+    assert {"model.calls", "lists.out"} <= set(core.domain.flow.last)  # the call went along the wires and back
     shopping = await core.domain.cards["lists"].call("read_list", {"list": "Shopping"})
     assert {"text": "Milk", "done": False} in shopping["items"]
     assert asked[1]["messages"][-1]["role"] == "tool"
@@ -318,9 +319,7 @@ async def test_a_model_talks_while_it_works(hass: HomeAssistant, mock_entry, aio
     core = await setup_aac(hass, mock_entry)
     d = core.domain
     voice = await d.add_card("text_to_speech", "Text to speech")
-    relay = await d.add_card("relay", "Answer")  # as in the voice chain: model → Answer → Chat and Text to speech
-    d.set_wires([*[w for w in d.wires if w != {"from": "model.out", "to": "chat.answers"}], {"from": "model.out", "to": f"{relay.id}.in"},
-                 {"from": f"{relay.id}.out", "to": "chat.answers"}, {"from": f"{relay.id}.out", "to": f"{voice.id}.in"}])
+    d.set_wires([*d.wires, {"from": "model.out", "to": f"{voice.id}.in"}])  # the answer goes to every card wired from out
     model_answers(aioclient_mock, reply("Let me check.", [("lists__lists", {})]), reply("You have no lists yet. Shall I make one?"))
     spoken, clips = [], []
 
@@ -346,14 +345,32 @@ async def test_a_model_talks_while_it_works(hass: HomeAssistant, mock_entry, aio
     assert ["Let me check."] in shown  # the chat showed it while the model went on
 
 
-async def test_tools_are_the_cards_in_its_loop(hass: HomeAssistant, mock_entry):
-    """A model's tools are the cards with functions in its loop (straight back, or round through other cards: the
-    Chat); a card whose functions are all unticked is none; a Relay in the loop has the same tools."""
+async def test_the_answer_goes_to_every_card_wired_from_out(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """A turn the Chat started: the answer goes to the Chat and to every other card wired from out too (no rule sends
+    it only back where it started); a card wired from out back into the Model (Lists, which passes a context on)
+    brings the turn back, and the Model, asked nothing new, does not answer again."""
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    d.set_wires([*d.wires, {"from": "model.out", "to": "lists.in"}])  # lists.out → model.in is there (it is a tool)
+    asked = model_answers(aioclient_mock, reply("Hello."), reply("Hello again."))
+    _, answer = await d.cards["chat"].send("hi")
+    assert answer == "Hello." and len(asked) == 1  # asked once: the turn that came back held nothing new
+    assert d.flow.held["lists.out"].answer == "Hello."  # Lists got the answer and passed it on
+
+
+async def test_tools_are_the_cards_its_calls_reach(hass: HomeAssistant, mock_entry):
+    """A model's tools are the cards with functions it reaches from its calls output (straight, or through other
+    cards) and that are wired back to it; a card wired only from its out (the answer) is none, nor one without a way
+    back; a card whose functions are all unticked is none."""
     core = await setup_aac(hass, mock_entry)
     d = core.domain
     tools = {c.id for c in d.flow.tools("model")}
     assert tools == {"lists", "home", "calendar", "chat"}
     assert d.cards["model"].summary()["tools"] == sorted(tools)
+    d.set_wires([w for w in d.wires if w != {"from": "model.calls", "to": "home.in"}] + [{"from": "model.out", "to": "home.in"}])
+    assert "home" not in {c.id for c in d.flow.tools("model")}  # it only gets the answers now
+    d.set_wires([w for w in d.wires if w != {"from": "calendar.out", "to": "model.in"}])
+    assert "calendar" not in {c.id for c in d.flow.tools("model")}  # reached, but its result could not come back
     await d.update_card("lists", settings={"functions": {fn: {"on": False} for fn in d.cards["lists"].functions}})
     assert "lists" not in {c.id for c in d.flow.tools("model")}
 
@@ -558,7 +575,7 @@ async def test_a_card_id_is_its_name(hass: HomeAssistant, mock_entry, aioclient_
 
     await d.update_card("lists", title="Projects")
     assert "projects" in d.cards and "lists" not in d.cards and d.cards["projects"].name == "Projects"
-    assert {"from": "model.out", "to": "projects.in"} in d.wires and not any("lists." in w["from"] + w["to"] for w in d.wires)
+    assert {"from": "model.calls", "to": "projects.in"} in d.wires and not any("lists." in w["from"] + w["to"] for w in d.wires)
     assert d.positions.get("projects") == where
     assert [li["name"] for li in d.cards["projects"].data["lists"]] == [li["name"] for li in (await d.load_card_data("projects"))["lists"]]
     assert "Car" in [li["name"] for li in d.cards["projects"].data["lists"]] and await d.load_card_data("lists") is None

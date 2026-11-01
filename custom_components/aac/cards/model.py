@@ -12,7 +12,7 @@ from typing import Any
 from custom_components.aac.api import (Card, Client, Context, ModelError, ModelUnreachable, entry, new_id, register, run,
                                       tool_spec)
 
-VERSION = "2.2.3"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
@@ -68,22 +68,22 @@ class Model(Card):
     type = "model"
     title = "Model"
     category = "Models"
-    help = ("Reads the context and answers, with the first free model of its list. Cards with functions in its loop "
-            "(wired from its output back into it, straight or round through other cards) are its tools: a call goes "
-            "there along the wires and the result comes back. "
-            "While it works, every finished sentence goes out at once (a Chat shows it, Text to speech speaks it); the "
-            "finished answer follows.")
-    outputs = {"out": "text"}
-    square = {"out"}
+    help = ("Reads the context and answers, with the first free model of its list. Its answer goes out at 'out' to every "
+            "card wired there (a Chat shows it, Text to speech speaks it): while it works every finished sentence at once, "
+            "then the finished answer. Cards with functions wired from 'calls' (straight or through other cards) are its "
+            "tools: a call goes there along the wires and the result comes back into 'in'.")
+    outputs = {"out": "text", "calls": "text"}
+    square = {"calls"}
+    calls_from = ("calls",)
     uses_tools = True
     tags = {"answer": "its answers (with the calls it made; its thinking in data.thinking; why one was cut off in data.cut)",
             "stop": "it was stopped (its answer is cut off)", "context_full": "its note to the model that the context is nearly full",
             "error": "no answer came (no model available, a model failed); models never read these"}
     ports_help = {"in": "a context arrives: the model reads it and answers; a tool's result comes back here too (a stop "
                         "while it writes cuts the answer)",
-                  "out": "square: a call goes the shortest way to the called card; the answer goes back to the card the "
-                         "context started at if that is wired from here, else to every wired card but those wired "
-                         "straight back (pure tools). Every card with functions in its loop is a tool (For models)"}
+                  "out": "its answer, to every card wired here (while it is written, each finished sentence)",
+                  "calls": "square: a tool call goes the shortest way to the called card (the result comes back into 'in'); "
+                           "every card with functions reachable from here is a tool (For models)"}
     settings_schema = {
         "models": {"type": "modellist", "tag": "text", "title": "Models (in order)", "default": [], "help": "The list is run through from the top: a free model takes the context; a busy one queues it if its Queue is ticked, then the next is tried; the first that gets free takes it. Empty: every model with the tag, queued."},
         "temperature": {"type": "number", "title": "Temperature", "default": 0.7, "help": "0 = always the same, higher = more varied."},
@@ -108,16 +108,23 @@ class Model(Card):
         self._upto: dict[str, int] = {}  # answer entry → how far its text has gone out
         self._context_size: dict[str, int | None] = {}  # model → the tokens its context holds (the server tells)
         self._used: dict[str, tuple[int, int]] = {}  # chat → (tokens used last time, context size)
+        self._done: dict[str, tuple[int, int]] = {}  # turn → how much it held when this model sent it on
 
     @property
     def busy(self) -> bool:
         return self._task is not None and not self._task.done()
 
+    async def progress(self, context: Context, port: str) -> list[Any] | None:
+        """A piece of a turn still being written elsewhere: a model answers only the finished one."""
+        return []
+
     async def handle(self, context: Context, port: str, step) -> list[Any] | None:
         if port != "in":
             return []
         if pending := context.open_calls(self.id):  # a result came back and another call waits: on to that card
-            return [("out", pending[0]["card"])]
+            return [("calls", pending[0]["card"])]
+        if self._done.get(context.id) == self._size(context):  # a turn it sent out came back with nothing new (a card
+            return []  # wired from 'out' back into it passed it on): it is not asked anything, it ends here
         self._stop = None
         self._task = asyncio.create_task(self._round(context, step))  # its own task: a stop cancels only the writing
         routes = None
@@ -135,20 +142,19 @@ class Model(Card):
             if self._sent:  # the snapshots first, then the finished turn
                 await self._sent
             self._sent, self._upto = None, {}
-        return routes or self._routes(context, step)
+        self._done[context.id] = self._size(context)
+        while len(self._done) > 50:  # only recent turns can come back
+            self._done.pop(next(iter(self._done)))
+        return routes or ["out"]
 
-    def _routes(self, context: Context, step) -> list[Any]:
-        """The answer goes back where the context started (if wired from here, even when that card is a tool too), else
-        to every wired card but those wired straight back (they only take calls: Lists, Home …)."""
-        targets = [c.id for c, _ in step.targets("out")]
-        if context.origin in targets:
-            return [("out", context.origin)]
-        back = {w["from"].split(".")[0] for w in self.domain.wires if w["to"].split(".")[0] == self.id}
-        return [("out", n) for n in targets if n not in back]
+    @staticmethod
+    def _size(context: Context) -> tuple[int, int]:
+        """How much a context holds: something new in it (a result, a line a Relay added) makes it bigger."""
+        return len(context.messages), len(context.events)
 
     def _snapshot(self, context: Context, step) -> None:
         """Send what it has so far (after the snapshots before it)."""
-        before, send = self._sent, step.progress(self._routes(context, step))
+        before, send = self._sent, step.progress(["out"])
 
         async def in_order() -> None:
             if before:
@@ -265,7 +271,7 @@ class Model(Card):
                             name=call["name"])
         self._snapshot(context, step)  # what it said and is calling goes out (a chat shows it)
         if pending := context.open_calls(self.id):
-            return [("out", pending[0]["card"])]
+            return [("calls", pending[0]["card"])]
         return await self._round(context, step)  # only unknown tools: it hears so and tries again
 
     async def _usage(self, context: Context, client: Client, model_id: str, reply: dict[str, Any]) -> dict[str, Any] | None:

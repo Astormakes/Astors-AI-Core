@@ -16,7 +16,7 @@
    "settings": {
     "script": "context = input(\"in\")\ncontext.add(\"charter\", \"\"\"Be kind.\"\"\", at=\"first\", role=\"system\")\noutput(\"out\", context)\n"
    },
-   "version": "3.1.0"
+   "version": "3.1.1"
   },
   "time": {
    "type": "relay",
@@ -24,13 +24,13 @@
    "settings": {
     "script": "context = input(\"in\")\ncontext.attach(\"time\", f\"Local time: {now():%A %Y-%m-%d %H:%M}\")\noutput(\"out\", context)\n"
    },
-   "version": "3.1.0"
+   "version": "3.1.1"
   },
   "model": {
    "type": "model",
    "title": "Model",
    "settings": {},
-   "version": "2.2.3"
+   "version": "3.0.0"
   },
   "lists": {
    "type": "lists",
@@ -90,7 +90,7 @@
    "settings": {
     "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard and \"stop\" in heard.text.lower():\n    stop()\n    output(\"stop\", context)\n"
    },
-   "version": "3.1.0"
+   "version": "3.1.1"
   },
   "wake_word": {
    "type": "relay",
@@ -98,7 +98,7 @@
    "settings": {
     "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard and any(word in heard.text.lower() for word in [\"computer\"]):\n    output(\"yes\", context)\n"
    },
-   "version": "3.1.0"
+   "version": "3.1.1"
   },
   "follow_up": {
    "type": "relay",
@@ -106,7 +106,7 @@
    "settings": {
     "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard:\n    # you started talking less than 6 s after AAC spoke at that satellite (long answers too)\n    spoke = audio.satellites.get(heard.data.get(\"mic\"), {}).get(\"seconds\", 999999)\n    said_for = heard.data.get(\"seconds\") or 0\n    named = any(word in heard.text.lower() for word in [\"stop\", \"computer\"])\n    if not heard.data.get(\"aac_spoke\") and spoke - said_for < 6 and not named:\n        output(\"yes\", context)\n"
    },
-   "version": "3.1.0"
+   "version": "3.1.1"
   },
   "spoken_turn": {
    "type": "relay",
@@ -114,7 +114,7 @@
    "settings": {
     "script": "context = input(\"chat\", read=True) + input(\"in\")\ncontext.attach(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
    },
-   "version": "3.1.0"
+   "version": "3.1.1"
   },
   "follow_up_turn": {
    "type": "relay",
@@ -122,13 +122,7 @@
    "settings": {
     "script": "context = input(\"chat\", read=True) + input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard:\n    heard.text = \"(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) \" + heard.text\ncontext.attach(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
    },
-   "version": "3.1.0"
-  },
-  "answer": {
-   "type": "relay",
-   "title": "Answer",
-   "settings": {},
-   "version": "3.1.0"
+   "version": "3.1.1"
   }
  },
  "wires": [
@@ -146,6 +140,14 @@
   },
   {
    "from": "model.out",
+   "to": "chat.answers"
+  },
+  {
+   "from": "model.calls",
+   "to": "chat.answers"
+  },
+  {
+   "from": "model.calls",
    "to": "lists.in"
   },
   {
@@ -153,7 +155,7 @@
    "to": "model.in"
   },
   {
-   "from": "model.out",
+   "from": "model.calls",
    "to": "home.in"
   },
   {
@@ -161,7 +163,7 @@
    "to": "model.in"
   },
   {
-   "from": "model.out",
+   "from": "model.calls",
    "to": "calendar.in"
   },
   {
@@ -197,10 +199,6 @@
    "to": "follow_up_turn.in"
   },
   {
-   "from": "answer.out",
-   "to": "text_to_speech.in"
-  },
-  {
    "from": "text_to_speech.out",
    "to": "speaker.in"
   },
@@ -225,12 +223,8 @@
    "to": "follow_up_turn.chat"
   },
   {
-   "from": "answer.out",
-   "to": "chat.answers"
-  },
-  {
    "from": "model.out",
-   "to": "answer.in"
+   "to": "text_to_speech.in"
   }
  ],
  "positions": {
@@ -301,10 +295,6 @@
   "follow_up_turn": {
    "x": 240,
    "y": 540
-  },
-  "answer": {
-   "x": 1200,
-   "y": 420
   }
  }
 }

@@ -2,10 +2,11 @@
 
 A round output gives every wire a copy; on a square one the card picks the wire. While a card works on a turn it may
 send snapshots of it (`Step.progress`): they pass every card's `progress()` (by default straight on), and the finished
-turn follows through `handle()`. A card's tools are the cards with functions in its loop (on a way from its outputs
-back into it). A call travels the shortest way along the wires to the called card (the cards between only pass it on),
-which runs the function and adds the result as a tool message; the result travels back the shortest way to the caller
-(every card does it the same way, here). What passes a card's wires goes into AAC's log as its Log setting says (the
+turn follows through `handle()`. A card's tools are the cards with functions it can reach from the outputs its calls
+leave by (a Model's `calls`; Card.calls_from), straight or through other cards. A call travels the shortest way along
+the wires from there to the called card (the cards between only pass it on), which runs the function and adds the
+result as a tool message; the result travels back the shortest way to the caller (every card does it the same way,
+here). What passes a card's wires goes into AAC's log as its Log setting says (the
 monitors read it there), what goes wrong too; open panels hear about it (live wires).
 """
 
@@ -36,10 +37,6 @@ class Step:
     def targets(self, port: str = "out") -> list[tuple[Card, str]]:
         """The cards (and their input) wired to one of this card's outputs."""
         return self.flow.wired_from(self.card.id, port)
-
-    def tool_cards(self) -> list[Card]:
-        """Its tools (Flow.tools)."""
-        return self.flow.tools(self.card.id)
 
     def wired_into(self, port: str) -> list[Card]:
         """The cards wired into one of this card's inputs."""
@@ -92,25 +89,26 @@ class Flow:
                 found.append((a, ap, b, bp))
         return found
 
-    def loop(self, card_id: str) -> list[Card]:
-        """The cards in its loop: on a way from its outputs back into it, straight or through other cards."""
+    def reach(self, card_id: str, ports: list[str]) -> list[Card]:
+        """The cards a context can reach from some of a card's outputs, straight or through other cards (not on through
+        the card itself)."""
         wires = self._text_wires()
-
-        def reach(forward: bool) -> set[str]:
-            seen, todo = set(), [card_id]
-            while todo:
-                at = todo.pop()
-                for a, _, b, _ in wires:
-                    nxt = b if forward and a == at else a if not forward and b == at else None
-                    if nxt and nxt != card_id and nxt not in seen:
-                        seen.add(nxt)
-                        todo.append(nxt)
-            return seen
-        return [self.domain.cards[i] for i in sorted(reach(True) & reach(False))]
+        seen = {b for a, ap, b, _ in wires if a == card_id and ap in ports and b != card_id}
+        todo = list(seen)
+        while todo:
+            at = todo.pop()
+            for a, _, b, _ in wires:
+                if a == at and b != card_id and b not in seen:
+                    seen.add(b)
+                    todo.append(b)
+        return [self.domain.cards[i] for i in sorted(seen)]
 
     def tools(self, card_id: str) -> list[Card]:
-        """A card's tools: the cards in its loop that offer at least one function (docs/v2 page 3)."""
-        return [c for c in self.loop(card_id) if c.offered()]
+        """A card's tools (docs/v2 page 3): the cards with at least one function it can reach from the outputs its calls
+        leave by (Card.calls_from; empty: all of them) and that have a way back to it (for the result)."""
+        card = self.domain.cards[card_id]
+        ports = list(card.calls_from) or [p for p, kind in card.ports()[1].items() if kind == "text"]
+        return [c for c in self.reach(card_id, ports) if c.offered() and self.way(c.id, card_id) is not None]
 
     def way(self, start: str, to: str, port: str | None = None) -> list[tuple[str, str, str, str]] | None:
         """The shortest way along the wires from a card (from one of its outputs, or the one given) to another card."""

@@ -3,7 +3,22 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-31) – 2.5.0, live on the owner's HA
+## Current state (2026-11-01) – 2.6.0, live on the owner's HA
+
+- **2026-11-01 (2.6.0): the Model's routing is only what is wired** (owner: "the rules are breaking things"). The
+  Model has `out` (its answer, to every card wired there, streamed) and `calls` (square: its tool calls). Its tools are
+  the cards with functions reachable from `calls` that have a way back (`flow.reach`, `Card.calls_from`; the loop scan
+  `flow.loop` is gone, a Relay's card calls check reach too). Gone: "the answer only back to where the turn started"
+  (it made the owner's spoken answers silent: Wake word's context belongs to the Chat, so the answer went only there,
+  never to Text to speech) and "cards wired straight back only get calls". A turn that comes back to a Model with
+  nothing new ends there (`_done`: a card wired from out back into it, as Lists passes a context on); a Model passes
+  no pieces from upstream on (as its old square out). The default voice chain lost its Answer Relay (the Model's out
+  reaches Chat and Text to speech). Backup broke: 2.6.0. Live: the owner's wires converted once (scratchpad
+  `convert26.py`: a tool wired straight back moved from out to calls; Schedule and the Chat, tools on the way to
+  others, got a calls wire next to their out wire); the Model's 10 tools the same as before; a real browser message
+  used the time tool and was answered (not spoken: typed); the test chat deleted. Open: the domain `test123` still
+  has the old wiring (convert when it is used); the Relay still has its own rule "a card wired to it and back only
+  gets calls" (`_picks`); what is spoken can now be chosen by a Relay in front of Text to speech (owner's idea).
 
 - **2026-11-01 (satellite 0.3.5): hunting the Calisto's noise blasts** (item 61). The satellite app runs with the
   new option `debug` (`addons/aac_satellite/debug.py`), on the live HA since 09:25.

@@ -139,7 +139,7 @@ REFERENCE = [
     ("Other cards", "lists.total", "A card's value (no brackets): each card lists its values.", ""),
     ("Other cards", 'cards["output"]', "A card whose id is one of the script's own names (a card called Output) is "
      "reached like this.", ""),
-    ("Your own functions", "def name(): … return …", "A function this Relay offers: to models in its loop (tick it under "
+    ("Your own functions", "def name(): … return …", "A function this Relay offers: to models that reach it from their calls output (tick it under "
      "For models) and to other Relays' scripts. The text in quotes under def is what a model reads about it; what it "
      "returns is the answer.",
      'def seconds_left():\n    """Seconds left on the climate clock."""\n    page = web.read("https://example.org/clock")\n'
@@ -517,7 +517,7 @@ class ContextView:
 
 
 class CardRef:
-    """Another card: its functions (when it is in the Relay's loop) and its values."""
+    """Another card: its functions (when the Relay reaches it from one of its outputs) and its values."""
 
     __slots__ = ("_card", "_run")
 
@@ -566,8 +566,9 @@ class Run:
         return self.arrived is not None and self.arrived.progress
 
     def call(self, card: Any, name: str, args: dict[str, Any]) -> Any:
-        if card.id not in {c.id for c in self.relay.domain.flow.loop(self.relay.id)}:
-            raise ScriptError(f"{card.id} is not in this Relay's loop: wire it so (from the Relay, back into it) to use {name}()")
+        outs = [p for p, kind in self.relay.ports()[1].items() if kind == "text"]
+        if card.id not in {c.id for c in self.relay.domain.flow.reach(self.relay.id, outs)}:
+            raise ScriptError(f"{card.id} cannot be reached from this Relay: wire one of its outputs to it (and it back) to use {name}()")
         if self.piece:
             raise ScriptError(f"{card.id}.{name}(): a card call waits for the finished context (put it under if context.finished:)")
         context = self.calling.branch() if self.calling is not None else self.arrived if self.arrived is not None else Context(origin=self.relay.id)

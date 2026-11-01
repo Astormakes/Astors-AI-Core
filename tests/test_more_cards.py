@@ -220,7 +220,7 @@ async def test_calendar_card_and_entity(hass: HomeAssistant, mock_entry, aioclie
 
     core = await setup_aac(hass, mock_entry)
     cal = core.domain.cards["calendar"]
-    assert {"from": "model.out", "to": "calendar.in"} in core.domain.wires
+    assert {"from": "model.calls", "to": "calendar.in"} in core.domain.wires
     day = (dt_util.now() + timedelta(days=200)).date()  # far from anything the backup holds
     tomorrow, after = day.isoformat(), (day + timedelta(days=1)).isoformat()
     assert (await cal.call("add", {"summary": "Dentist", "start": f"{tomorrow}T10:00"}))["done"] == "add"
@@ -307,9 +307,8 @@ async def test_chat_finds_and_switches_to_old_chats(hass: HomeAssistant, mock_en
     card = core.domain.cards["chat"]
     old, other = card._new("About the drone"), card._new("Groceries")
     old["context"]["messages"] = [{"id": "e1", "by": "chat", "kind": "said", "text": "the LoRa mast drone", "tags": [], "time": "", "data": {}, "state": "closed"}]
-    d = core.domain  # the Chat as the model's tool: wired straight to it and back
-    d.set_wires([w for w in d.wires if w["from"] != "chat.said"] + [{"from": "chat.said", "to": "model.in"},
-                                                                   {"from": "model.out", "to": "chat.answers"}])
+    d = core.domain  # the Chat as the model's tool: wired from its calls straight to it and back
+    d.set_wires([w for w in d.wires if w["from"] != "chat.said"] + [{"from": "chat.said", "to": "model.in"}])
     old["updated"], other["updated"] = "2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00"
     await card.save()
     found = await card.call("chats", {"search": "lora"})
