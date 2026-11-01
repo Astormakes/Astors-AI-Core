@@ -25,8 +25,9 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   (scratchpad board_before_3.json), deployed, the old chats deleted, three scripts converted (Charter:
   `context.set("context.system", text())`; Follow-up turn and Stop word: `*.said`; the Stop word's stop output and its
   wire into the Charter went), two browser messages answered (one with a tool call). Not yet tried live: a spoken
-  turn. Open: the Speaker's "A clip without a satellite plays at" is empty (typed answers are not played, the log says
-  so); the owner wanted typed answers spoken, with a Relay deciding.
+  turn. The Speaker's "A clip without a satellite plays at" is set to Home Assistant (`ha_app`, owner 23:11: fix A):
+  typed answers and heard turns whose script copied only the text (Wake word's `context.add("said", heard)`) play
+  there. Open: the owner's Follow-up turn has a typo (`comtext.add`), so it sends nothing.
 
 
 - **2026-11-01 (2.6.3): the storm stop** (owner's design). HA Core froze at 15:56:25: the owner said "stop the vacuum",
