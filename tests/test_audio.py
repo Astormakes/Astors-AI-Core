@@ -220,6 +220,8 @@ async def test_a_level_card_keeps_the_size_of_any_card(hass, mock_entry):
 
     core = await setup_aac(hass, mock_entry)
     level = await core.domain.add_card("level", "Level")
+    await core.domain.add_card("relay", "Sink", {"script": ""})
+    core.domain.set_wires([*core.domain.wires, {"from": f"{level.id}.cuts", "to": "sink.in"}])
     assert level.summary()["view"]["inline"] is True
     shown = []
     with patch.object(type(level), "show", lambda self, data: shown.append(data)):

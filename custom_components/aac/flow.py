@@ -2,6 +2,9 @@
 
 One way to arrive: a context comes in at an input and the card runs. A card acts when the context holds something
 for it, and sends only when it did something (`Card.send`); nothing to do, nothing sent: the context ends there.
+Contexts move as a wave: what a card sends reaches every card wired there before anything those cards send moves on
+(a copy sent earlier never arrives after what came of it). A snapshot (something streaming) goes as a wave of its own,
+at once.
 The one thing every card does the same: a card with functions answers the call that names it (`Context.next_call`)
 with a result entry and sends the context on from its outputs. One limit: a wire that carries more than the storm
 limit (AAC's settings) within a second turns red. What passes a card's wires goes into AAC's log as its Log setting
@@ -12,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from contextvars import ContextVar
 import json
 import time
 from traceback import format_exc
@@ -23,6 +27,15 @@ if TYPE_CHECKING:
     from .cards import Card
     from .core import Domain
 
+class Wave:
+    """The contexts still to arrive, in the order they were sent."""
+
+    def __init__(self) -> None:
+        self.queue: deque[tuple[Card, str, Context]] = deque()
+        self.moving = True
+
+
+WAVE: ContextVar[Wave | None] = ContextVar("aac_wave", default=None)  # the wave a card works in (its sends join it)
 LEVEL_EVERY = 0.1  # seconds between an audio wire's loudness updates (only while a Cards page is open)
 STORM_SECONDS = 1.0
 
@@ -120,11 +133,25 @@ class Flow:
     # ------------------------------------------------------------------ moving
     async def send(self, card: Card, context: Context, port: str) -> None:
         """A card sends a context from one of its outputs: every card wired there gets a copy (a red wire carries
-        nothing)."""
+        nothing). Within a wave it joins the wave; otherwise (or a snapshot) it starts one and returns when it ended."""
         targets = [(c, p) for c, p in self.wired_from(card.id, port) if self.passes(f"{card.id}.{port}", f"{c.id}.{p}")]
+        if not targets:
+            return
         self.record(card.id, port, context, [f"{c.id}.{p}" for c, p in targets])
-        for target, in_port in targets:
-            await self.enter(target, in_port, context.copy())
+        arriving = [(c, p, context.copy()) for c, p in targets]
+        wave = WAVE.get()
+        if wave is not None and wave.moving and not context.streaming:
+            wave.queue.extend(arriving)
+            return
+        wave = Wave()
+        wave.queue.extend(arriving)
+        token = WAVE.set(wave)
+        try:
+            while wave.queue:
+                await self.enter(*wave.queue.popleft())
+        finally:
+            wave.moving = False
+            WAVE.reset(token)
 
     async def enter(self, card: Card, port: str, context: Context) -> None:
         """A context arrives at a card's input."""

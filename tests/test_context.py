@@ -244,3 +244,16 @@ async def test_a_call_passes_the_cards_on_its_way(hass: HomeAssistant, mock_entr
     _, answer = await d.cards["chat"].write("my lists?")
     assert answer == "No lists." and asked[1]["messages"][-1]["role"] == "tool"
     assert any(p_["text"].startswith("passed") for p_ in d.cards[p].printed)
+
+
+async def test_contexts_move_as_a_wave(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """The calls go to Lists and to the Chat (wired last): the Chat gets its copy of the call before anything Lists
+    sends moves on, so the answer that comes of it is what the chat keeps (owner's board 2026-11-01: the older copy
+    arrived last and replaced the answer)."""
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    d.set_wires([w for w in d.wires if w != {"from": "model.calls", "to": "chat.answers"}] + [{"from": "model.calls", "to": "chat.answers"}])
+    model_answers(aioclient_mock, reply(calls=[("lists", {})]), reply("No lists."))
+    chat = d.cards["chat"]
+    chat_id, answer = await chat.write("my lists?")
+    assert answer == "No lists." and chat.get(chat_id)["messages"][-1]["text"] == "No lists."

@@ -10,7 +10,8 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   How AAC works). A context is a list of entries `{id, tag, text, data, time, state}`, first `context.system`, then
   `context.tools`, then the conversation; no kind, no by, no attachments, no events, no context id or way. A card acts
   when the context holds something for it and sends only when it did something (`Card.send`); one way to arrive
-  (`flow.enter`: a call that names the card is answered by the core, everything else is `handle`). Calls travel the
+  (`flow.enter`: a call that names the card is answered by the core, everything else is `handle`); contexts move as a
+  wave (found live: the Chat's copy of a call arrived after the answer and replaced it). Calls travel the
   wires like every context, one after the other (`Context.next_call`). Everything said is `<card>.said`. Stop is a
   core function (`stop_all`), no stop entry. One limit: the storm limit, an AAC-wide setting (`aac/settings`); the step
   limit went (it would end a heartbeat loop; the Timer holds on its own now). The Model acts when the newest entry is

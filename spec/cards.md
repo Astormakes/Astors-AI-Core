@@ -62,6 +62,10 @@ the conversation (`context.conversation`). An entry is `{id, tag, text, data, ti
 **data)`, `remove(entry)` (system and tools stay), `copy()`. Stored as `to_dict()` / `from_dict()` (`{entries}`).
 Everything anyone says is `<card>.said`.
 
+**A wave.** What a card sends reaches every card wired there before anything those cards send moves on (`flow.send`:
+inside a wave a send joins its queue; outside one, or for a snapshot, it starts a wave and returns when the wave
+ended). So a copy sent earlier never arrives after what came of it, and a Chat writing waits for the whole wave.
+
 **Snapshots.** While a card writes (a Model), it sends the same context again after every finished sentence, its entry
 `streaming`; the last one has it `ended`. Every card gets it through `handle()` like any context: Text to speech speaks
 the finished sentences, a Chat shows it growing, a Model finds nothing for it.

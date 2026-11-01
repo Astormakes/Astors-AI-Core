@@ -318,7 +318,7 @@ async def test_a_model_talks_while_it_works(hass: HomeAssistant, mock_entry, aio
     d = core.domain
     voice = await d.add_card("text_to_speech", "Text to speech")
     d.set_wires([*d.wires, {"from": "model.out", "to": f"{voice.id}.in"}])  # the answer goes to every card wired from out
-    model_answers(aioclient_mock, reply("Let me check.", [("lists__lists", {})]), reply("You have no lists yet. Shall I make one?"))
+    model_answers(aioclient_mock, reply("Let me check.", [("lists", {})]), reply("You have no lists yet. Shall I make one?"))
     spoken, clips = [], []
 
     async def tts(text, *args):

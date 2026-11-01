@@ -20,6 +20,8 @@ RULES = """How AAC works: a few rules every card follows, the same way every tim
    unblocked). A slow loop (through a Timer) may run for ever.
 
 What follows from them:
+- Contexts move as a wave: what a card sends reaches every card wired there before anything those cards send moves
+  on, so a copy sent earlier never arrives after what came of it. A snapshot goes as a wave of its own, at once.
 - A model acts when the newest entry is not its own. It reads context.system as its system prompt, its own .said
   entries as its answers, the results of its calls as tool messages, every other entry with text as a user message.
   An answer that is nothing (or only its "Means no answer" word) is no answer: nothing is sent.
