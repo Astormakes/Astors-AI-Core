@@ -804,5 +804,11 @@ pencil edit is missing" is item 11.
     - **When it happens again** (the owner says when): the satellite's log around that time (`ha apps logs
       local_aac_satellite`), the WAV, HA's host journal (`ha host logs`: Batmon's container exits, kernel), the
       Proxmox host's `journalctl -k` (`claude@192.168.1.10`).
-    - **Ideas once caught**: move the BT600 to a rear port (another controller, away from the UGREEN); stop Batmon
-      or fix its stick; hang up the BT600 on noise. Afterwards set `debug` off again.
+    - **2026-11-01 09:52: the UGREEN reset in software** on the Proxmox host (`sudo usbreset 33fa:0012`, see
+      ~/cluade/proxmox/docs/host-inventory.md): HA got it back, Batmon read the battery again (65 %), the BT600 was not
+      touched. Batmon no longer restarts every 5.5 min: if the noise stops now, that points at it. Idea: the host
+      resets the UGREEN by itself when HA's kernel logs `hci0 … tx timeout`.
+    - **`debug` is off for now** (09:47): with it on, the microphone seemed to hear nothing and the link dropped
+      often; to be ruled out before it goes on again (it records the raw microphone a second time).
+    - **Ideas once caught**: move the BT600 to a rear port (another controller, away from the UGREEN); hang up the
+      BT600 on noise. Afterwards set `debug` off again.
