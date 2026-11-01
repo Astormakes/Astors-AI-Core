@@ -3,7 +3,19 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-11-01) – 2.6.2, live on the owner's HA
+## Current state (2026-11-01) – 2.6.3, live on the owner's HA
+
+- **2026-11-01 (2.6.3): the storm stop** (owner's design). HA Core froze at 15:56:25: the owner said "stop the vacuum",
+  the Stop word sent a stop, it ran forward through the Model's out into Chat and Schedule, both wired back into the
+  Charter, and doubled every round (a probe: past 5000 card visits; `MAX_STEPS` bounds each copy, not their number).
+  The earlier "satellite hang" was most likely the same (HA frozen); the satellite reconnected by itself after HA's
+  restart. Fixed: a stop passes every card once; `flow.enter` yields to HA between two cards; the storm stop: more
+  than `STORM` (30) contexts through one wire within a second make it red (`flow.passes`, `domain.red`, kept in the
+  domain's store), it carries nothing until unblocked (Cards page: click the wire, Unblock; `aac/wire/unblock`; the
+  Card editor's `unblock`), an HA notification, an error in the log, every Card editor answer carries `red_wires`. A
+  stack trace of the frozen HA was not possible (no guest agent on VM 100, the SSH app cannot see HA's processes).
+  Live: Cards page draws, no red wires, a browser message answered, no console errors; the test chat deleted. Open:
+  the owner's Stop word fires on any line containing "stop" (his script).
 
 - **2026-11-01 (2.6.2, satellite 0.3.6): audio died again** (owner). The satellite had hung since between 11:46 and
   11:58: no reconnect after HA's restarts at 11:58 and 14:23 (no "Disconnected" logged), its event loop still alive
