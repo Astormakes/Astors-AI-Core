@@ -188,8 +188,8 @@ Through `self.core`:
 - `audio`: `say(satellite, text, language, engine=None, voices=None)` (a card's engine and its voice per language
   `{code: {language: locale, voice}}`; else the Audio page's default engine), `voices(engine)` (an engine's voices per
   home language), `play(satellite, wav)`, `stop(satellite)`, `spoken()` (when AAC last spoke), `stt(pcm, language,
-  models)` (no language: the home's), `tts(text, language, engine, voices)` (WAV; None when it failed or took longer
-  than `TTS_WAIT`, 30 s).
+  models)` (no language: the home's), `tts(text, language, engine, voices, wait)` (WAV; None when it failed or took longer
+  than `wait` seconds, default `TTS_WAIT` 30; Text to speech's setting Gives up after).
 - `languages()`: the home's languages, main first (ISO codes; the Audio page, else as Home Assistant describes the
   home).
 - Audio helpers from the api: `pcm_to_wav(pcm, rate)`, `wav_to_pcm(wav)`, `resample(pcm, rate, to)`. A clip is

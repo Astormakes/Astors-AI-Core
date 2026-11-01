@@ -5,7 +5,7 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
 
 ## Current state (2026-11-01) – 3.0.0 on branch `v3`, live on the owner's HA
 
-- **3.0.1:** a text-to-speech request is given up after `TTS_WAIT` (30 s), with a log warning (live 23:35: the whole
+- **3.0.1:** a text-to-speech request is given up after Text to speech's setting Gives up after (default 30 s), with a log warning (live 23:35: the whole
   context went to Piper as one text, it never finished, and every sentence after it waited behind it).
 
 - **2026-11-01 (3.0.0): the rules from the ground up** (owner: "lets scrap the old rules and build from the ground

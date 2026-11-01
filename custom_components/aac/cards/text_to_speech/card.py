@@ -11,7 +11,7 @@ from typing import Any
 
 from custom_components.aac.api import Card, Context, matches, register, wav_to_pcm
 
-VERSION = "3.0.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.1.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
@@ -37,6 +37,9 @@ class TextToSpeech(Card):
     settings_schema = {"speaks": {"type": "text", "title": "Speaks", "default": "model.said, model.error",
                                   "help": "The entries it speaks (tags, comma separated; * stands for anything): only those at "
                                           "the end of a context, after the last entry it does not speak, each once."},
+                       "wait": {"type": "number", "title": "Gives up after (seconds)", "default": 30, "min": 1,
+                                "help": "One text the engine takes longer for is given up (the log says so) and the next "
+                                        "one is spoken: a text that never finishes holds up nothing."},
                        "engine": {"type": "tts_engine", "title": "Voice engine", "default": "",
                                   "help": "A Home Assistant text-to-speech engine. Empty: the default on the Audio page."},
                        "voices": {"type": "voices", "title": "Voice per language", "default": {},
@@ -95,7 +98,8 @@ class TextToSpeech(Card):
         before, round_ = self._last, self._round
 
         async def in_order() -> None:
-            wav = await self.core.audio.tts(text, heard.get("language"), self.settings.get("engine") or None, self.settings.get("voices"))
+            wav = await self.core.audio.tts(text, heard.get("language"), self.settings.get("engine") or None, self.settings.get("voices"),
+                                            float(self.settings.get("wait") or 30))
             if before:
                 await before
             if not wav or round_ != self._round:
