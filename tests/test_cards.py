@@ -35,7 +35,7 @@ if said and "computer" in said.text.lower():
     await sink(d, "Notes")
     d.set_wires([{"from": "new.out", "to": "check.in"}, {"from": "check.aac", "to": "yes.in"}, {"from": "check.note", "to": "notes.in"},
                  {"from": "check.aac", "to": "room.in"}, {"from": "room.out", "to": "check.in"}])
-    context = Context(origin="chat")
+    context = Context()
     context.add("chat", "said", "Computer, lights on", ["said"])
     await d.flow.enter(new, "in", context)
     sent = d.flow.held["check.aac"]
@@ -44,7 +44,7 @@ if said and "computer" in said.text.lower():
     assert d.flow.held["check.note"].answer == "lights on\nnoted"  # a list: one answer of the Relay
     assert "check.note" not in {w["from"] for w in d.wires if w["to"] == "room.in"}
     d.flow.held.clear()
-    other = Context(origin="chat")
+    other = Context()
     other.add("chat", "said", "hello", ["said"])
     await d.flow.enter(new, "in", other)
     assert "check.aac" not in d.flow.held and "check.out" not in d.flow.held  # no output picked: nothing leaves
@@ -76,7 +76,7 @@ output("out", both)
     assert relay.ports()[0] == {"in": "text", "chat": "read"}
     await sink(d)
     d.set_wires([{"from": "texts.out", "to": "sink.in"}, {"from": "chat.provides", "to": "texts.chat"}])
-    context = Context(origin="ears")
+    context = Context()
     context.add("noise", "said", "hm", ["heard"])
     context.add("chat", "said", "hi", ["said"])
     await relay.handle(context, "in", None)
@@ -87,7 +87,7 @@ output("out", both)
     assert [p["text"] for p in relay.printed] == ["['system', 'system', 'system', 'user', 'user', 'user']", "1 said; True True None",
                                                  "Read me first. | The note. | 2"]
     sent = d.flow.held["texts.out"]
-    assert sent.origin == "chat" and sent.id == context.id and sent.entries[-1]["text"] == "x"  # files into the chat
+    assert sent.id == context.id and sent.entries[-1]["text"] == "x"  # b's turn, with both's entries
 
 
 async def test_relay_script_problems(hass: HomeAssistant, mock_entry):
@@ -160,7 +160,7 @@ print("the top ran")
     asker = await d.add_card("relay", "Asker", {"script": 'context = input("in")\noutput("out", tools.greet("Bo", "Hi"))\n'})
     await sink(d)
     d.set_wires([{"from": "asker.out", "to": "tools.in"}, {"from": "tools.out", "to": "asker.in"}, {"from": "asker.out", "to": "sink.in"}])
-    context = Context(origin="sink")
+    context = Context()
     context.add("chat", "said", "go")
     await asker.handle(context, "in", None)
     assert d.flow.held["asker.out"].answer == "Hi, Bo!" and "asker.call" in {t["tag"] for t in d.tag_pool()}
@@ -243,7 +243,7 @@ if audio.satellites[heard.data["mic"]].seconds < 10:
     output("yes", context)
 '''})
     for mic, picked in (("kitchen", True), ("office", False)):
-        context = Context(origin="ears")
+        context = Context()
         context.add("ears", "said", "and tomorrow?", ["said"], mic=mic)
         await card.handle(context, "in", Step(core.domain.flow, card, "in", context))
         assert card.last_run["outputs"] == (["yes"] if picked else []) and context.text == f"{lists.current()['total']} open"

@@ -18,7 +18,7 @@ from custom_components.aac.api import Card, Context, new_id, register
 sys.modules.pop(f"{__name__}.script", None)  # a newer card file brings a newer script.py
 from .script import DEFAULT, OWN, REFERENCE, Run, Script, check, joined, reference_text  # noqa: E402
 
-VERSION = "3.1.2"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
+VERSION = "3.2.0"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
 
 WAIT = 20  # seconds a script may run
 PRINTED = 200  # print entries it keeps
@@ -129,9 +129,9 @@ class Relay(Card):
 
     def _picks(self, out: str, context: Context) -> list[Any]:
         """The wires of one output; a card wired to it and back is its tool and only takes calls, except the card the
-        context started at (a Chat wired to it and back gets its turn back)."""
+        context started at, the first on its way (a Chat wired to it and back gets its turn back)."""
         back = {c.id for p, kind in self.ports()[0].items() if kind == "text" for c, _ in self.domain.flow.wired_into(self.id, p)}
-        return [(out, c.id) for c, _ in self.domain.flow.wired_from(self.id, out) if c.id not in back or c.id == context.origin]
+        return [(out, c.id) for c, _ in self.domain.flow.wired_from(self.id, out) if c.id not in back or context.way[:1] == [c.id]]
 
     # ------------------------------------------------------------------ calls
     async def travel(self, card: Any, function: str, args: dict[str, Any], context: Context) -> Any:
@@ -171,7 +171,7 @@ class Relay(Card):
         if script.problems:
             raise ValueError(f"its script has problems: {'; '.join(script.problems)}")
         run = Run(self, None, None, {}, self.hass.loop, self.core.audio.spoken() if "audio" in script.names else None,
-                  calling=context or Context(origin=self.id))
+                  calling=context or Context())
         try:
             result = await asyncio.wait_for(self.hass.async_add_executor_job(run.answer, script, function, args), WAIT)
         except TimeoutError as err:

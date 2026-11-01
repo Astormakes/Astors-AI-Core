@@ -9,7 +9,7 @@ from typing import Any
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "2.10.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.10.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 JOIN_WAIT = 1.5  # seconds the Phrase joiner waits for a phrase that may bring no text
 
@@ -69,7 +69,7 @@ class PhraseJoiner(Card):
         if not parts:
             return
         first = parts[0]["data"]
-        context = Context(origin=self.id)
+        context = Context()
         context.add(self.id, "said", " ".join(p["text"].strip() for p in parts), ["heard"],
                     **{k: first.get(k) for k in ("mic", "mic_name", "area", "language", "aac_spoke")},
                     seconds=round(sum(float(p["data"].get("seconds") or 0) for p in parts), 1), phrases=len(parts))

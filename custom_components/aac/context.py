@@ -6,6 +6,9 @@
     tools     what a model may call this turn (the Model card fills it from the cards wired to it and back)
     events    stop, cuts, choices, errors: for cards and the panel, never sent to a model
 
+A context holds nothing else about where it belongs: that is in its entries too (a Chat tags the messages it keeps
+with `<chat card>.<chat id>`).
+
 An entry: {id, by (card id), kind, text, tags (`<card>.<tag>`), time, data, state}. State: open while it grows,
 closed when done, cut when a stop ended it. An answer's calls: data["calls"] = [{id, card, function, name, args}];
 a result: data["call_id"].
@@ -54,10 +57,8 @@ class Context:
     messages: list[dict[str, Any]] = field(default_factory=list)
     tools: list[dict[str, Any]] = field(default_factory=list)  # {name, card, function, description, args}
     events: list[dict[str, Any]] = field(default_factory=list)
-    origin: str = ""  # the card it started at (an answer goes back there)
-    chat_id: str | None = None  # the chat it belongs to (a Chat card keeps the conversation)
     id: str = field(default_factory=new_id)
-    way: list[str] = field(default_factory=list)  # the cards it passed
+    way: list[str] = field(default_factory=list)  # the cards it passed, the one it started at first
     progress: bool = False  # a snapshot of a turn still being worked on (the same turn comes again, finished)
     request: dict[str, Any] | None = None  # the newest request a Model sent: {model, body, reply} (a chat page's Plain text)
 
@@ -176,6 +177,6 @@ class Context:
         def short(e: dict[str, Any]) -> dict[str, Any]:
             out = {k: (v[:4000] if k == "text" else v) for k, v in e.items() if k != "attachments"}
             return {**out, "attachments": [short(a) for a in e["attachments"]]} if e.get("attachments") else out
-        return {"id": self.id, "origin": self.origin, "chat_id": self.chat_id, "way": self.way,
+        return {"id": self.id, "way": self.way,
                 "system": [short(e) for e in self.system], "messages": [short(e) for e in self.messages[-60:]],
                 "tools": self.tools, "events": [short(e) for e in self.events[-30:]]}

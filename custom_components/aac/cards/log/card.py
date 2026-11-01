@@ -14,7 +14,7 @@ from typing import Any
 
 from custom_components.aac.api import SAMPLE_RATE, Card, Context, new_id, pcm_to_wav, register
 
-VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 READ_EVERY = 2  # seconds between looks at what dotted wires provide
 QUIET = 1.5  # seconds without audio from a satellite: it stopped
@@ -78,7 +78,7 @@ class Log(Card):
         return f"{e['kind']} {tags}: {body}".strip()
 
     async def handle(self, context: Context, port: str, step) -> list[Any] | None:
-        came_from = context.way[-2] if len(context.way) > 1 else context.origin
+        came_from = context.way[-2] if len(context.way) > 1 else context.way[0] if context.way else ""
         newest = context.entries[-1] if context.entries else None
         what = "snapshot" if context.progress else "context"
         self._write(what, self._name(came_from), (self._entry(newest) if newest else "(empty)") + f"  [{len(context.entries)} entries]", context)
@@ -170,7 +170,7 @@ class Log(Card):
         """What a dotted wire from 'provides' reads: AAC's newest log entries as one entry (when it may read the log)."""
         if port != "provides":
             return None
-        context = Context(origin=self.id)
+        context = Context()
         try:
             found = self.read_log(levels=["error", "warning", "info"], last=PROVIDED)
         except PermissionError:

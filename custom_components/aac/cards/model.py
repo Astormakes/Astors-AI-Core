@@ -12,9 +12,14 @@ from typing import Any
 from custom_components.aac.api import (Card, Client, Context, ModelError, ModelUnreachable, entry, new_id, register, run,
                                       tool_spec)
 
-VERSION = "3.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
+
+
+def conversation_key(context: Context) -> str:
+    """A conversation is known by its first message (the same in every turn of a chat)."""
+    return context.messages[0]["id"] if context.messages else context.id
 
 
 def conversation(context: Context, me: str, names: dict[str, str]) -> tuple[str, list[dict[str, Any]]]:
@@ -107,7 +112,7 @@ class Model(Card):
         self._sent: asyncio.Future | None = None  # the newest snapshot on its way (they go out in order)
         self._upto: dict[str, int] = {}  # answer entry → how far its text has gone out
         self._context_size: dict[str, int | None] = {}  # model → the tokens its context holds (the server tells)
-        self._used: dict[str, tuple[int, int]] = {}  # chat → (tokens used last time, context size)
+        self._used: dict[str, tuple[int, int]] = {}  # conversation → (tokens used last time, context size)
         self._done: dict[str, tuple[int, int]] = {}  # turn → how much it held when this model sent it on
 
     @property
@@ -199,7 +204,7 @@ class Model(Card):
         if not rounds:
             self._snapshot(context, step)  # under way: a chat shows the question at once (a spoken one too)
             await self._sent  # before the model is asked (only a few cards pass it on)
-        used = self._used.get(context.chat_id or context.origin or "")  # how full the context was last time
+        used = self._used.get(conversation_key(context))  # how full this conversation was last time
         full = round(100 * used[0] / used[1]) if used and used[1] else 0
         if self.settings.get("context_note", True) and not rounds:
             context.put(self.id, "trailer", f"(This conversation fills {full} % of your context: keep answers short; older "
@@ -281,7 +286,9 @@ class Model(Card):
         if model_id not in self._context_size:
             self._context_size[model_id] = await client.context_size()
         usage = {**usage, "context": self._context_size[model_id]}
-        self._used[context.chat_id or context.origin or ""] = (usage.get("total_tokens") or 0, usage["context"] or 0)
+        self._used[conversation_key(context)] = (usage.get("total_tokens") or 0, usage["context"] or 0)
+        while len(self._used) > 50:  # conversations long gone
+            self._used.pop(next(iter(self._used)))
         return usage
 
     def _live(self, answer: dict[str, Any], text: str, thinking: str, step) -> None:
@@ -303,7 +310,7 @@ class Model(Card):
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         if function == "ask":  # a question of its own, answered from what it knows (its tools stay out)
-            ask = Context(origin=self.id)
+            ask = Context()
             if context is not None:
                 ask.system = [dict(e) for e in context.system]
             ask.add(self.id, "said", str(args.get("text") or ""))

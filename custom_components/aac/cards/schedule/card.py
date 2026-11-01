@@ -18,7 +18,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, register
 
-VERSION = "1.3.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 MAX_PLANS = 20  # entries AAC may have at once
@@ -52,7 +52,7 @@ class AutoCard(Card):
 
     def fire(self, name: str, text: str) -> str:
         """Start a context at the output (in the background); its id."""
-        context = Context(origin=self.id)
+        context = Context()
         context.add(self.id, "said", text, ["fired"], name=name)
         self._log(name, text, None, context.id)
         task = self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "out"), f"aac {self.id}")
@@ -243,7 +243,7 @@ class Schedule(AutoCard):
             return
         item["unanswered"] = True
         text, failed = item["text"].split("\n(It is due now.")[0], f" ({item['failed']})" if item.get("failed") else ""
-        context = Context(origin=self.id)
+        context = Context()
         context.add(self.id, "answer", f"Not answered{failed}: {text}", ["unanswered"])
         self.log(f"{item['name']}: nobody answered{failed}", "warning", what="unanswered")
         self.hass.async_create_task(self._saved())

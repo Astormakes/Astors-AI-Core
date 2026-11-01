@@ -13,7 +13,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.2.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 
@@ -45,7 +45,7 @@ class AutoCard(Card):
 
     def fire(self, name: str, text: str) -> None:
         """Start a context at the output (in the background)."""
-        context = Context(origin=self.id)
+        context = Context()
         context.add(self.id, "said", text, ["fired"], name=name)
         self._log(name, text, None, context.id)
         task = self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "out"), f"aac {self.id}")

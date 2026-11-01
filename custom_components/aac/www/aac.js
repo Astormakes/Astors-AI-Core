@@ -342,7 +342,8 @@ class AacPanel extends HTMLElement {
   _type(t) { return (this.state?.types || []).find((x) => x.type === t); }
 
   _event(ev) {
-    if (ev.card && this._els[ev.card]) { try { this._els[ev.card].event?.(ev); } catch (err) { console.error(err); } } // to the card's page
+    const pages = ev.card ? [this._els[ev.card]] : ev.what === "delta" ? Object.values(this._els) : []; // to the card's page (a growing answer: every page; a chat's finds its turn by the tag)
+    for (const el of pages) { try { el?.event?.(ev); } catch (err) { console.error(err); } }
     if (["chat", "card"].includes(ev.what)) { // a card's sidebar entries may have changed
       clearTimeout(this._nt);
       this._nt = setTimeout(async () => { this.nav = (await this.ws("aac/nav")).nav; const n = this.shadowRoot.querySelector("nav"); if (n) n.outerHTML = this._nav(); }, 200);

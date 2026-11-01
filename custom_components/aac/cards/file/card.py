@@ -12,7 +12,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.4.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.4.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -63,7 +63,7 @@ class File(Card):
         """What a dotted wire from 'provides' reads: the file's text as one entry (its id changes with the text)."""
         if port != "provides":
             return None
-        context = Context(origin=self.id)
+        context = Context()
         if self.text.strip():
             entry = context.add(self.id, "note", self.text, ["text"])
             entry["id"] = hashlib.sha1(f"{self.id}|{self.text}".encode()).hexdigest()[:10]

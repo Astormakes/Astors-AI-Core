@@ -371,16 +371,14 @@ class Entries(list):
 
 
 def joined(a: Context, b: Context) -> Context:
-    """One context: a's entries, then b's. It is b's turn (its id, the cards it passed); it belongs where a does (a
-    chat's conversation with the new lines on top files into that chat), else where b does."""
+    """One context: a's entries, then b's. It is b's turn (its id, the cards it passed); the tags come along (a chat's
+    conversation with the new lines on top files into that chat: its messages carry the chat's tag)."""
     out = b.branch()
     start = len(a.messages)
     out.system = [*deepcopy(a.system), *out.system]
     out.messages = [*deepcopy(a.messages), *out.messages]
     out.events = [*deepcopy(a.events), *({**e, "at": e.get("at", 0) + start} for e in out.events)]
     out.tools = [*deepcopy(a.tools), *out.tools]
-    if a.origin:
-        out.origin, out.chat_id = a.origin, a.chat_id
     return out
 
 
@@ -571,7 +569,7 @@ class Run:
             raise ScriptError(f"{card.id} cannot be reached from this Relay: wire one of its outputs to it (and it back) to use {name}()")
         if self.piece:
             raise ScriptError(f"{card.id}.{name}(): a card call waits for the finished context (put it under if context.finished:)")
-        context = self.calling.branch() if self.calling is not None else self.arrived if self.arrived is not None else Context(origin=self.relay.id)
+        context = self.calling.branch() if self.calling is not None else self.arrived if self.arrived is not None else Context()
         return asyncio.run_coroutine_threadsafe(self.relay.travel(card, name, args, context), self.loop).result(60)
 
     def _what(self, what: Any) -> Context:
@@ -586,7 +584,7 @@ class Run:
             text = "\n".join(x.text if isinstance(x, Entry) else str(x) for x in what)
         else:
             text = str(what)
-        base = self.arrived.branch() if self.arrived is not None else Context(origin=self.relay.id)
+        base = self.arrived.branch() if self.arrived is not None else Context()
         base.add(self.relay.id, "answer", text, ["answer"])
         return base
 

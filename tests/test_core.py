@@ -614,7 +614,7 @@ async def test_aacs_own_log(hass: HomeAssistant, mock_entry, hass_ws_client):
     await d.add_card("relay", "A")
     await d.add_card("log", "Sink")
     d.set_wires([*d.wires, {"from": "a.out", "to": "sink.in"}])
-    first = Context(origin="a")
+    first = Context()
     first.add("a", "said", "first line", [])
     await d.flow.send(first, "a", "out")
     out = d.log.read(card="a", what="out")
@@ -622,7 +622,7 @@ async def test_aacs_own_log(hass: HomeAssistant, mock_entry, hass_ws_client):
     assert not d.log.read(card="a", what="in")  # by default only what goes out
 
     a = await d.update_card("a", settings={"log": "context", "log_at": "both"})
-    second = Context(origin="x")
+    second = Context()
     second.add("x", "said", "second", [])
     await d.flow.enter(a, "in", second)
     got = d.log.read(card="a", levels=["flow"], last=2)

@@ -10,7 +10,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import CARD_TYPES, SAMPLE_RATE, Card, Context, Segmenter, make_vad, new_id, register
 
-VERSION = "2.10.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.10.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 COLUMN = 290  # one column in the grid (the panel's card width and gap)
 
@@ -60,7 +60,7 @@ class PauseCut(Card):
 
     def _cut(self, what: str, meta: dict[str, Any], **data: Any) -> None:
         """A cut goes out at 'cuts' as a small context: one signal entry tagged start / phrase / end."""
-        context = Context(origin=self.id)
+        context = Context()
         context.add(self.id, "signal", f"cut: {what}", [what], cut=what, source=meta.get("source"), name=meta.get("name"), **data)
         self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "cuts"), f"aac {self.id} cut")
 

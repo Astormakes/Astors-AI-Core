@@ -200,7 +200,10 @@ under the new id.
 A context (`Context`, docs/v2 page 3) has the shape of a model request: `system` (parts), `messages` (said, answer,
 result; an answer's calls in `data["calls"]`, a result's `data["call_id"]`; a message's `attachments`: note before
 its text, trailer after), `tools` (`{name, card, function, description, args}`, filled by a Model), `events` (signal,
-error: never sent to a model). Every item is an entry `{id, by, kind, text, tags, time, data, state}`.
+error: never sent to a model). Every item is an entry `{id, by, kind, text, tags, time, data, state}`. Besides
+these a context has only `id` and `way` (the cards it passed; the card it started at is put first when it first
+leaves). Where it belongs is in its entries: a Chat tags every message it holds `<chat card>.<chat id>` and files
+every context reaching `answers` into the chat its messages name (none: a new chat).
 `context.add(by, kind, …)` puts an entry where its kind belongs (a note or trailer on the newest said message);
 `context.put(...)` (a card's standing text: a system part stays in place, an attachment moves to the newest message),
 `context.remove(e)`, `context.entries` (all in order), `context.last(kind)`, `context.tagged(tag)`, `context.answer`,

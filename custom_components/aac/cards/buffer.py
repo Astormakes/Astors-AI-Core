@@ -8,7 +8,7 @@ from typing import Any
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.1.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 KIND = {"start": "system", "note": "note", "after": "trailer"}
 
@@ -56,7 +56,7 @@ class Buffer(Card):
         """What a dotted wire from 'provides' reads: one entry per line (an entry keeps its id while the line is there)."""
         if port != "provides":
             return None
-        context, seen = Context(origin=self.id), {}
+        context, seen = Context(), {}
         for text in self.data.get("lines") or []:
             seen[text] = seen.get(text, 0) + 1
             line = context.add(self.id, "note", text, ["lines"])

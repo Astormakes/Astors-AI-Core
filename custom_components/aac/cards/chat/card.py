@@ -1,8 +1,10 @@
 """Chat: a chat in the sidebar. It holds a context per chat (its messages and events, docs/v2 page 3; the newest turn's
 system parts and tools, and the request the model got: its page shows the context and the text as the model read it). What you write is added to it and the whole context leaves
-at `said`; a context that comes into `answers` replaces what the chat holds (an answer to what you wrote, or
-a turn that started elsewhere, e.g. a spoken line a Relay put on top of this chat's context). What the chat shows is
-read from the context it holds. A dotted wire from `provides` lets another card read the current chat's context."""
+at `said`. Every message a chat holds carries its tag, `<this card>.<chat id>`, plainly in the context. Every context
+that comes into `answers` is kept: it replaces what the chat its messages are tagged with holds (an answer to what you
+wrote, or a spoken line a Relay put on top of this chat's context); one without such a tag is a new chat. What the
+chat shows is read from the context it holds. A dotted wire from `provides` lets another card read the current chat's
+context."""
 
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Client, Context, is_stop, new_id, register
 
-VERSION = "2.4.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.5.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds a chat waits for its answer
 NOT_WIRED = "Nothing is wired to this chat's output 'said': what you write goes nowhere."
@@ -33,17 +35,21 @@ class Chat(Card):
     title = "Chat"
     category = "In and out"
     help = ("A chat in the sidebar. It holds the conversation (a context per chat): what you write is added and the "
-            "whole context goes out at 'said'; a context coming into 'answers' replaces what it holds and shows up.")
+            "whole context goes out at 'said'. Its messages carry the chat's tag (<this card>.<chat id>). Every context "
+            "coming into 'answers' is kept and shows up: in the chat its messages are tagged with, else in a new chat.")
     inputs = {"answers": "text"}
     outputs = {"said": "text", "provides": "read"}
-    ports_help = {"answers": "a context that replaces what the chat holds (the answer to what you wrote, or a spoken "
-                             "turn built on this chat's context); its new lines and answers show up in the chat",
+    ports_help = {"answers": "every context that comes in is kept: it replaces what the chat its messages are tagged "
+                             "with holds (the answer to what you wrote, or a spoken turn built on this chat's context); "
+                             "untagged, it is a new chat. An answer that is only 'nothing' is not kept.",
                   "said": "what you wrote, with the conversation so far",
                   "provides": "the current chat's context, for cards that read it (dotted): the newest chat, or a new one "
                               "after the quiet time"}
     ui = True
     keeps_data = True
-    tags = {"said": "what you wrote in this chat", "stop": "you pressed Stop", "post": "written into the chat by a model or a script",
+    tags = {"<chat id>": "on every message a chat holds: the chat it belongs to (a turn goes on in the chat its messages "
+                         "are tagged with; a Relay that removes the tag makes a new chat)",
+            "said": "what you wrote in this chat", "stop": "you pressed Stop", "post": "written into the chat by a model or a script",
             "error": "nothing is wired to 'said'"}
     settings_schema = {
         "turns": {"type": "number", "title": "Conversation that goes along (turns)", "default": 0,
@@ -164,9 +170,25 @@ class Chat(Card):
                 "reply": request.get("reply"), "answers": answers, "usage": request.get("usage")}
 
     def _context(self, chat: dict[str, Any]) -> Context:
-        """What a chat holds, as a context (a copy)."""
+        """What a chat holds, as a context (a copy; its messages tagged with the chat)."""
         held = deepcopy(chat["context"])
-        return Context(messages=held["messages"], events=held["events"], origin=self.id, chat_id=chat["id"])
+        self._tag(held["messages"], chat["id"])
+        return Context(messages=held["messages"], events=held["events"])
+
+    def _tag(self, messages: list[dict[str, Any]], chat_id: str) -> None:
+        """Messages belong to this chat: its tag on each (another chat's goes)."""
+        mine = f"{self.id}.{chat_id}"
+        for m in messages:
+            m["tags"] = [t for t in m["tags"] if not (t.startswith(f"{self.id}.") and t[len(self.id) + 1:] in self.data["chats"])] + [mine]
+
+    def chat_of(self, context: Context) -> dict[str, Any] | None:
+        """The chat a context belongs to: the one its newest tagged message names; else the chat this turn already made
+        (a turn's snapshots and its finished context share its id); else none."""
+        for m in reversed(context.messages):
+            for t in m["tags"]:
+                if t.startswith(f"{self.id}.") and (chat := self.data["chats"].get(t[len(self.id) + 1:])) is not None:
+                    return chat
+        return self.data["chats"].get(context.id)
 
     def _new(self, title: str, chat_id: str | None = None) -> dict[str, Any]:
         now = dt_util.utcnow().isoformat()
@@ -181,6 +203,7 @@ class Chat(Card):
         if (chat := self.data["chats"].get(chat["id"])) is None:  # the stored one (get() gives a copy); deleted meanwhile: gone
             return
         held, kept = context.held(), chat["context"]["messages"]
+        self._tag(held["messages"], chat["id"])
         ids = [m["id"] for m in kept]
         if held["messages"] and held["messages"][0]["id"] in ids[1:]:  # it went out with only the last turns
             start = ids.index(held["messages"][0]["id"])
@@ -206,7 +229,7 @@ class Chat(Card):
         if port != "provides":
             return None
         chat = self.current()
-        return self._context(self.data["chats"][chat["id"]]) if chat else Context(origin=self.id)
+        return self._context(self.data["chats"][chat["id"]]) if chat else Context()
 
     async def delete(self, chat_id: str) -> None:
         """Delete a chat."""
@@ -222,6 +245,7 @@ class Chat(Card):
         chat = self.data["chats"].get(chat_id or "") or self._new(title or text, create_as)
         held = self._context(chat)
         held.add(self.id, "said", text, ["said"], **data)
+        self._tag(held.messages, chat["id"])
         await self._hold(chat, held)
         return await self._turn(chat, held)
 
@@ -283,23 +307,23 @@ class Chat(Card):
     async def progress(self, context: Context, port: str) -> list[Any] | None:
         """A turn still being worked on: the chat shows it at once (a spoken question too; the answer grows live in
         the panel). A turn that ends in "nothing" goes again when it is finished."""
-        if context.origin != self.id or port != "answers" or context.id in self._switch:  # a switching turn is not kept
+        if port != "answers" or context.id in self._switch:  # a switching turn is not kept
             return []
         await self._keep_turn(context)
         return []
 
     async def _keep_turn(self, context: Context) -> None:
-        chat = self.data["chats"].get(context.chat_id or context.id)  # a turn without a chat gets one named after it (snapshots too)
-        if chat is None:  # a turn built on an empty read (quiet for long): a new chat
+        chat = self.chat_of(context)
+        if chat is None:  # no message tagged with one of its chats (a spoken line alone, or read after a quiet time): a new chat
             said = context.last("said") or {}
             name = said.get("data", {}).get("mic_name")
-            chat = self._new(f"Voice · {name} · {dt_util.now().strftime('%H:%M')}" if name else said.get("text", ""), context.chat_id or context.id)
+            chat = self._new(f"Voice · {name} · {dt_util.now().strftime('%H:%M')}" if name else said.get("text", ""), context.id)
         await self._hold(chat, context)
 
     async def _do_switch(self, context: Context, target: str) -> None:
         """A turn asked to go on in another chat: the chat it came from drops the turn (and goes if nothing is left),
         the other chat is the current one."""
-        here = self.data["chats"].get(context.chat_id or context.id)
+        here = self.chat_of(context)
         if here is not None and here["id"] != target:
             self._drop_turn(here, context)
         self._switched[context.id] = target
@@ -325,7 +349,7 @@ class Chat(Card):
         self.core.notify("chat", domain=self.domain.id, card=self.id, switched=chat_id)
 
     async def handle(self, context: Context, port: str, step) -> list[Any] | None:
-        """A context came in: it replaces what the chat holds (a new chat if it belongs to none yet)."""
+        """A context came in: it replaces what the chat it is tagged with holds (a new chat if it belongs to none)."""
         if (target := self._switch.pop(context.id, None)) is not None:
             await self._do_switch(context, target)
             if (future := self._waiting.get(context.id)) and not future.done():
@@ -336,9 +360,9 @@ class Chat(Card):
             return []
         error = next((e["text"] for e in reversed(context.entries) if e["kind"] == "error"), "")
         text = context.answer or error  # nothing at all: fine (not every chat has a model)
-        if context.origin == self.id and text.strip().lower() not in SILENT:
+        if text.strip().lower() not in SILENT:
             await self._keep_turn(context)
-        elif context.origin == self.id and (chat := self.data["chats"].get(context.chat_id or context.id)) is not None:
+        elif (chat := self.chat_of(context)) is not None:
             self._drop_turn(chat, context)  # "nothing": it was not meant for AAC, the chat shows it no longer
             await self.save()
             self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=chat["id"])
@@ -376,11 +400,11 @@ class Chat(Card):
             if args.get("chat") and (self.data["chats"].get(str(args["chat"])) or {}).get("archived"):
                 return {"error": "that chat is archived (the owner can restore it)"}
             chat = (self.get(str(args["chat"])) if args.get("chat") else None) or \
-                (self.get(context.chat_id) if context and context.chat_id else (self.chats() and self.get(self.chats()[0]["id"])))
+                (self.get(chat["id"]) if context and (chat := self.chat_of(context)) else (self.chats() and self.get(self.chats()[0]["id"])))
             turns = int(args.get("turns") or 10)
             return [{"role": m["role"], "text": m["text"]} for m in (chat or {}).get("messages", [])[-turns:]]
         if function == "post":
-            if context is not None and context.chat_id in self.data["chats"]:  # during a turn of one of its chats: into that turn
+            if context is not None and self.chat_of(context) is not None:  # during a turn of one of its chats: into that turn
                 context.add(self.id, "answer", str(args.get("text") or ""), ["post"])
                 return {"posted": True}
             chats = self.chats()

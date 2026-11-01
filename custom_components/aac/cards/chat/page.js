@@ -97,7 +97,8 @@ class AacChatPage extends HTMLElement {
   }
 
   event(ev) { // what the core tells about this card
-    if (ev.what === "delta" && (this.busy || (this.entry && ev.chat_id === this.entry))) { // typed here, or spoken into this chat
+    const mine = this.entry && ((ev.tags || []).includes(`${this.card.id}.${this.entry}`) || ev.context === this.entry); // its messages carry this chat's tag (or this turn made the chat)
+    if (ev.what === "delta" && (mine || (this.busy && !this.entry))) { // spoken or typed into this chat, or typed into a new one
       this.live = ev.text; this.think = ev.thinking || "";
       const box = this.querySelector("#live");
       if (box) box.innerHTML = this._liveHtml(); else if (!this.busy) this.render();

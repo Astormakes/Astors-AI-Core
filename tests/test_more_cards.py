@@ -347,7 +347,7 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
     log = await d.add_card("log", "Log")
     d.set_wires([*d.wires, {"from": "chat.provides", "to": f"{log.id}.in"}, {"from": "model.out", "to": f"{log.id}.in"}])
     assert {"from": "chat.provides", "to": f"{log.id}.in"} in d.wires and {"from": "model.out", "to": f"{log.id}.in"} in d.wires
-    c = Context(origin="chat")
+    c = Context()
     c.way = ["model", log.id]
     c.add("model", "answer", "Hello there", ["answer"])
     await log.handle(c, "in", None)
@@ -358,7 +358,8 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
         task = hass.async_create_task(log._watch())
         await asyncio.sleep(0.05)
         chat = d.cards["chat"]
-        chat._new("Talk")["context"]["messages"].append({"id": "n1", "by": "chat", "kind": "said", "text": "a new line", "tags": [], "time": "", "data": {}, "state": "closed"})
+        talk = chat._new("Talk")
+        talk["context"]["messages"].append({"id": "n1", "by": "chat", "kind": "said", "text": "a new line", "tags": [], "time": "", "data": {}, "state": "closed"})
         await asyncio.sleep(0.05)
         task.cancel()
     own = (await log.ui_call("entries", {}))
@@ -366,7 +367,7 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
     assert not own["all"] and all(x["card"] == log.id for x in own["entries"])  # not allowed: only what it wrote
     assert ("context", "Model: answer #model.answer: Hello there  [1 entries]") in texts
     assert ("clip", "PC: 1.4 s, phrase 2") in texts and ("audio", "PC: started") in texts
-    assert any(w == "audio" and t.startswith("PC: stopped") for w, t in texts) and ("read", "Chat.provides: said : a new line") in texts
+    assert any(w == "audio" and t.startswith("PC: stopped") for w, t in texts) and ("read", f"Chat.provides: said #chat.{talk['id']}: a new line") in texts  # the chat's tag, plainly
     kept = next(x for x in own["entries"] if x["what"] == "clip")
     assert kept["audio"].endswith(".wav") and (await log.ui_call("audio", {"file": kept["audio"]}))  # playable
     assert "may not read" in (await log.call("read", {}))["error"] and not log.held("provides").entries
@@ -375,6 +376,46 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
     found = await log.call("read", {"card": "Log", "search": "phrase"})
     assert "Log clip: PC: 1.4 s, phrase 2" in found and found.count("\n") == 0
     assert "Added (Log)" in log.held("provides").entries[0]["text"]
+
+
+async def test_the_chat_files_a_turn_by_its_tag(hass: HomeAssistant, mock_entry):
+    """Every context that reaches 'answers' is kept: in the chat its messages are tagged with (a turn built on a read
+    of the chat), else in a new chat; the tag is plainly in the context, a Relay may take it off."""
+    from custom_components.aac.context import Context
+
+    core = await setup_aac(hass, mock_entry)
+    chat = core.domain.cards["chat"]
+    talk = chat._new("Talk")
+    talk["context"]["messages"].append({"id": "m1", "by": "chat", "kind": "said", "text": "hi", "tags": ["chat.said"],
+                                        "time": "", "data": {}, "state": "closed"})
+    before = len(chat.chats())
+    turn = chat.held("provides")  # the current chat, its messages tagged
+    assert turn.messages[0]["tags"] == ["chat.said", f"chat.{talk['id']}"]
+    turn.add("ears", "said", "and now?", ["heard"])
+    turn.add("model", "answer", "Now this.", ["answer"])
+    await chat.handle(turn, "answers", None)
+    assert [m["text"] for m in chat.get(talk["id"])["messages"]] == ["hi", "and now?", "Now this."]
+
+    alone = Context()  # a heard line on its own (nothing read): a chat of its own
+    alone.add("ears", "said", "what time is it?", ["heard"], mic_name="PC")
+    alone.add("model", "answer", "Five.", ["answer"])
+    await chat.handle(alone, "answers", None)
+    made = chat.data["chats"][alone.id]
+    assert made["title"].startswith("Voice · PC · ") and len(chat.chats()) == before + 1
+    assert all(f"chat.{alone.id}" in m["tags"] for m in made["context"]["messages"])
+
+    fresh = chat._context(chat.data["chats"][talk["id"]])  # the tag taken off (as a Relay could): a new chat
+    for m in fresh.messages:
+        m["tags"].remove(f"chat.{talk['id']}")
+    fresh.add("model", "answer", "Fresh.", ["answer"])
+    await chat.handle(fresh, "answers", None)
+    assert fresh.id in chat.data["chats"] and len(chat.get(talk["id"])["messages"]) == 3
+
+    quiet = Context()  # not meant for AAC: not kept
+    quiet.add("ears", "said", "see you", ["heard"])
+    quiet.add("model", "answer", "nothing", ["answer"])
+    await chat.handle(quiet, "answers", None)
+    assert quiet.id not in chat.data["chats"] and len(chat.chats()) == before + 2
 
 
 async def test_chat_archive(hass: HomeAssistant, mock_entry):

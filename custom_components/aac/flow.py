@@ -55,8 +55,9 @@ class Step:
 
     def live(self, text: str, thinking: str = "") -> None:
         """Text that is still growing (a model writing; its thinking too): open panels show it."""
-        self.flow.domain.core.notify("delta", domain=self.flow.domain.id, chat_id=self.context.chat_id or self.context.id,
-                                     card=self.context.origin, text=text, thinking=thinking)
+        tags = sorted({t for m in self.context.messages for t in m["tags"]})  # a chat finds its turn by its tag
+        self.flow.domain.core.notify("delta", domain=self.flow.domain.id, context=self.context.id, tags=tags,
+                                     text=text, thinking=thinking)
 
 
 class Flow:
@@ -271,6 +272,8 @@ class Flow:
     async def out(self, card: Card, context: Context, result: list[Any] | None) -> None:
         """A card sends a context from its outputs: result as handle() returns it (None: every round output)."""
         _, outs, square = card.ports()
+        if not context.way:  # a new context: the card it started at is the first on its way
+            context.way.append(card.id)
         if result is None:
             picks = [p for p, kind in outs.items() if kind == "text" and p not in square]
         else:
