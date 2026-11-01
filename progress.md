@@ -10,6 +10,9 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   100-entry chat be read out from the start on every turn; minutes of speech, the Microphone kept listening, Whisper
   heard "Thank you." in what got past the Calisto, the owner's Follow-up turn answered each one: a loop through the
   air. The Follow-up turn's input wire was taken off to stop it; the owner puts it back.)
+  2026-11-02 00:07, live settings: Text to speech Speaks `answerout.said` (it was empty: nothing spoken), Microphone
+  "While AAC speaks there" mute. Not yet tested by the owner (next time); the Follow-up wire is still off. Offered:
+  tag matching without capitals.
 - **3.0.1:** a text-to-speech request is given up after Text to speech's setting Gives up after (default 30 s), with a log warning (live 23:35: the whole
   context went to Piper as one text, it never finished, and every sentence after it waited behind it).
 
