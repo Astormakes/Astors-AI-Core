@@ -16,7 +16,7 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.api import Context
+from custom_components.aac.api import SYSTEM, TOOLS, Context
 
 ALLOWED = {
     ast.Module, ast.FunctionDef, ast.arguments, ast.arg, ast.Return, ast.Assign, ast.AugAssign, ast.Expr, ast.If,
@@ -93,7 +93,10 @@ REFERENCE = [
      "none, a new one, as add makes it (at= the same). The system prompt: context.set(\"context.system\", text).",
      'context.set("context.system", """You are AAC, a helpful assistant.""")'),
     ("The context", 'context.remove("phrase_joiner.said")', "Takes out every entry with that tag. at=\"first\" / "
-     "at=\"last\": only the oldest / newest. context.system and context.tools always stay.", ""),
+     "at=\"last\": only the oldest / newest. context.system and context.tools always stay: context.remove(\"*\") empties "
+     "the conversation.", ""),
+    ("The context", 'context.set("chat.id.2026-11-02", "")', "Names a chat: a Chat keeps the context in the chat with "
+     "that id (it is made when there is none yet). One chat per day: context.set(\"chat.id.\" + now().strftime(\"%Y-%m-%d\"), \"\").", ""),
     ("The context", "a + b", "One context: a's entries, then b's (a chat's conversation, then the new lines); the "
      "system prompt and tools are b's (a's when b has none).", 'context = input("chat", read=True) + input("in")'),
     ("The context", "context.system", "The system prompt's entry (context.system.text). context.tools: the tools' "
@@ -479,12 +482,9 @@ class ContextView:
         """Takes out every entry with that tag (at="first" / "last": only the oldest / newest)."""
         if at not in ("all", "first", "last"):
             raise ScriptError('remove(…, at="first"), at="last" or nothing (every one)')
-        found = self._found(tag)
+        found = [e for e in self._found(tag) if e["tag"] not in (SYSTEM, TOOLS)]  # those two always stay
         for e in found if at == "all" else found[:1] if at == "first" else found[-1:]:
-            try:
-                self._c.remove(e)
-            except ValueError as err:
-                raise ScriptError(str(err)) from err
+            self._c.remove(e)
 
     def __add__(self, other: Any) -> ContextView:
         if not isinstance(other, ContextView):

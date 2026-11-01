@@ -1,9 +1,11 @@
 """Chat (docs/v2 page 5): chats in the sidebar; each holds a context.
 
 What you write is added (`chat.said`) and the chat's context goes out at `said`. Every context that comes into
-`answers` is kept by the chat it belongs to: the one whose entry `<this card>.id.<chat id>` it holds. A context without
-one is filed once it is finished (nothing streaming, no call waiting): a new chat, which writes its entry; until then
-it shows under "Being answered…" (one at a time). A dotted wire from `provides` reads the current chat's context: a turn built on it goes on there. The chat shows
+`answers` is kept by the chat it belongs to: the one whose entry `<this card>.id.<chat id>` it holds (no such chat yet:
+it is made with that id, so a Relay can name a chat: one per day). Built on that chat (it holds the chat's first line)
+it replaces what the chat holds; otherwise it is added to the end (entries the chat has are updated). A context without
+an id entry is filed once it is finished (nothing streaming, no call waiting): a new chat, which writes its entry;
+until then it shows under "Being answered…" (one at a time). A dotted wire from `provides` reads the current chat's context: a turn built on it goes on there. The chat shows
 the entries its "Shown" setting lists; those "Shown as you" on your side.
 """
 
@@ -18,7 +20,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Client, Context, matches, new_id, register
 
-VERSION = "3.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds what you write may take to be answered
 NOT_WIRED = "Nothing is wired to this chat's output 'said': what you write goes nowhere."
@@ -44,7 +46,8 @@ class Chat(Card):
     inputs = {"answers": "text"}
     outputs = {"said": "text", "provides": "read"}
     ports_help = {"answers": "every context that comes in is kept: by the chat whose id entry (<this card>.id.<chat id>) "
-                             "it holds, else as a new chat once it is finished (nothing streaming, no call waiting)",
+                             "it holds (made with that id when there is none yet; built on the chat it replaces what it "
+                             "holds, else it is added to the end), else as a new chat once it is finished",
                   "said": "what you wrote, with the chat's context",
                   "provides": "the current chat's context, for cards that read it (dotted): the newest chat, or an empty "
                               "context after the quiet time"}
@@ -97,10 +100,33 @@ class Chat(Card):
     def _id_entry(self, context: Context) -> dict[str, Any] | None:
         return context.get(f"{self.id}.id.*")
 
+    def _named(self, context: Context) -> str | None:
+        """The chat id a context's id entry names (that chat may not exist yet)."""
+        mine = self._id_entry(context)
+        return mine["tag"][len(self.id) + 4:] if mine is not None else None
+
     def chat_of(self, context: Context) -> dict[str, Any] | None:
         """The chat a context belongs to: the one its id entry names."""
-        mine = self._id_entry(context)
-        return self.data["chats"].get(mine["tag"][len(self.id) + 4:]) if mine is not None else None
+        return self.data["chats"].get(self._named(context) or "")
+
+    def _onto(self, chat: dict[str, Any], context: Context) -> Context:
+        """What the chat holds once this context came: built on the chat (it holds the chat's first line), the context
+        itself; one that only names it (a turn that did not read it), added to the end of what it holds, the entries it
+        already has updated in place."""
+        held = self._held(chat)
+        first = next((e["id"] for e in held.conversation if not e["tag"].startswith(f"{self.id}.id.")), None)
+        if first is None or context.by_id(first) is not None:
+            return context
+        at = {e["id"]: i for i, e in enumerate(held.entries)}
+        for e in context.conversation:
+            if e["tag"].startswith(f"{self.id}.id."):
+                continue
+            if e["id"] in at:
+                held.entries[at[e["id"]]] = e
+            else:
+                held.entries.append(e)
+        held.entries[0], held.entries[1] = context.system, context.tools
+        return held
 
     def _new(self, title: str, chat_id: str | None = None) -> dict[str, Any]:
         now = dt_util.utcnow().isoformat()
@@ -145,6 +171,10 @@ class Chat(Card):
         if port != "answers":
             return
         if (chat := self.chat_of(context)) is not None:
+            await self._keep(chat, self._onto(chat, context))
+            return
+        if (named := self._named(context)) is not None:  # it names a chat that is not there yet: made with that id
+            chat = self._new(self._title(context), named)
             await self._keep(chat, context)
             return
         if context.streaming or context.waiting:  # no chat yet: shown while it is answered, filed once it is finished

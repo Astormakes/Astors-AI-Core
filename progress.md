@@ -5,6 +5,10 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
 
 ## Current state (2026-11-01) – 3.0.0 on branch `v3`, live on the owner's HA
 
+- **Chat 3.1.0: a context can name its chat** (owner 2026-11-02: one chat per day for voice and the Schedule): a
+  context whose id entry names a chat that is not there yet makes it with that id; one built on the chat (holds its
+  first line) replaces what it holds, one that only names it is added to its end. Relay 4.1.0: `remove("*")` empties
+  the conversation (system and tools stay).
 - **Text to speech 3.2.0:** each entry once, by time: only entries written after the card started and after the
   newest one it spoke to the end (live 2026-11-01 23:53: Speaks matched every entry, its 50-entry memory let a
   100-entry chat be read out from the start on every turn; minutes of speech, the Microphone kept listening, Whisper

@@ -31,8 +31,10 @@ What follows from them:
   time it has ended.
 - Stop is a core function: every card gets it at once. A busy card cuts what it writes and sends its context on. A stop
   travels nowhere.
-- A Chat keeps every context that reaches it: in the chat whose chat.id.<id> entry it holds, else as a new chat once it
-  is finished (nothing streaming, no call waiting).
+- A Chat keeps every context that reaches it: in the chat whose chat.id.<id> entry it holds (made with that id when
+  there is none yet: a Relay can name a chat, one per day), else as a new chat once it is finished (nothing streaming,
+  no call waiting). A context built on the chat (it holds the chat's first line) replaces what it holds; one that only
+  names it is added to its end.
 
 The mindset (not a rule): a card only needs to write its own entries. It may change others' (a Relay's script is the
 owner's hand), but nothing is built so that it has to.

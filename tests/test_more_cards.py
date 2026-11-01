@@ -569,3 +569,33 @@ async def test_a_model_asked_as_a_tool(hass: HomeAssistant, mock_entry, aioclien
     core = await setup_aac(hass, mock_entry)
     expert = await core.domain.add_card("model", "Expert")
     assert await expert.call("ask", {"text": "What is the answer?"}) == "Forty-two."
+
+
+async def test_a_context_can_name_its_chat(hass: HomeAssistant, mock_entry):
+    """A Relay names a chat (one per day): the first context naming it makes it with that id; a turn that only names it
+    (it did not read the chat) is added to its end, its snapshots update what it added; a turn built on it replaces it."""
+    core = await setup_aac(hass, mock_entry)
+    chat = core.domain.cards["chat"]
+    for c in chat.data["chats"].values():  # a backup's chats are old (the day's chat is the current one)
+        c["updated"] = "2020-01-01T00:00:00+00:00"
+    day = "chat.id.2026-11-02"
+    first = Context()
+    first.add(day)
+    first.add("speech_to_text.said", "good morning", mic_name="PC")
+    first.add("model.said", "Good morning.")
+    await chat.handle(first, "answers")
+    assert "2026-11-02" in chat.data["chats"]
+    later = Context()  # a later turn that did not read the chat: added to its end
+    later.add(day)
+    later.add("schedule.said", "Scheduled: turn on the bed light.")
+    answer = later.add("model.said", "Done")
+    answer["state"] = "streaming"
+    await chat.handle(later, "answers")
+    answer["text"], answer["state"] = "Done, it is on.", "ended"
+    await chat.handle(later, "answers")
+    texts = lambda: [m["text"] for m in chat.get("2026-11-02")["messages"]]  # noqa: E731
+    assert texts() == ["good morning", "Good morning.", "Scheduled: turn on the bed light.", "Done, it is on."]
+    built = chat.held("provides")  # built on it (read through provides): replaces what it holds
+    built.add("speech_to_text.said", "thanks")
+    await chat.handle(built, "answers")
+    assert texts()[-1] == "thanks" and len(texts()) == 5 and not any(c["title"] == "thanks" for c in chat.chats())

@@ -238,7 +238,10 @@ loaded with an id that does not fit, its store, its cards' stores and folders mo
 under the new id.
 
 **The Chat** keeps every context that reaches `answers`: in the chat whose entry `<chat card>.id.<chat id>` (no text) it
-holds; a context without one is filed once it is finished (nothing streaming, no call waiting) as a new chat, which
+holds (no such chat yet: made with that id, so a Relay can name a chat, e.g. one per day: `context.set("chat.id." +
+now().strftime("%Y-%m-%d"), "")`). Built on that chat (it holds the chat's first line other than its id entry) the
+context replaces what the chat holds; otherwise it is added to the end, entries the chat already has updated in place
+(a snapshot). A script's `remove("*")` empties the conversation (system and tools stay); a context without one is filed once it is finished (nothing streaming, no call waiting) as a new chat, which
 writes its id entry; until then it shows under "Being answered…" (the sidebar entry `answering`, one at a time; the
 notify that files it says `was: "answering"`, and an open page goes to the new chat). It shows the entries its Shown setting lists (`*.said, *.post, *.error`),
 those Shown as you on your side.
