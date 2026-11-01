@@ -100,6 +100,8 @@ class AacChatPage extends HTMLElement {
       this.live = ev.text; this.think = ev.thinking || "";
       const box = this.querySelector("#live");
       if (box) box.innerHTML = this._liveHtml(); else if (!this.busy) this.render();
+    } else if (ev.what === "chat" && this.entry === ev.was && ev.chat_id) { // the turn being answered is a chat now: go there
+      this.panel.go(ev.chat_id);
     } else if (ev.what === "chat" && this.entry && !this.busy && (!ev.chat_id || ev.chat_id === this.entry)) {
       clearTimeout(this._t); this._t = setTimeout(async () => { await this._get(); this.live = ""; this.think = ""; this.render(); }, 150);
     }

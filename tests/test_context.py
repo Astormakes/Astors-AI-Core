@@ -109,8 +109,8 @@ async def test_no_answer_is_no_answer(hass: HomeAssistant, mock_entry, aioclient
 
 
 async def test_a_turn_that_began_a_chat_finds_it_again(hass: HomeAssistant, mock_entry, aioclient_mock):
-    """A heard line with no chat in it: its snapshots, its calls and its answer land in one new chat, which writes its
-    id entry; a turn built on that chat (read through provides) goes on there."""
+    """A heard line with no chat in it: its call and its answer land in one new chat, filed once it is finished, which
+    writes its id entry; a turn built on that chat (read through provides) goes on there."""
     core = await setup_aac(hass, mock_entry)
     d = core.domain
     voice = (await d.add_card("relay", "Voice", {"script": 'context = input("chat", read=True) + input("in")\noutput("out", context)\n'})).id

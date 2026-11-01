@@ -1,9 +1,9 @@
 """Chat (docs/v2 page 5): chats in the sidebar; each holds a context.
 
 What you write is added (`chat.said`) and the chat's context goes out at `said`. Every context that comes into
-`answers` is kept by the chat it belongs to: the one whose entry `<this card>.id.<chat id>` it holds; a context without
-one begins a new chat (named by the id of its first entry, so the rest of that turn finds it) and the chat writes its
-entry. A dotted wire from `provides` reads the current chat's context: a turn built on it goes on there. The chat shows
+`answers` is kept by the chat it belongs to: the one whose entry `<this card>.id.<chat id>` it holds. A context without
+one is filed once it is finished (nothing streaming, no call waiting): a new chat, which writes its entry; until then
+it shows under "Being answered…" (one at a time). A dotted wire from `provides` reads the current chat's context: a turn built on it goes on there. The chat shows
 the entries its "Shown" setting lists; those "Shown as you" on your side.
 """
 
@@ -23,6 +23,7 @@ VERSION = "3.0.0"  # this file's cards (a newer file replaces an older one in <c
 WAIT = 600  # seconds what you write may take to be answered
 NOT_WIRED = "Nothing is wired to this chat's output 'said': what you write goes nowhere."
 ARCHIVE = "archive"  # the sidebar entry (and page) of the archived chats
+ANSWERING = "answering"  # the sidebar entry of a turn that belongs to no chat yet, while it is being answered
 
 
 def patterns(text: str) -> list[str]:
@@ -38,12 +39,12 @@ class Chat(Card):
     title = "Chat"
     category = "In and out"
     help = ("Chats in the sidebar, each holding a context. What you write is added and the chat's context goes out at "
-            "'said'. Every context coming into 'answers' is kept: by the chat whose id entry it holds, else as a new chat. "
-            "It shows the entries its Shown setting lists.")
+            "'said'. Every context coming into 'answers' is kept: by the chat whose id entry it holds, else as a new chat "
+            "once it is finished (until then under Being answered…). It shows the entries its Shown setting lists.")
     inputs = {"answers": "text"}
     outputs = {"said": "text", "provides": "read"}
     ports_help = {"answers": "every context that comes in is kept: by the chat whose id entry (<this card>.id.<chat id>) "
-                             "it holds, else as a new chat",
+                             "it holds, else as a new chat once it is finished (nothing streaming, no call waiting)",
                   "said": "what you wrote, with the chat's context",
                   "provides": "the current chat's context, for cards that read it (dotted): the newest chat, or an empty "
                               "context after the quiet time"}
@@ -78,6 +79,10 @@ class Chat(Card):
     def default_data(self) -> dict[str, Any]:
         return {"chats": {}}
 
+    def __init__(self, *args: Any) -> None:
+        super().__init__(*args)
+        self._answering: Context | None = None  # a turn of no chat yet, until it is finished
+
     async def start(self) -> None:
         if self.settings.get("ha_agent"):  # the core's "ha_conversation" channel: AAC as HA's conversation agent
             self.core.subscribe("ha_conversation", self, self.converse)
@@ -93,12 +98,9 @@ class Chat(Card):
         return context.get(f"{self.id}.id.*")
 
     def chat_of(self, context: Context) -> dict[str, Any] | None:
-        """The chat a context belongs to: the one its id entry names; else the one named by its first entry (a turn that
-        began a chat comes again: its snapshots, its calls)."""
-        if (mine := self._id_entry(context)) is not None:
-            return self.data["chats"].get(mine["tag"][len(self.id) + 4:])
-        first = context.conversation[:1]
-        return self.data["chats"].get(first[0]["id"]) if first else None
+        """The chat a context belongs to: the one its id entry names."""
+        mine = self._id_entry(context)
+        return self.data["chats"].get(mine["tag"][len(self.id) + 4:]) if mine is not None else None
 
     def _new(self, title: str, chat_id: str | None = None) -> dict[str, Any]:
         now = dt_util.utcnow().isoformat()
@@ -142,13 +144,23 @@ class Chat(Card):
     async def handle(self, context: Context, port: str) -> None:
         if port != "answers":
             return
-        chat = self.chat_of(context)
-        if chat is None:  # it belongs to no chat: a new one, named by its first entry
-            name = next((e["data"]["mic_name"] for e in context.conversation if e["data"].get("mic_name")), None)
-            first = next((e["text"] for e in context.conversation if self._shown(e) and e["text"].strip()), "")
-            title = f"Voice · {name} · {dt_util.now().strftime('%H:%M')}" if name else first
-            chat = self._new(title, context.conversation[0]["id"] if context.conversation else None)
+        if (chat := self.chat_of(context)) is not None:
+            await self._keep(chat, context)
+            return
+        if context.streaming or context.waiting:  # no chat yet: shown while it is answered, filed once it is finished
+            self._answering = context
+            self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=ANSWERING)
+            return
+        self._answering = None
+        chat = self._new(self._title(context))
         await self._keep(chat, context)
+        self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=chat["id"], was=ANSWERING)
+
+    def _title(self, context: Context) -> str:
+        """A new chat's title: "Voice · <satellite> · HH:MM" for a heard line, else its first text."""
+        name = next((e["data"]["mic_name"] for e in context.conversation if e["data"].get("mic_name")), None)
+        first = next((e["text"] for e in context.conversation if self._shown(e) and e["text"].strip()), "")
+        return f"Voice · {name} · {dt_util.now().strftime('%H:%M')}" if name else first
 
     # ------------------------------------------------------------------ writing in a chat
     async def write(self, text: str, chat_id: str | None = None, create_as: str | None = None, title: str | None = None,
@@ -234,6 +246,9 @@ class Chat(Card):
 
     def get(self, chat_id: str) -> dict[str, Any] | None:
         """One chat, with what it shows and its whole context."""
+        if chat_id == ANSWERING:
+            context = self._answering or Context()
+            return {"id": ANSWERING, "title": "Being answered…", "messages": self.shown(context), "behind": context.summary()}
         chat = self.data["chats"].get(chat_id)
         if chat is None:
             return None
@@ -272,7 +287,8 @@ class Chat(Card):
         chats = self.chats()
         live = [{"id": c["id"], "title": c["title"], "actions": acts(False)} for c in chats if not c.get("archived")]
         old = [c for c in chats if c.get("archived")]
-        return {"add": "New chat", "fold": "arrow", "entries": live + ([{"id": ARCHIVE, "title": f"Archive ({len(old)})"}] if old else [])}
+        answering = [{"id": ANSWERING, "title": "Being answered…"}] if self._answering is not None else []
+        return {"add": "New chat", "fold": "arrow", "entries": answering + live + ([{"id": ARCHIVE, "title": f"Archive ({len(old)})"}] if old else [])}
 
     async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
         if action == "nav_action":  # from its sidebar entries: delete, archive, restore, rename

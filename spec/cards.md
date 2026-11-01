@@ -233,8 +233,9 @@ loaded with an id that does not fit, its store, its cards' stores and folders mo
 under the new id.
 
 **The Chat** keeps every context that reaches `answers`: in the chat whose entry `<chat card>.id.<chat id>` (no text) it
-holds, else in a new chat named by the id of the context's first entry (so the rest of that turn, its snapshots and
-calls, finds it), which writes its id entry. It shows the entries its Shown setting lists (`*.said, *.post, *.error`),
+holds; a context without one is filed once it is finished (nothing streaming, no call waiting) as a new chat, which
+writes its id entry; until then it shows under "Being answered…" (the sidebar entry `answering`, one at a time; the
+notify that files it says `was: "answering"`, and an open page goes to the new chat). It shows the entries its Shown setting lists (`*.said, *.post, *.error`),
 those Shown as you on your side.
 
 ## The Relay's script

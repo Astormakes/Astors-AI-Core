@@ -378,7 +378,8 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
 
 async def test_the_chat_files_a_context_by_its_id_entry(hass: HomeAssistant, mock_entry):
     """Every context that reaches 'answers' is kept: by the chat whose id entry it holds (a turn built on a read of the
-    chat), else as a new chat named by its first entry; a Relay that takes the id entry off makes a new chat."""
+    chat), else as a new chat once it is finished (until then under Being answered…); a Relay that takes the id entry
+    off makes a new chat."""
     core = await setup_aac(hass, mock_entry)
     chat = core.domain.cards["chat"]
     for c in chat.data["chats"].values():  # a backup's chats are old
@@ -396,13 +397,18 @@ async def test_the_chat_files_a_context_by_its_id_entry(hass: HomeAssistant, moc
     await chat.handle(turn, "answers")
     assert [m["text"] for m in chat.get(talk["id"])["messages"]] == ["hi", "and now?", "Now this."]
 
-    alone = Context()  # a heard line on its own (nothing read): a chat of its own
-    first = alone.add("speech_to_text.said", "what time is it?", mic_name="PC")
-    alone.add("model.said", "Five.")
+    alone = Context()  # a heard line on its own (nothing read): while it is answered, no chat yet
+    alone.add("speech_to_text.said", "what time is it?", mic_name="PC")
+    answer = alone.add("model.said", "Fi")
+    answer["state"] = "streaming"
     await chat.handle(alone, "answers")
-    made = chat.data["chats"][first["id"]]
-    assert made["title"].startswith("Voice · PC · ") and len(chat.chats()) == before + 1
-    assert Context.from_dict(made["context"]).conversation[0]["tag"] == f"chat.id.{first['id']}"
+    assert len(chat.chats()) == before and chat.nav()["entries"][0]["id"] == "answering"
+    assert [m["text"] for m in chat.get("answering")["messages"]] == ["what time is it?", "Fi"]
+    answer["text"], answer["state"] = "Five.", "ended"  # finished: a chat of its own
+    await chat.handle(alone, "answers")
+    made = next(c for c in chat.data["chats"].values() if c["title"].startswith("Voice · PC · "))
+    assert len(chat.chats()) == before + 1 and chat.nav()["entries"][0]["id"] != "answering"
+    assert Context.from_dict(made["context"]).conversation[0]["tag"] == f"chat.id.{made['id']}"
 
     fresh = Context.from_dict(chat.data["chats"][talk["id"]]["context"])  # the id entry taken off: a new chat
     fresh.remove(fresh.conversation[0])

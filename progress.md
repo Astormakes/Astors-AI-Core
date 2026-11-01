@@ -15,7 +15,8 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   core function (`stop_all`), no stop entry. One limit: the storm limit, an AAC-wide setting (`aac/settings`); the step
   limit went (it would end a heartbeat loop; the Timer holds on its own now). The Model acts when the newest entry is
   not its own, builds its request from the tags, "Means no answer" (default nothing: nothing is sent). The Chat was
-  rebuilt: its id entry `chat.id.<id>`, a new chat named by its context's first entry, Shown / Shown as you settings,
+  rebuilt: its id entry `chat.id.<id>`, a context without one filed once finished (until then "Being answered…"),
+  Shown / Shown as you settings,
   `continue` dropped; its page kept. Text to speech speaks by a tag setting; the Speaker plays a clip without a
   satellite where its new setting says (else the log says so). Buffer: no system position. The card interface is
   written in `api.py` (cards stop reaching into the flow; a sandbox later). Every card file got a major version; the
