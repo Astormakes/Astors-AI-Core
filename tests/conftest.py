@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, get_test_config_dir
 
 from custom_components.aac.const import DOMAIN
 from custom_components.aac.defaults import new_text
@@ -20,6 +21,13 @@ BASE_URL = "http://llm.local:8080/v1"
 def auto_enable_custom_integrations(enable_custom_integrations):
     """Load custom integrations."""
     return
+
+
+@pytest.fixture(autouse=True)
+def clean_aac_folder():
+    """Each test starts without <config>/aac (the test config is shared and kept: card files from older layouts and
+    files of other tests stayed there, and an old card file replaced the current one)."""
+    shutil.rmtree(get_test_config_dir("aac"), ignore_errors=True)
 
 
 BACKUPS = Path(__file__).parent / "backups"

@@ -84,16 +84,16 @@ async def ws_card_add(hass, connection, msg) -> None:
     connection.send_result(msg["id"], card.summary())
 
 
-@command({vol.Required("type"): "aac/card/remove", vol.Required("card"): str})
+@command({vol.Required("type"): "aac/card/remove", vol.Required("cards"): [str], vol.Optional("drop_data", default=False): bool})
 async def ws_card_remove(hass, connection, msg) -> None:
-    """Take a card out."""
-    await _core(hass).domain.remove_card(msg["card"])
+    """Take cards out (several: one Undo step); drop_data: their data goes now, not when Undo forgets them."""
+    await _core(hass).domain.remove_card(*msg["cards"], drop_data=msg["drop_data"])
     connection.send_result(msg["id"], {})
 
 
 @command({vol.Required("type"): "aac/view/watch", vol.Required("cards"): [str]})
 async def ws_view_watch(hass, connection, msg) -> None:
-    """An open Nodes page: which cards' views it shows (again every few seconds; live wires go only while it is open)."""
+    """An open Cards page: which cards' views it shows (again every few seconds; live wires go only while it is open)."""
     _core(hass).watch(msg["cards"])
     connection.send_result(msg["id"], {})
 
@@ -140,6 +140,13 @@ async def ws_wires(hass, connection, msg) -> None:
     domain = _core(hass).domain
     domain.set_wires(msg["wires"])
     connection.send_result(msg["id"], {"wires": domain.wires})
+
+
+@command({vol.Required("type"): "aac/wire/unblock", vol.Required("from"): str, vol.Required("to"): str})
+async def ws_wire_unblock(hass, connection, msg) -> None:
+    """A red wire (the storm stop blocked it) carries again."""
+    domain = _core(hass).domain
+    connection.send_result(msg["id"], {"unblocked": domain.unblock(msg["from"], msg["to"]), "red": domain.red})
 
 
 @command({vol.Required("type"): "aac/positions", vol.Required("positions"): dict, vol.Optional("undoable", default=False): bool})
@@ -201,9 +208,29 @@ async def ws_stop(hass, connection, msg) -> None:
 
 @command({vol.Required("type"): "aac/monitor", vol.Required("wire"): str})
 async def ws_monitor(hass, connection, msg) -> None:
-    """The newest context that passed an output, and what passed it lately (10 minutes)."""
-    flow = _core(hass).domain.flow
-    connection.send_result(msg["id"], {"context": flow.last.get(msg["wire"]), "records": flow.records.get(msg["wire"], [])})
+    """The newest context that passed an output, and what passed it lately (from AAC's log; off: the card's Log setting
+    writes nothing going out)."""
+    domain = _core(hass).domain
+    card_id, _, port = msg["wire"].partition(".")
+    card = domain.cards.get(card_id)
+    off = card is None or card.settings.get("log") == "nothing" or card.settings.get("log_at") not in ("out", "both")
+    records = [{"time": e["time"], "text": e["text"]} for e in domain.log.read(card=card_id, port=port, what="out", last=20)]
+    connection.send_result(msg["id"], {"context": domain.flow.last.get(msg["wire"]), "records": records, "off": off})
+
+
+@command({vol.Required("type"): "aac/log", vol.Optional("card"): str, vol.Optional("part"): str,
+          vol.Optional("levels"): [str], vol.Optional("search"): str, vol.Optional("before"): int, vol.Optional("last"): int})
+async def ws_log(hass, connection, msg) -> None:
+    """AAC's log of the running domain (Settings → Logs): the newest entries that match."""
+    filters = {k: msg[k] for k in ("card", "part", "levels", "search", "before") if k in msg}
+    connection.send_result(msg["id"], {"entries": _core(hass).domain.log.read(**filters, last=max(1, min(msg.get("last", 300), 5000)))})
+
+
+@command({vol.Required("type"): "aac/log/clear"})
+async def ws_log_clear(hass, connection, msg) -> None:
+    """Every entry of the running domain's log goes."""
+    await _core(hass).domain.log.clear()
+    connection.send_result(msg["id"], {})
 
 
 @command({vol.Required("type"): "aac/tags/add", vol.Required("tag"): str})
@@ -313,6 +340,8 @@ async def ws_models_router(hass, connection, msg) -> None:
             core.save()
         else:
             await server["client"].router_do(msg["action"], msg["name"], msg.get("sidecars"))
+            if msg["action"] == "delete":
+                core.pool.forget(server["client"], msg["name"])
     except ModelError as err:
         return await _fail(connection, msg, err)
     connection.send_result(msg["id"], {"models": core.pool.summary()})
@@ -333,9 +362,8 @@ async def ws_domain_create(hass, connection, msg) -> None:
 @command({vol.Required("type"): "aac/domain/rename", vol.Required("domain_id"): str,
           vol.Required("name"): vol.All(str, vol.Length(min=1, max=40))})
 async def ws_domain_rename(hass, connection, msg) -> None:
-    """A domain's new name."""
-    await _core(hass).rename(msg["domain_id"], msg["name"])
-    connection.send_result(msg["id"], {})
+    """A domain's new name (its id follows: the new one)."""
+    connection.send_result(msg["id"], {"id": await _core(hass).rename(msg["domain_id"], msg["name"])})
 
 
 @command({vol.Required("type"): "aac/domain/delete", vol.Required("domain_id"): str})
@@ -355,7 +383,25 @@ async def ws_domain_switch(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"id": domain.id})
 
 
-# ---------------------------------------------------------------------- audio (core)
+# ---------------------------------------------------------------------- AAC's settings (core)
+@command({vol.Required("type"): "aac/settings"})
+async def ws_settings(hass, connection, msg) -> None:
+    """AAC's own settings (every domain): the storm limit; and the rules every card follows (How AAC works)."""
+    from .rules import RULES  # noqa: PLC0415
+
+    connection.send_result(msg["id"], {"storm": _core(hass).storm, "rules": RULES})
+
+
+@command({vol.Required("type"): "aac/settings/set", vol.Optional("storm"): vol.All(int, vol.Range(min=1, max=10000))})
+async def ws_settings_set(hass, connection, msg) -> None:
+    """Change AAC's settings."""
+    core = _core(hass)
+    if "storm" in msg:
+        core.data.setdefault("settings", {})["storm"] = msg["storm"]
+    core.save()
+    connection.send_result(msg["id"], {"storm": core.storm})
+
+
 @command({vol.Required("type"): "aac/appearance"})
 async def ws_appearance(hass, connection, msg) -> None:
     """The skins and the one in use (shared by every device)."""

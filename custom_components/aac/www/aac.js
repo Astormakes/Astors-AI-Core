@@ -1,47 +1,67 @@
-// AAC 2 panel (docs/v2): one sidebar (the cards' pages and their entries: chats, lists …; then Nodes and Settings),
-// the cards' own pages (each card file's .js, spec/cards.md), the node view (card types left, the grid, the selected
+// AAC 2 panel (docs/v2): one sidebar (the cards' pages and their entries: chats, lists …; then the Cards page and Settings),
+// the cards' own pages (each card file's .js, spec/cards.md), the Cards page (card types left, the grid, the selected
 // card's settings right), and the core's settings (Audio, Models, Appearance). Plain web component, HA's theme.
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\n/g, "<br>");
+const ago = (iso) => { const s = Math.max(0, (Date.now() - new Date(iso)) / 1000); // "12 s ago", "3 min ago", "2 h ago", older: the date
+  return s < 60 ? `${Math.round(s)} s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago`
+    : new Date(iso).toLocaleString([], { dateStyle: "short", timeStyle: "short" }); };
 const tip = (html) => `<span class="qm" tabindex="0">?<span class="tip">${html}</span></span>`;
 const W = 180, HEAD = 34, ROW = 20;
 const COL = W + 110; // one slot column (v1: a column per step in the flow)
+const crosses = (a, b, c, d) => { // do the segments a–b and c–d cross
+  const side = (p, q, r) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  return side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0;
+};
 const KIND_NAMES = { text: "context", read: "read (dotted)", audio: "audio stream", clip: "audio clip", any: "anything" };
 const KIND_NAME = new Proxy(KIND_NAMES, { get: (t, k) => String(k).split("|").map((x) => t[x] || x).join(" or ") }); // "audio|clip": either
-// A context as the model gets it (docs/v2 page 3), top to bottom in the order the model reads it; a colour per part
-// (system, tools, said, answer, tool result), only what belongs together folds (the tool list, a call with its result, a
-// long text); the events below, set apart. The monitor and a chat's Context view show it.
-// ctx: {system, messages, tools, events} (a context's summary); name(id): a card's name.
+// A context (docs/v2 page 5): its entries in order, each with its tag (the card that wrote it in front), its state
+// (streaming, cut; nothing when it ended), its text, its calls with their results and its data (folded). The monitor,
+// the log and a chat's Context view show it. ctx: {entries} (a context's summary); name(id): a card's name.
 const contextView = (ctx, name) => {
   const body = (text) => {
     const s = String(text ?? "");
+    if (!s) return "";
     return s.length > 600 ? `<details><summary class="cvmore">${esc(s.slice(0, 220).replace(/\s+/g, " "))}…</summary><pre class="cvtext">${esc(s)}</pre></details>`
       : `<pre class="cvtext">${esc(s)}</pre>`;
   };
-  const tags = (e) => (e.tags || []).map((x) => `<code class="cvtag">#${esc(x)}</code>`).join(" ");
-  const label = (kind, text, e) => `<div class="cvhead"><span class="cvlab ${kind}">${esc(text)}</span> ${e ? tags(e) : ""}</div>`;
-  const results = Object.fromEntries((ctx.messages || []).filter((m) => m.kind === "result").map((m) => [m.data?.call_id, m]));
-  const att = (a) => `<div class="cvatt">${label("att", `attached by ${name(a.by)} · ${a.kind === "note" ? "before" : "after"}`, a)}${body(a.text)}</div>`;
+  const entries = ctx.entries || [];
+  const results = Object.fromEntries(entries.filter((e) => e.data?.call_id).map((e) => [e.data.call_id, e]));
+  const card = (tag) => tag.split(".")[0];
+  const head = (e, kind) => `<div class="cvhead"><span class="cvlab ${kind}">${esc(e.tag)}</span>${card(e.tag) !== "context" ? ` <span class="hint">${esc(name(card(e.tag)))}</span>` : ""}${e.state && e.state !== "ended" ? ` <span class="cvstate">${esc(e.state)}</span>` : ""}</div>`;
   const call = (c) => { const r = results[c.id]; return `<details class="cvcall"><summary><code>${esc(c.name)}(${esc(JSON.stringify(c.args || {}).slice(1, -1))})</code> <span class="hint">→ ${esc(name(c.card || ""))}${r ? "" : " · no result yet"}</span></summary>
-    ${r ? `<div class="cvpart result">${label("result", `tool result · ${name(r.by)}`, r)}${body(r.text)}</div>` : ""}</details>`; };
-  const msg = (m) => {
-    if (m.kind === "result") return ""; // under the call it answers
-    const kind = m.kind === "said" ? "said" : "answer", attached = m.attachments || [];
-    const who = m.kind === "said" ? `${name(m.by)} · said` : `${name(m.by)} · answered${m.state === "cut" ? " (stopped)" : m.state === "open" ? " (writing…)" : ""}`;
-    return `<div class="cvpart ${kind}">${attached.filter((a) => a.kind === "note").map(att).join("")}${label(kind, who, m)}${m.text ? body(m.text) : ""}
-      ${(m.data?.calls || []).map(call).join("")}${attached.filter((a) => a.kind !== "note").map(att).join("")}</div>`;
+    ${r ? `<div class="cvpart result">${head(r, "result")}${body(r.text)}</div>` : ""}</details>`; };
+  const data = (e) => { const { calls, call_id, tools, ...rest } = e.data || {}; return Object.keys(rest).length ? `<details class="cvdata"><summary class="cvmore">data</summary><pre class="cvtext">${esc(JSON.stringify(rest, null, 1))}</pre></details>` : ""; };
+  const one = (e) => {
+    if (e.data?.call_id && entries.some((x) => (x.data?.calls || []).some((c) => c.id === e.data.call_id))) return ""; // under the call it answers
+    if (e.tag === "context.tools") {
+      const tools = e.data?.tools || [];
+      return `<details class="cvpart tools"><summary>${head(e, "tools")}<span class="hint">${tools.length ? tools.map((x) => esc(x.name)).join(", ") : "none"}</span></summary>
+        ${tools.map((x) => `<div class="cvtool"><code>${esc(x.name)}(${Object.entries(x.args || {}).map(([a, y]) => `${esc(a)}${y.required ? "" : "?"}`).join(", ")})</code> <span class="hint">${esc(name(x.card))}</span><div>${esc(x.description || "")}</div></div>`).join("")}</details>`;
+    }
+    const kind = e.tag === "context.system" ? "system" : e.data?.call_id ? "result" : e.tag.endsWith(".said") ? "said" : "entry";
+    return `<div class="cvpart ${kind}">${head(e, kind)}${body(e.text)}${(e.data?.calls || []).map(call).join("")}${data(e)}</div>`;
   };
-  const tools = ctx.tools || [];
-  return (ctx.system || []).map((e) => `<div class="cvpart system">${label("system", `system · ${name(e.by)}`, e)}${body(e.text)}</div>`).join("")
-    + (tools.length ? `<details class="cvpart tools"><summary>${label("tools", `tools · ${tools.length}`)}<span class="hint">${tools.map((x) => esc(x.name)).join(", ")}</span></summary>
-      ${tools.map((x) => `<div class="cvtool"><code>${esc(x.name)}(${Object.entries(x.args || {}).map(([a, y]) => `${esc(a)}${y.required ? "" : "?"}`).join(", ")})</code> <span class="hint">${esc(name(x.card))}</span><div>${esc(x.description || "")}</div></div>`).join("")}</details>` : "")
-    + (ctx.messages || []).map(msg).join("")
-    + ((ctx.events || []).length ? `<div class="cvaac"><div class="hint">AAC only, never sent to the model</div>${(ctx.events || []).map((e) => `<div class="cvpart event">${label("event", `${e.kind} · ${name(e.by)}`, e)}${e.text ? body(e.text) : ""}</div>`).join("")}</div>` : "");
+  return entries.map(one).join("");
 };
 
+const ICON = { // the grid's round buttons (drawn, so they look the same everywhere)
+  select: '<svg viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1" stroke-dasharray="2.5 2"/></svg>',
+  cut: '<svg viewBox="0 0 16 16"><circle cx="4" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><path d="M5.5 10.5 12 2M10.5 10.5 4 2"/></svg>',
+  bin: '<svg viewBox="0 0 16 16"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v5M9.2 6.5v5"/></svg>',
+};
 const KIND_COLOR = { text: "#f5a623", read: "#f5a623", audio: "#4caf50", clip: "#9c27b0", any: "#ffffff" };
-const DAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+
+// AAC's log (Settings → Logs, the Log card's page): entries come oldest first and show newest first; name(id): a card's name,
+// extra(entry): html before its text (the Log card's ▶ for a kept clip).
+const logTime = (t) => { const d = new Date(t * 1000);
+  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString() : d.toLocaleString([], { dateStyle: "short", timeStyle: "medium" }); };
+const logRows = (entries, name, extra = () => "") => entries.slice().reverse().map((e) => `<div class="logrow ${esc(e.level)}" data-logid="${e.id}">
+  <span class="lt">${esc(logTime(e.time))}</span><span class="ll">${esc(e.level)}</span>
+  <span class="lw">${esc(e.card ? name(e.card) : `AAC · ${e.part}`)} <span class="hint">${esc(e.what)}${e.port && e.port !== e.what ? ` (${esc(e.port)})` : ""}</span></span>
+  <span class="lx">${extra(e)}${esc(e.text)}${e.n ? ` <span class="hint">×${e.n}</span>` : ""}${e.context ? `<details class="fold"><summary>Whole context</summary>${contextView(e.context, name)}</details>` : ""}${e.trace ? `<details class="fold"><summary>Trace</summary><pre class="cvtext">${esc(e.trace)}</pre></details>` : ""}</span></div>`).join("");
+const logText = (entries, name) => entries.map((e) => `${new Date(e.time * 1000).toISOString()} ${e.level} ${e.card ? name(e.card) : `AAC (${e.part})`}${e.port ? ` ${e.port}` : ""} ${e.what}: ${e.text}${e.n ? ` (×${e.n})` : ""}${e.trace ? `\n  ${e.trace.trim().replace(/\n/g, "\n  ")}` : ""}`).join("\n");
 
 const STYLE = `
 :host { display: block; height: 100vh; color: var(--primary-text-color); background: var(--primary-background-color);
@@ -85,9 +105,10 @@ nav .item { position: relative; } .item .navacts { display: none; position: abso
 .navmenu { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 8px; margin: 4px 0; padding: 2px 0;
   box-shadow: 0 4px 12px rgba(0,0,0,.2); clear: both; }
 .permhead { margin: 0; cursor: pointer; user-select: none; } .card .permhead + * { margin-top: 10px; }
-.access .acclist { max-height: 420px; overflow-y: auto; border: 1px solid var(--divider-color); border-radius: 8px; }
+.access { container-type: inline-size; } .access .acclist { max-height: min(420px, 60vh); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--divider-color); border-radius: 8px; }
 .accrow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--divider-color); }
 .accrow .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; } .accrow .seg { display: flex; gap: 2px; flex: 0 0 auto; }
+@container (max-width: 380px) { .accrow { flex-wrap: wrap; gap: 2px 8px; } .accrow .t { flex-basis: 100%; } .accrow .seg { margin-left: auto; } } /* narrow (side panel, phone): the name gets the whole line */
 .dmenu .item.danger { color: var(--error-color, #db4437); }
 h4.fold { cursor: pointer; user-select: none; border-radius: 6px; } h4.fold:hover { background: rgba(127,127,127,.1); }
 h4.fold.lit { color: var(--primary-color); background: rgba(3,169,244,.12); } h4.fold .arrow { display: inline-block; width: 12px; }
@@ -127,16 +148,18 @@ textarea { resize: vertical; }
 .fields { padding: 1px 0 3px 26px; display: flex; flex-wrap: wrap; gap: 4px; }
 .chip { font-size: 11px; background: rgba(127,127,127,.12); border-radius: 10px; padding: 1px 7px; cursor: pointer; }
 .card { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
-.models td { padding: 4px 8px; border-bottom: 1px solid var(--divider-color); font-size: 14px; }
-/* nodes */
-.nodes { display: flex; height: 100%; min-height: 0; }
+.models td { padding: 4px 8px; border-bottom: 1px solid var(--divider-color); font-size: 14px; } .models tr.hint td { font-size: 12px; }
+.srvrows { width: 100%; border-collapse: collapse; margin-top: 6px; } .srvrows td { padding: 6px 4px; border-top: 1px solid var(--divider-color); vertical-align: top; }
+.srvrows tr:hover td { background: rgba(127,127,127,.07); } /* a model's buttons sit far right: the row shows what they belong to */
+/* the Cards page */
+.cardsview { display: flex; height: 100%; min-height: 0; }
 .palette { width: var(--pal-w, 190px); flex: none; border-right: 1px solid var(--divider-color); display: flex; flex-direction: column; }
 .palette .types { flex: 1; overflow-y: auto; padding-bottom: 8px; }
 .palette .info { border-top: 1px solid var(--divider-color); padding: 10px; font-size: 12px; max-height: 45%; overflow-y: auto; }
 .grid { flex: 1; position: relative; overflow: hidden; background-image: radial-gradient(rgba(127,127,127,.25) 1px, transparent 1px); background-size: 20px 20px; }
 .grid svg { width: 100%; height: 100%; display: block; user-select: none; touch-action: none; }
 .side { width: var(--side-w, 300px); flex: none; border-left: 1px solid var(--divider-color); overflow-y: auto; padding: 12px; }
-.nodes { position: relative; } .nodes.nopal .palette, .nodes.nopal [data-grip="pal"], .nodes.noside .side, .nodes.noside [data-grip="side"] { display: none; }
+.cardsview { position: relative; } .cardsview.nopal .palette, .cardsview.nopal [data-grip="pal"], .cardsview.noside .side, .cardsview.noside [data-grip="side"] { display: none; }
 .edge { position: absolute; top: 50%; transform: translateY(-50%); z-index: 6; width: 22px; height: 56px; padding: 0; font-size: 16px; cursor: pointer;
   border: 1px solid var(--divider-color); background: var(--card-background-color, #fff); color: var(--primary-text-color); opacity: .85; }
 .edge.left { left: 0; border-left: none; border-radius: 0 8px 8px 0; } .edge.right { right: 0; border-right: none; border-radius: 8px 0 0 8px; }
@@ -144,9 +167,10 @@ textarea { resize: vertical; }
 .side .check, .content .check { display: flex; gap: 6px; align-items: center; color: var(--primary-text-color); font-size: 14px; } .content .check input { width: auto; flex: 0 0 auto; }
 .side .check input { width: auto; }
 .fn { font-size: 12px; margin: 6px 0; } .fn code { font-size: 12px; }
-.node rect.box { fill: var(--card-background-color); stroke: var(--divider-color); stroke-width: 1.2; }
-.node.sel rect.box { stroke: var(--primary-color); stroke-width: 2.4; }
-.node text { fill: var(--primary-text-color); font-size: 13px; } .node text.sub { fill: var(--secondary-text-color); font-size: 10px; } .node text.port { font-size: 10px; fill: var(--secondary-text-color); }
+.cardbox rect.box { fill: var(--card-background-color); stroke: var(--divider-color); stroke-width: 1.2; }
+.cardbox.sel rect.box { stroke: var(--primary-color); stroke-width: 2.4; }
+#frame { fill: var(--primary-color); fill-opacity: .08; stroke: var(--primary-color); stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+.cardbox text { fill: var(--primary-text-color); font-size: 13px; } .cardbox text.sub { fill: var(--secondary-text-color); font-size: 10px; } .cardbox text.port { font-size: 10px; fill: var(--secondary-text-color); }
 .dot { cursor: crosshair; }
 .wire { fill: none; stroke-width: 2; opacity: .7; } .wire.read { stroke-dasharray: 4 4; } .wire.sel { stroke-width: 4; opacity: 1; }
 /* something passed (owner): the wire lights up brighter and pulses thick-thin, fading back to normal over a few seconds */
@@ -167,18 +191,25 @@ textarea { resize: vertical; }
 .fold { margin-top: 8px; font-size: 12px; } .fold > summary { cursor: pointer; color: var(--secondary-text-color); font-weight: 500; }
 .cvpart { border-left: 3px solid var(--divider-color); padding: 4px 8px; margin: 6px 0; font-size: 13px; }
 .cvpart.system { border-left-color: #8e8e93; } .cvpart.tools { border-left-color: #26a69a; } .cvpart.said { border-left-color: var(--primary-color); }
-.cvpart.answer { border-left-color: #f5a623; } .cvpart.result { border-left-color: #9c27b0; margin-left: 10px; } .cvpart.event { border-left-style: dashed; }
-.cvlab { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .03em; }
-.cvlab.system { color: #8e8e93; } .cvlab.tools { color: #26a69a; } .cvlab.said { color: var(--primary-color); } .cvlab.answer { color: #f5a623; }
-.cvlab.result { color: #9c27b0; } .cvlab.att, .cvlab.event { color: var(--secondary-text-color); }
-.cvatt { margin: 4px 0 4px 10px; padding: 2px 8px; border-left: 2px dashed var(--divider-color); font-size: 12px; }
+.cvpart.result { border-left-color: #9c27b0; margin-left: 10px; }
+.cvlab { font-size: 11px; font-weight: 500; font-family: ui-monospace, monospace; }
+.cvlab.system { color: #8e8e93; } .cvlab.tools { color: #26a69a; } .cvlab.said { color: var(--primary-color); } .cvlab.result { color: #9c27b0; }
+.cvstate { font-size: 10px; text-transform: uppercase; color: #f5a623; }
 .cvcall { margin: 4px 0 2px 10px; font-size: 12px; } .cvcall > summary, .cvpart.tools > summary { cursor: pointer; }
 .cvtool { margin: 4px 0 4px 10px; font-size: 12px; } .cvpart.tools > summary .cvhead { display: inline; margin-right: 6px; }
-.cvhead { font-size: 12px; } .cvtag { font-size: 10px; opacity: .6; } .cvmore { cursor: pointer; font-size: 12px; color: var(--secondary-text-color); }
+.cvhead { font-size: 12px; } .cvmore { cursor: pointer; font-size: 12px; color: var(--secondary-text-color); } .cvdata { margin-top: 2px; }
 .cvtext { white-space: pre-wrap; word-break: break-word; margin: 2px 0; font: inherit; font-size: 12px; }
-.cvaac { margin-top: 16px; padding-top: 6px; border-top: 1px dashed var(--divider-color); opacity: .8; }
 .fnrow { border-left: 3px solid var(--divider-color); padding: 4px 8px; margin: 6px 0; } .fnrow.off { opacity: .55; }
 .fnrow input[type=text], .fnrow textarea { width: 100%; box-sizing: border-box; font-size: 12px; }
+.gridtools { position: absolute; right: 30px; top: 10px; z-index: 6; display: flex; flex-direction: column; gap: 6px; }
+.gridtools button { width: 30px; height: 30px; border-radius: 50%; padding: 0; display: grid; place-items: center; cursor: pointer; border: 1px solid var(--divider-color); background: var(--card-background-color, #fff); color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.gridtools svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.gridtools button:disabled { opacity: .35; cursor: default; }
+.gridtools button.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
+.grid.tool-select svg, .grid.tool-cut svg { cursor: crosshair; }
+.wire.cut { stroke: #e53935 !important; stroke-width: 3.5; stroke-dasharray: 6 4; }
+.wire.red { stroke: #e53935 !important; stroke-width: 4; opacity: 1; }
+#cutline { fill: none; stroke: #e53935; stroke-width: 2; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; }
 .legend { position: absolute; right: 8px; bottom: 6px; font-size: 10px; color: var(--secondary-text-color); line-height: 1.5; opacity: .8; }
 .legend div { display: flex; align-items: center; gap: 4px; } .grid .legend svg { flex: none; width: 20px; height: 8px; }
 .warn { color: var(--error-color, #db4437); font-size: 12px; margin: 4px 0; }
@@ -186,12 +217,20 @@ textarea { resize: vertical; }
 .hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
 .menu { display: none; background: none; border: none; font-size: 22px; padding: 4px 8px 4px 0; cursor: pointer; color: var(--primary-text-color); }
 .scrim { display: none; }
+.logrow { display: grid; grid-template-columns: 140px 64px 170px minmax(0, 1fr); gap: 2px 10px; padding: 5px 0; border-bottom: 1px solid var(--divider-color); font-size: 13px; align-items: baseline; }
+.logrow .lt { color: var(--secondary-text-color); font-size: 12px; white-space: nowrap; } .logrow .lx { word-break: break-word; min-width: 0; }
+.logrow .ll { justify-self: start; font-size: 11px; padding: 0 6px; border-radius: 8px; background: rgba(127,127,127,.15); }
+.logrow.error .ll { background: var(--error-color, #db4437); color: #fff; } .logrow.warning .ll { background: var(--warning-color, #ffa600); color: #000; }
+.logrow.error .lx { color: var(--error-color, #db4437); } .logrow.flow .ll { opacity: .7; }
+.logbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; } .logbar select, .logbar input { width: auto; flex: 1 1 140px; }
 @media (max-width: 800px) { nav { position: absolute; z-index: 20; height: 100%; transform: translateX(-100%); transition: transform .2s; } .root.navopen nav { transform: none; }
   .menu { display: inline-block; } .root.navopen .scrim { display: block; position: absolute; inset: 0; z-index: 15; background: rgba(0,0,0,.3); }
   .grip { display: none; }
-  .nodes .palette, .nodes .side { position: absolute; top: 0; bottom: 0; z-index: 8; width: min(85vw, 320px); background: var(--primary-background-color); box-shadow: 0 0 12px rgba(0,0,0,.3); }
-  .nodes .palette { left: 0; } .nodes .side { right: 0; }
-  .nodes:not(.nopal) .edge.left { left: min(85vw, 320px); } .nodes:not(.noside) .edge.right { right: min(85vw, 320px); } }
+  .logrow { grid-template-columns: auto auto minmax(0, 1fr); } .logrow .lx { grid-column: 1 / -1; }
+  .cardsview .palette, .cardsview .side { position: absolute; top: 0; bottom: 0; z-index: 8; width: min(85vw, 320px); background: var(--primary-background-color); box-shadow: 0 0 12px rgba(0,0,0,.3); }
+  .cardsview .palette { left: 0; } .cardsview .side { right: 0; }
+  .cardsview:not(.nopal) .edge.left { left: min(85vw, 320px); } .cardsview:not(.noside) .edge.right { right: min(85vw, 320px); }
+  .models tr { display: flex; flex-wrap: wrap; align-items: baseline; border-bottom: 1px solid var(--divider-color); } .models td { border: none; padding: 2px 8px; } .models tr.hint { display: none; } }
 `;
 
 class AacPanel extends HTMLElement {
@@ -261,6 +300,7 @@ class AacPanel extends HTMLElement {
       else if (d.domgo) { this.domOpen = false; this.ws("aac/domain/switch", { domain_id: d.domgo }).then(async () => { this._els = {}; await this._load(); this.go("card", null, null); }); }
       else if (d.navadd) { e.stopPropagation(); const el = this._els[d.navadd]; if (el?.add) { this.go("card", d.navadd, this.view.card === d.navadd ? this.view.id : null).then(() => el.add()); } else this.go("card", d.navadd, null); }
       else if (d.fold) { e.stopPropagation(); const f = this._folds(); f[d.fold] = !f[d.fold]; this._setFolds(f); const n = this.shadowRoot.querySelector("nav"); if (n) n.outerHTML = this._nav(); }
+      else if (d.peek && this._phone()) { this.navPeek = this.navPeek === d.peek ? null : d.peek; this._redrawNav(); } // on a phone Settings only opens in the sidebar (a page would close it)
       else if (d.go) this.go(d.go, d.card || null, d.id || null);
       else if (t.id === "navbtn") { this.navOpen = true; this.shadowRoot.querySelector(".root").classList.add("navopen"); }
     });
@@ -286,20 +326,28 @@ class AacPanel extends HTMLElement {
   async _load() {
     [this.state, this.audio, this.look, this.nav] = await Promise.all([this.ws("aac/state"), this.ws("aac/audio").catch(() => null),
       this.ws("aac/appearance").catch(() => ({ skins: [], skin: "" })), this.ws("aac/nav").then((r) => r.nav).catch(() => [])]);
+    const ids = new Set(this.state.domain.cards.map((c) => c.id)); // a selected card that is gone (removed, Undo moved its id back) lets go
+    if (this._sel && !ids.has(this._sel)) this._sel = null;
+    this.many = new Set([...(this.many || [])].filter((id) => ids.has(id)));
   }
   _folds() { try { return JSON.parse(localStorage.getItem("aac.folds") || "{}"); } catch (err) { return {}; } }
   _setFolds(f) { try { localStorage.setItem("aac.folds", JSON.stringify(f)); } catch (err) { /* private window */ } }
+  get sel() { return this._sel; } // the card whose settings show; picking one (or none) lets go of several
+  set sel(id) { this._sel = id; this.many = new Set(); }
+  _picked() { return this.many.size ? this.many : new Set(this.sel ? [this.sel] : []); } // the selected cards on the Cards page
+  _pick(ids) { const s = new Set(ids); if (s.size > 1) { this.sel = null; this.many = s; } else this.sel = [...s][0] || null; } // several: no settings, they move together
   _card(id) { return (this.state?.domain.cards || []).find((c) => c.id === id); }
   _type(t) { return (this.state?.types || []).find((x) => x.type === t); }
 
   _event(ev) {
-    if (ev.card && this._els[ev.card]) { try { this._els[ev.card].event?.(ev); } catch (err) { console.error(err); } } // to the card's page
+    const pages = ev.card ? [this._els[ev.card]] : ev.what === "delta" ? Object.values(this._els) : []; // to the card's page (a growing answer: every page; a chat's finds its turn by the tag)
+    for (const el of pages) { try { el?.event?.(ev); } catch (err) { console.error(err); } }
     if (["chat", "card"].includes(ev.what)) { // a card's sidebar entries may have changed
       clearTimeout(this._nt);
       this._nt = setTimeout(async () => { this.nav = (await this.ws("aac/nav")).nav; const n = this.shadowRoot.querySelector("nav"); if (n) n.outerHTML = this._nav(); }, 200);
     } else if (ev.what === "setup") {
       clearTimeout(this._st);
-      this._st = setTimeout(async () => { await this._load(); if (this.view.kind !== "nodes" || !this._dragging) this.render(); }, 150);
+      this._st = setTimeout(async () => { await this._load(); if (this.view.kind !== "cards" || !this._dragging) this.render(); }, 150);
     } else if (ev.what === "models") { // a model stopped or started answering: the warnings follow
       clearTimeout(this._mt2);
       this._mt2 = setTimeout(async () => {
@@ -312,6 +360,9 @@ class AacPanel extends HTMLElement {
       this.ws("aac/appearance").then((look) => { this.look = look; this.render(); });
     } else if (ev.what === "audio" && this.view.kind === "audio") {
       clearTimeout(this._at); this._at = setTimeout(async () => { this.audio = await this.ws("aac/audio"); this.render(); }, 300);
+    } else if (ev.what === "log") {
+      if (this.view.kind === "logs") this._logArrived(ev.entry);
+      if (this.view.kind === "card") this._els[this.view.card]?.event?.(ev); // a card's page that shows the log
     } else if (ev.what === "view") {
       this._viewEls?.[ev.card]?.frame?.(ev.data);
     } else if (ev.what === "level") {
@@ -320,7 +371,7 @@ class AacPanel extends HTMLElement {
         clearTimeout(p._lt); p._lt = setTimeout(() => { p.style.strokeWidth = ""; }, 1200);
       }
     } else if (ev.what === "flow") {
-      if (this.view.kind === "nodes") for (const key of this._monitors().filter((k) => k.split("|")[0] === ev.wire)) {
+      if (this.view.kind === "cards") for (const key of this._monitors().filter((k) => k.split("|")[0] === ev.wire)) {
         clearTimeout((this._mt ||= {})[key]); this._mt[key] = setTimeout(() => this._loadMonitor(key, true), 250);
       }
       for (const p of this.shadowRoot.querySelectorAll(`.wire[data-from="${CSS.escape(ev.wire)}"]`)) {
@@ -331,7 +382,7 @@ class AacPanel extends HTMLElement {
     }
   }
 
-  // the Nodes page's side panels (card types left, settings right): arrows at the edges; on a phone they lie over the
+  // the Cards page's side panels (card types left, settings right): arrows at the edges; on a phone they lie over the
   // grid, each open one is an entry in the history, so Back closes the right one, then the left, then goes to the last chat
   _phone() { return matchMedia("(max-width: 800px)").matches; }
 
@@ -355,7 +406,7 @@ class AacPanel extends HTMLElement {
 
   _onBack() {
     if (this._quietBack) { this._quietBack = false; return; } // the panels closed already
-    if (this.view.kind !== "nodes") return;
+    if (this.view.kind !== "cards") return;
     if (this.sideOpen) this.sideOpen = false;
     else if (this.palOpen) this.palOpen = false;
     else { const last = this._lastCard || {}; this.go("card", last.card || null, last.id || null); return; }
@@ -366,17 +417,19 @@ class AacPanel extends HTMLElement {
   disconnectedCallback() { window.removeEventListener("popstate", this._back); }
 
   async go(kind, card = null, id = null) {
-    if (kind === "card") this._lastCard = { card, id }; // Back from the Nodes page on a phone goes here
-    if (kind === "nodes" && this.view.kind !== "nodes") {
+    if (kind === "card") this._lastCard = { card, id }; // Back from the Cards page on a phone goes here
+    if (kind === "cards" && this.view.kind !== "cards") {
       const phone = this._phone();
       this.palOpen = this.sideOpen = !phone;
-      if (phone) history.pushState({ aac: "nodes" }, ""); // Back with both panels closed leaves the page
+      if (phone) history.pushState({ aac: "cards" }, ""); // Back with both panels closed leaves the page
     }
     this.view = { kind, card, id };
-    this.navOpen = false; // on a phone the sidebar closes when a page is picked
-    if (kind === "nodes") this._watchIds = null; // say at once which views it shows
+    this.navOpen = false; this.navPeek = null; // on a phone the sidebar closes when a page is picked
+    if (kind === "cards") this._watchIds = null; // say at once which views it shows
     if (kind === "card" && !this.nav.some((n) => n.card === card)) this.view.card = this.nav[0]?.card || null;
     if (kind === "models") { this.servers = null; this._loadServers(); clearInterval(this._srvLive); this._srvLive = setInterval(() => { if (this.view.kind !== "models") { clearInterval(this._srvLive); return; } this._loadServers(); }, 3000); }
+    if (kind === "logs") await this._loadLogs();
+    if (kind === "rules") this.aacSettings = await this.ws("aac/settings");
     if (kind === "audio") { this.audio = await this.ws("aac/audio"); clearInterval(this._live); this._live = setInterval(async () => { if (this.view.kind !== "audio") { clearInterval(this._live); return; } this.audio = await this.ws("aac/audio"); const b = this.shadowRoot.querySelector("#meters"); if (b) b.innerHTML = this._meters(); }, 700); }
     this.render();
     if (kind === "card") await this._showCard();
@@ -404,6 +457,7 @@ class AacPanel extends HTMLElement {
       go: (entry) => this.go("card", card, entry),
       header: (title, extra) => this._header(title, extra), cardTitle: (id) => this._card(id)?.title || id, esc, md, tip,
       contextView: (ctx) => contextView(ctx, (id) => this._card(id)?.title || id), // a context in sections
+      logRows: (entries, extra) => logRows(entries, (id) => this._card(id)?.title || id, extra), // log entries as Settings → Logs shows them
       failing: () => this._failing(), // names of models that do not answer (a page may warn)
       confirm: (text, ok, danger) => this.confirm(text, ok, danger), prompt: (text, value, multiline) => this.prompt(text, value, multiline),
       alert: (text) => this.alert(text), dialog: (o) => this.dialog(o), // AAC's own dialogs
@@ -426,20 +480,22 @@ class AacPanel extends HTMLElement {
   render() {
     if (!this.state) { this.shadowRoot.innerHTML = `<style>${STYLE}</style><p style="padding:20px">Loading…</p>`; return; }
     const v = this.view;
-    const main = v.kind === "nodes" ? this._nodes() : v.kind === "models" ? this._models() : v.kind === "audio" ? this._audioView()
-      : v.kind === "appearance" ? this._appearanceView() : v.kind === "permissions" ? this._permissionsView() : v.card ? '<div id="cardhost"></div>'
-      : `${this._header("AAC")}<div class="content"><p>No card with a page in this domain (a Chat, Lists …). Add one in Nodes.</p></div>`;
+    const main = v.kind === "cards" ? this._cardsView() : v.kind === "models" ? this._models() : v.kind === "audio" ? this._audioView()
+      : v.kind === "appearance" ? this._appearanceView() : v.kind === "rules" ? this._rulesView() : v.kind === "permissions" ? this._permissionsView() : v.kind === "logs" ? this._logsView() : v.card ? '<div id="cardhost"></div>'
+      : `${this._header("AAC")}<div class="content"><p>No card with a page in this domain (a Chat, Lists …). Add one on the Cards page.</p></div>`;
     const skin = this.look?.skins.find((k) => k.id && k.id === this.look.skin);
     const page = `${v.kind}/${v.card || ""}`, before = this.shadowRoot.querySelector("main .content");
     const scrolled = before && this._page === page ? before.scrollTop : 0; // a redraw of the same page stays where it was
+    const lists = [...this.shadowRoot.querySelectorAll("[data-accbox]")].map((b) => [b.dataset.accbox, b.querySelector(".acclist")?.scrollTop || 0]); // and so do access lists
     Object.values(this._fieldEls || {}).forEach((el) => el.remember?.()); // an editor being typed in keeps its caret
     this.shadowRoot.innerHTML = `<style>${STYLE}</style>${skin ? `<link rel="stylesheet" href="${esc(skin.url)}?v=${esc(this.state.version)}">` : ""}<div class="root ${this.navOpen ? "navopen" : ""}">${this._nav()}<div class="scrim" id="scrim"></div><div class="grip" data-grip="nav" data-target="nav" title="Drag: width of the sidebar (double-click: back to normal)"></div><main>${main}</main></div>`;
     this._page = page;
     if (scrolled) this.shadowRoot.querySelector("main .content")?.scrollTo(0, scrolled);
+    for (const [box, top] of lists) this.shadowRoot.querySelector(`[data-accbox="${CSS.escape(box)}"] .acclist`)?.scrollTo(0, top);
     this._bind();
     if (this._wave) this._drawWave(); // and the waveforms view
     if (this._dialog) this._drawDialog(); // a redraw keeps an open dialog
-    if (v.kind === "nodes") this._drawGrid();
+    if (v.kind === "cards") { if (!this._dragging && this._settle()) this._savePositions(); this._drawGrid(); } // no card stays on another
     this._fieldElements();
     const el = v.kind === "card" && this._els[v.card];
     if (el) this.shadowRoot.querySelector("#cardhost")?.replaceChildren(el); // a redraw keeps the page as it is
@@ -647,11 +703,14 @@ class AacPanel extends HTMLElement {
         if (!n?.trim()) return this.render();
         const { id } = await this.ws(act === "new" ? "aac/domain/create" : "aac/domain/clone", { name: n.trim() });
         await this.ws("aac/domain/switch", { domain_id: id });
-        this._els = {}; await this._load(); return this.go(act === "new" ? "nodes" : "card", null, null);
+        this._els = {}; await this._load(); return this.go(act === "new" ? "cards" : "card", null, null);
       }
       if (act === "rename") {
         const n = await this.prompt("New name", name);
-        if (n?.trim() && n.trim() !== name) await this.ws("aac/domain/rename", { domain_id: s.domain.id, name: n.trim() });
+        if (n?.trim() && n.trim() !== name) {
+          const old = s.domain.id, { id } = await this.ws("aac/domain/rename", { domain_id: old, name: n.trim() });
+          if (id !== old) { this._moved([old, id]); this._els = {}; } // its id is its name
+        }
         await this._load(); return this.render();
       }
       if (act === "delete") {
@@ -674,19 +733,84 @@ class AacPanel extends HTMLElement {
   async _loadFile(file) {
     if (!file || !(await this.confirm(`Load "${file.name}" into this domain? Its cards and wires replace the current ones (Undo goes back).`, "Load"))) return;
     try { await this.ws("aac/setup/import", { setup: JSON.parse(await file.text()) }); } catch (err) { this.alert(`Could not load it: ${err.message || err}`); return; }
-    this.sel = null; this._els = {}; await this._load(); this.go("nodes");
+    this.sel = null; this._els = {}; await this._load(); this.go("cards");
+  }
+
+  // ------------------------------------------------------------------ Settings → Logs: AAC's log of this domain
+  _logFilter() { const f = this.logs?.filter || {}; return { levels: f.levels ? f.levels.split(",") : undefined, card: f.who?.startsWith("card:") ? f.who.slice(5) : undefined, part: f.who === "aac" ? "*" : undefined, search: f.search || "" }; }
+
+  async _loadLogs(older = false) {
+    const keep = this.logs || { filter: { levels: "", who: "", search: "" }, entries: [] };
+    const before = older ? keep.entries[0]?.id : undefined;
+    const { entries } = await this.ws("aac/log", { ...this._logFilter(), before, last: 300 });
+    this.logs = { ...keep, entries: older ? [...entries, ...keep.entries] : entries, more: entries.length >= 300 };
+  }
+
+  _logMatches(e) {
+    const f = this._logFilter();
+    return (!f.levels || f.levels.includes(e.level)) && (!f.card || e.card === f.card) && (!f.part || e.part)
+      && (!f.search || `${e.what} ${e.text}`.toLowerCase().includes(f.search.toLowerCase()));
+  }
+
+  _logArrived(entry) { // a new entry (or a repeat counted up): in the list at once when it matches
+    if (!this.logs || !this._logMatches(entry)) return;
+    const list = this.logs.entries.filter((e) => e.id !== entry.id);
+    this.logs.entries = [...list, entry].slice(-2000);
+    clearTimeout(this._lt); this._lt = setTimeout(() => { const box = this.shadowRoot.querySelector("#logrows"); if (box) box.innerHTML = this._logList(); }, 300);
+  }
+
+  _logList() {
+    const name = (id) => this._card(id)?.title || id;
+    return (this.logs?.entries.length ? logRows(this.logs.entries, name) : '<p class="hint">Nothing in the log matches.</p>')
+      + (this.logs?.more ? '<button class="small" id="logolder" style="margin-top:8px">Show older</button>' : "");
+  }
+
+  _logsView() {
+    const f = this.logs?.filter || {}, opt = (v, label, cur) => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(label)}</option>`;
+    const levels = [["", "Everything"], ["error,warning,info", "Without what passed the wires"], ["error,warning", "Errors and warnings"], ["error", "Errors"], ["flow", "Only what passed the wires"]];
+    const who = [["", "Every card and AAC"], ["aac", "AAC itself (audio, models …)"], ...this.state.domain.cards.map((c) => [`card:${c.id}`, c.title])];
+    return `${this._header(`Log of "${this.state.domain.name}"`, `${tip("AAC's own log of this domain: what passed the cards' wires (each card's Log setting says what), what went wrong, what was changed. The newest 5,000 entries of what passed the wires stay, and apart from them the newest 5,000 of everything else (a busy card cannot push errors out); a whole context stays with its entry 10 minutes and is never written to disk. A wire's monitor shows the same entries.")}
+      <button class="small" id="logsave" title="Save what the filter shows as a text file">Save</button><button class="small danger" id="logclear">Clear</button>`)}
+      <div class="content"><div class="logbar"><select id="loglevel">${levels.map(([v, l]) => opt(v, l, f.levels || "")).join("")}</select>
+        <select id="logwho">${who.map(([v, l]) => opt(v, l, f.who || "")).join("")}</select>
+        <input id="logsearch" type="search" placeholder="Search" value="${esc(f.search || "")}"></div>
+        <div id="logrows">${this.logs ? this._logList() : '<p class="hint">Loading…</p>'}</div></div>`;
+  }
+
+  _bindLogs() {
+    const $ = (s) => this.shadowRoot.querySelector(s);
+    const refilter = async () => { await this._loadLogs(); const box = $("#logrows"); if (box) box.innerHTML = this._logList(); this._bindLogs(); };
+    const set = (key, el) => { this.logs.filter = { ...this.logs.filter, [key]: el.value }; refilter(); };
+    $("#loglevel")?.addEventListener("change", (e) => set("levels", e.target));
+    $("#logwho")?.addEventListener("change", (e) => set("who", e.target));
+    const search = $("#logsearch");
+    if (search && !search._bound) { search._bound = true; search.addEventListener("input", () => { clearTimeout(this._ls); this._ls = setTimeout(() => set("search", search), 300); }); }
+    $("#logolder")?.addEventListener("click", async () => { await this._loadLogs(true); $("#logrows").innerHTML = this._logList(); this._bindLogs(); });
+    const clear = $("#logclear");
+    if (clear && !clear._bound) {
+      clear._bound = true;
+      clear.addEventListener("click", async () => { if (!(await this.confirm("Clear AAC's whole log of this domain?", "Clear", true))) return; await this.ws("aac/log/clear"); await refilter(); });
+      $("#logsave").addEventListener("click", async () => {
+        const { entries } = await this.ws("aac/log", { ...this._logFilter(), last: 5000 }), a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([logText(entries, (id) => this._card(id)?.title || id)], { type: "text/plain" }));
+        a.download = `aac-log-${this.state.domain.id}-${new Date().toISOString().slice(0, 16).replace(":", "-")}.txt`;
+        a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      });
+    }
   }
 
   _permSummary(c, fs) { // a folded card's permissions in a few words
     return fs.map(([k, f]) => { const v = c.settings[k] ?? f.default;
       if (f.type === "bool") return `${v ? "✓" : "✗"} ${f.title.toLowerCase()}`;
       if (f.type === "access") { const n = Object.values(v || {}); return `${n.filter((x) => x === "read").length} read-only, ${n.filter((x) => x === "full").length} full`; }
-      return `${f.title}: ${v}`; }).join(" · ");
+      if (f.type === "functions") { const fns = Object.keys(c.functions || {}), defOn = this._type(c.type)?.offers !== false;
+        return fns.length ? `${fns.filter((fn) => (v || {})[fn]?.on ?? defOn).length} of ${fns.length} functions for models` : ""; }
+      return `${f.title}: ${v}`; }).filter(Boolean).join(" · ") || "no functions";
   }
 
   _permissionsView() { // every setting a card marks as a permission, all cards of this domain on one page
     const cards = this.state.domain.cards.map((c) => [c, Object.entries(this._type(c.type)?.settings || {}).filter(([, f]) => f.permission)]).filter(([, fs]) => fs.length);
-    return `${this._header(`Permissions of "${this.state.domain.name}"`, tip("What this domain's cards may do, gathered from their settings (the same fields as in Nodes): which entities AAC may see or switch, what the Node editor may change, which cards models may use as tools."))}
+    return `${this._header(`Permissions of "${this.state.domain.name}"`, tip("What this domain's cards may do, gathered from their settings (the same fields as on the Cards page): which entities AAC may see or switch, what the Card editor may change, which cards models may use as tools."))}
       <div class="content">${cards.map(([c, fs]) => { const open = this.permOpen === c.id; return `<div class="card"><h3 class="permhead" data-permopen="${esc(c.id)}">${open ? "▾" : "▸"} ${esc(c.title)} <span class="hint">${esc(this._type(c.type)?.title || c.type)} · ${esc(this._permSummary(c, fs))}</span></h3>${open ? fs.map((e) => this._field(c, e)).join("") : ""}</div>`; }).join("") || '<p class="hint">No card here has permissions.</p>'}
       <p class="hint">Fields save when you leave them.</p></div>`;
   }
@@ -709,16 +833,16 @@ class AacPanel extends HTMLElement {
 
   _failing() { return (this.state?.models || []).filter((m) => m.failing).map((m) => m.name); }
 
-  _foldMode(key) { return this.look?.folds?.[key] || (key === "chat" ? "arrow" : "auto"); } // how a sidebar group folds
+  _foldMode(key) { return this.look?.folds?.[key] || this.nav.find((n) => n.card === key)?.nav?.fold || "auto"; } // how a sidebar group folds (the card's nav may say its default)
 
-  _nav() { // the cards' pages and their entries, then Nodes and the core's settings
+  _nav() { // the cards' pages and their entries, then the Cards page and the core's settings
     const s = this.state, v = this.view, folds = this._folds();
     const on = (kind, card = null, id = null) => (v.kind === kind && v.card === card && (v.id || null) === id ? "on" : "");
     const item = (label, kind, card = null, id = null, indent = 0) =>
       `<div class="item ${on(kind, card, id)}" data-go="${kind}" data-card="${esc(card || "")}" data-id="${esc(id || "")}" ${indent ? `style="padding-left:${12 + indent * 14}px"` : ""}>${esc(label)}</div>`;
     // a group: "auto" opens while one of its pages is in use (lit) and closes when you go elsewhere; "arrow" stays as the arrow left it
     const group = (key, title, active, body, add = "", go = "") => {
-      const auto = this._foldMode(key) === "auto", open = auto ? active : !folds[key];
+      const auto = this._foldMode(key) === "auto", open = auto ? active || this.navPeek === key : !folds[key];
       return `<h4 class="fold ${auto && active ? "lit" : ""}" ${go}>${auto ? "" : `<span class="arrow" data-fold="${esc(key)}" title="Keep it open or closed">${open ? "▾" : "▸"}</span> `}${esc(title.toUpperCase())}${add}</h4>${open ? body : ""}`;
     };
     const acts = (n, e) => { // an entry's actions (the card says which): icons at once, the rest in its ⋯ menu
@@ -735,13 +859,14 @@ class AacPanel extends HTMLElement {
       `data-go="card" data-card="${esc(n.card)}" data-id="" title="Open its page"`)).join("");
     const single = this.nav.filter((n) => !n.nav).map((n) => item(n.title, "card", n.card)).join("");
     const failing = this._failing();
-    const settings = group("settings", "Settings", ["audio", "models", "appearance"].includes(v.kind),
-      `${item("Audio", "audio")}${item("Models", "models").replace('data-go="models"', `data-go="models" ${failing.length ? "data-warn" : ""}`)}${item("Appearance", "appearance")}`, "",
-      `data-go="${["audio", "models", "appearance"].includes(v.kind) ? v.kind : failing.length ? "models" : "audio"}" ${failing.length ? `data-alarm title="Not answering: ${esc(failing.join(", "))}"` : ""}`);
+    const pages = ["audio", "models", "logs", "appearance", "rules"];
+    const settings = group("settings", "Settings", pages.includes(v.kind),
+      `${item("Audio", "audio")}${item("Models", "models").replace('data-go="models"', `data-go="models" ${failing.length ? "data-warn" : ""}`)}${item("Logs", "logs")}${item("Appearance", "appearance")}${item("How AAC works", "rules")}`, "",
+      `data-go="${pages.includes(v.kind) ? v.kind : failing.length ? "models" : "audio"}" data-peek="settings" ${failing.length ? `data-alarm title="Not answering: ${esc(failing.join(", "))}"` : ""}`);
     return `<nav><div class="top"><button class="menu" id="habtn" title="Home Assistant's menu">⌂</button><b>AAC</b><span>v${esc(s.version)}</span></div>
       <div class="dom">${this._domainMenu()}</div>
       <div class="scroll">${groups}${single ? `<h4>MORE</h4>${single}` : ""}</div>
-      <div class="bottom">${item("Nodes", "nodes")}${settings}</div></nav>`;
+      <div class="bottom">${item("Cards", "cards")}${settings}</div></nav>`;
   }
 
   _header(title, extra = "") { return `<header><button class="menu" id="navbtn" title="Menu">☰</button><h2>${esc(title)}</h2>${extra}</header>`; }
@@ -752,6 +877,13 @@ class AacPanel extends HTMLElement {
       <button class="small" data-say="${esc(src.id)}" style="margin-left:auto">Test voice</button></div>
       <div style="display:flex;align-items:flex-end;gap:2px;height:40px;margin-top:6px">${(src.meter || []).map(([lvl, sp]) => `<i style="flex:1;height:${Math.max(2, lvl)}%;background:${sp > 0.3 ? "var(--primary-color)" : "var(--divider-color)"}"></i>`).join("")}</div></div>`).join("")
       || '<p class="hint">No satellite connected (the AAC satellite add-on, or the PC program).</p>';
+  }
+
+  _rulesView() { // the rules every card follows (the Card editor gives models the same text), and the storm limit
+    const st = this.aacSettings || {};
+    return `${this._header("How AAC works")}<div class="content"><div class="card"><pre class="cvtext" style="font-size:13px">${esc(st.rules || "")}</pre></div>
+      <div class="card"><h3 style="margin-top:0">Storm limit ${tip("Rule 6: a wire that carries more contexts within a second than this turns red (blocked until you unblock it on the Cards page). A model writing sends its answer after every sentence: keep it well above that.")}</h3>
+        <div class="row"><input type="number" id="storm" min="1" max="10000" value="${esc(st.storm ?? "")}" style="max-width:120px"><span class="hint">contexts per second through one wire</span></div></div></div>`;
   }
 
   _appearanceView() {
@@ -778,7 +910,7 @@ class AacPanel extends HTMLElement {
       }
     } catch (e) { found.error = e.message || String(e); }
     this._vc[engine] = found;
-    if (this.view.kind === "nodes") this.render();
+    if (this.view.kind === "cards") this.render();
     return found;
   }
 
@@ -808,12 +940,12 @@ class AacPanel extends HTMLElement {
     const a = this.audio || { settings: {} }, st = a.settings || {};
     const sttItems = (a.stt_entities || []).map((e) => [e, e]);
     const order = (st.stt || []).filter((e) => e.startsWith("stt."));
-    return `${this._header("Audio", tip("The satellites, how AAC hears (speech to text, in this order: the first that answers) and speaks (an HA voice engine). Shared by all domains; the audio cards in Nodes decide what happens with it."))}
+    return `${this._header("Audio", tip("The satellites, how AAC hears (speech to text, in this order: the first that answers) and speaks (an HA voice engine). Shared by all domains; the audio cards on the Cards page decide what happens with it."))}
       <div class="content"><h3>Satellites</h3><div id="meters">${this._meters()}</div>
       ${(st.known || []).filter((k) => !(a.sources || []).some((s) => s.id === k.id)).map((k) => `<div class="row"><span class="hint">${esc(k.name)} · offline</span><button class="small danger" data-forget="${esc(k.id)}" style="margin-left:auto" title="Remove it from AAC (and its media player in HA)">Forget</button></div>`).join("")}
       ${this._languagesCard()}
       ${this._timingCard()}
-      <div class="card"><h3 style="margin-top:0">HA's speech to text (in order) ${tip("Home Assistant's engines, tried after the models in a Speech to text card's list (that list is in the card's settings in Nodes).")}</h3>
+      <div class="card"><h3 style="margin-top:0">HA's speech to text (in order) ${tip("Home Assistant's engines, tried after the models in a Speech to text card's list (that list is in the card's settings on the Cards page).")}</h3>
         ${order.map((id, i) => `<div class="row"><span class="t">${esc((sttItems.find((x) => x[0] === id) || [id, id])[1])}</span>
           <button class="small" data-sttup="${i}">↑</button><button class="small danger" data-sttdel="${i}">✕</button></div>`).join("") || '<p class="hint">None yet.</p>'}
         <div class="row" style="margin-top:8px"><select id="sttadd"><option value="">Add …</option>${sttItems.filter((x) => !order.includes(x[0])).map(([id, l]) => `<option value="${esc(id)}">${esc(l)}</option>`).join("")}</select></div>
@@ -825,12 +957,17 @@ class AacPanel extends HTMLElement {
   // ------------------------------------------------------------------ models
   _models() { // on top only the models; servers below, each with what it offers and AAC's models on it (their settings)
     const srv = (id) => (this.servers || []).find((x) => x.id === id);
+    const facts = (m) => { // what the server's model is (a router says it; kept from its last load)
+      const x = (srv(m.server)?.models || []).find((y) => y.id === m.model);
+      return x ? [x.params ? `${(x.params / 1e9).toFixed(1)} B parameters` : "", x.context ? `context ${x.context.toLocaleString()}` : ""].filter(Boolean).join(" · ") : "";
+    };
     const rows = this.state.models.map((m) => `<tr><td><b>${esc(m.name)}</b></td><td class="hint">${esc(srv(m.server)?.name || "")}</td>
-      <td class="hint">${m.follow ? `follows what is loaded · now <b>${esc(m.model)}</b>` : esc(m.model)}</td>
+      <td>${m.follow ? `<span class="hint">follows what is loaded:</span> ` : ""}${esc(m.model)}<div class="hint">${esc(facts(m))}</div></td>
       <td>${(m.tags || []).map((t) => `<code>${esc(t)}</code>`).join(" ")}</td>
-      <td>${m.failing ? `<span style="color:var(--error-color,#db4437)">✗ not answering${m.up ? " (tried again with the next request)" : " (skipped for a minute)"}</span>` : "✓"}<div class="hint">${m.busy || 0}/${m.parallel || 1} running${m.waiting ? ` · ${m.waiting} waiting` : ""}</div></td></tr>`).join("");
+      <td style="white-space:nowrap">${m.failing ? `<span style="color:var(--error-color,#db4437);white-space:normal">✗ not answering${m.up ? " (tried again with the next request)" : " (skipped for a minute)"}</span>` : "✓ ok"}<div class="hint">${m.busy ? `busy ${m.busy} of ${m.parallel || 1}` : "idle"}${m.waiting ? ` · ${m.waiting} waiting` : ""}</div></td></tr>`).join("");
+    const head = '<tr class="hint"><td>Name in AAC</td><td>Server</td><td>The server\'s model</td><td>Can do</td><td>Now</td></tr>';
     return `${this._header("Models", tip("The models AAC may use, for all domains (each card that uses models picks from these by what they can do, their tags). They are set up below, on their servers: any OpenAI-compatible server works (llama.cpp, Ollama, vLLM, LM Studio, cloud APIs); a llama-server router also lists, loads, downloads and deletes its models here."))}
-      <div class="content"><div class="card models"><table style="width:100%;border-collapse:collapse">${rows || '<tr><td class="hint">No models yet: add a server below, then its models.</td></tr>'}</table></div>
+      <div class="content"><div class="card models"><table style="width:100%;border-collapse:collapse">${rows ? head + rows : '<tr><td class="hint">No models yet: add a server below, then its models.</td></tr>'}</table></div>
       ${this.srvForm === "new" ? this._srvForm(null) : '<button data-srvadd="1" style="margin-bottom:12px">+ Add a server</button>'}
       ${this._servers()}</div>`;
   }
@@ -846,7 +983,7 @@ class AacPanel extends HTMLElement {
 
   _servers() {
     if (!this.servers) return '<div class="card"><p class="hint">Asking the servers …</p></div>';
-    return this.servers.map((s) => `<div class="card"><div class="row"><h3 style="margin:0">${esc(s.name)}</h3><span class="hint">${esc(s.base_url)}</span>
+    return this.servers.map((s) => `<div class="card"><div class="row" style="flex-wrap:wrap"><h3 style="margin:0">${esc(s.name)}</h3><span class="hint">${esc(s.base_url)}</span>
         <span style="margin-left:auto"></span><button class="small" data-srvedit="${esc(s.id)}">Edit</button><button class="small danger" data-srvdel="${esc(s.id)}">Delete</button></div>
       ${this.srvForm === s.id ? this._srvForm(s) : ""}
       <div data-srvlist="${esc(s.id)}">${this._serverRows(s)}</div>
@@ -875,7 +1012,15 @@ class AacPanel extends HTMLElement {
       <div style="margin-top:10px;display:flex;gap:8px"><button class="primary small" data-amsave="${esc(key)}">Save</button><button class="small" data-amcancel="1">Cancel</button></div></div>`;
   }
 
-  _serverRows(s) {
+  _heard(s) { // when AAC's requests last got an answer from it, and the last one that did not (newer than the answer: red)
+    const h = s.heard || {}, bad = h.failed && (!h.answered || h.failed > h.answered);
+    if (!h.answered && !h.failed) return "";
+    return `<div class="hint" style="margin-top:4px">${h.answered ? `Last answered ${esc(ago(h.answered))}` : "No answer yet"}${h.failed ? ` · <span style="${bad ? "color:var(--error-color,#db4437)" : ""}" title="${esc(h.error || "")}">last failed ${esc(ago(h.failed))}: ${esc((h.error || "").slice(0, 80))}</span>` : ""}</div>`;
+  }
+
+  _serverRows(s) { return this._heard(s) + this._serverModels(s); }
+
+  _serverModels(s) {
     if (s.error) return `<p style="color:var(--error-color,#db4437)">Not answering: ${esc(s.error)}</p>`;
     if (!s.router) return `<p class="hint">${(s.offered || []).length ? `It offers: ${s.offered.map(esc).join(", ")}` : "It lists no models (add them with + model)."} Not a llama-server router: one fixed model.</p>`;
     const gb = (b) => (b ? `${(b / 1e9).toFixed(1)} GB` : "");
@@ -892,12 +1037,12 @@ class AacPanel extends HTMLElement {
       const act = (a, label, cls = "", title = "") => `<button class="small ${cls}" data-ract="${a}" data-srv="${esc(s.id)}" data-rname="${esc(m.id)}" ${title ? `title="${esc(title)}"` : ""}>${label}</button>`;
       const del = !m.can_remove ? `<button class="small" disabled title="Set up on the server itself (its preset file or models folder): it can't be deleted from here, only downloaded models can">Delete</button>`
         : st === "loaded" ? '<button class="small" disabled title="Unload it first">Delete</button>' : act("delete", "Delete", "danger");
-      const buttons = st === "downloading" ? act("unload", "Pause") : st === "incomplete" ? `${act("download", "Resume")} ${act("delete", "Delete", "danger")}`
+      const buttons = st === "downloading" ? act("unload", "Stop", "", "Stops the download. Some llama-server builds keep what came so far (Resume, or Delete), others throw it away") : st === "incomplete" ? `${act("download", "Resume")} ${act("delete", "Delete", "danger")}`
         : `${on && st !== "loading" ? (benching ? '<button class="small" disabled>Benching …</button>' : act("bench", "Bench", "", "A short fixed test: reads ~1,500 tokens, writes 256; the result is kept")) : ""} ${del}`;
       const tick = st === "downloading" || st === "incomplete" ? "" : `<input type="checkbox" data-rload="1" data-srv="${esc(s.id)}" data-rname="${esc(m.id)}" ${on ? "checked" : ""} ${st === "loading" ? "disabled" : ""} title="Loaded (with one model at a time, ticking another unloads this one)">`;
-      return `<tr><td style="width:28px;vertical-align:top">${tick}</td><td><b>${esc(m.id)}</b>${users.length ? ` <span class="hint">← ${users.map((u) => esc(u.name)).join(", ")}</span>` : ""}<div class="hint">${esc(facts)}</div>${benchLine}</td><td style="text-align:right;white-space:nowrap;vertical-align:top">${buttons}</td></tr>`;
+      return `<tr><td style="width:28px">${tick}</td><td><b>${esc(m.id)}</b>${users.length ? ` <span class="hint">← ${users.map((u) => esc(u.name)).join(", ")}</span>` : ""}<div class="hint">${esc(facts)}</div>${benchLine}</td><td style="text-align:right;white-space:nowrap">${buttons}</td></tr>`;
     }).join("");
-    return `<table style="width:100%;border-collapse:collapse;margin-top:6px"><tr><th class="hint" style="text-align:left;font-weight:normal">loaded</th><th></th><th></th></tr>${rows || '<tr><td></td><td class="hint">It offers no models.</td><td></td></tr>'}</table>`;
+    return `<table class="srvrows"><tr><th class="hint" style="text-align:left;font-weight:normal">loaded</th><th></th><th></th></tr>${rows || '<tr><td></td><td class="hint">It offers no models.</td><td></td></tr>'}</table>`;
   }
 
   async _loadServers() {
@@ -955,8 +1100,8 @@ class AacPanel extends HTMLElement {
     }
   }
 
-  // ------------------------------------------------------------------ nodes
-  _nodes() {
+  // ------------------------------------------------------------------ the Cards page
+  _cardsView() {
     const s = this.state, d = s.domain;
     const cats = s.categories.map((c) => {
       const types = s.types.filter((t) => t.category === c);
@@ -967,11 +1112,11 @@ class AacPanel extends HTMLElement {
     const info = t ? `<b>${esc(t.title)}</b> <span class="hint">v${esc(t.version)}</span><p style="margin:6px 0">${esc(t.help)}</p>${ports("Takes", t.inputs)}${ports("Outputs", t.outputs)}${Object.keys(t.functions || {}).length ? `<label>Functions (for models: For models on the card)</label>${Object.entries(t.functions).map(([n, f]) => `<div class="fn"><code>${esc(n)}(${Object.entries(f.args || {}).map(([a, x]) => `${esc(a)}${x.required ? "" : "?"}`).join(", ")})</code> ${esc(f.help || "")}</div>`).join("")}` : ""}<p class="hint">Click in the grid to place it. <button class="small" id="unpick" title="Put it back (Esc, or click the type again)">Cancel</button></p>`
       : '<span class="hint">Pick a card type above, then click in the grid to place it.</span>';
     const slots = ["1", "2", "3"].map((n) => `<button class="small" data-slot="${n}" title="Save the setup to slot ${n} (Shift-click: load it)">${d.slots[n] ? "●" : "○"} ${n}</button>`).join("");
-    return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Nodes", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it.")}
+    return `<div style="display:flex;flex-direction:column;height:100%">${this._header("Cards", `${tip("Cards are placed from the left, wired by dragging from an output dot to an input dot of the same colour. Click a wire and press Delete (or the button) to remove it. A model's tools are the cards wired from its output and back into it. Cards never lie on each other: a dropped or new card goes into its column below what it would cover, and a card that grows pushes the ones under it down. The round buttons (top right): Select (dashed square) draws a frame around cards and adds or removes cards by a click (or Ctrl+click and Ctrl+drag without it, a long press on a phone); drag one of them and they all move. Cut (scissors) removes every wire a drawn line crosses. Esc turns them off. The bin (or Del) removes the selected cards or wire.")}
         <button class="small" id="undo" ${d.undo ? "" : "disabled"}>Undo</button><button class="small" id="redo" ${d.redo ? "" : "disabled"} title="What the last Undo took back">Redo</button><button class="small" id="fit">Fit</button><button class="small ${this.showValues ? "on" : ""}" id="values" title="The value pool: what scripts can read now (card.value), live">Values</button><button class="small" id="arrange" title="Put the cards in slots: a column per step in the flow, a card's tools under it (Undo goes back)">Arrange</button>${slots}<button class="small danger" id="stop">Send stop</button>`)}
-      <div class="nodes ${this.palOpen ? "" : "nopal"} ${this.sideOpen ? "" : "noside"}"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
+      <div class="cardsview ${this.palOpen ? "" : "nopal"} ${this.sideOpen ? "" : "noside"}"><div class="palette"><div class="types">${cats}</div><div class="info">${info}</div></div>
         <div class="grip" data-grip="pal" data-target=".palette" title="Drag: width (double-click: back to normal)"></div>
-        <div class="grid" id="grid"><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}
+        <div class="grid ${this.tool ? `tool-${this.tool}` : ""}" id="grid"><div class="gridtools">${[["select", ICON.select, "Select: drag a frame around cards, or click cards to add or remove them; drag one of them and they all move"], ["cut", ICON.cut, "Cut wires: draw a line across the wires that should go (Undo brings them back)"]].map(([k, icon, t]) => `<button class="${this.tool === k ? "on" : ""}" data-tool="${k}" title="${t}">${icon}</button>`).join("")}<button id="delsel" title="Remove the selected cards or wire (Del; Undo brings them back)" ${this._picked().size || this.selWire ? "" : "disabled"}>${ICON.bin}</button></div><svg id="svg"><g id="world"><g id="wires"></g><g id="cards"></g></g></svg><div class="mons"></div>${this._legend()}
           <button class="edge left" id="paltog" title="${this.palOpen ? "Hide" : "Show"} the card types">${this.palOpen ? "‹" : "›"}</button>
           <button class="edge right" id="sidetog" title="${this.sideOpen ? "Hide" : "Show"} the settings">${this.sideOpen ? "›" : "‹"}</button></div>
         <div class="grip" data-grip="side" data-target=".side" data-side="left" title="Drag: width (double-click: back to normal)"></div>
@@ -1008,7 +1153,7 @@ class AacPanel extends HTMLElement {
     const fns = Object.keys(t?.functions || {}).length;
     const help = { ...(fns ? { in: "used as a tool: wire it from a Model (or a Relay) and back, and its functions are called", out: "back to the card that called it" } : {}), ...(t?.ports_help || {}) };
     const kind = (k) => KIND_NAME[k] || k;
-    const row = (dir, [p, k]) => `<div class="fn"><code>${esc(p)}</code> <span class="hint">${dir} · ${esc(kind(k))}${c.square.includes(p) ? " · square: goes to one wire" : dir === "out" ? " · round: every wire gets it" : ""}</span>${help[p] || help["*"] ? `<br>${esc(help[p] || help["*"])}` : ""}</div>`;
+    const row = (dir, [p, k]) => `<div class="fn"><code>${esc(p)}</code> <span class="hint">${dir} · ${esc(kind(k))}${dir === "out" ? " · every wire gets it" : ""}</span>${help[p] || help["*"] ? `<br>${esc(help[p] || help["*"])}` : ""}</div>`;
     const list = [...Object.entries(c.inputs).map((x) => row("in", x)), ...Object.entries(c.outputs).map((x) => row("out", x))];
     return list.length ? `<details class="fold"><summary>Ports</summary>${list.join("")}</details>` : "";
   }
@@ -1025,10 +1170,20 @@ class AacPanel extends HTMLElement {
       ${groups.join("") || '<p class="hint">No card offers values.</p>'}<label>The core: when AAC last spoke</label>${audio}`;
   }
 
-  async _removeCard() { // no question: Undo brings it back
-    const card = this.sel;
+  async _removeCards() { // the selected cards (several in one Undo step); cards with data of their own ask what happens to it
+    const cards = [...this._picked()];
+    await this._load(); // whether they hold data now
+    const held = cards.map((id) => this._card(id)).filter((c) => c?.has_data);
+    let drop = false;
+    if (held.length) {
+      const one = held.length === 1, names = held.map((c) => `"${c.title}"`).join(", ");
+      const { button } = await this.dialog({ title: "Remove", text: `${names} ${one ? "has data of its" : "have data of their"} own (chats, lists, memories …).\n\nKeep: Undo brings ${one ? "it" : "them"} back with it. Kept data goes once Undo can no longer bring ${one ? "the card" : "them"} back.\nDelete: the data goes now; Undo brings ${one ? "the card" : "them"} back empty.`,
+        buttons: [["cancel", "Cancel"], ["keep", "Keep", "primary"], ["drop", "Delete the data", "danger"]] });
+      if (button === "cancel") return this.render();
+      drop = button === "drop";
+    }
     this.sel = null;
-    await this.ws("aac/card/remove", { card });
+    await this.ws("aac/card/remove", { cards, drop_data: drop });
     await this._load(); this.render();
   }
 
@@ -1107,12 +1262,6 @@ class AacPanel extends HTMLElement {
     if (f.type === "player") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="">the satellite the line came from</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)} (satellite)</option>`).join("")}${Object.keys(this._hass.states).filter((e) => e.startsWith("media_player.") && !e.startsWith("media_player.aac_satellite_")).sort().map((e) => `<option value="${esc(e)}" ${e === v ? "selected" : ""}>${esc(this._hass.states[e].attributes.friendly_name || e)}</option>`).join("")}</select>`;
     if (f.type === "source") return `<label>${esc(f.title)}${h}</label><select data-set="${esc(key)}"><option value="${key === "source" && c.type === "microphone" ? "any" : ""}">${esc(f.empty || (c.type === "microphone" ? "any satellite" : "where the line came from"))}</option>${(this.audio?.settings?.known || []).map((k) => `<option value="${esc(k.id)}" ${k.id === v ? "selected" : ""}>${esc(k.name)}</option>`).join("")}</select>`;
     if (f.type === "outputs") return `<label>${esc(f.title)}${h}</label><textarea rows="4" data-set="${esc(key)}" data-outputs>${esc((v || []).map((o) => `${o.name}: ${o.description || ""}`).join("\n"))}</textarea>`;
-    if (f.type === "schedule") return `<label>${esc(f.title)}${h}</label>${(v || []).map((e, i) => `<div class="card" style="padding:8px" data-entry="${i}">
-        <div class="row"><input data-e="name" value="${esc(e.name)}" placeholder="Name"><input data-e="at" value="${esc(e.at)}" style="width:80px" placeholder="HH:MM"></div>
-        <div class="row" style="margin:4px 0;flex-wrap:wrap">${DAYS.map((d, n) => `<label class="check" style="font-size:12px"><input type="checkbox" data-day="${n}" ${(e.weekdays || []).includes(n) ? "checked" : ""}>${d}</label>`).join("")}</div>
-        <textarea rows="2" data-e="text" placeholder="What to do">${esc(e.text)}</textarea>
-        <div class="row"><label class="check"><input type="checkbox" data-e="enabled" ${e.enabled !== false ? "checked" : ""}>on</label><button class="small danger" data-delentry="${i}" style="margin-left:auto">Remove</button></div></div>`).join("")}
-      <button class="small" id="addentry">Add an entry</button>`;
     if (f.type === "watches") return `<label>${esc(f.title)}${h}</label>${(v || []).map((w, i) => `<div class="card" style="padding:8px" data-watch="${i}">
         <div class="row"><input data-w="name" value="${esc(w.name)}" placeholder="Name"><input data-w="cooldown" value="${esc(w.cooldown ?? 300)}" style="width:70px" title="Cooldown (s)"></div>
         <input data-w="entity_id" value="${esc(w.entity_id)}" placeholder="entity, e.g. binary_sensor.door" style="margin-top:4px">
@@ -1140,9 +1289,13 @@ class AacPanel extends HTMLElement {
     if (this.selMon) return this._monitorSide(this.selMon);
     if (this.selWire) {
       const key = `${this.selWire.from}|${this.selWire.to}`, on = this._monitors().includes(key);
+      const red = (d.red || []).find((r) => `${r.from}|${r.to}` === key);
       return `<b>Wire</b><p class="hint">${esc(this.selWire.from)} → ${esc(this.selWire.to)}</p>
+        ${red ? `<p class="hint" style="color:#e53935"><b>Blocked (red)</b> since ${esc(new Date(red.since * 1000).toLocaleString())}: more than ${red.count} contexts went through it within a second, so the wiring probably loops. It carries nothing until it is unblocked.</p><div class="row" style="margin-bottom:8px"><button class="small" id="unblock">Unblock</button></div>` : ""}
         <div class="row" style="gap:8px"><button class="small" id="monitor" title="A window above the wire with what passes it, live">${on ? "Stop monitoring" : "Monitor"}</button><button class="small danger" id="unwire">Remove wire</button></div>`;
     }
+    if (this.many.size) return `<b>${this.many.size} cards selected</b><p class="hint">Drag one of them and they all move, the bin or Del removes them. With Select on, a click on a card or a long press on a phone adds or removes it (Ctrl+click without it), a frame adds the cards in it. Esc or a click on the empty grid lets go.</p>
+      ${[...this.many].map((id) => `<div class="item" data-selcard="${esc(id)}" style="cursor:pointer">${esc(this._card(id)?.title || id)}</div>`).join("")}`;
     const c = this.sel && this._card(this.sel);
     if (!c) {
       const groups = {};
@@ -1156,10 +1309,10 @@ class AacPanel extends HTMLElement {
     return `<label>Name</label><input id="title" value="${esc(c.title)}">
       <p class="hint" style="margin-top:8px">${esc(t?.help || "")} <span title="The version of its card file">· ${esc(t?.title || c.type)} v${esc(t?.version || "?")}</span></p>
       ${Object.entries(t?.settings || {}).filter(([, f]) => !f.fold).map(field).join("")}
-      ${c.tools ? `<label>Its tools ${tip("The cards wired from its output and straight back into it, with at least one function ticked under For models. A call goes there along the wire and comes back.")}</label>
-        <div class="row" style="flex-wrap:wrap;gap:4px">${c.tools.map((id) => `<button class="small" data-selcard="${esc(id)}" title="Select it">${esc(this._card(id)?.title || id)}</button>`).join("") || '<span class="hint">none: wire a card with functions from it and back</span>'}</div>` : ""}
+      ${c.tools ? `<label>Its tools ${tip("The cards in its loop (wired from its output back into it, straight or round through other cards) with at least one function ticked under For models. A call goes there along the wires and comes back.")}</label>
+        <div class="row" style="flex-wrap:wrap;gap:4px">${c.tools.map((id) => `<button class="small" data-selcard="${esc(id)}" title="Select it">${esc(this._card(id)?.title || id)}</button>`).join("") || '<span class="hint">none: wire a card with functions into its loop</span>'}</div>` : ""}
       ${Object.entries(Object.entries(t?.settings || {}).filter(([, f]) => f.fold).reduce((g, e) => ({ ...g, [e[1].fold]: [...(g[e[1].fold] || []), e] }), {}))
-        .map(([name, fs]) => `<details class="fold" ${fs.some(([k]) => c.settings[k]) ? "open" : ""}><summary>${esc(name)}</summary>${fs.map(field).join("")}</details>`).join("")}
+        .map(([name, fs]) => `<details class="fold" ${fs.some(([k, f]) => JSON.stringify(c.settings[k] ?? null) !== JSON.stringify(f.default ?? null)) ? "open" : ""}><summary>${esc(name)}</summary>${fs.map(field).join("")}</details>`).join("")}
       ${this._portDocs(c, t)}
       ${Object.keys(t?.values || {}).length ? `<details class="fold"><summary>Values (for scripts)</summary>${Object.entries(t.values).map(([n, h]) => `<div class="fn"><code>${esc(/^[A-Za-z_]\w*$/.test(c.id) ? c.id : `cards['${c.id}']`)}.${esc(n)}</code> ${esc(h)}</div>`).join("")}</details>` : ""}
       ${Object.keys(c.tags).length ? `<details class="fold"><summary>Tags</summary>${Object.entries(c.tags).map(([x, w]) => `<div class="fn"><code>${esc(x)}</code> ${esc(w)}</div>`).join("")}</details>` : ""}
@@ -1196,12 +1349,11 @@ class AacPanel extends HTMLElement {
     this.shadowRoot.querySelector("#cards").innerHTML = d.cards.map((c) => {
       const p = pos(c.id), ins = Object.entries(c.inputs), outs = Object.entries(c.outputs), m = mirror.has(c.id);
       const inX = m ? W : 0, outX = m ? 0 : W, inT = m ? `x="${W - 10}" text-anchor="end"` : 'x="10"', outT = m ? 'x="10"' : `x="${W - 10}" text-anchor="end"`;
-      return `<g class="node ${this.sel === c.id ? "sel" : ""}" data-node="${esc(c.id)}" transform="translate(${p.x},${p.y})">
+      return `<g class="cardbox ${this.sel === c.id || this.many.has(c.id) ? "sel" : ""}" data-cardbox="${esc(c.id)}" transform="translate(${p.x},${p.y})">
         <rect class="box" width="${W}" height="${height(c)}" rx="8"></rect>
         <text x="10" y="18">${esc(c.title)}</text><text class="sub" x="10" y="30">${esc(this._sub(c))}</text>
         ${ins.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-in="${esc(n)}" data-kind="${k}" points="${this._tri(inX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : k.includes("|") ? this._halves(inX, HEAD + ROW * i + ROW / 2, n, k) : `<circle class="dot" data-in="${esc(n)}" data-kind="${k}" cx="${inX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${inT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
-        ${outs.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-out="${esc(n)}" data-kind="${k}" points="${this._tri(outX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : c.square.includes(n) ? `<rect class="dot" data-out="${esc(n)}" data-kind="${k}" x="${outX - 6}" y="${HEAD + ROW * i + ROW / 2 - 6}" width="12" height="12" fill="${KIND_COLOR[k] || "#999"}"></rect>`
-          : `<circle class="dot" data-out="${esc(n)}" data-kind="${k}" cx="${outX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${outT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
+        ${outs.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-out="${esc(n)}" data-kind="${k}" points="${this._tri(outX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : `<circle class="dot" data-out="${esc(n)}" data-kind="${k}" cx="${outX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${outT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
         ${c.view ? `<foreignObject ${c.view.inline ? `x="34" y="${HEAD + 2}" width="${W - 76}" height="${ROW - 4}"` : `x="8" y="${this._ports(c) + 2}" width="${W - 16}" height="${c.view.height}"`}><div xmlns="http://www.w3.org/1999/xhtml" data-viewhost="${esc(c.id)}" style="width:100%;height:100%"></div></foreignObject>` : ""}
       </g>`;
     }).join("");
@@ -1209,7 +1361,8 @@ class AacPanel extends HTMLElement {
     const routes = this._routes(wires, port);
     this.shadowRoot.querySelector("#wires").innerHTML = wires.map((w) => {
       const path = routes[w.key], sel = this.selWire && `${this.selWire.from}|${this.selWire.to}` === w.key;
-      return `<path class="wire ${w.read ? "read" : ""} ${w.loop ? "loop" : ""} ${sel ? "sel" : ""}" data-from="${esc(`${w.a.id}.${w.ap}`)}" data-to="${esc(`${w.b.id}.${w.bp}`)}" d="${path}" stroke="${KIND_COLOR[w.kind] || "#999"}"></path>
+      const red = (d.red || []).some((r) => `${r.from}|${r.to}` === `${w.a.id}.${w.ap}|${w.b.id}.${w.bp}`); // the storm stop blocked it
+      return `<path class="wire ${w.read ? "read" : ""} ${w.loop ? "loop" : ""} ${sel ? "sel" : ""} ${red ? "red" : ""}" data-from="${esc(`${w.a.id}.${w.ap}`)}" data-to="${esc(`${w.b.id}.${w.bp}`)}" d="${path}" stroke="${KIND_COLOR[w.kind] || "#999"}"></path>
         <path class="hit" data-wire="${esc(w.key)}" d="${path}"><title>${esc(w.a.title)}.${esc(w.ap)} → ${esc(w.b.title)}.${esc(w.bp)} (${esc(w.kind)})</title></path>`;
     }).join("");
     this._view();
@@ -1235,12 +1388,12 @@ class AacPanel extends HTMLElement {
     }
   }
 
-  _watchViews(ids) { // AAC sends views' frames (and live wires) only while a Nodes page says it is open
-    const say = () => (this.view.kind === "nodes" && this.isConnected ? this.ws("aac/view/watch", { cards: this._watchIds || [] }).catch(() => {}) : null);
+  _watchViews(ids) { // AAC sends views' frames (and live wires) only while a Cards page says it is open
+    const say = () => (this.view.kind === "cards" && this.isConnected ? this.ws("aac/view/watch", { cards: this._watchIds || [] }).catch(() => {}) : null);
     const changed = JSON.stringify(ids) !== JSON.stringify(this._watchIds);
     this._watchIds = ids;
     if (changed) say();
-    if (!this._watchTimer) this._watchTimer = setInterval(() => { if (this.view.kind === "nodes") say(); }, 8000);
+    if (!this._watchTimer) this._watchTimer = setInterval(() => { if (this.view.kind === "cards") say(); }, 8000);
   }
 
   _ports(c) { return HEAD + ROW * Math.max(Object.keys(c.inputs).length, Object.keys(c.outputs).length, 1); } // where its view starts
@@ -1350,17 +1503,41 @@ class AacPanel extends HTMLElement {
     return found;
   }
 
-  _snap(id) {
-    // a dropped card goes into the nearest column, on the 20 px grid, below any card it would cover there
-    const d = this.state.domain, p = d.positions[id], c = this._card(id);
-    if (!p || !c) return;
-    p.x = Math.round(p.x / COL) * COL; p.y = Math.round(p.y / 20) * 20;
+  // No card lies on or right against another (10 px apart at least): a card that would goes below the one it covers
+  _hit(x, y, h, among) { // the card of `among` that a card at x, y (h high) would cover
+    const d = this.state.domain;
+    return among.find((o) => d.positions[o.id] && Math.abs(d.positions[o.id].x - x) < W && d.positions[o.id].y < y + h + 10 && y < d.positions[o.id].y + this._height(o) + 10);
+  }
+
+  _under(o) { return Math.round((this.state.domain.positions[o.id].y + this._height(o) + 20) / 20) * 20; } // the first free y below a card
+
+  _snap(id, group = [id]) {
+    // dragged cards go into the nearest column, on the 20 px grid, below any card they would cover there; the cards
+    // dragged together (the one held and the rest of the selection) move as one and keep their places to each other
+    const d = this.state.domain, p = d.positions[id], ours = group.filter((g) => d.positions[g] && this._card(g));
+    if (!p || !this._card(id)) return;
+    const shift = (dx, dy) => { for (const g of ours) { d.positions[g].x += dx; d.positions[g].y += dy; } };
+    shift(Math.round(p.x / COL) * COL - p.x, Math.round(p.y / 20) * 20 - p.y);
+    const others = d.cards.filter((o) => !ours.includes(o.id));
     for (let tries = 0; tries < 50; tries++) {
-      const hit = d.cards.find((o) => o.id !== id && d.positions[o.id] && Math.abs(d.positions[o.id].x - p.x) < W
-        && d.positions[o.id].y < p.y + this._height(c) + 10 && p.y < d.positions[o.id].y + this._height(o) + 10);
-      if (!hit) break;
-      p.y = Math.round((d.positions[hit.id].y + this._height(hit) + 20) / 20) * 20;
+      const g = ours.find((x) => this._hit(d.positions[x].x, d.positions[x].y, this._height(this._card(x)), others));
+      if (!g) break;
+      const q = d.positions[g];
+      shift(0, this._under(this._hit(q.x, q.y, this._height(this._card(g)), others)) - q.y);
     }
+  }
+
+  _settle() { // cards on each other (one grew, or came without a place, e.g. from a model): the lower one moves down; true if any moved
+    const d = this.state.domain, done = [];
+    let moved = false;
+    const placed = d.cards.filter((c) => d.positions[c.id]).sort((a, b) => d.positions[a.id].y - d.positions[b.id].y || d.positions[a.id].x - d.positions[b.id].x);
+    for (const c of [...placed, ...d.cards.filter((c) => !d.positions[c.id])]) {
+      if (!d.positions[c.id]) { d.positions[c.id] = { x: 0, y: 0 }; moved = true; } // no place yet: the first column, below what is there
+      const p = d.positions[c.id];
+      for (let tries = 0, hit; tries < 50 && (hit = this._hit(p.x, p.y, this._height(c), done)); tries++) { p.y = this._under(hit); moved = true; }
+      done.push(c);
+    }
+    return moved;
   }
 
   _routes(wires, port) {
@@ -1467,6 +1644,18 @@ class AacPanel extends HTMLElement {
 
   _setMonitors(list) { try { localStorage.setItem(`aac.monitors.${this.state.domain.id}`, JSON.stringify(list)); } catch (err) { /* private window */ } }
 
+  _moved(domain, card) { // an id moved with its name ([old, new] of the domain, or of a card in it): what this browser keeps goes along
+    try {
+      const [from, to] = domain || [this.state.domain.id, this.state.domain.id];
+      const end = (ref) => (card && ref.startsWith(`${card[0]}.`) ? card[1] + ref.slice(card[0].length) : ref);
+      const list = JSON.parse(localStorage.getItem(`aac.monitors.${from}`) || "[]").map((k) => k.split("|").map(end).join("|"));
+      localStorage.removeItem(`aac.monitors.${from}`);
+      if (list.length) localStorage.setItem(`aac.monitors.${to}`, JSON.stringify(list));
+      const folds = this._folds();
+      if (card && card[0] in folds) { folds[card[1]] = folds[card[0]]; delete folds[card[0]]; this._setFolds(folds); }
+    } catch (err) { /* private window */ }
+  }
+
   async _loadMonitor(key, flash = false) {
     try { (this.monData ||= {})[key] = await this.ws("aac/monitor", { wire: key.split("|")[0] }); } catch (err) { return; }
     this._layoutMonitors();
@@ -1511,7 +1700,7 @@ class AacPanel extends HTMLElement {
       <button class="small" data-monoff="${esc(key)}">Stop monitoring</button>
       ${msg?.messages ? `<label>NEWEST CONTEXT · ${esc(new Date(msg.time * 1000).toLocaleTimeString())}</label><p class="hint">Way: ${esc((msg.way || []).map(name).join(" › "))}</p>${contextView(msg, name)}`
         : msg?.clip ? `<label>NEWEST</label><p>${esc(msg.clip)} from ${esc(msg.source)}</p>` : ""}
-      <label>PASSED LATELY</label>${recs || '<p class="hint">Nothing yet (kept 10 minutes).</p>'}`;
+      <label>PASSED LATELY ${tip("From AAC's log (Settings → Logs): what the card's Log setting writes down.")}</label>${recs || `<p class="hint">${m.off ? `${esc(name(from))}'s Log setting writes nothing going out, so nothing shows here.` : "Nothing yet."}</p>`}`;
   }
 
   _bindMonitorSide() {
@@ -1548,25 +1737,35 @@ class AacPanel extends HTMLElement {
       this._view();
     }, { passive: false });
     svg.addEventListener("pointerdown", (e) => {
-      const node = e.target.closest(".node"), out = e.target.dataset?.out, hit = e.target.dataset?.wire;
+      const box = e.target.closest(".cardbox"), out = e.target.dataset?.out, hit = e.target.dataset?.wire;
       svg.setPointerCapture(e.pointerId);
       fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (fingers.size >= 2) { // a second finger: whatever the first began becomes a pinch
-        if (drag?.kind === "move" && drag.moved) { this._snap(drag.id); this._savePositions(); }
-        drag = null; this._dragging = false; this.shadowRoot.querySelector("#tmpwire")?.remove();
+        if (drag?.kind === "move" && drag.moved) { this._snap(drag.id, Object.keys(drag.from)); this._savePositions(); }
+        if (drag?.kind === "cut") this._drawGrid();
+        clearTimeout(drag?.press); this.shadowRoot.querySelectorAll("#frame, #cutline, #tmpwire").forEach((x) => x.remove());
+        drag = null; this._dragging = false;
         pinch = { ...two(), vp: { ...this.vp } };
         return;
       }
-      if (node && out) { drag = { kind: "wire", from: `${node.dataset.node}.${out}`, type: e.target.dataset.kind }; return; }
+      if (this.tool === "cut") { drag = { kind: "cut", trail: [this._world(e)], lines: this._wireLines(), hits: new Set() }; return; } // the knife cuts across cards too
+      if (box && out) { drag = { kind: "wire", from: `${box.dataset.cardbox}.${out}`, type: e.target.dataset.kind }; return; }
       if (hit) { const [from, to] = hit.split("|"); this.selWire = { from, to }; this.sel = null; this.selMon = null; this.showValues = false; this.render(); return; }
-      if (node) {
-        const id = node.dataset.node, p = this.state.domain.positions[id] || (this.state.domain.positions[id] = { x: 0, y: 0 }), w = this._world(e);
-        drag = { kind: "move", id, dx: w.x - p.x, dy: w.y - p.y, moved: false };
+      if (box) { // a card in the selection takes the others along
+        const id = box.dataset.cardbox, pos = this.state.domain.positions, p = pos[id] || (pos[id] = { x: 0, y: 0 }), w = this._world(e);
+        const group = this.many.has(id) ? [...this.many] : [id];
+        drag = { kind: "move", id, dx: w.x - p.x, dy: w.y - p.y, moved: false, add: e.ctrlKey || e.metaKey || this.tool === "select", at: [e.clientX, e.clientY], from: Object.fromEntries(group.filter((g) => pos[g]).map((g) => [g, { ...pos[g] }])) };
+        if (e.pointerType === "touch") { const d = drag; d.press = setTimeout(() => { // a long press: in or out of the selection
+          if (drag !== d || d.moved) return;
+          d.long = true; navigator.vibrate?.(20); this._toggle(id);
+        }, 500); }
         return;
       }
       if (this.selType) { const w = this._world(e); this._place(this.selType, w); return; }
+      if (this.tool === "select" || e.ctrlKey || e.metaKey) { drag = { kind: "frame", at: this._world(e), screen: [e.clientX, e.clientY], add: e.ctrlKey || e.metaKey, had: this._picked() }; return; }
       drag = { kind: "pan", x: e.clientX - this.vp.x, y: e.clientY - this.vp.y, at: [e.clientX, e.clientY] };
     });
+    svg.addEventListener("contextmenu", (e) => e.preventDefault()); // a long press on a phone selects, no menu
     svg.addEventListener("pointermove", (e) => {
       if (fingers.has(e.pointerId)) fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pinch) {
@@ -1579,10 +1778,33 @@ class AacPanel extends HTMLElement {
       }
       if (!drag) { this._ghost(e); return; }
       if (drag.kind === "pan") { this.vp.x = e.clientX - drag.x; this.vp.y = e.clientY - drag.y; this._view(); }
+      if (drag.kind === "move" && !drag.moved && (drag.long || (e.pointerType === "touch" && Math.hypot(e.clientX - drag.at[0], e.clientY - drag.at[1]) < 8))) return; // a finger holds still (long press)
       if (drag.kind === "move") {
-        const w = this._world(e), p = this.state.domain.positions[drag.id];
+        const w = this._world(e), pos = this.state.domain.positions, p = pos[drag.id];
         p.x = Math.round((w.x - drag.dx) / 20) * 20; p.y = Math.round((w.y - drag.dy) / 20) * 20; drag.moved = true; this._dragging = true;
+        const a = drag.from[drag.id];
+        for (const [g, f] of Object.entries(drag.from)) pos[g] = { x: f.x + p.x - a.x, y: f.y + p.y - a.y };
+        this._snap(drag.id, Object.keys(drag.from)); // shown where it lands: in its column, below what it would cover
         this._drawGrid();
+      }
+      if (drag.kind === "frame") {
+        const w = this._world(e), x = Math.min(w.x, drag.at.x), y = Math.min(w.y, drag.at.y), fw = Math.abs(w.x - drag.at.x), fh = Math.abs(w.y - drag.at.y);
+        drag.hits = this.state.domain.cards.filter((c) => { const p = this.state.domain.positions[c.id]; return p && p.x < x + fw && x < p.x + W && p.y < y + fh && y < p.y + this._height(c); }).map((c) => c.id);
+        drag.moved ||= Math.hypot(e.clientX - drag.screen[0], e.clientY - drag.screen[1]) >= 4; this._dragging = true;
+        let r = this.shadowRoot.querySelector("#frame");
+        if (!r) { r = document.createElementNS("http://www.w3.org/2000/svg", "rect"); r.id = "frame"; this.shadowRoot.querySelector("#world").appendChild(r); }
+        r.setAttribute("x", x); r.setAttribute("y", y); r.setAttribute("width", fw); r.setAttribute("height", fh);
+        const on = new Set(drag.add ? [...drag.had, ...drag.hits] : drag.hits);
+        for (const n of this.shadowRoot.querySelectorAll("#cards .cardbox")) n.classList.toggle("sel", on.has(n.dataset.cardbox));
+      }
+      if (drag.kind === "cut") {
+        const w = this._world(e), last = drag.trail.at(-1);
+        drag.trail.push(w); this._dragging = true;
+        for (const [key, pts] of Object.entries(drag.lines)) if (!drag.hits.has(key) && pts.some((q, i) => i && crosses(last, w, pts[i - 1], q))) drag.hits.add(key);
+        let line = this.shadowRoot.querySelector("#cutline");
+        if (!line) { line = document.createElementNS("http://www.w3.org/2000/svg", "polyline"); line.id = "cutline"; this.shadowRoot.querySelector("#world").appendChild(line); }
+        line.setAttribute("points", drag.trail.map((q) => `${q.x},${q.y}`).join(" "));
+        for (const el of this.shadowRoot.querySelectorAll("#wires path.wire")) el.classList.toggle("cut", drag.hits.has(`${el.dataset.from}|${el.dataset.to}`));
       }
       if (drag.kind === "wire") {
         const w = this._world(e), [a, ap] = drag.from.split("."), c = this._card(a), p = this.state.domain.positions[a] || { x: 0, y: 0 };
@@ -1593,39 +1815,70 @@ class AacPanel extends HTMLElement {
       }
     });
     svg.addEventListener("pointerleave", () => this.shadowRoot.querySelector("#ghost")?.remove());
-    svg.addEventListener("pointercancel", (e) => { fingers.delete(e.pointerId); if (fingers.size < 2) pinch = null; drag = null; this._dragging = false; });
+    svg.addEventListener("pointercancel", (e) => {
+      fingers.delete(e.pointerId); if (fingers.size < 2) pinch = null;
+      if (drag?.kind === "cut") this._drawGrid();
+      clearTimeout(drag?.press); drag = null; this._dragging = false; this.shadowRoot.querySelectorAll("#frame, #cutline").forEach((x) => x.remove());
+    });
     svg.addEventListener("pointerup", async (e) => {
       fingers.delete(e.pointerId);
       if (pinch) { if (!fingers.size) pinch = null; return; } // a pinch ends when the last finger lifts
       const d = drag; drag = null; this._dragging = false;
       if (!d) return;
-      if (d.kind === "pan" && Math.hypot(e.clientX - d.at[0], e.clientY - d.at[1]) < 4) { // a tap on empty grid lets go (on a phone it closes the panels too)
+      clearTimeout(d.press);
+      if (d.kind === "cut") { // the wires the knife crossed go (Undo brings them back)
+        this.shadowRoot.querySelector("#cutline")?.remove();
+        if (!d.hits.size) { this._drawGrid(); return; }
+        if (this.selWire && d.hits.has(`${this.selWire.from}|${this.selWire.to}`)) this.selWire = null;
+        await this.ws("aac/wires", { wires: this.state.domain.wires.filter((w) => !d.hits.has(`${w.from}|${w.to}`)) });
+        await this._load(); this.render(); return;
+      }
+      if (d.long) return; // the long press already did it
+      if (d.kind === "frame") this.shadowRoot.querySelector("#frame")?.remove();
+      if (d.kind === "frame" && d.moved) { this._pick(d.add ? [...d.had, ...d.hits] : d.hits); this.selWire = this.selMon = null; this.showValues = false; this.render(); return; }
+      if ((d.kind === "pan" && Math.hypot(e.clientX - d.at[0], e.clientY - d.at[1]) < 4) || (d.kind === "frame" && !d.add)) { // a tap on empty grid lets go (on a phone it closes the panels too)
         const closed = this._phone() && this._closePanels();
-        if (this.sel || this.selWire) { this.sel = this.selWire = null; this.render(); return; }
+        if (this._picked().size || this.selWire) { this.sel = this.selWire = null; this.render(); return; }
         if (closed) return;
       }
       if (d.kind === "move") {
-        if (d.moved) { this._snap(d.id); this._drawGrid(); await this._savePositions(); }
+        if (d.moved) { this._snap(d.id, Object.keys(d.from)); this._drawGrid(); await this._savePositions(); }
+        else if (d.add) this._toggle(d.id); // Ctrl+click or the Select tool: in or out of the selection
         else { this.sel = d.id; this.selWire = null; this.selMon = null; this.showValues = false; if (!this.sideOpen) this._panel("side", true); else this.render(); }
       }
       if (d.kind === "wire") {
         this.shadowRoot.querySelector("#tmpwire")?.remove();
-        const el = this.shadowRoot.elementFromPoint(e.clientX, e.clientY), node = el?.closest?.(".node"), inp = el?.dataset?.in;
-        if (node && inp && (el.dataset.kind === "any" || el.dataset.kind.split("|").includes(d.type))) { // a kind the input takes (a read output only into a read input; "any" takes all)
-          await this.ws("aac/wires", { wires: [...this.state.domain.wires, { from: d.from, to: `${node.dataset.node}.${inp}` }] });
+        const el = this.shadowRoot.elementFromPoint(e.clientX, e.clientY), box = el?.closest?.(".cardbox"), inp = el?.dataset?.in;
+        if (box && inp && (el.dataset.kind === "any" || el.dataset.kind.split("|").includes(d.type))) { // a kind the input takes (a read output only into a read input; "any" takes all)
+          await this.ws("aac/wires", { wires: [...this.state.domain.wires, { from: d.from, to: `${box.dataset.cardbox}.${inp}` }] });
           await this._load(); this.render();
         }
       }
     });
   }
 
-  _spot(at) { return { x: Math.round((at.x - W / 2) / COL) * COL, y: Math.round(at.y / 20) * 20 }; } // where a new card lands
+  _toggle(id) { const s = this._picked(); if (!s.delete(id)) s.add(id); this._pick(s); this.selWire = this.selMon = null; this.showValues = false; this.render(); }
+
+  _wireLines() { // each wire as a line of points (world), for the knife
+    const lines = {};
+    for (const el of this.shadowRoot.querySelectorAll("#wires path.hit")) {
+      const len = el.getTotalLength(), n = Math.max(2, Math.ceil(len / 8));
+      lines[el.dataset.wire] = Array.from({ length: n + 1 }, (_, i) => el.getPointAtLength(len * i / n));
+    }
+    return lines;
+  }
+
+  _spot(at, h) { // where a new card (h high) lands: in a column, below any card it would cover
+    const p = { x: Math.round((at.x - W / 2) / COL) * COL, y: Math.round(at.y / 20) * 20 };
+    for (let tries = 0, hit; tries < 50 && (hit = this._hit(p.x, p.y, h, this.state.domain.cards)); tries++) p.y = this._under(hit);
+    return p;
+  }
 
   _ghost(e) { // the picked card type, see-through, where a click would place it
     const t = this.selType && this._type(this.selType);
     let g = this.shadowRoot.querySelector("#ghost");
     if (!t) { g?.remove(); return; }
-    const p = this._spot(this._world(e)), h = this._height({ inputs: t.inputs, outputs: t.outputs });
+    const h = this._height({ inputs: t.inputs, outputs: t.outputs }), p = this._spot(this._world(e), h);
     if (!g) { g = document.createElementNS("http://www.w3.org/2000/svg", "g"); g.id = "ghost"; g.setAttribute("pointer-events", "none"); this.shadowRoot.querySelector("#cards").appendChild(g); }
     g.setAttribute("transform", `translate(${p.x},${p.y})`);
     g.innerHTML = `<rect class="box" width="${W}" height="${h}" rx="8" style="opacity:.45;stroke-dasharray:5 4"></rect><text x="10" y="18" style="opacity:.6">${esc(t.title)}</text>`;
@@ -1634,7 +1887,7 @@ class AacPanel extends HTMLElement {
   _unpick() { this.selType = null; this.shadowRoot.querySelector("#ghost")?.remove(); this.render(); }
 
   async _place(type, at) {
-    const card = await this.ws("aac/card/add", { card_type: type, ...this._spot(at) });
+    const t = this._type(type), card = await this.ws("aac/card/add", { card_type: type, ...this._spot(at, this._height({ inputs: t.inputs, outputs: t.outputs })) });
     this.selType = null; this.sel = card.id;
     await this._load(); this.render();
   }
@@ -1661,16 +1914,20 @@ class AacPanel extends HTMLElement {
     this._grips();
     $("#scrim")?.addEventListener("click", () => { this.navOpen = false; this.shadowRoot.querySelector(".root").classList.remove("navopen"); });
     $("#habtn")?.addEventListener("click", () => this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true })));
-    // nodes
+    if (this.view.kind === "logs") this._bindLogs();
+    // the Cards page
     $$("[data-pick]").forEach((el) => el.addEventListener("click", () => { this.selType = this.selType === el.dataset.pick ? null : el.dataset.pick; if (this.selType && this._phone()) this._panel("pal", false); else this.render(); }));
     $("#paltog")?.addEventListener("click", () => this._panel("pal", !this.palOpen));
     $("#sidetog")?.addEventListener("click", () => this._panel("side", !this.sideOpen));
     $("#undo")?.addEventListener("click", async () => { await this.ws("aac/undo"); await this._load(); this.render(); });
     $("#redo")?.addEventListener("click", async () => { await this.ws("aac/redo"); await this._load(); this.render(); });
     $("#fit")?.addEventListener("click", () => this._fit());
+    $("#delsel")?.addEventListener("click", () => this.selWire ? this._unwire() : this._removeCards());
+    $$("[data-tool]").forEach((el) => el.addEventListener("click", () => { this.tool = this.tool === el.dataset.tool ? null : el.dataset.tool; this.render(); }));
     $("#unpick")?.addEventListener("click", () => this._unpick());
     $$("[data-selcard]").forEach((el) => el.addEventListener("click", () => { this.sel = el.dataset.selcard; this.render(); }));
     $$("[data-skin]").forEach((el) => el.addEventListener("change", async () => { await this.ws("aac/appearance/set", { skin: el.dataset.skin }); }));
+    $("#storm")?.addEventListener("change", async (e) => { const n = Math.round(Number(e.target.value)); if (n >= 1) this.aacSettings = { ...this.aacSettings, ...(await this.ws("aac/settings/set", { storm: n })) }; });
     $$("[data-foldmode]").forEach((el) => el.addEventListener("change", async () => { await this.ws("aac/appearance/set", { folds: { [el.dataset.foldmode]: el.value } }); }));
     $("#values")?.addEventListener("click", () => { this.showValues = !this.showValues; this.values = null; this.render(); if (this.showValues) this._loadValues(); });
     $("#valrefresh")?.addEventListener("click", () => this._loadValues());
@@ -1685,7 +1942,12 @@ class AacPanel extends HTMLElement {
       else await this.ws("aac/slot", { slot, action: "save" });
       await this._load(); this.render();
     }));
-    $("#title")?.addEventListener("change", async (e) => { await this.ws("aac/card/update", { card: this.sel, title: e.target.value }); await this._load(); this.render(); });
+    $("#title")?.addEventListener("change", async (e) => { // its id follows the name
+      const old = this.sel;
+      this.sel = (await this.ws("aac/card/update", { card: old, title: e.target.value })).id;
+      if (this.sel !== old) this._moved(null, [old, this.sel]);
+      await this._load(); this.render();
+    });
     $$("[data-set]").forEach((el) => el.addEventListener("change", () => this._saveSetting(el)));
     const fnSave = async (row, reset) => { // For models: one function's tick, name, description (empty: the card's own)
       const c = this._card(this.sel), key = row.dataset.key; // only functions the card has now (a renamed block's old entry goes)
@@ -1716,22 +1978,19 @@ class AacPanel extends HTMLElement {
       const key = el.dataset.tag, tags = [...$$(`[data-tag="${key}"]`)].filter((x) => x.checked).map((x) => x.value);
       await this.ws("aac/card/update", { card: this.sel, settings: { [key]: tags } }); await this._load(); this.render();
     }));
-    $("#remove")?.addEventListener("click", () => this._removeCard());
+    $("#remove")?.addEventListener("click", () => this._removeCards());
     $("#unwire")?.addEventListener("click", () => this._unwire());
-    // schedule entries and watches: the whole list is saved on any change
+    $("#unblock")?.addEventListener("click", async () => { const w = this.selWire; await this.ws("aac/wire/unblock", { from: w.from, to: w.to }); await this._load(); this.render(); });
+    // watches: the whole list is saved on any change
     const collect = (sel, attr) => [...$$(sel)].map((box) => {
       const o = {};
       box.querySelectorAll(`[${attr}]`).forEach((el) => { o[el.getAttribute(attr)] = el.type === "checkbox" ? el.checked : el.value; });
-      if (attr === "data-e") o.weekdays = [...box.querySelectorAll("[data-day]")].filter((x) => x.checked).map((x) => Number(x.dataset.day));
       if (o.cooldown !== undefined) o.cooldown = Number(o.cooldown) || 300;
       return o;
     });
     const saveList = async (key, list) => { await this.ws("aac/card/update", { card: this.sel, settings: { [key]: list } }); await this._load(); this.render(); };
-    $$("[data-entry] input, [data-entry] textarea").forEach((el) => el.addEventListener("change", () => saveList("entries", collect("[data-entry]", "data-e"))));
     $$("[data-watch] input, [data-watch] textarea").forEach((el) => el.addEventListener("change", () => saveList("watches", collect("[data-watch]", "data-w"))));
-    $("#addentry")?.addEventListener("click", () => saveList("entries", [...collect("[data-entry]", "data-e"), { name: "New", at: "08:00", weekdays: [], text: "", enabled: true }]));
     $("#addwatch")?.addEventListener("click", () => saveList("watches", [...collect("[data-watch]", "data-w"), { name: "New", entity_id: "", to: "", text: "", cooldown: 300 }]));
-    $$("[data-delentry]").forEach((el) => el.addEventListener("click", () => saveList("entries", collect("[data-entry]", "data-e").filter((_, i) => i !== Number(el.dataset.delentry)))));
     $$("[data-delwatch]").forEach((el) => el.addEventListener("click", () => saveList("watches", collect("[data-watch]", "data-w").filter((_, i) => i !== Number(el.dataset.delwatch)))));
     // memory, file
     // audio
@@ -1760,19 +2019,20 @@ class AacPanel extends HTMLElement {
     this._bindMonitorSide();
     if (!this._keys) {
       this._keys = true;
-      window.addEventListener("keydown", (e) => { // Delete: the selected wire or card goes (Undo brings it back)
-        if (this.view.kind !== "nodes" || /INPUT|TEXTAREA|SELECT/.test(e.composedPath()[0]?.tagName)) return;
+      window.addEventListener("keydown", (e) => { // Delete: the selected wire or cards go (Undo brings them back)
+        if (this.view.kind !== "cards" || /INPUT|TEXTAREA|SELECT/.test(e.composedPath()[0]?.tagName)) return;
         if (e.key === "Escape") { // put back a picked card type, or let go of the selected card or wire
           if (this.selType) this._unpick();
-          else if (this.sel || this.selWire || this.selMon || this.showValues) { this.sel = this.selWire = this.selMon = null; this.showValues = false; this.render(); }
+          else if (this.tool) { this.tool = null; this.render(); }
+          else if (this._picked().size || this.selWire || this.selMon || this.showValues) { this.sel = this.selWire = this.selMon = null; this.showValues = false; this.render(); }
           return;
         }
         if (!(e.key === "Delete" || e.key === "Backspace")) return;
         if (this.selWire) this._unwire();
-        else if (this.sel) this._removeCard();
+        else if (this._picked().size) this._removeCards();
       });
     }
-    if (this.view.kind === "nodes") { this._gridEvents(); if (!this._fitted) { this._fitted = true; requestAnimationFrame(() => this._fit()); } }
+    if (this.view.kind === "cards") { this._gridEvents(); if (!this._fitted) { this._fitted = true; requestAnimationFrame(() => this._fit()); } }
   }
 
   async _unwire() {

@@ -9,7 +9,7 @@ from typing import Any
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "2.10.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 JOIN_WAIT = 1.5  # seconds the Phrase joiner waits for a phrase that may bring no text
 
@@ -29,7 +29,7 @@ class PhraseJoiner(Card):
     ports_help = {"lines": "heard lines from Speech to text (one per phrase)",
                   "cuts": "the Audio clipper's 'cuts': it acts on 'the sentence is done, with how many parts'",
                   "out": "the whole sentence as one heard line (data: the satellite, the language, the phrases)"}
-    tags = {"heard": "a whole sentence put together from phrases"}
+    tags = {"said": "a whole sentence put together from phrases (data: the satellite, the language, the phrases)"}
 
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
@@ -37,19 +37,21 @@ class PhraseJoiner(Card):
         self._expected: dict[str, int] = {}  # sentence → how many phrases (when it is done)
         self._waits: dict[str, Any] = {}  # sentence → the timer that sends it with what came
 
-    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
+    async def handle(self, context: Context, port: str) -> None:
         if port == "cuts":  # the clipper's cuts: only "the sentence is done" counts
-            cut = next((e["data"] for e in reversed(context.entries) if e["kind"] == "signal" and e["data"].get("cut")), {})
+            cut = next((e["data"] for e in reversed(context.conversation) if e["data"].get("cut")), {})
             if cut.get("cut") == "end" and cut.get("utterance"):
                 await self._ended(cut["utterance"], int(cut.get("parts") or 0))
-            return []
-        said = context.last("said") or {}
+            return
+        said = context.get("*.said") or {}
         utterance = said.get("data", {}).get("utterance")
-        if port != "lines" or not utterance:
-            return None if port == "lines" else []  # not a phrase: straight on
+        if port != "lines":
+            return
+        if not utterance:  # not a phrase: straight on
+            await self.send(context, "out")
+            return
         self._parts.setdefault(utterance, {})[int(said["data"].get("part") or 0)] = said
         await self._check(utterance)
-        return []
 
     async def _ended(self, utterance: str, parts: int) -> None:
         self._expected[utterance] = parts
@@ -69,10 +71,10 @@ class PhraseJoiner(Card):
         if not parts:
             return
         first = parts[0]["data"]
-        context = Context(origin=self.id)
-        context.add(self.id, "said", " ".join(p["text"].strip() for p in parts), ["heard"],
+        context = Context()
+        context.add(self.tag("said"), " ".join(p["text"].strip() for p in parts),
                     **{k: first.get(k) for k in ("mic", "mic_name", "area", "language", "aac_spoke")},
                     seconds=round(sum(float(p["data"].get("seconds") or 0) for p in parts), 1), phrases=len(parts))
         self.core.audio.mark(first.get("mic"), "text ready")
-        await self.domain.flow.send(context, self.id, "out")
+        await self.send(context, "out")
 

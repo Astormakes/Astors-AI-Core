@@ -10,7 +10,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import CARD_TYPES, SAMPLE_RATE, Card, Context, Segmenter, make_vad, new_id, register
 
-VERSION = "2.10.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 COLUMN = 290  # one column in the grid (the panel's card width and gap)
 
@@ -30,7 +30,7 @@ class PauseCut(Card):
     ports_help = {"in": "live audio",
                   "out": "one clip per stretch of speech that ends with a pause (with a phrase pause: one per phrase, "
                          "tagged with its sentence and number)",
-                  "cuts": "where it cuts, as small contexts (a signal entry tagged start / phrase / end; data: the sentence, "
+                  "cuts": "where it cuts, as small contexts (an entry without text tagged start / phrase / end; data: the sentence, "
                           "the parts, the satellite): for a Phrase joiner, a Level card, or any card"}
     tags = {"start": "speech began (data: ago = how many seconds back)", "phrase": "a phrase was cut (data: part)",
             "end": "the sentence is done (data: parts)"}
@@ -59,10 +59,10 @@ class PauseCut(Card):
             self.hass.async_create_task(self._add_joiner())  # after this card is set up
 
     def _cut(self, what: str, meta: dict[str, Any], **data: Any) -> None:
-        """A cut goes out at 'cuts' as a small context: one signal entry tagged start / phrase / end."""
-        context = Context(origin=self.id)
-        context.add(self.id, "signal", f"cut: {what}", [what], cut=what, source=meta.get("source"), name=meta.get("name"), **data)
-        self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "cuts"), f"aac {self.id} cut")
+        """A cut goes out at 'cuts' as a small context: one entry without text tagged start / phrase / end."""
+        context = Context()
+        context.add(self.tag(what), "", cut=what, source=meta.get("source"), name=meta.get("name"), **data)
+        self.hass.async_create_background_task(self.send(context, "cuts"), f"aac {self.id} cut")
 
     def _joined(self) -> bool:
         """A card at its cuts that also takes heard lines puts phrases together (a Phrase joiner, or one of your own).
@@ -126,5 +126,5 @@ class PauseCut(Card):
                 self._parts[utterance] = self._parts.get(utterance, 0) + 1
                 clip |= {"utterance": utterance, "part": self._parts[utterance]}
                 self._cut("phrase", meta, utterance=utterance, part=self._parts[utterance])
-            self.domain.flow.clip(self.id, "out", clip)
+            self.clip_out("out", clip)
 

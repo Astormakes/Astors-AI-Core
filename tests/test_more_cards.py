@@ -6,28 +6,115 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components import conversation
 from homeassistant.core import Context as HaContext, HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pytest_homeassistant_custom_component.common import async_fire_time_changed, async_mock_service
 
-from custom_components.aac.flow import Step
 from custom_components.aac.context import Context
 
 from .conftest import model_answers, reply, setup_aac
 
 
 async def test_a_schedule_fires_at_its_time(hass: HomeAssistant, mock_entry, aioclient_mock, freezer: FrozenDateTimeFactory):
-    """A Schedule entry at 05:25 wakes the chain; the answer lands in its log."""
+    """A Schedule entry at 05:25 wakes the chain; the answer lands in its log. Entries saved as a setting (before 1.3.0)
+    become its data, the owner's."""
     asked = model_answers(aioclient_mock, reply("The bed light is on."))
     core = await setup_aac(hass, mock_entry)
     d = core.domain
-    schedule = await d.add_card("schedule", "Schedule", {"entries": [{"name": "Bed light", "at": "05:25", "weekdays": [],
-                                                                       "text": "Turn on the bed light.", "enabled": True}]}, card_id="schedule")
-    d.set_wires([*d.wires, {"from": "schedule.out", "to": "charter.in"}, {"from": "model.out", "to": "schedule.answers"}])
+    schedule = await d.add_card("schedule", "Schedule")
+    old = {"entries": [{"name": "Bed light", "at": "05:25", "weekdays": [], "text": "Turn on the bed light.", "enabled": True}]}
+    d._specs[schedule.id].update(version="1.2.0", settings=old)  # as 1.2.0 saved it
+    await d.save_card_data(schedule.id, {"log": []})
+    schedule = await d.remake(schedule.id)
+    assert "entries" not in d._specs[schedule.id]["settings"] and [(e["name"], e["by"]) for e in schedule.entries] == [("Bed light", "owner")]
+    d.set_wires([*d.wires, {"from": f"{schedule.id}.out", "to": "charter.in"}, {"from": "model.out", "to": f"{schedule.id}.answers"}])
     at = (dt_util.now() + timedelta(days=1)).replace(hour=5, minute=25, second=0, microsecond=0)  # always ahead
     freezer.move_to(dt_util.as_utc(at))
     async_fire_time_changed(hass)
     await hass.async_block_till_done(wait_background_tasks=True)
     assert "Turn on the bed light." in asked[-1]["messages"][-1]["content"]
     assert schedule.data["log"][-1]["answer"] == "The bed light is on."
+
+
+async def test_schedule_like_v1(hass: HomeAssistant, mock_entry, aioclient_mock, freezer: FrozenDateTimeFactory):
+    """v1's time triggers (progress 39): entries are data (no Undo step), each says who made it; AAC touches only its own,
+    at most 20, as the owner allows (ask: it waits for the OK); day names; AAC's entries wait out quiet hours; an entry
+    the model fails on goes out at 'unanswered'; its times are on AAC's calendar (through the core)."""
+    from custom_components.aac.cards.schedule.card import days
+
+    assert days("Mon-Fri") == [0, 1, 2, 3, 4] and days("weekend") == [5, 6] and days(["mo", "Thursday"]) == [0, 3]
+    assert days("Fr-Mo") == [0, 4, 5, 6] and days("") == [] and days([1, 2]) == [1, 2]
+    model_answers(aioclient_mock, {"error": "boom"})
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    s = await d.add_card("schedule", "Schedule", {"quiet_from": "22:00", "quiet_to": "07:00", "answer_within": 5})
+    await d.add_card("relay", "Catch")
+    d.set_wires([*d.wires, {"from": "schedule.out", "to": "charter.in"}, {"from": "model.out", "to": "schedule.answers"},
+                 {"from": "schedule.unanswered", "to": "catch.in"}])
+    await s.ui_call("save", {"entry": {"name": "Alarm", "at": "06:30", "weekdays": [0, 1, 2, 3, 4], "text": "Wake up."}})
+    undo = len(d.undo)
+    assert (await s.call("add", {"name": "Tea", "at": "23:15", "text": "Say: the tea is ready.", "days": "daily"}))["done"] == "add"
+    assert len(d.undo) == undo  # an entry is no Undo step
+    assert "owner's entry" in (await s.call("remove", {"name": "Alarm"}))["error"]
+    assert "owner's entry" in (await s.call("change", {"name": "Alarm", "at": "07:00"}))["error"]
+    assert (await s.call("change", {"name": "Tea", "days": "Mon-Fri"}))["done"] == "change"
+    assert next(e for e in s.entries if e["name"] == "Tea")["weekdays"] == [0, 1, 2, 3, 4]
+    assert "HH:MM" in (await s.call("add", {"name": "Bad", "at": "soon", "text": "x"}))["error"]
+
+    s = await d.update_card("schedule", settings={"plans": "ask"})
+    got = await s.call("add", {"name": "Plants", "at": "18:00", "text": "Water the plants.", "date": "2099-01-05"})
+    plants = next(e for e in s.entries if e["name"] == "Plants")
+    assert got["waiting"] and plants["proposed"] and not plants["enabled"]
+    await s.ui_call("allow", {"id": plants["id"], "ok": True})
+    assert plants["enabled"] and "proposed" not in plants
+    s = await d.update_card("schedule", settings={"plans": "off"})
+    assert "add" not in s.offered() and "run" in s.offered() and "not allow" in (await s.call("add", {"name": "X", "at": "10:00", "text": "x"}))["error"]
+    s = await d.update_card("schedule", settings={"plans": "allowed"})
+    for i in range(19):
+        await s.call("add", {"name": f"P{i}", "at": "12:00", "text": "x", "date": "2099-01-01"})
+    assert f"{20} entries" in (await s.call("add", {"name": "One more", "at": "12:00", "text": "x"}))["error"]
+
+    from datetime import datetime as dt_
+    start = dt_util.start_of_local_day(dt_.fromisoformat("2099-01-05"))
+    on_cal = [e for e in core.calendar.entries(start, start + timedelta(days=1)) if e["source"] == "schedule"]
+    assert {e["summary"] for e in on_cal} >= {"Alarm", "Tea", "Plants"} and all(not e["can"] for e in on_cal)
+
+    tea_at = (dt_util.now() + timedelta(days=7 - dt_util.now().weekday())).replace(hour=23, minute=15, second=0, microsecond=0)  # a Monday
+    freezer.move_to(dt_util.as_utc(tea_at))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert not any(x["name"] == "Tea" for x in s.data["log"]) and s.data["waiting"]  # quiet: AAC's entry waits
+    freezer.move_to(dt_util.as_utc(tea_at.replace(hour=7, minute=0) + timedelta(days=1)))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    tea = next(x for x in s.data["log"] if x["name"] == "Tea")
+    assert not s.data["waiting"] and tea["failed"] and tea["unanswered"]  # the model failed: it went out at 'unanswered'
+    sent = d.flow.last["schedule.unanswered"]["entries"][-1]
+    assert sent["tag"] == "schedule.unanswered" and "Not answered" in sent["text"] and "the tea is ready" in sent["text"]
+    assert d.log.read(card="schedule", what="unanswered") and not d.log.read(levels=["error"])  # a model error, no crash
+
+    d.set_wires([w for w in d.wires if w["to"] != "schedule.answers"])  # nothing comes back at all: after 5 minutes
+    s._ring(next(e for e in s.entries if e["name"] == "Alarm"), "07:00")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    alarm = s.data["log"][-1]
+    assert alarm["answer"] is None and not alarm.get("unanswered")
+    freezer.tick(timedelta(minutes=6))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert alarm["unanswered"] and "failed" not in alarm and "Wake up." in d.flow.last["schedule.unanswered"]["entries"][-1]["text"]
+    await s.call("run", {"name": "Alarm"})  # Run now is watched like a ring
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert s.data["log"][-1]["text"].startswith("Run now (Alarm): Wake up.") and not s.data["log"][-1].get("unanswered")
+    freezer.tick(timedelta(minutes=6))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert s.data["log"][-1]["unanswered"] and any(e["name"] == "Alarm" for e in s.entries)
+
+    calls = async_mock_service(hass, "notify", "mobile_app_phone")  # nothing is wired to its output: it goes out at once
+    await d.add_card("notify", "Notify", {"service": "notify.mobile_app_phone"})
+    d.set_wires([w for w in d.wires if w["from"] != "schedule.out"] + [{"from": "schedule.unanswered", "to": "notify.in"}])
+    await s.ui_call("run", {"id": next(e for e in s.entries if e["name"] == "Alarm")["id"]})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert s.data["log"][-1]["unanswered"] and "nothing is wired" in s.data["log"][-1]["failed"]
+    assert calls and "Not answered (nothing is wired to its output): Run now (Alarm): Wake up." == calls[-1].data["message"]
 
 
 async def test_ha_event_and_heartbeat_fire(hass: HomeAssistant, mock_entry, aioclient_mock):
@@ -84,8 +171,9 @@ async def test_decide_picks_an_output(hass: HomeAssistant, mock_entry, aioclient
     core.domain.set_wires([*core.domain.wires, {"from": "for_me.yes", "to": "go.in"}, {"from": "models.models", "to": "for_me.pool"}])
     model_answers(aioclient_mock, reply("yes"))
     context = Context()
-    context.add("chat", "said", "computer, lights on")
-    assert await decide.handle(context, "in", Step(core.domain.flow, decide, "in", context)) == [("yes", yes.id)]
+    context.add("chat.said", "computer, lights on")
+    await decide.handle(context, "in")
+    assert core.domain.flow.held["for_me.yes"].get("for_me.choice")["data"]["choice"] == "yes" and "for_me.no" not in core.domain.flow.held
 
 
 async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
@@ -94,9 +182,9 @@ async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
     memory = await core.domain.add_card("memory", "Memory")
     await memory.call("remember", {"text": "The drill is on basement shelf 2."})
     context = Context()
-    context.add("chat", "said", "where is the drill?")
-    await memory.handle(context, "in", None)
-    assert "basement shelf 2" in context.last("note")["text"]
+    context.add("chat.said", "where is the drill?")
+    await memory.handle(context, "in")
+    assert "basement shelf 2" in context.get("memory.recall")["text"]
     await memory.call("remember", {"text": "The car is blue."})
     missed = await memory.call("forget", {"text": "the"})  # a word is not a memory: nothing goes, the close ones are named
     assert missed["error"] and len(memory.data["memories"]) == 2 and missed["close"]
@@ -107,12 +195,26 @@ async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
     await file.call("write", {"text": "# Hi"})
     await file.call("append", {"text": "more"})
     assert await file.call("read", {}) == "# Hi\nmore\n"
+    (held,) = file.held("provides").conversation  # its read output: the file as one entry
+    assert held["text"] == "# Hi\nmore\n" and held["tag"] == "notes.text"
+    again = await core.domain.add_card("file", "Same", {"name": "test"})  # reads the file when it starts
+    assert again.held("provides").conversation[0]["text"] == "# Hi\nmore\n"
+    await core.domain.add_card("relay", "Reader", {"script": 'context = input("in") + input("reads", read=True)\noutput("out", context)\n'})
+    core.domain.set_wires([*core.domain.wires, {"from": "notes.provides", "to": "reader.reads"}])
+    assert {"from": "notes.provides", "to": "reader.reads"} in core.domain.wires  # a dotted wire into a read input
     timer = await core.domain.add_card("timer", "Wait", {"seconds": 0})
-    assert await timer.handle(Context(), "in", None) is None
+    core.domain.set_wires([*core.domain.wires, {"from": "wait.out", "to": "reader.in"}])
+    await timer.handle(Context(), "in")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert "wait.out" in core.domain.flow.held  # held on its own, then sent on
     builder = await core.domain.add_card("builder", "Builder")
     added = await builder.call("add_card", {"type": "buffer", "name": "Room"})
     assert added["id"] == "room" and (await builder.call("remove_card", {"card": "room"}))["error"]
     assert (await builder.call("wire", {"from": "room.out", "to": "notes.in"}))["wired"]
+    assert any(t.startswith("relay (Relay): ") for t in await builder.call("types", {}))  # one line each
+    relay = await builder.call("help", {"type": "relay"})  # one type in full: its settings' help (the script reference)
+    assert relay.startswith("Relay (type relay") and 'output("out", context)' in relay and "Settings:\n- script" in relay
+    assert "add_items(list, items, under?)" in await builder.call("help", {"type": "lists"})
 
 
 async def test_calendar_card_and_entity(hass: HomeAssistant, mock_entry, aioclient_mock):
@@ -121,7 +223,7 @@ async def test_calendar_card_and_entity(hass: HomeAssistant, mock_entry, aioclie
 
     core = await setup_aac(hass, mock_entry)
     cal = core.domain.cards["calendar"]
-    assert {"from": "model.out", "to": "calendar.in"} in core.domain.wires
+    assert {"from": "model.calls", "to": "calendar.in"} in core.domain.wires
     day = (dt_util.now() + timedelta(days=200)).date()  # far from anything the backup holds
     tomorrow, after = day.isoformat(), (day + timedelta(days=1)).isoformat()
     assert (await cal.call("add", {"summary": "Dentist", "start": f"{tomorrow}T10:00"}))["done"] == "add"
@@ -201,29 +303,22 @@ async def test_busy_models_queue_or_drop(hass: HomeAssistant, mock_entry):
     assert [m["busy"] for m in pool.summary()] == [0, 0]
 
 
-async def test_chat_finds_and_switches_to_old_chats(hass: HomeAssistant, mock_entry, aioclient_mock):
-    """A model looks up older chats and switches to one: when the turn is done, that chat is the current one and the
-    asking turn is not kept (a chat that was only that turn goes)."""
+async def test_chat_finds_old_chats(hass: HomeAssistant, mock_entry):
+    """A model looks up older chats by words and reads one; quiet for long, none is the current one."""
     core = await setup_aac(hass, mock_entry)
     card = core.domain.cards["chat"]
     old, other = card._new("About the drone"), card._new("Groceries")
-    old["context"]["messages"] = [{"id": "e1", "by": "chat", "kind": "said", "text": "the LoRa mast drone", "tags": [], "time": "", "data": {}, "state": "closed"}]
-    d = core.domain  # the Chat as the model's tool: wired straight to it and back
-    d.set_wires([w for w in d.wires if w["from"] != "chat.said"] + [{"from": "chat.said", "to": "model.in"},
-                                                                   {"from": "model.out", "to": "chat.answers"}])
+    held = Context()
+    held.add("chat.said", "the LoRa mast drone")
+    old["context"] = held.to_dict()
     old["updated"], other["updated"] = "2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00"
+    for c in card.data["chats"].values():
+        c["updated"] = min(c["updated"], "2026-01-02T00:00:00+00:00")
     await card.save()
     found = await card.call("chats", {"search": "lora"})
     assert [c["id"] for c in found] == [old["id"]] and found[0]["first"] == "the LoRa mast drone"
     assert (await card.call("read", {"chat": old["id"]}))[0]["text"] == "the LoRa mast drone"
-    assert card.current() is None  # both quiet for long: the next spoken turn would start a new chat
-    model_answers(aioclient_mock, reply(calls=[("continue", {"chat": old["id"]})]), reply("Back to the drone."))
-    before = {c["id"] for c in card.chats()}
-    chat_id, answer = await card.send("let's go on with the drone chat")
-    assert chat_id == old["id"] and answer == "Back to the drone."
-    assert card.current()["id"] == old["id"]
-    assert {c["id"] for c in card.chats()} == before  # the asking chat is gone
-    assert [m["text"] for m in card.get(old["id"])["messages"]] == ["the LoRa mast drone"]  # the switch is not kept
+    assert card.current() is None  # all quiet for long: the next spoken turn would start a new chat
 
 
 async def test_home_access_list(hass: HomeAssistant, mock_entry):
@@ -237,8 +332,9 @@ async def test_home_access_list(hass: HomeAssistant, mock_entry):
 
 
 async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
-    """The Log card's input takes every kind; it writes down contexts, clips, audio start and stop, and what is new on
-    a dotted wire (a Chat's provides)."""
+    """The Log card's input takes every kind; it writes contexts, clips, audio start and stop, and what is new on a
+    dotted wire (a Chat's provides) into AAC's log. Its page shows what it wrote; allowed to read the log, all of it,
+    and models and dotted wires get it too."""
     import asyncio
     import time as time_mod
     from unittest.mock import patch
@@ -248,10 +344,9 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
     log = await d.add_card("log", "Log")
     d.set_wires([*d.wires, {"from": "chat.provides", "to": f"{log.id}.in"}, {"from": "model.out", "to": f"{log.id}.in"}])
     assert {"from": "chat.provides", "to": f"{log.id}.in"} in d.wires and {"from": "model.out", "to": f"{log.id}.in"} in d.wires
-    c = Context(origin="chat")
-    c.way = ["model", log.id]
-    c.add("model", "answer", "Hello there", ["answer"])
-    await log.handle(c, "in", None)
+    c = Context()
+    c.add("model.said", "Hello there")
+    await log.handle(c, "in")
     await log.clip("in", {"pcm": b"\x01\x00" * 160, "seconds": 1.4, "name": "PC", "part": 2})
     log.stream("in", b"\x00\x00", {"source": "pc", "name": "PC"})
     log._audio["PC"] = [time_mod.monotonic() - 5, time_mod.monotonic() - 3]  # quiet for a while
@@ -259,28 +354,78 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
         task = hass.async_create_task(log._watch())
         await asyncio.sleep(0.05)
         chat = d.cards["chat"]
-        chat._new("Talk")["context"]["messages"].append({"id": "n1", "by": "chat", "kind": "said", "text": "a new line", "tags": [], "time": "", "data": {}, "state": "closed"})
+        talk = chat._new("Talk")
+        held = Context()
+        held.add("chat.said", "a new line")
+        talk["context"] = held.to_dict()
         await asyncio.sleep(0.05)
         task.cancel()
-    texts = [(x["what"], x["text"]) for x in log.data["log"]]
-    kept = next(x for x in log.data["log"] if x["what"] == "clip")
+    own = (await log.ui_call("entries", {}))
+    texts = [(x["what"], x["text"]) for x in own["entries"]]
+    assert not own["all"] and all(x["card"] == log.id for x in own["entries"])  # not allowed: only what it wrote
+    assert ("context", "Model: #model.said: Hello there  [3 entries]") in texts
+    assert ("clip", "PC: 1.4 s, phrase 2") in texts and ("audio", "PC: started") in texts
+    assert any(w == "audio" and t.startswith("PC: stopped") for w, t in texts) and ("read", "Chat.provides: #chat.said: a new line") in texts
+    kept = next(x for x in own["entries"] if x["what"] == "clip")
     assert kept["audio"].endswith(".wav") and (await log.ui_call("audio", {"file": kept["audio"]}))  # playable
-    await log.ui_call("clear", {})
-    assert not list(log._folder.glob("*.wav"))  # cleared with the log
-    import shutil
-    shutil.rmtree(log._folder.parent, ignore_errors=True)  # HA's test config folder is shared: leave nothing behind
-    assert ("context", "answer #model.answer: Hello there  [1 entries]") in texts
-    assert ("clip", "1.4 s, phrase 2") in texts and ("audio", "started") in texts
-    assert any(w == "audio" and t.startswith("stopped") for w, t in texts) and ("read", "said : a new line") in texts
+    assert "may not read" in (await log.call("read", {}))["error"] and not log.held("provides").conversation
+    log = await d.update_card(log.id, settings={"may_read_log": True})  # the Permissions page
+    assert (await log.ui_call("entries", {}))["all"]
+    found = await log.call("read", {"card": "Log", "search": "phrase"})
+    assert "Log clip: PC: 1.4 s, phrase 2" in found and found.count("\n") == 0
+    assert "Added (Log)" in log.held("provides").conversation[0]["text"]
+
+
+async def test_the_chat_files_a_context_by_its_id_entry(hass: HomeAssistant, mock_entry):
+    """Every context that reaches 'answers' is kept: by the chat whose id entry it holds (a turn built on a read of the
+    chat), else as a new chat once it is finished (until then under Being answered…); a Relay that takes the id entry
+    off makes a new chat."""
+    core = await setup_aac(hass, mock_entry)
+    chat = core.domain.cards["chat"]
+    for c in chat.data["chats"].values():  # a backup's chats are old
+        c["updated"] = "2020-01-01T00:00:00+00:00"
+    talk = chat._new("Talk")
+    held = Context()
+    held.add("chat.id." + talk["id"])
+    held.add("chat.said", "hi")
+    talk["context"] = held.to_dict()
+    before = len(chat.chats())
+    turn = chat.held("provides")  # the current chat, with its id entry
+    assert turn.conversation[0]["tag"] == f"chat.id.{talk['id']}"
+    turn.add("speech_to_text.said", "and now?")
+    turn.add("model.said", "Now this.")
+    await chat.handle(turn, "answers")
+    assert [m["text"] for m in chat.get(talk["id"])["messages"]] == ["hi", "and now?", "Now this."]
+
+    alone = Context()  # a heard line on its own (nothing read): while it is answered, no chat yet
+    alone.add("speech_to_text.said", "what time is it?", mic_name="PC")
+    answer = alone.add("model.said", "Fi")
+    answer["state"] = "streaming"
+    await chat.handle(alone, "answers")
+    assert len(chat.chats()) == before and chat.nav()["entries"][0]["id"] == "answering"
+    assert [m["text"] for m in chat.get("answering")["messages"]] == ["what time is it?", "Fi"]
+    answer["text"], answer["state"] = "Five.", "ended"  # finished: a chat of its own
+    await chat.handle(alone, "answers")
+    made = next(c for c in chat.data["chats"].values() if c["title"].startswith("Voice · PC · "))
+    assert len(chat.chats()) == before + 1 and chat.nav()["entries"][0]["id"] != "answering"
+    assert Context.from_dict(made["context"]).conversation[0]["tag"] == f"chat.id.{made['id']}"
+
+    fresh = Context.from_dict(chat.data["chats"][talk["id"]]["context"])  # the id entry taken off: a new chat
+    fresh.remove(fresh.conversation[0])
+    fresh.add("model.said", "Fresh.")
+    await chat.handle(fresh, "answers")
+    assert len(chat.chats()) == before + 2 and len(chat.get(talk["id"])["messages"]) == 3
 
 
 async def test_chat_archive(hass: HomeAssistant, mock_entry):
     """Sidebar actions: archive moves a chat into 'Archive (n)'; an archived chat is never the current one, and models
-    see it marked but cannot read or continue it; restore and delete work the same way."""
+    see it marked but cannot read it; restore and delete work the same way."""
     core = await setup_aac(hass, mock_entry)
     card = core.domain.cards["chat"]
     chat = card._new("Old talk")
-    chat["context"]["messages"] = [{"id": "e1", "by": "chat", "kind": "said", "text": "hello", "tags": [], "time": "", "data": {}, "state": "closed"}]
+    held = Context()
+    held.add("chat.said", "hello")
+    chat["context"] = held.to_dict()
     await card.save()
     entry = next(e for e in card.nav()["entries"] if e["id"] == chat["id"])
     assert [a["id"] for a in entry["actions"]] == ["delete", "archive", "rename"]
@@ -290,7 +435,7 @@ async def test_chat_archive(hass: HomeAssistant, mock_entry):
     assert [c["id"] for c in await card.ui_call("archived", {})] == [chat["id"]]
     assert (card.current() or {}).get("id") != chat["id"]
     assert next(c for c in await card.call("chats", {}) if c["id"] == chat["id"])["archived"] is True
-    assert "error" in await card.call("read", {"chat": chat["id"]}) and "error" in await card.call("continue", {"chat": chat["id"]})
+    assert "error" in await card.call("read", {"chat": chat["id"]})
     await card.ui_call("nav_action", {"entry": chat["id"], "action": "rename", "value": "Renamed"})
     await card.ui_call("nav_action", {"entry": chat["id"], "action": "restore"})
     assert next(e for e in card.nav()["entries"] if e["id"] == chat["id"])["title"] == "Renamed"
@@ -330,6 +475,7 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert big["status"] == "loaded" and big["quant"] == "Q4_0" and big["tools"] and big["speed"] == {"read": 1044, "write": 45}
     assert big["context"] == 16384 and big["context_max"] == 262144
     assert new["status"] == "downloading" and new["progress"] == 25 and new["can_remove"]
+    assert core.data["facts"][f"{root} big"] == {"params": 11.9e9, "size": 6.7e9, "quant": "Q4_0"}  # kept for when it is not loaded
 
     await client.send_json({"id": 2, "type": "aac/models/router", "server_id": sid, "action": "load", "name": "big"})
     assert (await client.receive_json())["success"]
@@ -339,8 +485,10 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert (await client.receive_json())["success"]
     assert any(m[0] == "POST" and str(m[1]) == f"{root}/models" and m[2] == {"model": "user/new-GGUF:Q4_K_M", "sidecars": ["mtp"]}
                for m in aioclient_mock.mock_calls)
+    core.data["facts"][f"{root} user/new-GGUF:Q4_K_M"] = {"params": 3e9}
     await client.send_json({"id": 4, "type": "aac/models/router", "server_id": sid, "action": "delete", "name": "user/new-GGUF:Q4_K_M"})
     assert (await client.receive_json())["success"]
+    assert f"{root} user/new-GGUF:Q4_K_M" not in core.data["facts"]  # deleted: what AAC kept about it goes
     assert any(m[0] == "DELETE" and m[1].query.get("model") == "user/new-GGUF:Q4_K_M" for m in aioclient_mock.mock_calls)
 
     assert all(m[1].query.get("autoload") == "false" for m in aioclient_mock.mock_calls if m[1].path in ("/props", "/metrics"))
@@ -352,8 +500,16 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert (kept["read"], kept["write"], kept["prompt"], kept["written"], kept["seconds"]) == (1044, 107, 1520, 256, 3.8)
     bench_body = next(m[2] for m in aioclient_mock.mock_calls if str(m[1]).endswith("/v1/chat/completions"))
     assert bench_body["model"] == "big" and bench_body["ignore_eos"] and not bench_body["cache_prompt"]
+    assert not core.pool.heard  # nothing asked yet
+    core.pool.mark_down("m_small", "timeout")  # a request that got no answer, then one that did (the same server)
+    core.pool.mark_up("m_big")
+    core.data["facts"][f"{root} slow"] = {"params": 3e9, "quant": "Q8_0"}  # from an earlier load
     await client.send_json({"id": 6, "type": "aac/models/servers"})
-    assert (await client.receive_json())["result"]["servers"][0]["models"][0]["bench"]["write"] == 107
+    listed = (await client.receive_json())["result"]["servers"][0]
+    assert listed["models"][0]["bench"]["write"] == 107
+    assert listed["models"][2]["params"] == 3e9 and listed["models"][2]["quant"] == "Q8_0"  # loading: shown from what was kept
+    assert listed["heard"]["error"] == "timeout" and listed["heard"]["answered"] >= listed["heard"]["failed"]
+    core.pool.mark_up("m_small")
 
     core.save_model({"id": "m_small", "follow": True, "model": "something old"})  # follows: asks for what is loaded
     from custom_components.aac.models import Client
@@ -373,6 +529,24 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert await card.call("use", {"aac_model": "big", "model": "user/new-GGUF:Q4_K_M"}) == {"done": "Big uses user/new-GGUF:Q4_K_M"}
     assert core.pool.get("m_big")["model"] == "user/new-GGUF:Q4_K_M"
     assert "error" in await card.call("use", {"aac_model": "nobody", "model": "big"})
+
+
+async def test_download_progress_holds_between_events(hass: HomeAssistant, aioclient_mock):
+    """The router's live events come about once a second and AAC listens a moment: a round that hears nothing keeps
+    the last progress (it showed 0 % now and then); a finished download forgets it."""
+    from custom_components.aac.models import Client
+    root, known = "http://llm.local:8080", {}
+    client = Client(hass, {"base_url": f"{root}/v1", "model": ""})
+    def serve(status, sse):
+        aioclient_mock.clear_requests()
+        aioclient_mock.get(f"{root}/models", json={"data": [{"id": "new", "status": {"value": status}, "can_remove": True}]})
+        aioclient_mock.get(f"{root}/models/sse", text=sse)
+    serve("downloading", 'data: {"model": "new", "event": "download_progress", "data": {"progress": {"u": {"done": 12, "total": 100}}}}\n\n')
+    assert (await client.router(known))[0]["progress"] == 12
+    serve("downloading", "")  # no event this round
+    assert (await client.router(known))[0]["progress"] == 12
+    serve("unloaded", "")
+    assert "progress" not in (await client.router(known))[0] and not known
 
 
 

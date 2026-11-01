@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+import threading
 import time
 
 from . import DevicePlugin
@@ -22,6 +23,18 @@ OFF_HOOK, ON_HOOK = b"\x05\x01", b"\x05\x00"
 SILENCE_RESEND = 5.0  # seconds of silence before off-hook is sent again
 SILENT_RMS = 3.0  # below this the link is down: a dropped link gives zeros, or ±1 noise (about -90 dBFS, 2026-10-23)
 MIN_GAP = 10.0  # do not resend more often than this
+
+
+def all_hidraw() -> list[str]:
+    """Every hidraw node of the dongle (telephony, buttons)."""
+    found = []
+    for node in sorted(Path("/sys/class/hidraw").glob("hidraw*")):
+        try:
+            if USB_ID in os.path.realpath(node / "device").upper():
+                found.append(f"/dev/{node.name}")
+        except OSError:
+            continue
+    return found
 
 
 def find_hidraw() -> str | None:
@@ -88,6 +101,23 @@ class BT600(DevicePlugin):
         self._silent_since = self._silent_since or now
         if now - self._silent_since >= SILENCE_RESEND and now - self._last_sent >= MIN_GAP:
             self._write(OFF_HOOK, "mic silent")
+
+    def debug(self) -> None:
+        """Logs every report the dongle sends (call state, buttons, link), one reader per hidraw node."""
+        for node in all_hidraw():
+            threading.Thread(target=self._read_reports, args=(node,), daemon=True, name=f"bt600 {node}").start()
+
+    @staticmethod
+    def _read_reports(node: str) -> None:
+        LOG.info("BT600 debug: reading the reports of %s", node)
+        while True:
+            try:
+                with open(node, "rb", buffering=0) as dev:
+                    while report := dev.read(64):
+                        LOG.warning("BT600 report %s: %s", node, report.hex(" "))
+            except OSError as err:
+                LOG.warning("BT600 debug: %s: %s; again in 10 s", node, err)
+            time.sleep(10)
 
     async def tick(self) -> None:
         """A replug gives the dongle a new hidraw node: send off-hook again."""

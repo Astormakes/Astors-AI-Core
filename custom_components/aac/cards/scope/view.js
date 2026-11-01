@@ -1,5 +1,5 @@
 // The Scope card's view (spec/cards.md "A card's view"): level bars scrolling by, the waveform or the spectrum,
-// drawn from the frames the card sends while a Nodes page shows it.
+// drawn from the frames the card sends while a Cards page shows it.
 
 class AacScopeView extends HTMLElement {
   connectedCallback() {

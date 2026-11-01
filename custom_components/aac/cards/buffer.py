@@ -6,12 +6,9 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from custom_components.aac.api import Card, Context, register
+from custom_components.aac.api import Card, Context, matches, register
 
-VERSION = "1.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
-
-KIND = {"start": "system", "note": "note", "after": "trailer"}
-
+VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 @register
 class Buffer(Card):
@@ -20,20 +17,20 @@ class Buffer(Card):
     type = "buffer"
     title = "Buffer"
     category = "Logic"
-    help = ("Keeps the last lines of the tags you pick and adds them to each context as one entry; a model can read and "
-            "edit it. A dotted wire from 'provides' lets another card read its lines.")
+    help = ("Keeps the last lines of the tags you pick; adds them to each context that passes as one entry at the end "
+            "and sends it on. A model can read and edit it. A dotted wire from 'provides' lets another card read its lines.")
     outputs = {"out": "text", "provides": "read"}
     ports_help = {"in": "a context: its newest matching line is kept", "out": "the context, with the lines added",
                   "provides": "its lines, for cards that read them (dotted): one entry per line, oldest first"}
     tags = {"lines": "the kept lines (one entry)"}
     keeps_data = True
     settings_schema = {
-        "tags": {"type": "tags", "title": "Keeps entries tagged", "default": [],
-                 "help": "Empty: what people said (kind 'said')."},
+        "tags": {"type": "tags", "title": "Keeps entries tagged", "default": ["*.said"],
+                 "help": "The newest entry with one of these tags is kept (* stands for anything)."},
         "size": {"type": "number", "title": "Slots", "default": 10},
-        "position": {"type": "select", "title": "Writes them", "default": "note",
-                     "options": [["note", "as a note before the turn"], ["start", "at the start"],
-                                 ["after", "after the turn"], ["nothing", "nowhere (only for its functions)"]]},
+        "adds": {"type": "bool", "title": "Adds its lines to each context", "default": True,
+                 "help": "As one entry at the end (the one before goes). Off: it only keeps them (for its functions and "
+                         "'provides')."},
     }
     values = {"text": "its lines, one per line", "lines": "its lines (a list)", "count": "how many lines"}
     functions = {
@@ -56,10 +53,10 @@ class Buffer(Card):
         """What a dotted wire from 'provides' reads: one entry per line (an entry keeps its id while the line is there)."""
         if port != "provides":
             return None
-        context, seen = Context(origin=self.id), {}
+        context, seen = Context(), {}
         for text in self.data.get("lines") or []:
             seen[text] = seen.get(text, 0) + 1
-            line = context.add(self.id, "note", text, ["lines"])
+            line = context.add(self.tag("lines"), text)
             line["id"] = hashlib.sha1(f"{self.id}|{text}|{seen[text]}".encode()).hexdigest()[:10]
         return context
 
@@ -72,16 +69,22 @@ class Buffer(Card):
         lines = self.data["lines"]
         return (f"{self.name} (newest last):\n" + "\n".join(f"{i}. {t}" for i, t in enumerate(lines, 1))) if lines else ""
 
-    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
+    async def handle(self, context: Context, port: str) -> None:
+        if context.streaming or context.waiting:
+            return
         tags = self.settings.get("tags") or []
-        newest = next((e for e in reversed(context.entries)
-                       if (any(t in e["tags"] for t in tags) if tags else e["kind"] == "said") and e["text"].strip()), None)
+        newest = next((e for e in reversed(context.conversation)
+                       if any(matches(e, t) for t in tags) and not e["tag"].startswith(f"{self.id}.") and e["text"].strip()), None)
         if newest and (not self.data["lines"] or self.data["lines"][-1] != newest["text"].strip()):
             self._keep(newest["text"].strip())
             await self.save()
-        if (position := self.settings.get("position") or "note") in KIND:
-            context.put(self.id, KIND[position], self.block(), "lines")
-        return None
+        if not self.settings.get("adds", True):
+            return
+        for old in context.find(self.tag("lines")):
+            context.remove(old)
+        if block := self.block():
+            context.add(self.tag("lines"), block)
+        await self.send(context, "out")
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         lines = self.data["lines"]

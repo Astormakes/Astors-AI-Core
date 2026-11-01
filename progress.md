@@ -3,7 +3,306 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-10-30) – 2.3.16, live on the owner's HA
+## Current state (2026-11-01) – 3.0.0 on branch `v3`, live on the owner's HA
+
+- **2026-11-01 (3.0.0): the rules from the ground up** (owner: "lets scrap the old rules and build from the ground
+  up"; docs/v2 page 5, the rules in `custom_components/aac/rules.py`: the Card editor's `rules`, the panel's Settings →
+  How AAC works). A context is a list of entries `{id, tag, text, data, time, state}`, first `context.system`, then
+  `context.tools`, then the conversation; no kind, no by, no attachments, no events, no context id or way. A card acts
+  when the context holds something for it and sends only when it did something (`Card.send`); one way to arrive
+  (`flow.enter`: a call that names the card is answered by the core, everything else is `handle`); contexts move as a
+  wave (found live: the Chat's copy of a call arrived after the answer and replaced it). Calls travel the
+  wires like every context, one after the other (`Context.next_call`). Everything said is `<card>.said`. Stop is a
+  core function (`stop_all`), no stop entry. One limit: the storm limit, an AAC-wide setting (`aac/settings`); the step
+  limit went (it would end a heartbeat loop; the Timer holds on its own now). The Model acts when the newest entry is
+  not its own, builds its request from the tags, "Means no answer" (default nothing: nothing is sent). The Chat was
+  rebuilt: its id entry `chat.id.<id>`, a context without one filed once finished (until then "Being answered…"),
+  Shown / Shown as you settings,
+  `continue` dropped; its page kept. Text to speech speaks by a tag setting; the Speaker plays a clip without a
+  satellite where its new setting says (else the log says so). Buffer: no system position. The card interface is
+  written in `api.py` (cards stop reaching into the flow; a sandbox later). Every card file got a major version; the
+  backup is 3.0.0 (stored chats are not converted: the owner lets them go). Live 22:46: the board saved first
+  (scratchpad board_before_3.json), deployed, the old chats deleted, three scripts converted (Charter:
+  `context.set("context.system", text())`; Follow-up turn and Stop word: `*.said`; the Stop word's stop output and its
+  wire into the Charter went), two browser messages answered (one with a tool call). Not yet tried live: a spoken
+  turn. The Speaker's "A clip without a satellite plays at" is set to Home Assistant (`ha_app`, owner 23:11: fix A):
+  typed answers and heard turns whose script copied only the text (Wake word's `context.add("said", heard)`) play
+  there. Open: the owner's Follow-up turn has a typo (`comtext.add`), so it sends nothing.
+
+
+- **2026-11-01 (2.6.3): the storm stop** (owner's design). HA Core froze at 15:56:25: the owner said "stop the vacuum",
+  the Stop word sent a stop, it ran forward through the Model's out into Chat and Schedule, both wired back into the
+  Charter, and doubled every round (a probe: past 5000 card visits; `MAX_STEPS` bounds each copy, not their number).
+  The earlier "satellite hang" was most likely the same (HA frozen); the satellite reconnected by itself after HA's
+  restart. Fixed: a stop passes every card once; `flow.enter` yields to HA between two cards; the storm stop: more
+  than `STORM` (30) contexts through one wire within a second make it red (`flow.passes`, `domain.red`, kept in the
+  domain's store), it carries nothing until unblocked (Cards page: click the wire, Unblock; `aac/wire/unblock`; the
+  Card editor's `unblock`), an HA notification, an error in the log, every Card editor answer carries `red_wires`. A
+  stack trace of the frozen HA was not possible (no guest agent on VM 100, the SSH app cannot see HA's processes).
+  Live: Cards page draws, no red wires, a browser message answered, no console errors; the test chat deleted. Open:
+  the owner's Stop word fires on any line containing "stop" (his script).
+
+- **2026-11-01 (2.6.2, satellite 0.3.6): audio died again** (owner). The satellite had hung since between 11:46 and
+  11:58: no reconnect after HA's restarts at 11:58 and 14:23 (no "Disconnected" logged), its event loop still alive
+  (it hung up the BT600 cleanly when restarted). Where exactly is not known; every wait on a player or recorder that
+  had no limit has one now (`GRACE`, `ended()`, a player gets the WAV's length + 10 s) and logs when it fires: the
+  next hang names its place. Restarted 15:24, updated 15:29, connected, the mic hears the room. Found on the way, a
+  real AAC bug: at 11:44:57 a context went Model ↔ Home 400 times in a second. The Chat had kept a Follow-up turn
+  half-way (an answer whose Home call had no result yet); Wake word read it with "Okay, computer." on top; the Model
+  took the old call as still waiting, the flow did not. One rule now: `Context.open_calls` counts a call only while
+  its answer is the newest thing said or answered (test `test_a_call_left_behind_is_not_made_again`).
+
+- **2026-11-01 (2.6.1): a chat is a tag, plainly in the context** (owner: he unwired Wake word's read and expected a
+  new chat per spoken turn, got nothing in the Chat; "nothing should be hidden, mechanisms have to be discoverable and
+  look-up-able with common sense"). The Context's hidden fields `origin` and `chat_id` are gone; a context has only
+  `id` and `way` besides its containers (the card it started at is put first on its way when it first leaves). Every
+  message a Chat holds carries `chat.<chat id>`; the Chat keeps every context reaching `answers` in the chat its
+  messages are tagged with, else in a new chat ("Voice · mic · time" for a heard line). The "nothing" answer and the
+  Relay's `_picks` rule stay (owner: necessary rules); `_picks` uses the first card on the way. The Model knows a
+  conversation by its first message (`conversation_key`). A growing answer (delta) goes to every open page, the
+  chat's finds its turn by the tag. Backup survived: 2.6.1. Live: a real browser chat of two turns stayed one chat,
+  both turns tagged, the answer grew live, no console errors; the test chat deleted. Not yet tried by voice. On the
+  owner's board: Wake word reads nothing now, so each wake-word turn is a chat of its own; Follow-up turn reads the
+  chat, so it continues the newest one; the weekday 05:25 schedule run now shows as a chat too (`model.out →
+  chat.answers`; a Relay in front of `chat.answers` would filter it).
+
+- **2026-11-01 (2.6.0): the Model's routing is only what is wired** (owner: "the rules are breaking things"). The
+  Model has `out` (its answer, to every card wired there, streamed) and `calls` (square: its tool calls). Its tools are
+  the cards with functions reachable from `calls` that have a way back (`flow.reach`, `Card.calls_from`; the loop scan
+  `flow.loop` is gone, a Relay's card calls check reach too). Gone: "the answer only back to where the turn started"
+  (it made the owner's spoken answers silent: Wake word's context belongs to the Chat, so the answer went only there,
+  never to Text to speech) and "cards wired straight back only get calls". A turn that comes back to a Model with
+  nothing new ends there (`_done`: a card wired from out back into it, as Lists passes a context on); a Model passes
+  no pieces from upstream on (as its old square out). The default voice chain lost its Answer Relay (the Model's out
+  reaches Chat and Text to speech). Backup broke: 2.6.0. Live: the owner's wires converted once (scratchpad
+  `convert26.py`: a tool wired straight back moved from out to calls; Schedule and the Chat, tools on the way to
+  others, got a calls wire next to their out wire); the Model's 10 tools the same as before; a real browser message
+  used the time tool and was answered (not spoken: typed); the test chat deleted. Open: the domain `test123` still
+  has the old wiring (convert when it is used); the Relay still has its own rule "a card wired to it and back only
+  gets calls" (`_picks`); what is spoken can now be chosen by a Relay in front of Text to speech (owner's idea).
+
+- **2026-11-01 (satellite 0.3.5): hunting the Calisto's noise blasts** (item 61). The satellite app runs with the
+  new option `debug` (`addons/aac_satellite/debug.py`), on the live HA since 09:25.
+
+- **2026-10-31 (2.5.0): where a Relay writes says what a model reads it as** (owner: his Wake word's `attach_first`
+  landed in the system prompt, visible only in Plain text). `add(tag, text, at="last"|"first", role="user"|"system")`
+  makes a new entry (a user message, or a part of the system prompt, which a model always reads first);
+  `attach(tag, text, at=)` adds onto the last / first entry a model reads, in its role (no more silent fallback to the
+  system prompt); `set(…, at=, role=)` adds like `add` when the tag is missing; `remove(tag, at="all"|"first"|"last")`;
+  `e.role`. One pattern (`at=`) for every "where"; `read=True` stays a bool. No `role="tool"` (only an answer to a
+  call) or `"assistant"` (a model reads another card's answer as a user message). Docstrings stay plain Python, not
+  marked (owner). Backup broke: 2.5.0 (I had said 2.4.1; the backup test decided). Live: the owner's Charter, Spoken
+  turn, Follow-up turn and Wake word got only the new names, same behaviour (`attach_first` → `add(…, at="first",
+  role="system")`, `attach_last` → `attach`, the Charter's `set` with `role="system"`); a real message in the browser
+  answered, Plain text starts with the charter as the system prompt; the test chat deleted.
+
+- **2026-10-31 (2.4.0): item 58, the Relay rework** (owner's design, talked through first: docs/v2/04-relay.md). A
+  Relay's script is plain Python that runs top to bottom every time something arrives, every piece of a model's
+  answer too: `context = input("in")`, `output("out", context)`; nothing leaves unless an output line runs (no
+  pass-through, no fallback to out; a new Relay starts with these two lines, an empty script sends nothing). Its ports
+  are what it names (`input("x")`, `input("x", read=True)` dotted, `output("x", …)`; none named: in, out). The
+  context reads as a list of tagged texts (`get`, `[tag]`, `in`, `all(…).text`, `text`, `attach_first`,
+  `attach_last`, `set(…, at=)`, `remove*`, `a + b`); a tag without a dot is the Relay's own, `*` any. `output` takes a
+  context as it is, anything else as the Relay's answer in the context that arrived. Every `def` is a function (a call
+  runs only that def; another Relay calls `relay_2.time()`); card calls take arguments in order or by name, not on a
+  piece (`context.finished`). `print` shows under Printed in the editor (half an hour), `print_log` writes into AAC's
+  log. The script's own names win over a card's id (`cards["output"]`). The Card editor (1.6.0) got `help(type)`: a
+  type's setup help from what it declares (the Relay's: its script reference); `types` is one line each. Editor
+  rewritten (suggestions per name: context / entry / text; status says when nothing leaves; Simple view rows: text,
+  if, send). Backup broke: new 2.4.0 backup. The owner's six Relays were converted by a scratchpad script, tried
+  first on a copy of the live stores (a real turn: charter as system, `localtime` called); live: a real message in
+  the browser (Time's `localtime` answered), the editor, Wide, ?, Printed and suggestions checked, the test chat
+  deleted. Time is now a toolbox (only `def time()`), Charter offers `text()` as before. The 20 Undo steps from before
+  hold old-format scripts: undoing past the conversion brings back scripts that no longer run.
+
+- **2026-10-31 (2.3.36): Schedule 1.3.1, and a Notify card on live.** Run now rings like an entry at its time (the
+  same instruction, watched for an answer; a one-time entry stays). Nothing wired to its output: it goes out at
+  'unanswered' at once ("nothing is wired to its output"). Owner: models may make entries (allowed stays); live got a
+  Notify card (notify.mobile_app_cph2581, the owner's phone) wired from schedule.unanswered; the test notification
+  arrived.
+- **2026-10-31 (2.3.35): item 39, Schedule like v1, and AAC's calendar in the core** (owner: cards only use interfaces
+  the core offers; the calendar was hardwired). `calendars.py`: the core keeps no entries, only who offers them
+  (`core.calendar.offer(card, query, create, change, remove)`; `entries`, `add`, `change`, `remove` by uid
+  "<card>:<key>"); HA's `calendar.aac_calendar`, the Calendar card and models ask there. The `ha_calendar` channel and
+  `dated()` are gone; the Calendar card (1.3.0) offers its own entries (all four ways) and lost its "lists" setting
+  (every card's entries show); Lists (1.3.0) offers its dated entries (read only). Schedule 1.3.0: entries are data (no
+  Undo step; `upgrade_data`, a new generic card hook, moved them out of the settings as the owner's), each says who
+  made it (owner / aac); a model may add, change, remove only its own, at most 20, as the setting "Entries a model
+  makes" allows (allowed / ask: waits for Allow on its page / off: no add/change/remove offered; a permission);
+  days as names ("Mon-Fri", "weekend"); quiet hours (fold) make AAC's entries wait; the fired line says what to do
+  with a reminder; an entry nobody answered within "Unanswered after" (30 min) or that a model failed on goes out at
+  the new output 'unanswered' (an answer, for a Notify card) and into the log; its times are on AAC's calendar (read
+  only there). Its editor moved from the core panel to its page (Allow / Refuse, Run now). Found by the new log: a
+  200 answer without choices crashed the client (KeyError); now a model error. Cooldown (v1, for state triggers) does
+  not apply to fixed times; the HA event card has its own.
+- **2026-10-31 (2.3.34): the log rotates in two lanes.** Live, the voice chain wrote ~40 entries a minute (mostly the
+  Audio clipper hearing the room): one rotation of 5,000 would have pushed errors and changes out within two hours. Now
+  the newest 5,000 of what passed the wires (flow) stay, and the newest 5,000 of everything else. A context with only
+  signals (the clipper's cuts) is written as its newest signal's kind and tags instead of "(no text)".
+  Owner (2026-10-31): Schedule, Heartbeat and HA event keep their own history of what fired and what came back (on their pages),
+  apart from the log.
+
+- **2026-10-31 (2.3.33): item 38, AAC's own log** (owner and a friend: a proper logging mechanism in AAC itself).
+  `log.py` `DomainLog` per domain, `<config>/aac/data/<domain>/log.jsonl` (appended every 2 s, written anew past 6,000
+  lines; moves with a rename, goes with the domain, a copy starts its own). Rotates at 5,000 entries (two lanes since
+  2.3.34); whole contexts
+  stay 10 minutes in memory only; a repeat counts up (`n`). Levels error, warning, info, flow. Every card has the fold
+  "Log" (`log`: what changed / whole context / nothing; `log_at`: out / in / both; default what changed going out);
+  `self.log(...)`, `self.read_log(...)` (own entries always, the rest with `needs = {"read_log"}` → permission
+  `may_read_log`, the start of item 20's card layer). The core writes failures with their trace, models not answering,
+  loops, no way back, failing functions, and what the owner changes; HA's log keeps only card files loading and the
+  first start. Wire monitors read the log (`aac/monitor` says `off` when the card writes nothing going out). Settings →
+  Logs: level / card filters, search, Show older, Save as text, Clear; live. Log card 1.3.0: writes into the log,
+  allowed to read it shows all of it on its page, function `read`, output `provides`; its own data store is gone.
+  A setting fold opens when a setting in it differs from its default (For models was always open). Tested locally
+  (a real message, Logs page, monitor, a throwaway Log card with and without permission, phone width).
+- **2026-10-31 (2.3.31, 2.3.32): item 29, Models page.** The top list has headings (Name in AAC, Server, The server's
+  model, Can do, Now; hidden on a phone, where rows wrap), each AAC model shows what the server's model is (parameters,
+  context) and its state in words (✓ ok / ✗ not answering; idle / busy n of m / waiting). A router's numbers for a
+  loaded model (params, size, quant) are kept in core data `facts` ("<address> <model>", like `benches`) and shown
+  while it is not loaded; a model deleted on the server loses its facts and bench (`pool.forget`). Models never loaded
+  since show none (only llama.cpp says it). Item 28 dropped (owner: the order and queues are set in the Model card).
+  Item 56 (context per model): the router cannot load a model with another context (`/models/load` takes only the
+  name; the context is the preset's `ctx-size`, read at start), and only the machine can estimate memory
+  (`llama-fit-params --fit-print`, tried on the PC: Gemma 26B-A4B 13.6 GB + context 0.9 GB at 32 k, 2.9 GB at 128 k,
+  5.4 GB at 262 k + 0.6–0.8 GB compute). The owner does not want a helper on the machines ("maybe that can be a card at
+  some point"): the page shows the context and the model's maximum, and that is it. GPUs: PC = RTX 5070 Ti, CT 110 =
+  RX 7800 XT.
+
+- **2026-10-31 (2.3.30): items 15 and 52.** Undo steps stay whole in memory; stored, each keeps only what differs from
+  the setup after it (`packed` / `unpacked` in core.py: its card ids, changed cards and wires, positions as they are; a
+  step stored whole loads as it is). Owner's store computed offline: Undo 453 KB → 31 KB (the Home card's 16 KB access
+  list was in every step); local test HA 112 KB → 30 KB. A removed card's data and files stay while the setup, Undo,
+  Redo or a slot knows it, then go (`_on_top` trims, `_tidy` → `_drop_data(only_unused)`, after the change: HA starts
+  tasks eagerly, so `eager_start=False`); Redo is not kept over unload. The owner removing cards whose data differs from
+  `default_data()` (summary `has_data`; the panel reloads first) is asked: Cancel / Keep (Undo brings it back with it) /
+  Delete the data (`aac/card/remove` `drop_data`: Undo brings the card back empty). A model removing a card keeps it.
+  Tried in the local test HA and live in a throwaway copy of the domain (question, Keep + Undo, Delete + Undo, a real
+  message answered, copy deleted). Backup before: `/config/aac/bak-v2-2.3.29/` (2.3.27 removed). The owner's store
+  packs at its next change. Left over from before: `aac2.card.assistant.log` (a Log card removed before Undo knew it,
+  Oct 29): removed on the owner's word.
+
+- **2026-10-31 (2.3.29): a domain's id is its name too** (owner: "it's always ids and show names or the name is the id";
+  things work by the default rules, as few special cases as possible). `Core`: `fits(id, name)` (shared with cards),
+  `_move(old, new)` moves the domain's store, its cards' stores (setup, Undo steps, slots) and files, the active mark; a
+  running domain starts again under the new id. Rename (`aac/domain/rename` answers the id) and load (an id that does not
+  fit) move it. Cards get one generic folder, `self.folder` = `<config>/aac/data/<domain>/<card>`, moved with a card's or
+  a domain's rename, copied with Copy, gone with Delete; the Log card keeps its clips there (was `aac/log/<domain>.<card>`,
+  a special case a rename left behind; no such folder existed anywhere). The browser's wire monitors and sidebar folds
+  follow a card or domain rename (panel `_moved`). Tried in the local test HA, then live with a throwaway domain through
+  the real menu: Copy "ZZ try", Rename "ZZ renamed" (5 stores and a monitor moved), a real message answered, Delete left
+  nothing. The owner's two domains already fit their names: nothing moved. Owner confirmed 32 and 46.
+
+- **2026-10-31 (2.3.28): a card's id is its name** (owner: "clean all the way, consistent"; after 2.3.27 kept the
+  id `node_editor` for the renamed Card editor). `slug(title)`, a number after it when two share a name. `Domain`:
+  `follow_names()` (at load, after Undo / Redo / a slot / a file), `_wanted()`, `_move(old, new)`: the setup, Undo
+  and Redo steps, slots, the card's store (moved), the other cards' settings (class method `renamed_settings`: by
+  default a script's `old.tag` and `cards['old']`, not a word alone: `e.data.get("mic")` is a field; the Calendar
+  adds its `lists`, also at its default) and data (`renamed`: entries' `by`, `tags`, a call's `card`; not keys: Lists
+  keeps a field "lists"), the sidebar fold, `flow.held`. New ids never meet one in the history (a removed card coming
+  back). `add_card` lost `card_id`; defaults.py builds from the ids cards get. The panel follows a rename (`sel`) and
+  lets go of a selection whose card is gone. Live: tried first on a copy of the owner's domain in the local test HA
+  (23 cards, 34 wires, 20 Undo steps; mic, cut, ears, spoken, followed, node_editor moved; the chat store's 74
+  references all carried over; rename + Undo through the real Name field), then deployed: the same 6 moved, a real
+  message and an Assist turn answered (both test chats deleted). test123 moves when it is next opened. Backup before:
+  `/config/aac/bak-v2-2.3.27/` (the older 2.2.2 one removed: newest only). Backup test compares cards by name.
+  Item 58 added (Relay rework, owner).
+
+- **2026-10-31 (2.3.27): items 37, 30, 41** (owner: do them; 51 needs a talk first). **37:** cards are only called
+  cards: the Nodes page is the **Cards** page (view kind `cards`, `_cardsView()`, CSS `.cardsview`, a card on the
+  grid `.cardbox` / `data-cardbox`, the neon skin too; `core.cards_page_open`), the Node editor is the **Card
+  editor** (type `builder` unchanged; the owner's card retitled, its id `node_editor` kept; test123's not); help
+  texts, docstrings, spec, README, docs/v2. The Relay's "node" words are Python syntax-tree nodes and stay. **30:**
+  each server on the Models page says when it last answered and when a request last failed, and why (red when the
+  failure is newer; since AAC started, in memory: `pool.heard`, set by `mark_up` / `mark_down` / `heard_from`).
+  **41:** the File card has a read output `provides` (the file's text as one entry, the last 8,000 characters, kept
+  in memory: loaded at start, renewed by every write and read, so `held()` never touches the disk). **Found:**
+  pytest's shared test config (`…/pytest_homeassistant_custom_component/testing_config/aac`) still held card files
+  from before 2.2.1 (`tools/`, `auto/`, `audio.py`, `conditional.py`); the old `tools/` File replaced the new one,
+  so some tests ran old card code. `conftest.clean_aac_folder` empties it before every test. The local test HA had
+  the same leftovers (removed); the live HA is clean. Checked: local test HA (Cards page by real clicks, a File card
+  wired dotted into a Relay, a failing model shown red), live HA (Cards page, a real message, its chat deleted,
+  "Last answered" per server).
+
+- **2026-10-31 (2.3.26): open items 31, 32, 42–46.** Lists (43, 44): Undo remove and editing (a click on the text)
+  were there and work (real clicks, desktop and touch); Undo now puts entries back where they were (a sub-entry under
+  its parent, at its place; a deleted list at its place; before, all at the end of the top level), the text shows
+  "Click to change". Sidebar (45): a card's `nav()` may say `"fold": "arrow"` (stays open until its arrow closes it);
+  Chat and Lists do (the core's hidden `key === "chat"` is gone). Access list (42): a redraw keeps its own scroll (it
+  jumped to the top on every click). Phone (46): narrower than 380 px (side panel, phone) a row puts the name on its
+  own line, the buttons below; the list does not hand its scroll to the page. Permissions page: "For models: [object
+  Object]" → "4 of 4 functions for models". Models page (31): a line between the models and the hovered row marked
+  (the Delete far right was hard to match); on a phone the top table wraps and server headers wrap (it scrolled
+  sideways). 32: not reproduced on either router (PC build 11429, CT 110 529ac89; download, stop, delete, the next
+  download: no cross-talk). What did happen: AAC listens to the live events 1.5 s per poll and they come every
+  1–1.9 s, so a poll without an event showed 0 % (the jumping); the pool keeps the last progress (`pool.progress`).
+  On the PC's build Stop throws the download away (no "incomplete" entry), on CT 110 it stays incomplete:
+  "Pause" became "Stop" with a tooltip saying so. Checked: local test HA (taps at 390 px, list scroll, Lists clicks),
+  live HA (sidebar, Permissions, scroll on a redraw, a real message sent and its chat deleted).
+
+- **2026-10-31 (2.3.25): no card on another, snapping while dragging (items 35, 36).** One check (`_hit`, `_under`):
+  a card may not lie on or within 10 px of another in its column range; the one that would goes below. Dragging: the
+  card (or the selection) snaps into its column and below what it covers while it moves, so it lands where it is shown.
+  A new card lands below what it would cover (the ghost shows it). `_settle()` runs whenever the Nodes page draws (not
+  while dragging): cards on each other (a card grew, positions from elsewhere) – the lower one moves down; cards
+  without a place (the Node editor and the voice chain add them without one, they all sat at 0,0) get the first column,
+  below what is there; saved if anything moved. Checked on the local test HA (drag onto a card, a new card onto one,
+  two cards on one spot, a card without a place) and on the live HA (the owner's 23 cards: none touched, none moved).
+
+- **2026-10-31 (2.3.24): the grid's round buttons on the right, smaller (30 px), drawn line icons** (owner: plain
+  symbols, not the emoji bin; `ICON` in aac.js). Their box is `.gridtools`: 2.3.21–2.3.23 called it `.tools`, which
+  also matched the chat Context view's tools part (`.cvpart.tools`, `.cvlab.tools`) and pulled it out of place.
+
+- **2026-10-31 (2.3.23): test: every card survives remove + Undo** (owner's idea). `test_every_card_survives_remove_and_undo`:
+  one card of every type, wired and placed, Lists and Chat with data; all removed at once, one Undo: setup, wires,
+  positions, titles and each card's data as before, and the chat and Lists work again (fresh and from the backup).
+  It found a real bug: AAC's unload passed `watcher.cancel` to `entry.async_on_unload`, its `True` was taken for a
+  task ("Error unloading entry AAC" whenever AAC is reloaded); now a small function that returns nothing.
+  Also run on the live HA on a copy of the owner's domain (23 cards, 37 wires): all removed, one Undo, cards, wires,
+  positions and every card's data as before, Lists and Chat answer; the copy deleted, the main domain untouched (4 s).
+
+- **2026-10-31 (2.3.22): 🗑 and Del remove the selection** (owner: deleting belongs with the tool buttons; Del was
+  pressed by habit). A round 🗑 under Select and Cut (greyed out when nothing is selected) and Del / Backspace remove the
+  selected cards or the selected wire. `aac/card/remove` takes `cards` (a list) and `Domain.remove_card(*ids)` removes
+  them in one Undo step that also keeps their positions (before, Undo brought a removed card back at 0,0). Test in
+  test_core; checked on the local test HA (Del on two framed cards, one Undo back with wires and positions; 🗑 on a card
+  and on a wire) and on the live HA (the button follows the selection; nothing removed).
+
+- **2026-10-31 (2.3.21): round tool buttons on the grid, long press** (owner: the mouse drags the view; round buttons
+  for actions such as select; a cut line for wires; long press on a phone did not select). Left-drag pans again (2.3.20's
+  frame on the left button is gone). Top left of the grid: **Select** (⬚: a drag on the empty grid draws the frame, a
+  click on a card adds or removes it) and **Cut** (✂: a drawn line, freehand, removes every wire it crosses; the wires
+  turn red while drawing; one `aac/wires`, Undo brings them back). A tool stays on until pressed again or Esc. Without
+  one, Ctrl+click and Ctrl+drag still select. On a phone a long press (500 ms, the finger held within 8 px) adds or
+  removes a card (a short buzz); a finger that moves still drags the card. Checked with real mouse and touch input on
+  the local test HA (cut, long press, moving) and the live HA (pan, Select, Esc; nothing changed there).
+
+- **2026-10-31 (2.3.20): select and move several cards (item 34).** A frame drawn with the mouse on the empty grid
+  selects the cards it touches (Ctrl held: adds them); Ctrl+click adds or removes one; dragging a selected card moves
+  them all and they snap as one block (`_snap(id, group)`: the dragged card into its column, the rest keep their places,
+  pushed down together if they would cover another card). With several selected the side panel lists them (no settings);
+  Esc or a click on the empty grid lets go. (2.3.21: the frame and Ctrl+click moved to the Select button.) `sel` is a setter: picking one card or none clears the several (`many`). Delete only removes a
+  single selected card. Checked with real mouse input on the local test HA (moving) and the live HA (selecting only).
+
+- **2026-10-31 (2.3.19): bug 57 fixed.** On a phone the SETTINGS heading went straight to the Audio page (its `data-go`;
+  a page closes the sidebar), so Models and Appearance could not be reached. Now on a phone it only opens the group in
+  the sidebar (`navPeek`, cleared by `go()`); a computer still opens the first settings page. Checked with real touch
+  taps at 390×844 on the live HA (☰ → SETTINGS opens, again closes, Models opens the Models page).
+
+- **2026-10-30 (2.3.18): Model card setting "Most tool rounds without an answer"** (owner: may be unlimited). Was the
+  fixed MAX_ROUNDS 8; now `max_rounds`, default 8, 0 or empty = no limit (Stop still ends it; flow's MAX_STEPS 400 stays).
+- **2026-10-30, outside the code:** HA's own AI removed (GLaDOS pipeline, llama.cpp, ai_memory, LVA); AAC is HA's
+  preferred pipeline "AAC" (text). Voice: Calisto via the satellite app, Wyoming `tts.piper` (CT 110, own announcer
+  voice) and `stt.faster_whisper` (CT 110, fallback after the PC Whisper). CT 110 has no chat model any more (the owner
+  deleted the 12B, 26B, Ornith). Open: the Text to speech card's en voice → `en_US-announcer-medium` (language `en-us`)
+  once the Assistant domain is active again; first spoken test when the Calisto is on. Details: docs/home-assistant.md.
+
+- **2026-10-30 (2.3.17): tools are the loop again, and calls travel through it** (owner: "everything always moves
+  through a context through wires", not "tools only when wired directly"; 2.3.0's pair rule had taken the Chat's
+  functions from his model). `flow.loop()` / `tools()`: cards with functions on a way from a card's outputs back into
+  it; `flow.way()` finds the shortest way along text wires, `flow.carry()` takes a call there and its result back (the
+  cards between only pass it on, every wire lights). A Model's answer goes to every wired card but those wired straight
+  back (pure tools), so a second Model or the Answer Relay further round still gets it. MAX_STEPS 400.
 
 - **2026-10-30 (2.3.16): thinking, cut-offs, tokens** (owner). The client reads the server's thinking
   (`reasoning_content`), why it stopped (`finish_reason`) and the tokens (`stream_options.include_usage`); the context
@@ -339,7 +638,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
    sends frames only while a Nodes page shows the card (`aac/view/watch`, said every 8 s). First one: Scope (Audio:
    level bars, waveform, spectrum with numpy; passes the audio on). Next: Gain, Compressor.
 3. ~~Faster lights~~ **done (2.1.1):** wire levels 10×/s, only while a Nodes page is open.
-4. **Audio delay** (2.1.32: a spoken turn shows in the chat at once, the answer grows live there; a turn answered "nothing" goes again): measure each stage first (clip end → text → model → speech → playing), then: the satellite
+4. ~~**Audio delay**~~ **done (owner, 2026-10-31: 2.1.4 timing, 2.1.5 phrases, 2.1.28 muting in the Microphone, 2.1.32 the spoken turn at once, 2.1.44–2.1.48 echo).** (2.1.32: a spoken turn shows in the chat at once, the answer grows live there; a turn answered "nothing" goes again): measure each stage first (clip end → text → model → speech → playing), then: the satellite
    plays a stream instead of whole WAVs; sentence-wise speech (item 1); the Audio clipper's pause. Found: the
    Microphone → Speaker loop sounded broken because AAC ignores a satellite's microphone while it plays (no talking
    to itself) and the Speaker plays a stream in separate 2 s pieces; needs echo cancellation (best in the satellite)
@@ -375,7 +674,7 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     (context, `-ub`) and a VRAM check before loading: on the 7800 XT a model without 1–2 GB of headroom froze the host
     three times (2026-10-25, see the CT 110 notes). To check: whether the router can fetch from Hugging Face itself
     (`-hf`), else a small helper on the machine. Later AAC decides what to load (the broker idea from v1).
-15. **Smaller undo history** (review 2026-10-30: the undo steps are 462 KB of the 712 KB domain store): the domain's store is ~720 KB because every undo step and slot is a whole copy of the
+15. ~~**Smaller undo history**~~ **done (2.3.30).** (review 2026-10-30: the undo steps are 462 KB of the 712 KB domain store): the domain's store is ~720 KB because every undo step and slot is a whole copy of the
     setup (the Home card's access list alone is big), and it is written on every change. Keep changes instead of
     copies, or leave big settings out of the undo steps. Also: a removed card's data stays stored (for Undo); stores of
     cards that are long gone should go (owner's no-dead-weight rule).
@@ -388,9 +687,9 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     processed residue (the sweep gone, beeps ringing; no linear relation), so subtraction can't help there and isn't
     needed: Speex already stops AAC hearing itself. The add-on runs `echo_cancel` on, `reference` off. For devices that
     give the raw echo (a cheap USB speakerphone on a Pi).
-17. **Ideas, not started:** AAC's own output as the echo reference, lined up per answer by correlation (any satellite,
+17. ~~**Ideas, not started:**~~ **settled (2026-10-31):** RAM/VRAM needs a helper on the machines (owner: no, maybe a card some day, see 56); the echo reference is not needed while the satellite's Speex echo cancellation keeps AAC from hearing itself (16). Was: AAC's own output as the echo reference, lined up per answer by correlation (any satellite,
     and another room's speaker); RAM/VRAM on the Models page (llama-server's API has none: a helper on each machine).
-18. **Chat rework** (owner, 2026-10-26: "needs to be reworked a little"; what exactly: talk through first). Related
+18. ~~**Chat rework**~~ **done as far as known (2.3.0: items 22–27, Chat + Behind the scenes; 2.3.7: item 11).** (owner, 2026-10-26: "needs to be reworked a little"; what exactly: talk through first). Related
     and still open: item 11 (edit messages, resend).
 19. **Measures against code injection** (owner, 2026-10-26). Since 2.2.0 Relay scripts are code a model can write
     (the Node editor's `change_card`), and models read untrusted text (web pages, mails, chat lines), so a planted
@@ -411,7 +710,13 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
     (`request_access(entity_ids, level, reason)`, `request_visibility`) wait outside the chat (panel badge + HA
     notification) until the owner allows all, some or none; locks, alarms, covers, valves, sirens only with the owner
     in the chat; HA's "expose to Assist" as the starting point. Ties in with 19 (what a script may call). Talk through
-    first.
+    first. (2026-10-31, owner) The per-card layer is also where a card's permission to read AAC's log goes (38); the
+    domain layer lists permissions per accessible thing and decides whether cards can even see that a thing exists
+    before they can ask for it. Needs a general look: a Home Assistant card cannot know the entities it should ask
+    for (today the owner fills its access list beforehand and a model finds only what is not hidden).
+    Owner (2026-10-31): the domain layer comes first, on top and separate from the cards: per thing **list** (cards may
+    know it exists), **read** or **full**. A domain loaded from the internet with its own cards and wires must be under
+    precise control: what it can see and do.
 21. **Card sandboxing** (owner, 2026-10-26). Today a card file in `<config>/aac/cards/` is plain Python run inside
     Home Assistant's process (`cards/__init__.py` `_load`: `exec`): it can do anything HA can (files, network, every
     entity, other cards' data), and "only uses `api`" is a convention, not enforced. Fine for AAC's own cards, not for
@@ -448,44 +753,52 @@ pencil edit is missing" is item 11.
     (wired as its tool, out to in and back) it could, so it was not aware of the card: fix that if possible. (c)
     `card: name = "ID"`? (d) The model called `time__text({})` to get the Time card to append the time, then answered
     with it: correct, but a cumbersome way to call it.
-28. **Models page: model order and unavailable servers.** A clearer way to set the order in which models are used,
+28. ~~**Models page: model order and unavailable servers.**~~ **dropped (owner, 2026-10-31: set in the Model card).** A clearer way to set the order in which models are used,
     and a tick that it is no issue when a compute resource is not available.
-29. **Models page: top list and parameter counts.** The top list is not really clear; models in the server lists
+29. ~~**Models page: top list and parameter counts.**~~ **done (2.3.31).** The top list is not really clear; models in the server lists
     should show their parameter count if llama.cpp gives it.
-30. **Models page: last spoken to per server.** A "last spoken to" per compute server, so it is visible when RAM
+30. ~~**Models page: last spoken to per server.**~~ **done (2.3.27).** A "last spoken to" per compute server, so it is visible when RAM
     overfills and a server stops answering.
-31. **Models page: Delete misaligned.** The Delete per model does not seem to line up with the actual models.
-32. **Models page: deleted downloads go on.** A stopped and deleted download seems to go on: the next model's
+31. ~~**Models page: Delete misaligned.**~~ **done (2.3.26):** rows with lines, the hovered row marked. The Delete per model does not seem to line up with the actual models.
+32. ~~**Models page: deleted downloads go on.**~~ **fixed (2.3.26, the owner confirmed it on 2026-10-31):** a poll without a live event showed 0 %. A stopped and deleted download seems to go on: the next model's
     progress jumps between 0 % and ~12 %. Happens with every model (first seen after stopping a base Gemma 3 31B
     download for a quantised one).
-33. **Nodes page: lit wires wrong.** (2.3.0: tool calls travel along the wires now, snapshots no longer go through Schedule; check again live) The lit wires do not seem right: a question that makes Gemma search the web
+33. ~~**Nodes page: lit wires wrong.**~~ **fixed (2.3.0, the owner confirmed it on 2026-10-31).** (2.3.0: tool calls travel along the wires now, snapshots no longer go through Schedule; check again live) The lit wires do not seem right: a question that makes Gemma search the web
     reliably ("lithium is used in many antidepressant medications, how does it work…") always lights the way to
     Schedule and Chat.
-34. **Nodes page: select and move several cards.** With several cards selected, dragging one moves only that one, not
+34. ~~**Nodes page: select and move several cards.**~~ **done (2.3.20).** With several cards selected, dragging one moves only that one, not
     all selected.
     Owner, 2026-10-30: box select (drag a frame on the empty grid), Ctrl+click to add or remove cards from the
     selection, and drag and drop the whole selection at once.
-35. **Nodes page: overlapping cards.** Cards can be placed overlapping; they are only moved apart when a card near
+35. ~~**Nodes page: overlapping cards.**~~ **done (2.3.25).** Cards can be placed overlapping; they are only moved apart when a card near
     another is moved. The "too close" check must happen consistently.
-36. **Nodes page: snap while dragging.** Snapping to columns only happens on release; while dragging, cards still
+36. ~~**Nodes page: snap while dragging.**~~ **done (2.3.25).** Snapping to columns only happens on release; while dragging, cards still
     move in the old raster (a leftover).
-37. **Naming: cards, not nodes.** Cards are called cards or nodes interchangeably; they should just be called cards
+37. ~~**Naming: cards, not nodes.**~~ **done (2.3.27).** Cards are called cards or nodes interchangeably; they should just be called cards
     (with their interchangeability now).
-38. **Cards: logging per card.** Logging per card instead of a Log card: a unified logging interface; every card has
-    a dropdown what to log (whole context / only changed text) and ticks for in, out or both. The Log card should use
-    that.
-39. **Schedule: like v1.** Schedule should work more like it did in v1 (talk through: what exactly). Review: its
+38. ~~**AAC's own log**~~ **done (2.3.33).** (owner, 2026-10-31, widened from "logging per card" after a friend's advice: a proper logging
+    mechanism in AAC itself, so it can be checked when something goes wrong). Agreed so far:
+    - One log per domain, in the domain's data folder (`Core.folder(domain)`: moves on rename, goes on delete).
+    - AAC's log is its own; HA's log only gets what belongs to the integration running on HA (start, stop, failing
+      to load), not what happens inside AAC.
+    - A rotating log (about 5,000 entries per domain; owner: a rotating log is not up for question). Whole
+      contexts in entries age out after about 10 minutes (privacy, space); the entry's line stays.
+    - Cards write through one call in the api; every card has the 38 settings (what: whole context / only changed
+      text; when: in, out or both). Wire monitors read from it.
+    - Settings → Logs shows it. Cards may read the log per permission (a per-card grant, see 20); the Log card puts
+      entries into the log and reads it as a function and through an output.
+39. ~~**Schedule: like v1.**~~ **done (2.3.35).** Schedule should work more like it did in v1 (talk through: what exactly). Review: its
     entries are settings, so every reminder a model adds or a one-time entry that fires makes an Undo step and remakes
     the card (reminders push the owner's undo steps out).
 40. **File: several files.** The File card has only one file. Owner imagined accessing different files, but likes the
     single file too: maybe a File system card (with a whitelist of paths) next to the File card.
-41. **File: provides output.** The File card should have a provides (read) output.
-42. **Home card: list jumps.** Clicking something in the Home card makes the list jump.
-43. **Lists: undo a removal.** Removing an entry cannot be undone; maybe show an Undo button (a function
+41. ~~**File: provides output.**~~ **done (2.3.27).** The File card should have a provides (read) output.
+42. ~~**Home card: list jumps.**~~ **fixed (2.3.26).** Clicking something in the Home card makes the list jump.
+43. ~~**Lists: undo a removal.**~~ **done (was there; 2.3.26 puts entries back in place).** Removing an entry cannot be undone; maybe show an Undo button (a function
     `undo_remove` exists: check the page).
-44. **Lists: edit entries.** Entries cannot be edited (check against the current page).
-45. **Lists: sidebar folded open.** The Lists entry in the sidebar should be folded open.
-46. **Settings: entities UI on the phone.** The entities UI in settings is broken on the phone.
+44. ~~**Lists: edit entries.**~~ **done (was there: a click on the text; 2.3.26 says so on hover).** Entries cannot be edited (check against the current page).
+45. ~~**Lists: sidebar folded open.**~~ **done (2.3.26).** The Lists entry in the sidebar should be folded open.
+46. ~~**Settings: entities UI on the phone.**~~ **done (2.3.26, the owner confirmed it on 2026-10-31).** The entities UI in settings is broken on the phone.
 47. **Node editor: draft mode** (owner idea, 2026-10-30; talk through first). A model plans a new card setup as a
     draft, puts it live to test it, and then decides whether it works: the Node editor keeps the context while the
     cards are rebuilt to the model's design, and expects the model to say "keep" within ~120 s, otherwise the old
@@ -500,9 +813,9 @@ pencil edit is missing" is item 11.
     should be a preset the owner applies (ties in with "Presets").
 50. ~~**Review: the Request view goes through the card.**~~ **done (2.3.0): the Request view is gone.** The core's `aac/chat/request` reads `card.requests` inside the
     Model card (a hidden contract); it should be the card's own ui_call.
-51. **Review: cards may not import each other.** The loader makes `aac_cards` a package so card files can import one
+51. **Review: cards may not import each other** (owner, 2026-10-31: talk through first). The loader makes `aac_cards` a package so card files can import one
     another; that invites cards to depend on each other. Remove it (folders keep their own relative imports).
-52. **Review: removing a card asks about its data** (page 1, rule 3). Today its data stays stored forever, silently.
+52. ~~**Review: removing a card asks about its data**~~ **done (2.3.30).** (page 1, rule 3). Today its data stays stored forever, silently.
     Ties in with 15 (stores of long-gone cards).
 53. ~~**Review: signals besides stop.**~~ **done (2.3.0): events.** Page 1 says stop is the only signal, but Decide writes its choice and the Audio
     clipper its cuts as `signal` entries (the Level card reads the cuts). Either page 1 or the code changes.
@@ -514,7 +827,64 @@ pencil edit is missing" is item 11.
     looked at Behind the scenes). (a) A card should have only one name: the card's name is the name the model sees
     (today a function has its own tool name, e.g. the Time card's `text` renamed `get_time`). (b) Tools declared in the
     card in Python would fit better than the For models form (for a Relay: in its script).
-56. **Models page: context size per model** (owner, 2026-10-30). Show each model's context and let it be set with a
+56. ~~**Models page: context size per model**~~ **settled (2.3.31): shown, not set** (no helper on the machines; maybe a card some day). (owner, 2026-10-30). Show each model's context and let it be set with a
     slider up to what the GPU can hold; the default close to the maximum. To find out first: how a llama-server router
     loads a model with another context size (its presets set `--ctx-size`), and how to tell the GPU's maximum (VRAM,
     the model's own limit). The chat already shows the tokens used of the context (2.3.16).
+57. ~~**Bug: on a phone, tapping Settings also presses Audio**~~ **fixed (2.3.19).** (owner, 2026-10-31). Tapping the sidebar's SETTINGS
+    group opens it and the Audio entry, which then lies under the finger, gets pressed at once. To check: the group
+    re-renders the nav on the first event of the tap and the rest of the tap (or a ghost click) lands on the new
+    entry; fix so one tap does one thing, then try it on the real page on a phone.
+58. ~~**Relay rework**~~ **done (2.4.0)** (owner, 2026-10-31; `docs/v2/04-relay.md`). The script becomes plain Python
+    that runs top to bottom per arriving context (`context = input("in")`, `output("out", context)`); nothing leaves
+    unless sent, the context reads as a list of tagged texts (`attach_first`, `attach_last`, `set`, `remove` …),
+    `print` on the card, `print_log`. With it the Card editor's `help(type)` (any card's setup help, as it declares it;
+    the Relay's script reference is its `script` setting's help).
+59. **Card types: where they came from** (owner, 2026-10-31; talk through first). Card files sit in one shared
+    `<config>/aac/cards/` for all domains, while domain data now has its own folder. Every card type should carry a
+    tag saying what brought it in (shipped with AAC, downloaded, made by a model, the owner …) and when; a view that
+    manages card types shows it. Ties in with 21 (unchecked cards) and 51.
+    Owner, 2026-10-31: the Card editor will let a model look into cards, edit them and make new ones. Then (a) a card
+    keeps its own version: the Card editor raises `VERSION` on every save, not the model (today a file is loaded again
+    only when its VERSION goes up, so an edit without it never runs); (b) a version alone cannot tell "newer" from
+    "changed": with the origin tag, a shipped card someone changed is never replaced by an AAC update without asking
+    (today a shipped 2.3.0 would overwrite an edited 2.2.4), and a high number on an edit does not block AAC's fixes;
+    (c) editing card code is riskier than a setting (it runs inside HA, item 21): looking is free, a model's code
+    edit or new card waits for the owner's Allow (like Schedule's "ask").
+60. **Calendar: what v1 had beyond 39** (2026-10-31; talk through first). Since 2.3.35 the core gathers the entries
+    cards offer. Still missing against v1: Home Assistant's calendars (Google, CalDAV …) as an offer models can read and
+    write (today only the Calendar card's page shows them, calling HA itself; ties in with 20); one AAC calendar per
+    domain in HA (today one, the running domain's); moving or cancelling AAC's own Schedule entries from the calendar
+    (read only there now); the next 24 hours for runs nobody asked for.
+61. **Hardware: the Calisto blares white noise by itself** (owner, 2026-11-01; open, being caught). Twice now, left on
+    overnight, the speaker suddenly played loud white noise, in bursts ("white noise, then cuts, then again"); this
+    morning about 07:27, the owner switched it off within about 8 s. What is known:
+    - **AAC played nothing**: the satellite's log has no "AAC: …" line all night (only the later sound tests).
+    - **No command from the satellite before it**: the BT600 watchdog last sent off-hook at 05:50:38; the noise
+      started 07:27:07 (the microphone's clip start), the watchdog only started again at 07:27:15 (switched off).
+    - **Batmon (BMS monitor app) restarts every ~5.5 min, all day and night**: its Bluetooth stick (UGREEN BT6.0,
+      33fa:0012, hci0) hangs (kernel: `hci0: command 0x2042 tx timeout`, since 2026-10-30 12:40; the owner has to
+      replug it often), Batmon fails 200 times and its watchdog restarts it. Of this morning's 12 loud moments on
+      the microphone, three fell within 2 s of a Batmon container exit (05:47:00 −2.1 s, 06:14:52 +0.5 s,
+      07:27:07 −0.1 s); by chance about 1 in 80 each. The other nine did not line up.
+    - **Both dongles sit side by side** on the PC's front USB 3.0 header, on one controller of the Proxmox host
+      (bus 1, ports 5 and 6; passed to VM 100 as `usb0: host=33fa:0012`, `usb1: host=047f:0417`). On 2026-10-29
+      19:20 the UGREEN's replug made the kernel reset the BT600 twice: trouble on one reaches the other. No USB
+      errors on the Proxmox host or in HA at 07:27.
+    - **Debug on (satellite 0.3.5, option `debug`)**: logs every loud stretch (≥ −40 dBFS for 0.3 s) on the raw
+      microphone (before echo cancellation) or on the BT300C sink's monitor, with zero-crossing rate (white noise
+      ≈ 0.5, speech ≈ 0.1) and whether AAC was playing, and saves it as a stereo WAV (left mic, right monitor) in
+      `/share/aac_satellite_debug/`; PulseAudio's card/sink/source events; levels every 5 min; the BT600's HID
+      reports. The Calisto cancels its own playback in hardware (a test sentence: monitor −26 dBFS, raw mic −66):
+      a loud mic with a silent monitor means the noise did not come from this machine's software.
+    - **When it happens again** (the owner says when): the satellite's log around that time (`ha apps logs
+      local_aac_satellite`), the WAV, HA's host journal (`ha host logs`: Batmon's container exits, kernel), the
+      Proxmox host's `journalctl -k` (`claude@192.168.1.10`).
+    - **2026-11-01 09:52: the UGREEN reset in software** on the Proxmox host (`sudo usbreset 33fa:0012`, see
+      ~/cluade/proxmox/docs/host-inventory.md): HA got it back, Batmon read the battery again (65 %), the BT600 was not
+      touched. Batmon no longer restarts every 5.5 min: if the noise stops now, that points at it. Idea: the host
+      resets the UGREEN by itself when HA's kernel logs `hci0 … tx timeout`.
+    - **`debug` is off for now** (09:47): with it on, the microphone seemed to hear nothing and the link dropped
+      often; to be ruled out before it goes on again (it records the raw microphone a second time).
+    - **Ideas once caught**: move the BT600 to a rear port (another controller, away from the UGREEN); hang up the
+      BT600 on noise. Afterwards set `debug` off again.

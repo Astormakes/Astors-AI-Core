@@ -1,7 +1,7 @@
-"""The Text to speech card (docs/v2 page 2): Turns the answers of a turn into audio clips, sentence by sentence as they
-are written, in a voice per language (the language it was spoken to in). A clip remembers the satellite the spoken
-line came from; wire it into a Speaker. An answer 'nothing' stays silent; a stop arriving here goes on to the Speaker
-as a stop."""
+"""The Text to speech card (docs/v2 page 5): speaks the entries its Speaks setting names that came after the last entry
+it does not speak, each once, sentence by sentence while they are written, in a voice per language. A clip carries
+the satellite of the newest entry that has one (data mic: a heard line); wire it into a Speaker. Stop: what is still
+being made is dropped and a stop clip goes to the Speaker."""
 
 from __future__ import annotations
 
@@ -9,11 +9,9 @@ import asyncio
 import re
 from typing import Any
 
-from custom_components.aac.api import Card, Context, register, wav_to_pcm
+from custom_components.aac.api import Card, Context, matches, register, wav_to_pcm
 
-VERSION = "2.10.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
-
-SILENT = ("nothing", "nothing.", "")
+VERSION = "3.0.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
@@ -25,15 +23,21 @@ class TextToSpeech(Card):
     type = "text_to_speech"
     title = "Text to speech"
     category = "Audio"
-    help = ("Turns the answers of a turn into audio clips, sentence by sentence as they are written, in a voice per "
-            "language (the language it was spoken to in). A clip remembers the satellite the spoken line came from; wire "
-            "it into a Speaker. An answer 'nothing' stays silent; a stop arriving here goes on to the Speaker as a stop.")
+    help = ("Speaks the new answers in a context: the entries tagged as in its Speaks setting (default model.said, "
+            "model.error) at the end of the context, after the last entry of anything else; each once, sentence by "
+            "sentence while it is written. Each clip carries the satellite of the newest entry that has one (data.mic, "
+            "which a heard line has): the Speaker plays it there. No such entry (a typed turn, or a script that copied "
+            "only the text of a heard line): no satellite, the Speaker's setting decides.")
     inputs = {"in": "text"}
     outputs = {"out": "clip"}
-    ports_help = {"in": "a context: the answers of its newest turn are spoken (while they are written: each finished sentence)",
-                  "out": "each spoken sentence as a clip (data: the satellite it was heard at, the text, the language); a stop "
-                         "goes out as a stop clip"}
-    settings_schema = {"engine": {"type": "tts_engine", "title": "Voice engine", "default": "",
+    ports_help = {"in": "a context: its new answers are spoken (the Speaks entries at its end; while they are written, "
+                        "each finished sentence)",
+                  "out": "each spoken sentence as a clip (the satellite it was heard at, the text, the language); Stop "
+                         "sends a stop clip"}
+    settings_schema = {"speaks": {"type": "text", "title": "Speaks", "default": "model.said, model.error",
+                                  "help": "The entries it speaks (tags, comma separated; * stands for anything): only those at "
+                                          "the end of a context, after the last entry it does not speak, each once."},
+                       "engine": {"type": "tts_engine", "title": "Voice engine", "default": "",
                                   "help": "A Home Assistant text-to-speech engine. Empty: the default on the Audio page."},
                        "voices": {"type": "voices", "title": "Voice per language", "default": {},
                                   "help": "For each home language (Audio page). Not set: the engine's default voice."}}
@@ -47,7 +51,7 @@ class TextToSpeech(Card):
 
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
-        self._spoken: dict[str, int] = {}  # answer entry → how much of its text is spoken
+        self._spoken: dict[str, int] = {}  # entry → how much of its text is spoken
         self._last: asyncio.Future | None = None  # the newest sentence on its way (they go out in order)
         self._round = 0  # a stop starts a new round: sentences of the old one are dropped
 
@@ -55,34 +59,33 @@ class TextToSpeech(Card):
     def busy(self) -> bool:
         return self._last is not None and not self._last.done()
 
-    async def progress(self, context: Context, port: str) -> list[Any] | None:
-        self._speak(context, finished=False)
-        return []
-
-    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
-        self._speak(context, finished=True)
-        if self._last:
+    async def handle(self, context: Context, port: str) -> None:
+        self._speak(context)
+        if self._last and not context.streaming:
             await self._last
-        return []
 
-    def _speak(self, context: Context, finished: bool) -> None:
-        """Queue what is newly finished in the answers of the newest turn (all of it once the turn is finished)."""
-        entries = context.entries
-        said = max((i for i, e in enumerate(entries) if e["kind"] == "said"), default=-1)
-        heard = (entries[said]["data"] if said >= 0 else {})
-        for e in entries[said + 1:]:
-            if e["kind"] not in ("answer", "error") or e.get("state") == "cut":  # an error is said too (nothing came)
+    def _speaks(self, e: dict[str, Any]) -> bool:
+        return any(matches(e, p.strip()) for p in str(self.settings.get("speaks") or "").split(",") if p.strip())
+
+    def _speak(self, context: Context) -> None:
+        """Queue what is newly finished in the entries it speaks after the last one it does not (an entry still being
+        written: up to its last finished sentence)."""
+        entries = context.conversation
+        last = max((i for i, e in enumerate(entries) if not self._speaks(e)), default=-1)
+        heard = next((e["data"] for e in reversed(entries) if e["data"].get("mic")), {})
+        for e in entries[last + 1:]:
+            if e["state"] == "cut":
                 continue
             text, upto = e["text"], self._spoken.get(e["id"], 0)
-            if finished or e.get("state") == "closed":
-                end = len(text)
-            else:
+            if e["state"] == "streaming":
                 ends = [m.end() for m in SENTENCE.finditer(text)]
                 end = ends[-1] if ends else 0
+            else:
+                end = len(text)
             if end <= upto:
                 continue
             self._spoken[e["id"]] = end
-            if text.strip().lower() not in SILENT and (part := text[upto:end].strip()):
+            if part := text[upto:end].strip():
                 self.core.audio.mark(heard.get("mic"), "first sentence")
                 self._queue(part, heard)
         while len(self._spoken) > 50:  # only recent turns matter
@@ -99,14 +102,13 @@ class TextToSpeech(Card):
                 return
             self.core.audio.mark(heard.get("mic"), "voice ready")
             pcm, rate = wav_to_pcm(wav)
-            self.domain.flow.clip(self.id, "out", {"pcm": pcm, "rate": rate, "seconds": round(len(pcm) / 2 / rate, 1), "text": text,
+            self.clip_out("out", {"pcm": pcm, "rate": rate, "seconds": round(len(pcm) / 2 / rate, 1), "text": text,
                                                    "source": heard.get("mic"), "name": heard.get("mic_name"), "language": heard.get("language")})
         self._last = asyncio.ensure_future(in_order())
 
-    async def stop(self, stop: dict[str, Any] | None = None) -> bool:
+    async def stop(self) -> None:
         self._round += 1  # sentences still being made are dropped
-        self.domain.flow.clip(self.id, "out", {"stop": True})  # the Speaker stops what it plays
-        return False
+        self.clip_out("out", {"stop": True})  # the Speaker stops what it plays
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         if function == "voices":

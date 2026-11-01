@@ -43,7 +43,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, LOGGER
+from .const import DOMAIN
 from .languages import NAMES, code_of, describe, from_ha
 from .models import ModelError, ModelUnreachable, run
 
@@ -410,7 +410,7 @@ class AudioHub:
         try:
             result = await entity.internal_async_process_audio_stream(meta, chunks())
         except Exception as err:  # noqa: BLE001 - one bad piece must not stop the hub
-            LOGGER.warning("AAC audio: %s failed: %s", entity_id, err)
+            self.core.log("audio", "warning", f"Speech to text with {entity_id} failed: {err}")
             return None
         if result.result != stt.SpeechResultState.SUCCESS:
             return None
@@ -423,7 +423,7 @@ class AudioHub:
         the language ({code: {language: locale, voice}}), else the engine's default."""
         engine = engine or self.settings.get("tts")
         if not engine:
-            LOGGER.warning("AAC audio: no voice engine set (Audio in the sidebar)")
+            self.core.log("audio", "warning", "No voice engine set (Settings → Audio)")
             return None
         options = {tts.ATTR_PREFERRED_FORMAT: "wav", tts.ATTR_PREFERRED_SAMPLE_RATE: 22050,
                    tts.ATTR_PREFERRED_SAMPLE_CHANNELS: 1, tts.ATTR_PREFERRED_SAMPLE_BYTES: 2}
@@ -435,7 +435,7 @@ class AudioHub:
                 stream.async_set_message(text)
                 return b"".join([chunk async for chunk in stream.async_stream_result()])
             except Exception as err:  # noqa: BLE001
-                LOGGER.warning("AAC audio: text to speech failed: %s", err)
+                self.core.log("audio", "warning", f"Text to speech with {engine} failed: {err}")
         return None
 
     def voices(self, engine: str | None = None) -> dict[str, dict[str, Any]]:
@@ -607,7 +607,7 @@ class AudioView(HomeAssistantView):
 
         name = str(hello.get("name") or "Microphone")[:60]
         source = hub.connect(_slug(str(hello.get("id") or name)), name, hello.get("area"), send, reference=int(hello.get("channels", 1)) == 2)
-        LOGGER.info("AAC audio: %s connected", name)
+        hub.core.log("audio", "info", f"Satellite {name} connected")
         await send({"type": "welcome", "source_id": source.id})
         try:
             async for msg in ws:
@@ -622,7 +622,7 @@ class AudioView(HomeAssistantView):
                         hub.played(source)
         finally:
             hub.disconnect(source)
-            LOGGER.info("AAC audio: %s disconnected", name)
+            hub.core.log("audio", "info", f"Satellite {name} disconnected")
         return ws
 
 

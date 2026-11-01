@@ -1,5 +1,5 @@
 // The Chat card's page (spec/cards.md "A card's page"): one chat (or a new one), the composer, Stop, and two views of
-// the newest turn (docs/v2 page 3): Context (in sections, each part with its card) and Plain text (the request as the
+// what it holds (docs/v2 page 5): Context (every entry in order, with its tag) and Plain text (the newest request as the
 // model read it). The panel hands over .panel (its helpers), .card and .entry (the chat id).
 
 const STYLE = `<style>
@@ -70,15 +70,13 @@ class AacChatPage extends HTMLElement {
   _plain() { // the request as the model read it: the template's markers dimmed, each tool on its own line
     const { esc } = this.panel, r = this.read || {};
     if (!r.text) return '<p class="hint">Nothing kept yet: the next turn in this chat shows here.</p>';
-    if (r.raw) { // no model read this turn: AAC's context itself, one entry per line (keys and brackets dim, answers blue)
+    if (r.raw) { // no model read it: AAC's context itself, one entry per line (keys and brackets dim)
       const tok = (s) => `<span class="tok">${esc(s)}</span>`;
-      const val = (v, blue) => (Array.isArray(v) ? `${tok("[")}${v.map((x) => val(x)).join(tok(","))}${tok("]")}`
-        : v && typeof v === "object" ? `${tok("{")}${Object.entries(v).map(([k, x]) => `${tok(`"${k}":`)}${val(x, k === "text" && v.kind === "answer")}`).join(tok(","))}${tok("}")}`
-        : blue ? `<span class="ans">${esc(JSON.stringify(v))}</span>` : esc(JSON.stringify(v)));
-      const box = (name, list) => `${tok(`${name}: [`)}${list.length ? `\n${list.map((x) => `  ${val(x)}`).join(`${tok(",")}\n`)}\n` : ""}${tok("]")}`;
-      const c = r.context || {};
-      return `<p class="hint plainhead">No model read this turn: AAC's context itself, as it holds it (dim: keys and brackets; blue: answers).</p>
-        <pre class="plain">${["system", "messages", "tools", "events"].map((n) => box(n, c[n] || [])).join("\n")}</pre>`;
+      const val = (v) => (Array.isArray(v) ? `${tok("[")}${v.map((x) => val(x)).join(tok(","))}${tok("]")}`
+        : v && typeof v === "object" ? `${tok("{")}${Object.entries(v).map(([k, x]) => `${tok(`"${k}":`)}${val(x)}`).join(tok(","))}${tok("}")}`
+        : esc(JSON.stringify(v)));
+      return `<p class="hint plainhead">No model read it: AAC's context itself, as the chat holds it (dim: keys and brackets).</p>
+        <pre class="plain">${(r.entries || []).map((e) => val(e)).join(`${tok(",")}\n`)}</pre>`;
     }
     const TOKEN = /(<\|[^<>\s|]{0,30}\|?>|<[^<>\s|]{1,30}\|>)/g;
     const text = r.text.replace(/(?<!\n)(<\|tool[^<>\s|]*\|?>)/g, "\n$1");
@@ -97,10 +95,13 @@ class AacChatPage extends HTMLElement {
   }
 
   event(ev) { // what the core tells about this card
-    if (ev.what === "delta" && (this.busy || (this.entry && ev.chat_id === this.entry))) { // typed here, or spoken into this chat
+    const mine = this.entry && (ev.tags || []).includes(`${this.card.id}.id.${this.entry}`); // the context holds this chat's id entry
+    if (ev.what === "delta" && (mine || (this.busy && !this.entry))) { // spoken or typed into this chat, or typed into a new one
       this.live = ev.text; this.think = ev.thinking || "";
       const box = this.querySelector("#live");
       if (box) box.innerHTML = this._liveHtml(); else if (!this.busy) this.render();
+    } else if (ev.what === "chat" && this.entry === ev.was && ev.chat_id) { // the turn being answered is a chat now: go there
+      this.panel.go(ev.chat_id);
     } else if (ev.what === "chat" && this.entry && !this.busy && (!ev.chat_id || ev.chat_id === this.entry)) {
       clearTimeout(this._t); this._t = setTimeout(async () => { await this._get(); this.live = ""; this.think = ""; this.render(); }, 150);
     }
@@ -139,8 +140,8 @@ class AacChatPage extends HTMLElement {
         || `<div class="hint" style="margin:auto">${esc(card.title)}: ask anything.</div>`;
     const live = (this.busy || this.live || this.think) && !this.mode ? `<div class="bubble aac" id="live">${this._liveHtml()}</div>` : "";
     const mode = (m, label, title) => `<button class="small" data-mode="${m}" title="${title}" ${this.mode === m ? "disabled" : ""}>${label}</button>`;
-    const modes = this.chat ? `${mode("", "Chat", "The conversation")}${mode("context", "Context", "The newest turn's context, in sections: the system parts with the card each came from, every message with what was attached, the tools it called and what came back, the tools it had")}${mode("text", "Plain text", "The newest request exactly as the model read it")}<button class="small danger" id="delchat">Delete</button>` : "";
-    this.innerHTML = `${STYLE}<div class="chat">${header(this.chat?.title || `New chat · ${card.title}`, `${this._tokens(this.chat?.usage)}${modes}<button class="small" id="chatstop" title="Stop: sends this chat's context with a stop; a model still writing cuts its answer">Stop</button>`)}
+    const modes = this.chat ? `${mode("", "Chat", "The conversation")}${mode("context", "Context", "What the chat holds: every entry in order, with its tag (the card that wrote it in front), its state and its data")}${mode("text", "Plain text", "The newest request exactly as the model read it")}<button class="small danger" id="delchat">Delete</button>` : "";
+    this.innerHTML = `${STYLE}<div class="chat">${header(this.chat?.title || `New chat · ${card.title}`, `${this._tokens(this.chat?.usage)}${modes}<button class="small" id="chatstop" title="Stop: every card stops; a model still writing cuts its answer">Stop</button>`)}
       <div class="log">${body}${live}</div>
       ${(this.panel.failing?.() || []).length ? `<div class="warnline">Not answering: ${esc(this.panel.failing().join(", "))} (Settings → Models)</div>` : ""}
       ${this.chat?.archived ? `<div class="composer"><span class="hint" style="flex:1">This chat is archived.</span><button id="restore">Restore</button></div>` : `<div class="composer"><textarea id="input" placeholder="Message AAC…" ${this.busy ? "disabled" : ""}>${esc(this.draft)}</textarea><button class="primary" id="send" ${this.busy ? "disabled" : ""}>Send</button></div>`}</div>`;
@@ -207,7 +208,7 @@ class AacChatPage extends HTMLElement {
       await this.panel.ui("delete", { chat_id: this.entry });
       this.panel.go(null);
     } else if (t.id === "chatstop") {
-      if (this.entry) await this.panel.ui("stop", { chat_id: this.entry }); else await this.panel.ws("aac/stop");
+      await this.panel.ws("aac/stop");
     }
   }
 }

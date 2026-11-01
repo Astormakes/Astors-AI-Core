@@ -21,7 +21,6 @@ from ..const import LOGGER
 
 if TYPE_CHECKING:
     from ..core import Domain
-    from ..flow import Step
     from ..context import Context
 
 CARD_TYPES: dict[str, type[Card]] = {}
@@ -30,7 +29,48 @@ UI_URL = "/aac_cards"  # a card file's UI (<stem>.js next to it) is served here
 FUNCTIONS = {"type": "functions", "title": "For models", "default": {}, "fold": "For models", "permission": True,
              "help": "A Model wired to this card and back has these functions as tools: each ticked one, under the name "
                      "and with the description written here (Reset: the card's own). The card's id never reaches the model."}
+LOG = {"log": {"type": "select", "title": "What it writes in the log", "default": "text", "fold": "Log",
+               "options": [["text", "what changed (the newest text)"], ["context", "the whole context too (kept 10 minutes)"],
+                           ["nothing", "nothing"]],
+               "help": "What passes the card's wires goes into AAC's log (Settings → Logs; a wire's monitor shows it). A whole "
+                       "context takes much room: it stays with its entry 10 minutes and is never written to disk. What goes "
+                       "wrong is always written."},
+       "log_at": {"type": "select", "title": "When", "default": "out", "fold": "Log",
+                  "options": [["out", "what goes out"], ["in", "what comes in"], ["both", "both"]]}}
+NEEDS = {"read_log": {"type": "bool", "title": "May read AAC's log", "default": False, "permission": True,
+                      "help": "The log of this domain: what passed the cards' wires, what went wrong, what was changed."}}
 CATEGORIES = ["In and out", "Text", "Logic", "Models", "Data", "Home Assistant", "Audio", "Other"]
+
+
+def renamed_refs(value: Any, old: str, new: str) -> Any:
+    """A card's id changed (its name did): in texts that refer to it, as a script does: `old.said` (a tag, a value, a
+    call) and `cards['old']`. A word alone is left (`e.data.get("mic")` is not the card mic)."""
+    if isinstance(value, str):
+        return re.sub(rf"(?<![\w.]){re.escape(old)}(?=\.\w)|(?<=cards\[[\"']){re.escape(old)}(?=[\"']\])", new, value)
+    if isinstance(value, dict):
+        return {k: renamed_refs(v, old, new) for k, v in value.items()}
+    if isinstance(value, list):
+        return [renamed_refs(v, old, new) for v in value]
+    return value
+
+
+def renamed_entries(value: Any, old: str, new: str) -> Any:
+    """A card's id changed: in stored entries (their tag, the card a call went to); nothing else (a data field may be
+    called like a card: the Lists card keeps "lists")."""
+    if isinstance(value, list):
+        return [renamed_entries(v, old, new) for v in value]
+    if not isinstance(value, dict):
+        return value
+    out = {}
+    for k, v in value.items():
+        if k == "card" and v == old:
+            v = new
+        elif k == "tag" and isinstance(v, str) and v.startswith(f"{old}."):
+            v = f"{new}.{v[len(old) + 1:]}"
+        else:
+            v = renamed_entries(v, old, new)
+        out[k] = v
+    return out
 
 
 def register(cls: type[Card]) -> type[Card]:
@@ -51,6 +91,7 @@ def register(cls: type[Card]) -> type[Card]:
                                for k, f in cls.settings_schema.items()}
     if (cls.functions or cls.dynamic_functions) and "functions" not in cls.settings_schema:  # every card with functions
         cls.settings_schema = {**cls.settings_schema, "functions": FUNCTIONS}
+    cls.settings_schema = {**cls.settings_schema, **{f"may_{n}": NEEDS[n] for n in sorted(cls.needs)}, **LOG}  # every card
     CARD_TYPES[cls.type] = cls
     return cls
 
@@ -64,20 +105,22 @@ class Card:
     help: ClassVar[str] = ""  # one or two sentences for the ? helper
     inputs: ClassVar[dict[str, str]] = {"in": "text"}  # port → wire kind: text, audio, pool
     outputs: ClassVar[dict[str, str]] = {"out": "text"}
-    square: ClassVar[set[str]] = set()  # outputs where the card picks one wire (the others copy to every wire)
     settings_schema: ClassVar[dict[str, dict[str, Any]]] = {}
     tags: ClassVar[dict[str, str]] = {}  # tag (without the card) → what it marks
     functions: ClassVar[dict[str, dict[str, Any]]] = {}  # name → {"help", "args": {name: {"type", "help", "required"}}}
     ports_help: ClassVar[dict[str, str]] = {}  # port → one sentence: what goes in or comes out there
     values: ClassVar[dict[str, str]] = {}  # name → what it is: read in templates as {{ <card>.<name> }}
     offers: ClassVar[bool] = True  # its functions are ticked for models until the owner says otherwise
-    dynamic_functions: ClassVar[bool] = False  # its functions come from its settings (a Relay's @new blocks)
-    uses_tools: ClassVar[bool] = False  # it calls the functions of the cards in its loop (a Model): the panel lists them
+    dynamic_functions: ClassVar[bool] = False  # its functions come from its settings (a Relay's defs)
+    uses_tools: ClassVar[bool] = False  # it calls the functions of other cards (a Model, a Relay): the panel lists them
+    calls_from: ClassVar[tuple[str, ...]] = ()  # the outputs its calls leave by (empty: all); its tools are the cards
+    # with functions it reaches from there (Flow.tools)
     ui: ClassVar[bool] = False  # a page of its own: the element aac-card-<type> from the .js next to its file
     ui_url: ClassVar[str | None] = None  # where the panel loads it (set when the file is loaded)
     view: ClassVar[dict[str, Any] | None] = None  # a view inside the card in the grid ({"height": px}): view.js in its folder
     view_url: ClassVar[str | None] = None
     keeps_data: ClassVar[bool] = False
+    needs: ClassVar[set[str]] = set()  # what it asks the owner for (NEEDS): a permission setting may_<need>, off until allowed
     version: ClassVar[str] = "0"  # its file's VERSION
 
     def __init__(self, domain: Domain, card_id: str, title: str, settings: dict[str, Any] | None) -> None:
@@ -87,6 +130,24 @@ class Card:
         self.name = title or type(self).title
         self.settings = {k: f.get("default") for k, f in self.settings_schema.items()} | dict(settings or {})
         self.data: dict[str, Any] = {}
+
+    @property
+    def folder(self) -> Path:
+        """Where it keeps files (<config>/aac/data/<domain>/<card>): they move with a rename and go with the domain."""
+        return self.core.folder(self.domain.id, self.id)
+
+    def log(self, text: str, level: str = "info", what: str = "", context: Context | None = None, **extra: Any) -> dict[str, Any]:
+        """A line in AAC's log from this card (level: error, warning, info); a context goes with it only when its Log
+        setting says the whole context."""
+        whole = context.summary() if context is not None and self.settings.get("log") == "context" else None
+        return self.domain.log.write(level, text, card=self.id, what=what, context=whole, **extra)
+
+    def read_log(self, **filters: Any) -> list[dict[str, Any]]:
+        """AAC's log of its domain (DomainLog.read's filters), when the owner allowed it ("read_log" in its needs); what
+        it wrote itself (card=its id) it may always read."""
+        if not self.settings.get("may_read_log") and filters.get("card") != self.id:
+            raise PermissionError(f"{self.name} may not read AAC's log (allow it on the Permissions page)")
+        return self.domain.log.read(**filters)
 
     def current(self) -> dict[str, Any]:
         """Its values now (see `values`)."""
@@ -111,25 +172,77 @@ class Card:
         if self.keeps_data:
             await self.domain.save_card_data(self.id, self.data)
 
+    @classmethod
+    def renamed_settings(cls, settings: dict[str, Any], old: str, new: str) -> dict[str, Any]:
+        """A card's id changed (it was renamed): this card's settings refer to it by the new one (a script's
+        references; a card with ids in a setting of its own adds them)."""
+        return renamed_refs(settings, old, new)
+
+    async def renamed(self, old: str, new: str) -> None:
+        """A card's id changed: its data refers to it by the new one (stored entries: authors, tags, calls)."""
+        if self.keeps_data and (data := renamed_entries(self.data, old, new)) != self.data:
+            self.data = data
+            await self.save()
+
     # ------------------------------------------------------------------ ports and work
-    def ports(self) -> tuple[dict[str, str], dict[str, str], set[str]]:
-        """Inputs, outputs, square outputs (a card may make them from its settings)."""
-        return dict(self.inputs), dict(self.outputs), set(self.square)
+    def ports(self) -> tuple[dict[str, str], dict[str, str]]:
+        """Inputs and outputs (a card may make them from its settings)."""
+        return dict(self.inputs), dict(self.outputs)
 
     def tag(self, name: str) -> str:
         """One of its tags with the card in front."""
         return f"{self.id}.{name}"
 
-    async def handle(self, context: Context, port: str, step: Step) -> list[Any] | None:
-        """A context arrived. Return None: on to every round output; []: it ends here; [port] or [(port, card)]:
-        the outputs (or the one wire) it takes."""
-        return None
+    async def handle(self, context: Context, port: str) -> None:
+        """A context arrived at an input. The card acts when it holds something for it, and sends only when it did
+        something (`send`); otherwise it ends here (the default)."""
 
-    async def progress(self, context: Context, port: str) -> list[Any] | None:
-        """A snapshot of a turn still being worked on (a model wrote a sentence, called a tool): the same turn comes
-        again, and finished, to handle(). By default it passes on unchanged to the round outputs; a card that shows or
-        speaks things as they come (Chat, Text to speech) answers it. Returns like handle()."""
-        return None
+    async def send(self, context: Context, port: str = "out") -> None:
+        """Send a context from one of its outputs: every card wired there gets a copy."""
+        await self.domain.flow.send(self, context, port)
+
+    def read(self, port: str) -> list[Context]:
+        """What the dotted wires into one of its inputs hold now."""
+        return self.domain.flow.read(self.id, port)
+
+    def stream_out(self, port: str, chunk: bytes, meta: dict[str, Any]) -> None:
+        """Live audio out at one of its outputs (every card wired there that takes a stream gets it at once)."""
+        self.domain.flow.stream(self.id, port, chunk, meta)
+
+    def clip_out(self, port: str, clip: dict[str, Any]) -> None:
+        """An audio clip out at one of its outputs ({pcm, rate, seconds, text, source, name, language}; {stop: True})."""
+        self.domain.flow.clip(self.id, port, clip)
+
+    def wired(self, port: str) -> bool:
+        """Something is wired to one of its outputs."""
+        return bool(self.domain.flow.wired_from(self.id, port))
+
+    def wired_into(self, port: str) -> list[tuple[Card, str]]:
+        """The cards (and their outputs) wired into one of its inputs."""
+        return self.domain.flow.wired_into(self.id, port)
+
+    def reaches(self, card_id: str, ports: list[str] | None = None) -> bool:
+        """A context sent from its outputs (or these) can get to that card, straight or through others."""
+        ports = ports or [p for p, kind in self.ports()[1].items() if kind == "text"]
+        return card_id in self.domain.flow.reach(self.id, ports)
+
+    def all_cards(self) -> list[Card]:
+        """The cards of its domain (another card is used only by what it offers: functions, values, held())."""
+        return list(self.domain.cards.values())
+
+    def tools(self) -> list[Card]:
+        """The cards whose functions it can call: reached from the outputs its calls leave by, and back."""
+        return self.domain.flow.tools(self.id)
+
+    async def stop_all(self) -> None:
+        """Stop every card of the domain (the core function the Stop buttons use)."""
+        await self.domain.stop()
+
+    def live(self, context: Context, text: str, thinking: str = "") -> None:
+        """Text still growing faster than snapshots go (a model writing): open panels show it, with the context's
+        tags (a chat finds its turn by them)."""
+        self.core.notify("delta", domain=self.domain.id, tags=sorted({e["tag"] for e in context.entries}),
+                         text=text, thinking=thinking)
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         """One of its functions (a model's tool call, a Relay's script)."""
@@ -147,15 +260,18 @@ class Card:
                            "help": (mine.get("help") or "").strip() or spec.get("help", ""), "args": spec.get("args") or {}}
         return out
 
-    async def stop(self, stop: dict[str, Any] | None = None) -> bool:
-        """A stop arrived (`stop`: its entry; None: the Send stop button). A busy card closes its open block as cut
-        off, appends the stop and sends its own context on; it says True. Not busy: False (the stop goes on)."""
-        return False
+    async def stop(self) -> None:
+        """Stop (a core function: every card of the domain gets it at once). A busy card marks what it was writing
+        cut and, having done something, sends its context on; an idle card does nothing."""
 
     @classmethod
     def upgrade(cls, settings: dict[str, Any], made_with: str) -> dict[str, Any]:
         """A card was saved by another version of its file (`made_with`): its settings as this version wants them."""
         return settings
+
+    async def upgrade_data(self, settings: dict[str, Any], made_with: str) -> None:
+        """Made from a setup saved by another version of its file, after upgrade() and load(): its data as this version
+        wants it (settings: as they were saved, e.g. entries that moved from its settings into its data)."""
 
     async def start(self) -> None:
         """The card is in a running domain: start its timers and listeners."""
@@ -171,15 +287,15 @@ class Card:
     # ------------------------------------------------------------------ for the panel
     @classmethod
     def describe(cls) -> dict[str, Any]:
-        """The type: for the node view's palette and the ? helper."""
+        """The type: for the Cards page's palette and the ? helper."""
         return {"type": cls.type, "title": cls.title, "category": cls.category, "help": cls.help,
-                "inputs": cls.inputs, "outputs": cls.outputs, "square": sorted(cls.square),
+                "inputs": cls.inputs, "outputs": cls.outputs,
                 "settings": cls.settings_schema, "tags": cls.tags, "functions": cls.functions, "values": cls.values, "ports_help": cls.ports_help, "ui": cls.ui_url,
                 "version": cls.version, "offers": cls.offers}
 
     def nav(self) -> dict[str, Any] | None:
-        """Its entries in the sidebar (a card with a page): {"entries": [{id, title, children?}], "add": "New …"};
-        None: the card is one item there."""
+        """Its entries in the sidebar (a card with a page): {"entries": [{id, title, children?}], "add": "New …",
+        "fold": "arrow" (its group stays open or closed by the arrow; default: opens while in use)}; None: one item there."""
         return None
 
     async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
@@ -188,11 +304,11 @@ class Card:
 
     @property
     def watched(self) -> bool:
-        """An open Nodes page shows its view now (compute frames only then)."""
+        """An open Cards page shows its view now (compute frames only then)."""
         return self.core.watched(self.id)
 
     def show(self, data: Any) -> None:
-        """A frame for its view (only sent while a Nodes page shows it; keep it small, a few times a second)."""
+        """A frame for its view (only sent while a Cards page shows it; keep it small, a few times a second)."""
         if self.watched:
             self.core.notify("view", domain=self.domain.id, card=self.id, data=data)
 
@@ -200,11 +316,12 @@ class Card:
         return {"url": self.view_url, "element": f"aac-view-{self.type.replace('_', '-')}", **self.view} if self.view_url else None
 
     def summary(self) -> dict[str, Any]:
-        """This card: for the node view."""
-        ins, outs, square = self.ports()
+        """This card: for the Cards page."""
+        ins, outs = self.ports()
         return {"id": self.id, "type": self.type, "title": self.name, "settings": self.settings, "functions": self.functions,
-                "inputs": ins, "outputs": outs, "square": sorted(square), "ui": self.ui_url, "view": self._view(),
-                **({"tools": [c.id for c in self.domain.flow.tools(self.id)]} if self.uses_tools else {}),
+                "inputs": ins, "outputs": outs, "ui": self.ui_url, "view": self._view(),
+                "has_data": self.keeps_data and self.data != self.default_data(),
+                **({"tools": [c.id for c in self.tools()]} if self.uses_tools else {}),
                 "tags": {self.tag(t): what for t, what in self.tags.items()}}
 
 

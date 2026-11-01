@@ -17,7 +17,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.util import dt as dt_util
 
-from .const import LOGGER, SIGNAL
+from .const import SIGNAL
 
 DOWN_FOR = 60  # seconds a model that did not answer is skipped
 
@@ -93,6 +93,8 @@ class Client:
                     raise ModelError(f"HTTP {resp.status}: {(await resp.text())[:300]}")
                 if "event-stream" not in resp.headers.get("Content-Type", ""):  # the server ignored "stream"
                     data = await resp.json()
+                    if not data.get("choices"):  # an error in a 200 answer (some servers do that)
+                        raise ModelError(f"no answer: {str(data.get('error') or data)[:300]}")
                     choice = data["choices"][0]
                     msg = choice["message"]
                     if on_delta and msg.get("content"):
@@ -164,9 +166,10 @@ class Client:
         except (aiohttp.ClientError, TimeoutError) as err:
             raise ModelUnreachable(str(err) or type(err).__name__) from err
 
-    async def router(self) -> list[dict[str, Any]] | None:
+    async def router(self, known: dict[str, int] | None = None) -> list[dict[str, Any]] | None:
         """What a llama-server router offers, each with its state and, once loaded, what it is and how fast it ran.
-        None: the server is no router (one fixed model)."""
+        None: the server is no router (one fixed model). `known`: the last progress per download / load (kept by the
+        caller), used when the live events said nothing this time (else it showed 0 % now and then)."""
         try:
             found = (await self._request("GET", "/models")).get("data") or []
         except ModelError as err:
@@ -188,10 +191,18 @@ class Client:
                      "can_remove": bool(m.get("can_remove")), "source": m.get("source"),
                      "context_max": m.get("context_length"), "inputs": (m.get("architecture") or {}).get("input_modalities") or [],
                      "context": int(args[args.index("--ctx-size") + 1]) if "--ctx-size" in args else None}
+            key = f"{self.root} {m['id']}"
             if files := status.get("progress"):
                 entry["progress"] = _percent(files)
             elif m["id"] in progress:
                 entry["progress"] = progress[m["id"]]
+            elif known is not None and m["id"] in busy and key in known:
+                entry["progress"] = known[key]
+            if known is not None:
+                if entry["status"] in ("downloading", "loading") and "progress" in entry:
+                    known[key] = entry["progress"]
+                else:
+                    known.pop(key, None)
             if m["id"] in loaded:
                 info = meta.get(m["id"], {})
                 entry.update(params=info.get("n_params"), size=info.get("size"), quant=info.get("ftype"), context=info.get("n_ctx") or entry["context"])
@@ -301,13 +312,20 @@ class ModelPool:
     that does not answer is skipped a minute."""
 
     def __init__(self, hass: HomeAssistant, models: list[dict[str, Any]], benches: dict[str, Any] | None = None,
-                 servers: list[dict[str, Any]] | None = None) -> None:
-        """Initialize with the stored lists: models, the last benchmarks, the servers the models are on."""
+                 servers: list[dict[str, Any]] | None = None, facts: dict[str, Any] | None = None,
+                 save: Callable[[], None] = lambda: None, log: Callable[[str, str], None] = lambda level, text: None) -> None:
+        """Initialize with the stored lists: models, the last benchmarks, the servers the models are on, what each
+        server's models are (kept from when they were loaded); `save` keeps them, `log(level, text)` writes in AAC's log."""
         self.hass = hass
         self.models = models
         self.benches = benches if benches is not None else {}
         self.server_list = servers if servers is not None else []
+        self.facts = facts if facts is not None else {}
+        self._save = save
+        self.log = log
         self._down: dict[str, float] = {}
+        self.progress: dict[str, int] = {}  # "<server> <model>" → its last download / load progress (router())
+        self.heard: dict[str, dict[str, Any]] = {}  # server id → when it last answered / failed (since AAC started)
         self.failing: set[str] = set()  # models that did not answer last time (until they answer again): the panel warns
         self._busy: dict[str, int] = {}  # requests running per model
         self._queues: dict[str, list[asyncio.Future]] = {}  # contexts waiting per model (one queue, every card and domain)
@@ -315,6 +333,10 @@ class ModelPool:
     def get(self, model_id: str) -> dict[str, Any] | None:
         """A model by id."""
         return next((m for m in self.models if m["id"] == model_id), None)
+
+    def name(self, model_id: str) -> str:
+        """A model's name in AAC (its id when it is gone)."""
+        return (self.get(model_id) or {}).get("name") or model_id
 
     def tags(self, model_id: str) -> list[str]:
         """What a model can do (its tags, else a guess from its name)."""
@@ -391,16 +413,25 @@ class ModelPool:
         """Not marked down."""
         return time.monotonic() >= self._down.get(model_id, 0)
 
-    def mark_down(self, model_id: str) -> None:
+    def mark_down(self, model_id: str, error: str = "") -> None:
         """Skip it for a while."""
+        self.heard_from(model_id, error or "no answer")
         self._down[model_id] = time.monotonic() + DOWN_FOR
-        LOGGER.warning("AAC: model %s does not answer, skipped for %s s", model_id, DOWN_FOR)
+        self.log("warning", f"Model {self.name(model_id)} does not answer ({error or 'no answer'}): skipped for {DOWN_FOR} s")
         if model_id not in self.failing:
             self.failing.add(model_id)
             async_dispatcher_send(self.hass, SIGNAL, {"what": "models"})
 
+    def heard_from(self, model_id: str, error: str | None = None) -> None:
+        """A request to a model ended: its server answered (error None) or not (mark_up / mark_down say it too); the
+        Models page shows when."""
+        if server := (self.get(model_id) or {}).get("server"):
+            now = dt_util.utcnow().isoformat()
+            self.heard[server] = {**self.heard.get(server, {}), **({"failed": now, "error": error} if error else {"answered": now})}
+
     def mark_up(self, model_id: str) -> None:
         """It answered."""
+        self.heard_from(model_id)
         self._down.pop(model_id, None)
         if model_id in self.failing:
             self.failing.discard(model_id)
@@ -431,6 +462,12 @@ class ModelPool:
         self.benches[f"{client.root} {name}"] = result
         return result
 
+    def forget(self, client: Client, name: str) -> None:
+        """A server's model is gone (deleted): what AAC kept about it goes too."""
+        key = f"{client.root} {name}"
+        if [self.benches.pop(key, None), self.facts.pop(key, None)] != [None, None]:
+            self._save()
+
     def find(self, name: str) -> dict[str, Any] | None:
         """A pool model by id or name (as a model or a Relay's script writes it)."""
         name = (name or "").strip().lower()
@@ -442,11 +479,11 @@ class ModelPool:
         async def one(server: dict[str, Any]) -> dict[str, Any]:
             record = server["record"]
             out = {"id": record["id"], "name": record["name"], "base_url": record["base_url"], "has_key": bool(record.get("api_key")),
-                   "address": server["address"],
+                   "address": server["address"], "heard": self.heard.get(record["id"], {}),
                    "uses": [{"id": m["id"], "name": m["name"], "model": m["model"], "follow": bool(m.get("follow")),
                              "tags": self.tags(m["id"]), "parallel": m.get("parallel") or 1} for m in server["uses"]]}
             try:
-                out["models"] = await server["client"].router()
+                out["models"] = await server["client"].router(self.progress)
                 out["router"] = out["models"] is not None
                 if not out["router"]:  # one fixed model (or a few): what its /v1/models says, if it says anything
                     try:
@@ -456,8 +493,15 @@ class ModelPool:
             except ModelError as err:
                 out.update(router=False, models=None, error=str(err))
             for m in out["models"] or []:
-                if bench := self.benches.get(f"{server['address']} {m['id']}"):
+                key = f"{server['address']} {m['id']}"
+                if bench := self.benches.get(key):
                     m["bench"] = bench
+                if m.get("params"):  # llama.cpp says what a model is while it is loaded: kept for when it is not
+                    if self.facts.get(key) != (found := {k: m[k] for k in ("params", "size", "quant") if m.get(k)}):
+                        self.facts[key] = found
+                        self._save()
+                else:
+                    m.update(self.facts.get(key, {}))
             loaded = next((m["id"] for m in out["models"] or [] if m["status"] in ("loaded", "loading", "sleeping")), None)
             for model, use in zip(server["uses"], out["uses"]):
                 if model.get("follow") and loaded:  # a model that follows the server uses what it has loaded
@@ -477,10 +521,11 @@ async def run(pool: ModelPool, entries: list[dict[str, Any]], job: Callable[[dic
                 return None, any(pool.usable(e["model"]) for e in left)
             try:
                 result = await job(pool.get(model_id))
-            except ModelUnreachable:
-                pool.mark_down(model_id)
+            except ModelUnreachable as err:
+                pool.mark_down(model_id, str(err))
             except ModelError as err:
-                LOGGER.info("AAC: model %s failed: %s", model_id, err)
+                pool.log("warning", f"Model {pool.name(model_id)} failed: {err}")
+                pool.heard_from(model_id, str(err))
             else:
                 pool.mark_up(model_id)
                 return result, False

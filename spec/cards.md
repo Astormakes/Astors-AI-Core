@@ -1,4 +1,4 @@
-# Cards (v2)
+# Cards (3.0)
 
 Every behaviour of AAC is a card. A card type is a Python file in `<config>/aac/cards/`, and every card is loaded
 from there when AAC starts (and when the integration is reloaded). While AAC runs it looks at the folder every few
@@ -11,6 +11,10 @@ unless a newer version of the same file is already there (a download, or one mad
 the public interface below, and the core never asks for a card's type (docs/v2 rule 10).
 
 ## A card file
+
+The rules every card follows are in `custom_components/aac/rules.py` (`RULES`; the Card editor's `rules`, the panel's
+How AAC works page; docs/v2 page 5). In short: a context is a list of entries; a card acts when the context holds
+something for it and sends only when it did something.
 
 ```python
 from custom_components.aac.api import Card, Context, register
@@ -25,22 +29,22 @@ class Shout(Card):
     type = "shout"                      # unique; the same as an AAC card's replaces it
     title = "Shout"
     category = "Text"                   # palette group: In and out, Text, Logic, Models, Data, Home Assistant, Audio, Other
-    help = "Makes the newest line upper case."
+    help = "Makes the newest said line upper case."
     inputs = {"in": "text"}             # port → kind: text (a context), read (dotted: read, never starts), audio (a live stream), clip (a finished bit of audio); "audio|clip": either; "any": every kind
-    outputs = {"out": "text"}           # same kinds; a read output (a triangle) is what held(port) provides, wired only into read inputs
-    square = set()                      # outputs where the card picks one wire (else every wire gets a copy)
+    outputs = {"out": "text"}           # same kinds; a read output (a triangle) is what held(port) provides, wired only into read inputs; every wire of an output gets a copy
     ports_help = {"in": "a context arrives", "out": "the same context, louder"}
     settings_schema = {"loud": {"type": "bool", "title": "Really loud", "default": True}}
     tags = {"shouted": "lines it changed"}          # written as shout.shouted
     functions = {"shout": {"help": "Upper-case a text.", "args": {"text": {"type": "string", "required": True}}}}
     values = {"count": "how many lines it shouted"}  # shout.count in a Relay's script
 
-    async def handle(self, context: Context, port: str, step) -> list | None:
-        """A context arrived. None: on to every round output; []: it ends here; ["out"] or [("out", card_id)]: there."""
-        said = context.last("said")
-        if said:
-            said["text"] = said["text"].upper()
-        return None
+    async def handle(self, context: Context, port: str) -> None:
+        """A context arrived: act when it holds something for this card, send only when it did something."""
+        said = context.get("*.said")
+        if said is None or context.streaming:
+            return  # nothing for it: the context ends here
+        said["text"] = said["text"].upper()
+        await self.send(context, "out")
 
     async def call(self, function: str, args: dict, context: Context | None = None):
         """One of its functions (a model's tool call, a Relay's script)."""
@@ -49,31 +53,67 @@ class Shout(Card):
         return await super().call(function, args, context)
 ```
 
-While a card works on a turn it may send snapshots of it: `await step.progress(picks)` (taken when called). A snapshot
-(`context.progress`) passes each card's `async progress(context, port)`, which by default sends it straight on (like
-`handle` returning None); cards that show or speak things as they come answer it (Chat holds the turn, Text to speech
-speaks each newly finished sentence). The finished turn always follows through `handle()`. A Model sends one after
-every finished sentence and when it calls tools.
+**The context** (`context.py`). `Context.entries` is a list; the first entry is always `context.system` (its text: the
+system prompt), the second `context.tools` (its `data["tools"]`: `[{name, card, function, description, args}]`), then
+the conversation (`context.conversation`). An entry is `{id, tag, text, data, time, state}`: the tag `<card>.<name>`
+(optionally `.<extra>`; `card.tag(name)` puts the card in front), state `streaming` / `ended` / `cut`. Reading:
+`get(pattern)` (the newest whose tag fits, `*` stands for anything), `find(pattern)`, `by_id(id)`, `newest`,
+`streaming`, `waiting` (it waits for a call's result), `next_call()`. Writing: `add(tag, text, at="last"|"first",
+**data)`, `remove(entry)` (system and tools stay), `copy()`. Stored as `to_dict()` / `from_dict()` (`{entries}`).
+Everything anyone says is `<card>.said`.
+
+**A wave.** What a card sends reaches every card wired there before anything those cards send moves on (`flow.send`:
+inside a wave a send joins its queue; outside one, or for a snapshot, it starts a wave and returns when the wave
+ended). So a copy sent earlier never arrives after what came of it, and a Chat writing waits for the whole wave.
+
+**Snapshots.** While a card writes (a Model), it sends the same context again after every finished sentence, its entry
+`streaming`; the last one has it `ended`. Every card gets it through `handle()` like any context: Text to speech speaks
+the finished sentences, a Chat shows it growing, a Model finds nothing for it.
 
 **For models.** Every card with functions has the setting `functions` (type `functions`, in the fold "For models"):
 per function `{on, name, help}`, the tick, the name a model sees and the description it reads; empty keeps the card's
 own (`offers` on the class is the tick's default; a Relay's is off). `card.offered()` gives the ticked ones as models
 see them. A card whose functions come from its settings sets `dynamic_functions = True` and `self.functions` per
-instance (a Relay: one per `@new` block). A setting may say `fold` to sit in a fold at the bottom of the card's settings.
+instance (a Relay: one per `def` in its script). A setting may say `fold` to sit in a fold at the bottom of the card's settings.
 
-**Tools** (docs/v2 page 3). A card that uses tools (`uses_tools = True`: a Model, a Relay's script) gets the functions
-of the cards wired from one of its outputs and straight back into it (`flow.paired()`, `flow.tools()`); nothing else
-is a tool. A model's call travels: the context goes along the wire to the called card, the core runs the function
-there (`call()`), adds the result as a `result` message and sends the context back along that card's wire to the
-caller; several calls go one after the other. Tool names are the function's own (as For models names it); the card's
-name goes in front only when two cards in one model's tools offer the same name. The card id never reaches a model.
-The answer goes back to the card the context started at when that is wired (even when it is a tool too), else to
-every wired card but the tools.
+**Calls and tools.** A card that uses tools (`uses_tools = True`: a Model, a Relay's script) gets the functions of the
+cards it reaches from the outputs its calls leave by (`calls_from`, empty: all its outputs; a Model's is `calls`),
+straight or through other cards, and that reach it again for the result (`card.tools()`). A call is in the `data
+["calls"]` of the entry that makes it (`[{id, card, function, name, args}]`). The context goes out like every context;
+every card it passes may look at it (`context.waiting`: it waits for a result); the card the next call names
+(`context.next_call()`: the first call without a result while the newest entry with calls is followed by nothing but
+results) does not get `handle()`: the core runs its function (`call()`), adds a `<card>.result` entry (`data
+["call_id"]`) and sends the context on from that card's outputs. Calls go one after the other. Tool names are the
+function's own (as For models names it); the card's name goes in front only when two cards in one model's tools offer
+the same name. The card id never reaches a model.
+
+**The Model** acts when the newest entry is not its own (`<its id>.*`) and nothing is streaming. Its request, from the
+tags: `context.system` is the system prompt; its own `.said` entries are assistant messages (with their calls); the
+results of its calls are tool messages; every other entry with text is a user message (two in a row are one). Its
+answer is a `<its id>.said` entry (`data`: `calls`, `thinking`, `cut`, `usage`; the newest also `request`, the Plain
+text view), sent at `out`; what it says before calling also goes out at `out`, its calls at `calls`. An answer that is
+nothing, or only the word in its "Means no answer" setting, is no answer: nothing is sent.
+
+**Stop** is a core function (`card.stop_all()`, `aac/stop`, the Stop buttons, a script's `stop()`): every card's
+`async stop()` is called at once. A busy card marks what it writes `cut` and sends its context on; an idle card does
+nothing. A stop is no entry and travels nowhere.
+
+**The storm limit.** Home Assistant gets its turn between two cards (`flow.enter` yields). More contexts through one
+wire within `STORM_SECONDS` (1) than the storm limit (AAC's settings: `aac/settings`, `aac/settings/set {storm}`;
+default `STORM`, 30) make it red (`flow.passes()`, `domain.redden()`): it carries nothing until it is unblocked, it
+stays red over a restart (`domain.red`: `{from, to, since, count}`, in the domain's store and its summary), the owner
+gets a Home Assistant notification, the log an error (`what` red). Unblocked by the owner (the Cards page: click the
+wire, Unblock; `aac/wire/unblock {from, to}`) or a model through the Card editor (`unblock`); a wire that is removed is
+no longer red. While a wire is red, every answer of the Card editor carries `red_wires` and its `cards` overview marks
+them. A slow loop (through a Timer, which holds a context on its own) may run for ever.
 
 More a card may define: `busy` (a property: True while it works on something; a newer version of its file waits),
 `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
-self.save()`), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop(stop_entry) -> bool` (a stop
-arrived: True when it was busy and sent its own context on), `held(port)` (what a dotted wire from that read output
+self.save()`; `async upgrade_data(settings, made_with)`: made from a setup saved by another version of its file, after
+`upgrade()` and loading its data, it gets the settings as they were saved, e.g. to move entries from a setting into its
+data), `self.folder` (where it keeps files: `<config>/aac/data/<domain>/<card>`, moved with a rename, gone with
+its domain; a removed card's data and files stay while Undo, Redo or a slot can bring it back, then go; the owner
+removing a card whose data differs from `default_data()` is asked: keep it, or let it go now), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop()` (see Stop), `held(port)` (what a dotted wire from that read output
 reads), `current()` (its values), `ui = True` (a page of its own, see below). A setting of type `modellist` with a
 `tag` gives it a list of models with queues. A setting may say `min` (and `off`, the value that turns it off),
 and `confirm` (a question the panel asks before it is first turned on, for a setting that changes more than itself). A setting marked
@@ -97,7 +137,7 @@ file is a folder: `chat/card.py` (with `VERSION`), `page.js`, `view.js`. It is c
 A card with `view = {"height": 90}` and a `view.js` in its folder shows something inside its card in the grid (the
 card grows by that height); `view = {"inline": True}` puts a small view in its first port row, between the port
 names, so the card keeps the size of any card. The file defines `aac-view-<type>`; the panel sets `.card` and calls `frame(data)` for
-every frame. The card sends frames with `self.show(data)`, which only goes out while a Nodes page shows the card
+every frame. The card sends frames with `self.show(data)`, which only goes out while a Cards page shows the card
 (`self.watched`: check it before computing anything). Keep frames small (a few dozen numbers), up to ~30 a second.
 
 ## A card's page
@@ -115,8 +155,9 @@ without shadow DOM, so the panel's look and skins apply. The panel hands it:
 It may define `event(ev)` (what the card tells open panels: `core.notify(what, card=self.id, …)`) and `add()` (the
 `+` in its sidebar group). The element is kept while the page is open elsewhere, so its state survives.
 
-In Python: `nav()` gives its sidebar entries (`{"entries": [{id, title, children?, actions?}], "add": "New list"}`;
-None: one item). An entry's `actions` (`[{id, label, icon?, ask?, confirm?}]`) show in the sidebar: one with an icon
+In Python: `nav()` gives its sidebar entries (`{"entries": [{id, title, children?, actions?}], "add": "New list", "fold": "arrow"}`;
+None: one item). `fold: "arrow"`: its group stays open until its arrow closes it (Chat, Lists); without it the group
+opens while one of its pages is in use. The owner can change either in Appearance. An entry's `actions` (`[{id, label, icon?, ask?, confirm?}]`) show in the sidebar: one with an icon
 as a button, the others in its ⋯ menu; `ask` asks for a value first, `confirm` asks first. The panel then calls
 `ui_call("nav_action", {entry, action, value})`, and `ui_call(action, args)` answers its page for what is not a function for models (a Chat's send).
 
@@ -125,9 +166,19 @@ as a button, the others in its ⋯ menu; `ask` asks for a value first, `confirm`
 Through `self.core`:
 
 - `subscribe(channel, card, handler)`: take what comes in on a channel. `audio` (handler `(chunk, meta)`: satellite
-  audio), `ha_conversation` (handler `async (text, conversation_id, where) -> answer`: Home Assistant's Assist),
-  `ha_calendar` (handler `events(start, end)`: Home Assistant's calendar entity). Subscriptions end when the card
-  unloads.
+  audio), `ha_conversation` (handler `async (text, conversation_id, where) -> answer`: Home Assistant's Assist).
+  Subscriptions end when the card unloads.
+- `calendar`: AAC's calendar (v1's design: the core keeps no entries, only who offers them). A card offers its entries
+  with `calendar.offer(card, query, create=None, change=None, remove=None)` (usually in `start()`; it ends when the card
+  unloads): `query(start, end)` gives the entries of a period `[{key, summary, start, end?, description?}]` (start and
+  end "YYYY-MM-DD" or a time; repeating entries once per occurrence), `async create(entry) -> key`, `async change(key,
+  changes)`, `async remove(key)`; what it leaves out it does not offer, and asking for it gives a clear "cannot".
+  `calendar.entries(start, end)` collects every card's entries at that moment, by start: `{uid ("<card>:<key>"),
+  summary, start, end, description, source (the card), all_day, start_v, end_v, can}`; `await calendar.add(entry)`
+  (into the first card that takes new ones), `change(uid, changes)`, `remove(uid)` (where the entry lives). Home
+  Assistant's `calendar.aac_calendar`, the Calendar card and models ask here, never a card. `parse_when(text)` from
+  the api reads a date or a time. Offered today: the Calendar card (its own entries, all four ways), Lists (dated
+  entries: a field when / date / due; read only), Schedule (each time an entry rings; read only).
 - `pool`: the models. `pool.entries(list, tag)` (a card's list of models doing a job), `async with pool.slot(entries)
   as model_id` (a free model, else the queues), `pool.tags(model_id)`, `pool.find(name)` (a model by id or name),
   `await pool.offers()` (every server behind the pool and what it offers: a llama-server router lists its models and
@@ -143,32 +194,76 @@ Through `self.core`:
 - Audio helpers from the api: `pcm_to_wav(pcm, rate)`, `wav_to_pcm(wav)`, `resample(pcm, rate, to)`. A clip is
   `{"pcm": 16-bit mono, "rate", "seconds", "source" (a satellite), "text"?, "language"?}`, or `{"stop": True}`. A card
   takes clips with `async clip(port, clip)` and a live stream with `stream(port, chunk, meta)`; it sends them with
-  `self.domain.flow.clip(...)` / `flow.stream(...)`.
+  `self.clip_out(port, clip)` / `self.stream_out(port, chunk, meta)`.
 - `notify(what, **data)`: tell open panels.
+- `log(part, level, text)`: a part of AAC itself ("audio", "models" …) writes in the running domain's log.
 
-Through `self.domain`: `flow.send(context, self.id, port)` (start a context at an output), `cards` (other cards, used
-only through what they offer: `call`, `current()`, `held()`, `dated()`), `template_values()` (every card's values: the Values panel, a Relay's script).
+**The log.** Each domain has AAC's own log (`self.domain.log`, the file `<config>/aac/data/<domain>/log.jsonl`: it moves
+with a rename, goes with the domain; a copy starts its own). It rotates in two lanes, so a busy card cannot push the rest out: the newest 5,000
+entries of what passed the wires (level flow) stay, and the newest 5,000 of everything else. An entry is
+`{id, time (epoch s), level (error, warning, info, flow), card | part, what, text (600 chars at most), port?, to?, n?
+(the same entry again right after it: counted up), trace?}`; while it is younger than 10 minutes it may carry the
+whole `context` (only in memory, never on disk). A card writes with `self.log(text, level="info", what="", context=None,
+**extra)` (the context goes along only when its Log setting says the whole context) and reads with
+`self.read_log(card=, part=, port=, what=, levels=, search=, before=, last=)` (part `"*"`: AAC itself): its own entries
+always, the rest only when the owner allowed it. Asking for that: `needs = {"read_log"}` on the class gives it the
+permission setting `may_read_log` (off; on the Permissions page). Every card has the settings `log` (`text`: what
+changed, the default; `context`: the whole context too; `nothing`) and `log_at` (`out`, the default; `in`; `both`) in
+the fold "Log": what passes its wires is written as `flow` entries (`what` in or out, `port`, `to`); snapshots are
+not. The core writes what fails (with the trace), a model that does not answer, a wire turned red, and what the
+owner changes (cards added, removed, renamed, settings, wires, Undo, Redo, slots, files, the domain
+starting). HA's own log only hears about AAC running on Home Assistant (card files loading). The panel: Settings →
+Logs (filters, Save as text, Clear); a wire's monitor shows the entries of its output (`aac/monitor`; `aac/log`,
+`aac/log/clear`).
 
-A context (`Context`, docs/v2 page 3) has the shape of a model request: `system` (parts), `messages` (said, answer,
-result; an answer's calls in `data["calls"]`, a result's `data["call_id"]`; a message's `attachments`: note before
-its text, trailer after), `tools` (`{name, card, function, description, args}`, filled by a Model), `events` (signal,
-error: never sent to a model). Every item is an entry `{id, by, kind, text, tags, time, data, state}`.
-`context.add(by, kind, …)` puts an entry where its kind belongs (a note or trailer on the newest said message);
-`context.put(...)` (a card's standing text: a system part stays in place, an attachment moves to the newest message),
-`context.remove(e)`, `context.entries` (all in order), `context.last(kind)`, `context.tagged(tag)`, `context.answer`,
-`context.open_calls(card)`, `context.stopped`.
+**The card interface** (`api.py`; cards may later run in a sandbox, so this is all a card uses): `handle`, `send(context,
+port)`, `read(port)`, `held(port)`, `call`, `stop`, `stop_all()`, `tools()`, `wired(port)`, `wired_into(port)`,
+`reaches(card_id, ports=None)`, `all_cards()` (other cards, used only through what they offer: `call`, `current()`,
+`held()`), `stream_out`, `clip_out`, `live(context, text, thinking)`, `show(data)`, its data and folder, the log, and
+the core's services above. Cards that build (the Card editor; an Audio clipper adding its Phrase joiner) also use the
+setup through `self.domain`: `add_card`, `update_card`, `remove_card`, `set_wires`, `wires`, `export`,
+`template_values()`.
+
+**A card's id is its name** (lowercase, other characters `_`: "Speech to text" is `speech_to_text`; a second card of
+that name `speech_to_text_2`), so a card is called the same everywhere. Renamed (by the owner, the Card editor, Undo,
+a slot, a file; or loaded with an id that does not fit), its id moves everywhere: wires, positions, Undo steps and
+slots, its stored data and folder, the sidebar's fold (and what the browser keeps: wire monitors, folds), and what the other cards keep about it: their settings through the class
+method `renamed_settings(settings, old, new)` (by default a script's references `old.tag` and `cards['old']`; a card
+with ids in a setting of its own adds them, as the Calendar does for `lists`) and their data through
+`async renamed(old, new)` (by default stored entries: their `tag`, a call's `card`).
+
+**A domain's id is its name** too (the same rule): renamed (`aac/domain/rename` answers with the id it has then) or
+loaded with an id that does not fit, its store, its cards' stores and folders move, and a running domain starts again
+under the new id.
+
+**The Chat** keeps every context that reaches `answers`: in the chat whose entry `<chat card>.id.<chat id>` (no text) it
+holds; a context without one is filed once it is finished (nothing streaming, no call waiting) as a new chat, which
+writes its id entry; until then it shows under "Being answered…" (the sidebar entry `answering`, one at a time; the
+notify that files it says `was: "answering"`, and an open page goes to the new chat). It shows the entries its Shown setting lists (`*.said, *.post, *.error`),
+those Shown as you on your side.
 
 ## The Relay's script
 
-A Relay card's setting `script` is Python, checked before it runs (`cards/relay/script.py`, `check()`): only the
-parts listed there (no imports, no `while`, nothing starting with `_`). `@new("name", at="start"|"end",
-before=tag, after=tag, replace=)` above a `def` writes an entry of its own (tag `<relay>.<name>`; the start is a
-`system` part, the end a `trailer` on the newest said message, before / after a `note` / `trailer` on the message of
-that tag); `@on("tag", …, which="last"|"first"|"all",
-kind=, live=)` runs on entries with a tag (`*` = any card, `"context"` = the whole context once). Names: `context`,
-other cards (`chat.said.text`, `lists.total`, `lists.add_items(...)` for cards wired to it and back; such a call travels like a model's: an answer of the Relay
-with the call, the card's result as a tool message, and the context goes back to where it started), `now()`, `states()`,
-`stop()`, `output("name")` (the Relay gets that output), `signal()`, `between()`, `re`, `audio`. In a snapshot
-(a stream) an open entry a block works on goes on empty until it is closed; `live=True` runs on every piece.
-Side effects (stop, signals, calls) happen once per turn and entry. The full list with examples is `REFERENCE`
-there (the editor's ? panel; models read it in the setting's help).
+A Relay card's setting `script` is Python (docs/v2 page 4), checked before it runs (`cards/relay/script.py`,
+`check()`): only the parts listed there (no imports, no `while`, nothing starting with `_`). It runs top to bottom
+every time a context arrives, snapshots included (`context.streaming` is True on those); nothing leaves unless
+`output("name", what)` runs. Its ports are what it names: `input("x")` (text), `input("x", read=True)` (dotted, read
+when something arrives elsewhere), `output("x", …)`; none named: `in`, `out`. `input()` is what arrived
+(`input("x")`: None when it came in elsewhere). `output` sends a context as it is, anything else (a text, an entry, a
+list) as the Relay's said (tag `<relay>.said`) in the context that arrived, to every card wired there.
+
+To the script the context is a list of entries (`ContextView`): `get(tag)`, `[tag]`, `tag in context`, `all(tag)`
+(`.text`: their texts as one), `text` (the conversation's), `system`, `tools`, `streaming`, `add(tag, text,
+at="last"|"first")`, `set(tag, text, at=)` (written in place; none: as `add`; the system prompt:
+`set("context.system", text)`), `remove(tag, at="all"|"first"|"last")` (system and tools stay), `a + b` (a's entries,
+then b's; the system prompt and tools are b's, a's when b has none). A tag without a dot is the Relay's own
+(`<relay>.<name>`), `*` stands for anything. An entry: `text` (settable), `tag`, `id`, `data` (writable), `state`,
+`time`. Other names: `stop()` (every card stops, once the script is done), `print()` (the editor's Printed panel),
+`print_log()` (AAC's log), `now()`, `states()`, `re`, `audio`, and every card by its id: its values (`lists.total`)
+and, for a card it reaches from one of its outputs, its functions (`lists.add_items(...)`, arguments in order or by
+name; not on a snapshot). Such a call travels like a model's: an entry `<relay>.call` with the call goes out at the
+outputs that reach the card, the card's result comes back into the Relay, and the script goes on with the context as
+it came back. The script's own names win over a card's id (`cards["output"]`). Every `def` is a function the Relay
+offers (`self.functions`: its parameters, its docstring): a call runs only the defs, then that one, with its
+arguments; its return is the result. The full list with examples is `REFERENCE` there (the editor's ? panel; the
+`script` setting's help, which the Card editor's `help("relay")` gives a model).
