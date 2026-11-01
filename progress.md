@@ -3,7 +3,21 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-11-01) – 2.6.0, live on the owner's HA
+## Current state (2026-11-01) – 2.6.1, live on the owner's HA
+
+- **2026-11-01 (2.6.1): a chat is a tag, plainly in the context** (owner: he unwired Wake word's read and expected a
+  new chat per spoken turn, got nothing in the Chat; "nothing should be hidden, mechanisms have to be discoverable and
+  look-up-able with common sense"). The Context's hidden fields `origin` and `chat_id` are gone; a context has only
+  `id` and `way` besides its containers (the card it started at is put first on its way when it first leaves). Every
+  message a Chat holds carries `chat.<chat id>`; the Chat keeps every context reaching `answers` in the chat its
+  messages are tagged with, else in a new chat ("Voice · mic · time" for a heard line). The "nothing" answer and the
+  Relay's `_picks` rule stay (owner: necessary rules); `_picks` uses the first card on the way. The Model knows a
+  conversation by its first message (`conversation_key`). A growing answer (delta) goes to every open page, the
+  chat's finds its turn by the tag. Backup survived: 2.6.1. Live: a real browser chat of two turns stayed one chat,
+  both turns tagged, the answer grew live, no console errors; the test chat deleted. Not yet tried by voice. On the
+  owner's board: Wake word reads nothing now, so each wake-word turn is a chat of its own; Follow-up turn reads the
+  chat, so it continues the newest one; the weekday 05:25 schedule run now shows as a chat too (`model.out →
+  chat.answers`; a Relay in front of `chat.answers` would filter it).
 
 - **2026-11-01 (2.6.0): the Model's routing is only what is wired** (owner: "the rules are breaking things"). The
   Model has `out` (its answer, to every card wired there, streamed) and `calls` (square: its tool calls). Its tools are
