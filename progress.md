@@ -9,6 +9,10 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   context whose id entry names a chat that is not there yet makes it with that id; one built on the chat (holds its
   first line) replaces what it holds, one that only names it is added to its end. Relay 4.1.0: `remove("*")` empties
   the conversation (system and tools stay).
+  Live 00:3x: the Wake word names today's chat (`chat.id.<YYYY-MM-DD>`; the chat it read is not today's: emptied
+  first; its script before in the scratchpad, wake_word_before_day.py), a new Relay "Day chat" between Schedule and
+  Charter does the same for scheduled runs. Not yet tried live (the owner tests next time); the Follow-up turn does not
+  name the day (it lands in the chat it read).
 - **Text to speech 3.2.0:** each entry once, by time: only entries written after the card started and after the
   newest one it spoke to the end (live 2026-11-01 23:53: Speaks matched every entry, its 50-entry memory let a
   100-entry chat be read out from the start on every turn; minutes of speech, the Microphone kept listening, Whisper
