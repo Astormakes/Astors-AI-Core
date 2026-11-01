@@ -1,7 +1,7 @@
 """Relay (docs/v2 page 4): its script (Python, `script.py`) runs top to bottom every time something arrives;
 `input("in")` is what arrived, `output("out", what)` sends, nothing leaves otherwise. Its ports are what the script
-names (none named: in, out). Every def is a function it offers; a call runs only that def. It runs on every piece of a
-turn still being written too, so it streams. The editor (`editor.js`) has a simple view that writes the code."""
+names (none named: in, out). Every def is a function it offers; a call runs only that def. It runs on every context
+that arrives, one still being written too (context.streaming), so it streams. The editor (`editor.js`) has a simple view that writes the code."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from collections import deque
 import json
 import sys
 import time
-from traceback import format_exc
 from typing import Any
 
 from custom_components.aac.api import Card, Context, new_id, register
@@ -18,7 +17,7 @@ from custom_components.aac.api import Card, Context, new_id, register
 sys.modules.pop(f"{__name__}.script", None)  # a newer card file brings a newer script.py
 from .script import DEFAULT, OWN, REFERENCE, Run, Script, check, joined, reference_text  # noqa: E402
 
-VERSION = "3.2.0"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
+VERSION = "4.0.0"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
 
 WAIT = 20  # seconds a script may run
 PRINTED = 200  # print entries it keeps
@@ -63,7 +62,7 @@ class Relay(Card):
         script = self.script
         self.functions = dict(script.functions)
         found = {t: what for t, what in script.tags.items()}
-        if any(c.id in script.names and c.functions for c in self.domain.cards.values()):
+        if any(c.id in script.names and c.functions for c in self.all_cards()):
             found["call"] = "its script's calls (an answer with the call; the result comes back as a tool message)"
         self.tags = found
 
@@ -77,31 +76,27 @@ class Relay(Card):
                 self.log(f"Its script: {'; '.join(self._script.problems)}", "warning", what="script")
         return self._script
 
-    def ports(self) -> tuple[dict[str, str], dict[str, str], set[str]]:
+    def ports(self) -> tuple[dict[str, str], dict[str, str]]:
         script = self.script
-        return dict(script.inputs or {"in": "text"}), {n: "text" for n in script.outputs or ["out"]}, set()
+        return dict(script.inputs or {"in": "text"}), {n: "text" for n in script.outputs or ["out"]}
 
     # ------------------------------------------------------------------ a context arrives
-    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
-        if self._answered(context):  # a result for its script's call ends here
-            return []
-        return await self._run(context, port)
-
-    async def progress(self, context: Context, port: str) -> list[Any] | None:
-        return await self._run(context, port)
+    async def handle(self, context: Context, port: str) -> None:
+        if self._answered(context):  # a result for its script's call: the script waiting for it goes on
+            return
+        await self._run(context, port)
 
     def _read(self, port: str) -> Context:
         """What the dotted wires into a read input hold now, one after the other (nothing wired: empty)."""
         found = Context()
-        for card, out in self.domain.flow.wired_into(self.id, port):
-            if (held := card.held(out)) is not None:
-                found = joined(found, held)
+        for held in self.read(port):
+            found = joined(found, held)
         return found
 
-    async def _run(self, context: Context, port: str) -> list[Any]:
+    async def _run(self, context: Context, port: str) -> None:
         script = self.script
         if script.problems or not script.code or script.inputs.get(port) == "read":
-            return []
+            return
         reads = {name: self._read(name) for name, kind in script.inputs.items() if kind == "read"}
         audio = self.core.audio.spoken() if "audio" in script.names else None
         run = Run(self, context, port, reads, self.hass.loop, audio)
@@ -109,12 +104,11 @@ class Relay(Card):
             await asyncio.wait_for(self.hass.async_add_executor_job(run.go, script), WAIT)
         except TimeoutError:  # the thread goes on by itself; the turn does not wait for it
             run.problems.append(f"the script ran longer than {WAIT} s")
-        self._after(run, context.progress)
+        self._after(run, context.streaming)
         if run.stop_now:
-            await self.domain.stop()
+            await self.stop_all()
         for out, sent in run.sends:
-            await self.domain.flow.out(self, sent, self._picks(out, sent))
-        return []
+            await self.send(sent, out)
 
     def _after(self, run: Run, piece: bool) -> None:
         """What a run printed, logged and got wrong."""
@@ -127,39 +121,36 @@ class Relay(Card):
         if not piece or run.problems:
             self.last_run = {"time": now, "problems": run.problems, "outputs": [o for o, _ in run.sends]}
 
-    def _picks(self, out: str, context: Context) -> list[Any]:
-        """The wires of one output; a card wired to it and back is its tool and only takes calls, except the card the
-        context started at, the first on its way (a Chat wired to it and back gets its turn back)."""
-        back = {c.id for p, kind in self.ports()[0].items() if kind == "text" for c, _ in self.domain.flow.wired_into(self.id, p)}
-        return [(out, c.id) for c, _ in self.domain.flow.wired_from(self.id, out) if c.id not in back or context.way[:1] == [c.id]]
-
     # ------------------------------------------------------------------ calls
     async def travel(self, card: Any, function: str, args: dict[str, Any], context: Context) -> Any:
-        """A script's call travels (docs/v2 page 3): along this Relay's wire to the card, which runs it; the result comes
-        back along the card's wire. The call and its result stay in the context, visible."""
-        port = next((p for p in self.ports()[1] if any(c.id == card.id for c, _ in self.domain.flow.wired_from(self.id, p))),
-                    next(iter(self.ports()[1])))
+        """A script's call travels (docs/v2 page 5) like every context: out at this Relay's outputs that reach the card,
+        which answers; the result comes back along the wires into this Relay, and the script goes on with the context
+        as it came back (the call, what the card added, its result: visible)."""
+        ports = [p for p, kind in self.ports()[1].items() if kind == "text" and self.reaches(card.id, [p])]
         call = {"id": new_id(), "name": function, "card": card.id, "function": function, "args": args}
-        context.add(self.id, "answer", "", ["call"], calls=[call])
+        context.add(self.tag("call"), "", calls=[call])
         waiter = self.hass.loop.create_future()
         self._calls[call["id"]] = waiter
         try:
-            await self.domain.flow.out(self, context, [(port, card.id)])
+            for port in ports:
+                await self.send(context, port)
         finally:
             self._calls.pop(call["id"], None)
         if not waiter.done():
             raise ValueError(f"{card.name} is not wired back to this Relay: its result cannot return")
-        return waiter.result()
+        result, came_back = waiter.result()
+        context.entries = came_back.entries
+        return result
 
     def _answered(self, context: Context) -> bool:
         """A result came back for a call its script is waiting for."""
-        for m in reversed(context.messages):
-            waiter = self._calls.get(m["data"].get("call_id")) if m["kind"] == "result" else None
+        for m in reversed(context.conversation):
+            waiter = self._calls.get(m["data"].get("call_id"))
             if waiter is not None and not waiter.done():
                 try:
-                    waiter.set_result(json.loads(m["text"]))
+                    waiter.set_result((json.loads(m["text"]), context))
                 except ValueError:
-                    waiter.set_result(m["text"])
+                    waiter.set_result((m["text"], context))
                 return True
         return False
 
@@ -179,7 +170,7 @@ class Relay(Card):
         finally:
             self._after(run, False)
             if run.stop_now:
-                await self.domain.stop()
+                await self.stop_all()
         return "" if result is None else result
 
     # ------------------------------------------------------------------ the editor
@@ -187,7 +178,7 @@ class Relay(Card):
         """The editor: check a script while it is written, what it printed, the reference."""
         if action == "check":
             found = check(str(args.get("script") or ""))
-            taken = sorted(c.id for c in self.domain.cards.values() if c.id in OWN and c.id in found.names)
+            taken = sorted(c.id for c in self.all_cards() if c.id in OWN and c.id in found.names)
             return {"problems": found.problems, "inputs": found.inputs or {"in": "text"}, "outputs": found.outputs or ["out"],
                     "sends": bool(found.outputs), "functions": list(found.functions), "tags": [self.tag(t) for t in found.tags],
                     "taken": taken}

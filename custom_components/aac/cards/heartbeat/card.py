@@ -13,22 +13,19 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.2.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 
-SILENT = ("nothing", "nothing.", "")
-
-
 class AutoCard(Card):
-    """A card that starts messages by itself and keeps a log of what came back."""
+    """A card that starts contexts by itself and keeps a log of what came back."""
 
     category = "In and out"
     inputs = {"answers": "text"}
     outputs = {"out": "text"}
     ui = True
     keeps_data = True
-    tags = {"fired": "what woke the chain"}
+    tags = {"said": "what woke the chain: its instruction"}
 
     def default_data(self) -> dict[str, Any]:
         return {"log": []}
@@ -43,35 +40,43 @@ class AutoCard(Card):
             unsub()
         self._unsubs = []
 
-    def fire(self, name: str, text: str) -> None:
-        """Start a context at the output (in the background)."""
+    def fire(self, name: str, text: str) -> str:
+        """Start a context at the output (in the background); the id of its entry."""
         context = Context()
-        context.add(self.id, "said", text, ["fired"], name=name)
-        self._log(name, text, None, context.id)
-        task = self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "out"), f"aac {self.id}")
+        fired = context.add(self.tag("said"), text, name=name)
+        self._log(name, text, None, fired["id"])
+        task = self.hass.async_create_background_task(self.send(context, "out"), f"aac {self.id}")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return fired["id"]
 
-    def _log(self, name: str, text: str, answer: str | None, message_id: str) -> None:
+    def _log(self, name: str, text: str, answer: str | None, entry_id: str) -> None:
         self.data["log"] = [*self.data["log"], {"time": dt_util.utcnow().isoformat(), "name": name, "text": text,
-                                                 "answer": answer, "id": message_id}][-LOG_SIZE:]
+                                                 "answer": answer, "id": entry_id}][-LOG_SIZE:]
         self.hass.async_create_task(self.save())
         self.core.notify("card", domain=self.domain.id, card=self.id)
 
-    async def progress(self, context: Context, port: str) -> list[Any] | None:
-        """A turn still being worked on: only the finished answer counts (nothing goes on from here)."""
-        return []
-
-    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
-        """What the chain concluded."""
-        answer = context.answer.strip()
+    def answered(self, context: Context) -> dict[str, Any] | None:
+        """The log item a context answers (it holds the entry the card fired), with the answer written in: the newest
+        said line or error after it (an error: failed, with why)."""
         for item in reversed(self.data["log"]):
-            if item.get("id") == context.id:
-                item["answer"] = "" if answer.lower() in SILENT else answer
-                break
+            at = next((i for i, e in enumerate(context.entries) if e["id"] == item.get("id")), None)
+            if at is None:
+                continue
+            found = [e for e in context.entries[at + 1:] if e["tag"].endswith((".said", ".error")) and e["text"].strip()]
+            if found:
+                item["answer"] = found[-1]["text"].strip()
+                if found[-1]["tag"].endswith(".error"):
+                    item["failed"] = item["answer"][:200]
+            return item
+        return None
+
+    async def handle(self, context: Context, port: str) -> None:
+        """What the chain concluded."""
+        if port != "answers" or context.streaming or self.answered(context) is None:
+            return
         await self.save()
         self.core.notify("card", domain=self.domain.id, card=self.id)
-        return []
 
 
 @register

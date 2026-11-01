@@ -8,29 +8,29 @@
    "settings": {
     "ha_agent": true
    },
-   "version": "2.4.1"
+   "version": "3.0.0"
   },
   "charter": {
    "type": "relay",
    "title": "Charter",
    "settings": {
-    "script": "context = input(\"in\")\ncontext.add(\"charter\", \"\"\"Be kind.\"\"\", at=\"first\", role=\"system\")\noutput(\"out\", context)\n"
+    "script": "context = input(\"in\")\ncontext.set(\"context.system\", \"\"\"Be kind.\"\"\")\noutput(\"out\", context)\n"
    },
-   "version": "3.1.1"
+   "version": "4.0.0"
   },
   "time": {
    "type": "relay",
    "title": "Time",
    "settings": {
-    "script": "context = input(\"in\")\ncontext.attach(\"time\", f\"Local time: {now():%A %Y-%m-%d %H:%M}\")\noutput(\"out\", context)\n"
+    "script": "context = input(\"in\")\ncontext.add(\"time\", f\"Local time: {now():%A %Y-%m-%d %H:%M}\")\noutput(\"out\", context)\n"
    },
-   "version": "3.1.1"
+   "version": "4.0.0"
   },
   "model": {
    "type": "model",
    "title": "Model",
    "settings": {},
-   "version": "3.0.0"
+   "version": "4.0.0"
   },
   "lists": {
    "type": "lists",
@@ -48,7 +48,7 @@
    "type": "calendar",
    "title": "Calendar",
    "settings": {},
-   "version": "1.3.0"
+   "version": "2.0.0"
   },
   "microphone": {
    "type": "microphone",
@@ -56,7 +56,7 @@
    "settings": {
     "source": "any"
    },
-   "version": "2.10.1"
+   "version": "3.0.0"
   },
   "audio_clipper": {
    "type": "pause_cut",
@@ -64,65 +64,65 @@
    "settings": {
     "pause": 800
    },
-   "version": "2.10.1"
+   "version": "3.0.0"
   },
   "speech_to_text": {
    "type": "speech_to_text",
    "title": "Speech to text",
    "settings": {},
-   "version": "2.10.1"
+   "version": "3.0.0"
   },
   "text_to_speech": {
    "type": "text_to_speech",
    "title": "Text to speech",
    "settings": {},
-   "version": "2.10.2"
+   "version": "3.0.0"
   },
   "speaker": {
    "type": "speaker",
    "title": "Speaker",
    "settings": {},
-   "version": "2.10.2"
+   "version": "3.0.0"
   },
   "stop_word": {
    "type": "relay",
    "title": "Stop word",
    "settings": {
-    "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard and \"stop\" in heard.text.lower():\n    stop()\n    output(\"stop\", context)\n"
+    "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.said\")\nif heard and \"stop\" in heard.text.lower():\n    stop()\n"
    },
-   "version": "3.1.1"
+   "version": "4.0.0"
   },
   "wake_word": {
    "type": "relay",
    "title": "Wake word",
    "settings": {
-    "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard and any(word in heard.text.lower() for word in [\"computer\"]):\n    output(\"yes\", context)\n"
+    "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.said\")\nif heard and any(word in heard.text.lower() for word in [\"computer\"]):\n    output(\"yes\", context)\n"
    },
-   "version": "3.1.1"
+   "version": "4.0.0"
   },
   "follow_up": {
    "type": "relay",
    "title": "Follow-up",
    "settings": {
-    "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard:\n    # you started talking less than 6 s after AAC spoke at that satellite (long answers too)\n    spoke = audio.satellites.get(heard.data.get(\"mic\"), {}).get(\"seconds\", 999999)\n    said_for = heard.data.get(\"seconds\") or 0\n    named = any(word in heard.text.lower() for word in [\"stop\", \"computer\"])\n    if not heard.data.get(\"aac_spoke\") and spoke - said_for < 6 and not named:\n        output(\"yes\", context)\n"
+    "script": "context = input(\"in\")\nheard = context.get(\"speech_to_text.said\")\nif heard:\n    # you started talking less than 6 s after AAC spoke at that satellite (long answers too)\n    spoke = audio.satellites.get(heard.data.get(\"mic\"), {}).get(\"seconds\", 999999)\n    said_for = heard.data.get(\"seconds\") or 0\n    named = any(word in heard.text.lower() for word in [\"stop\", \"computer\"])\n    if not heard.data.get(\"aac_spoke\") and spoke - said_for < 6 and not named:\n        output(\"yes\", context)\n"
    },
-   "version": "3.1.1"
+   "version": "4.0.0"
   },
   "spoken_turn": {
    "type": "relay",
    "title": "Spoken turn",
    "settings": {
-    "script": "context = input(\"chat\", read=True) + input(\"in\")\ncontext.attach(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
+    "script": "context = input(\"chat\", read=True) + input(\"in\")\ncontext.add(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
    },
-   "version": "3.1.1"
+   "version": "4.0.0"
   },
   "follow_up_turn": {
    "type": "relay",
    "title": "Follow-up turn",
    "settings": {
-    "script": "context = input(\"chat\", read=True) + input(\"in\")\nheard = context.get(\"speech_to_text.heard\")\nif heard:\n    heard.text = \"(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) \" + heard.text\ncontext.attach(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
+    "script": "context = input(\"chat\", read=True) + input(\"in\")\nheard = context.get(\"speech_to_text.said\")\nif heard:\n    heard.text = \"(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) \" + heard.text\ncontext.add(\"rules\", \"\"\"You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look something up or do something, call the tool first, then answer.\"\"\")\noutput(\"out\", context)\n"
    },
-   "version": "3.1.1"
+   "version": "4.0.0"
   }
  },
  "wires": [
@@ -201,10 +201,6 @@
   {
    "from": "text_to_speech.out",
    "to": "speaker.in"
-  },
-  {
-   "from": "stop_word.stop",
-   "to": "charter.in"
   },
   {
    "from": "spoken_turn.out",

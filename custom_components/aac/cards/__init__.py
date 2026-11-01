@@ -21,7 +21,6 @@ from ..const import LOGGER
 
 if TYPE_CHECKING:
     from ..core import Domain
-    from ..flow import Step
     from ..context import Context
 
 CARD_TYPES: dict[str, type[Card]] = {}
@@ -56,18 +55,18 @@ def renamed_refs(value: Any, old: str, new: str) -> Any:
 
 
 def renamed_entries(value: Any, old: str, new: str) -> Any:
-    """A card's id changed: in stored entries (who wrote it, its tags, the card a call went to); nothing else (a data
-    field may be called like a card: the Lists card keeps "lists")."""
+    """A card's id changed: in stored entries (their tag, the card a call went to); nothing else (a data field may be
+    called like a card: the Lists card keeps "lists")."""
     if isinstance(value, list):
         return [renamed_entries(v, old, new) for v in value]
     if not isinstance(value, dict):
         return value
     out = {}
     for k, v in value.items():
-        if k in ("by", "card") and v == old:
+        if k == "card" and v == old:
             v = new
-        elif k == "tags" and isinstance(v, list):
-            v = [f"{new}.{t[len(old) + 1:]}" if isinstance(t, str) and t.startswith(f"{old}.") else t for t in v]
+        elif k == "tag" and isinstance(v, str) and v.startswith(f"{old}."):
+            v = f"{new}.{v[len(old) + 1:]}"
         else:
             v = renamed_entries(v, old, new)
         out[k] = v
@@ -106,7 +105,6 @@ class Card:
     help: ClassVar[str] = ""  # one or two sentences for the ? helper
     inputs: ClassVar[dict[str, str]] = {"in": "text"}  # port → wire kind: text, audio, pool
     outputs: ClassVar[dict[str, str]] = {"out": "text"}
-    square: ClassVar[set[str]] = set()  # outputs where the card picks one wire (the others copy to every wire)
     settings_schema: ClassVar[dict[str, dict[str, Any]]] = {}
     tags: ClassVar[dict[str, str]] = {}  # tag (without the card) → what it marks
     functions: ClassVar[dict[str, dict[str, Any]]] = {}  # name → {"help", "args": {name: {"type", "help", "required"}}}
@@ -187,24 +185,64 @@ class Card:
             await self.save()
 
     # ------------------------------------------------------------------ ports and work
-    def ports(self) -> tuple[dict[str, str], dict[str, str], set[str]]:
-        """Inputs, outputs, square outputs (a card may make them from its settings)."""
-        return dict(self.inputs), dict(self.outputs), set(self.square)
+    def ports(self) -> tuple[dict[str, str], dict[str, str]]:
+        """Inputs and outputs (a card may make them from its settings)."""
+        return dict(self.inputs), dict(self.outputs)
 
     def tag(self, name: str) -> str:
         """One of its tags with the card in front."""
         return f"{self.id}.{name}"
 
-    async def handle(self, context: Context, port: str, step: Step) -> list[Any] | None:
-        """A context arrived. Return None: on to every round output; []: it ends here; [port] or [(port, card)]:
-        the outputs (or the one wire) it takes."""
-        return None
+    async def handle(self, context: Context, port: str) -> None:
+        """A context arrived at an input. The card acts when it holds something for it, and sends only when it did
+        something (`send`); otherwise it ends here (the default)."""
 
-    async def progress(self, context: Context, port: str) -> list[Any] | None:
-        """A snapshot of a turn still being worked on (a model wrote a sentence, called a tool): the same turn comes
-        again, and finished, to handle(). By default it passes on unchanged to the round outputs; a card that shows or
-        speaks things as they come (Chat, Text to speech) answers it. Returns like handle()."""
-        return None
+    async def send(self, context: Context, port: str = "out") -> None:
+        """Send a context from one of its outputs: every card wired there gets a copy."""
+        await self.domain.flow.send(self, context, port)
+
+    def read(self, port: str) -> list[Context]:
+        """What the dotted wires into one of its inputs hold now."""
+        return self.domain.flow.read(self.id, port)
+
+    def stream_out(self, port: str, chunk: bytes, meta: dict[str, Any]) -> None:
+        """Live audio out at one of its outputs (every card wired there that takes a stream gets it at once)."""
+        self.domain.flow.stream(self.id, port, chunk, meta)
+
+    def clip_out(self, port: str, clip: dict[str, Any]) -> None:
+        """An audio clip out at one of its outputs ({pcm, rate, seconds, text, source, name, language}; {stop: True})."""
+        self.domain.flow.clip(self.id, port, clip)
+
+    def wired(self, port: str) -> bool:
+        """Something is wired to one of its outputs."""
+        return bool(self.domain.flow.wired_from(self.id, port))
+
+    def wired_into(self, port: str) -> list[tuple[Card, str]]:
+        """The cards (and their outputs) wired into one of its inputs."""
+        return self.domain.flow.wired_into(self.id, port)
+
+    def reaches(self, card_id: str, ports: list[str] | None = None) -> bool:
+        """A context sent from its outputs (or these) can get to that card, straight or through others."""
+        ports = ports or [p for p, kind in self.ports()[1].items() if kind == "text"]
+        return card_id in self.domain.flow.reach(self.id, ports)
+
+    def all_cards(self) -> list[Card]:
+        """The cards of its domain (another card is used only by what it offers: functions, values, held())."""
+        return list(self.domain.cards.values())
+
+    def tools(self) -> list[Card]:
+        """The cards whose functions it can call: reached from the outputs its calls leave by, and back."""
+        return self.domain.flow.tools(self.id)
+
+    async def stop_all(self) -> None:
+        """Stop every card of the domain (the core function the Stop buttons use)."""
+        await self.domain.stop()
+
+    def live(self, context: Context, text: str, thinking: str = "") -> None:
+        """Text still growing faster than snapshots go (a model writing): open panels show it, with the context's
+        tags (a chat finds its turn by them)."""
+        self.core.notify("delta", domain=self.domain.id, tags=sorted({e["tag"] for e in context.entries}),
+                         text=text, thinking=thinking)
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         """One of its functions (a model's tool call, a Relay's script)."""
@@ -222,10 +260,9 @@ class Card:
                            "help": (mine.get("help") or "").strip() or spec.get("help", ""), "args": spec.get("args") or {}}
         return out
 
-    async def stop(self, stop: dict[str, Any] | None = None) -> bool:
-        """A stop arrived (`stop`: its entry; None: the Send stop button). A busy card closes its open block as cut
-        off, appends the stop and sends its own context on; it says True. Not busy: False (the stop goes on)."""
-        return False
+    async def stop(self) -> None:
+        """Stop (a core function: every card of the domain gets it at once). A busy card marks what it was writing
+        cut and, having done something, sends its context on; an idle card does nothing."""
 
     @classmethod
     def upgrade(cls, settings: dict[str, Any], made_with: str) -> dict[str, Any]:
@@ -252,7 +289,7 @@ class Card:
     def describe(cls) -> dict[str, Any]:
         """The type: for the Cards page's palette and the ? helper."""
         return {"type": cls.type, "title": cls.title, "category": cls.category, "help": cls.help,
-                "inputs": cls.inputs, "outputs": cls.outputs, "square": sorted(cls.square),
+                "inputs": cls.inputs, "outputs": cls.outputs,
                 "settings": cls.settings_schema, "tags": cls.tags, "functions": cls.functions, "values": cls.values, "ports_help": cls.ports_help, "ui": cls.ui_url,
                 "version": cls.version, "offers": cls.offers}
 
@@ -280,11 +317,11 @@ class Card:
 
     def summary(self) -> dict[str, Any]:
         """This card: for the Cards page."""
-        ins, outs, square = self.ports()
+        ins, outs = self.ports()
         return {"id": self.id, "type": self.type, "title": self.name, "settings": self.settings, "functions": self.functions,
-                "inputs": ins, "outputs": outs, "square": sorted(square), "ui": self.ui_url, "view": self._view(),
+                "inputs": ins, "outputs": outs, "ui": self.ui_url, "view": self._view(),
                 "has_data": self.keeps_data and self.data != self.default_data(),
-                **({"tools": [c.id for c in self.domain.flow.tools(self.id)]} if self.uses_tools else {}),
+                **({"tools": [c.id for c in self.tools()]} if self.uses_tools else {}),
                 "tags": {self.tag(t): what for t, what in self.tags.items()}}
 
 

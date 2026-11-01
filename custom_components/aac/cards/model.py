@@ -1,6 +1,12 @@
-"""Model: reads the context as it is (docs/v2 page 3: system, messages, tools) and answers. Its tools are the cards
-with functions in its loop: a call travels the shortest way along the wires there and its result the shortest way back,
-then the model goes on. The answer goes back where the context came from."""
+"""Model (docs/v2 page 5): acts when the newest entry is not its own, reads the context and answers.
+
+What the model gets, from the tags: `context.system` is the system prompt; its own `<id>.said` entries are its answers
+(with their calls); the results of its calls are tool messages; every other entry with text is a user message (two in
+a row are one). Its answer is a `<id>.said` entry, sent at `out` (while it is written, after every finished sentence,
+with the state streaming). Its calls go out at `calls` to every card wired there; the card a call names answers, and
+the result comes back into `in`, one call after the other. An answer that is nothing (or only the word in "Means no
+answer") is no answer: nothing is sent.
+"""
 
 from __future__ import annotations
 
@@ -9,53 +15,34 @@ import json
 import re
 from typing import Any
 
-from custom_components.aac.api import (Card, Client, Context, ModelError, ModelUnreachable, entry, new_id, register, run,
+from custom_components.aac.api import (Card, Client, Context, ModelError, ModelUnreachable, new_id, register, run,
                                       tool_spec)
 
-VERSION = "3.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "4.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
 
-def conversation_key(context: Context) -> str:
-    """A conversation is known by its first message (the same in every turn of a chat)."""
-    return context.messages[0]["id"] if context.messages else context.id
-
-
-def conversation(context: Context, me: str, names: dict[str, str]) -> tuple[str, list[dict[str, Any]]]:
-    """What the model gets: (system prompt, messages). The context already has the shape; only who is who is decided
-    here: its own answers (and their calls) are the assistant's, their results tool messages; what another member of
-    the chat answered is a message from that member, by name. Attachments go into their message (notes before the
-    text, trailers after)."""
-    system = "\n\n".join(e["text"] for e in context.system if e["text"].strip())
-    chat: list[dict[str, Any]] = []
-    mine: set[str] = set()
-    for m in context.messages:
-        kind, by, data = m["kind"], m["by"], m["data"]
-        attached = m.get("attachments", [])
-        before = [a for a in attached if a["kind"] == "note" and a["text"].strip()]
-        after = [a for a in attached if a["kind"] != "note" and a["text"].strip()]
-        if kind == "said":
-            parts = [*before, m, *after]
-            chat.append({"role": "user", "content": "\n\n".join(x["text"] for x in parts if x["text"].strip())})
-            continue
-        if kind == "answer" and by == me and m.get("state") != "open":
-            calls = data.get("calls") or []
+def conversation(context: Context, me: str) -> tuple[str, list[dict[str, Any]]]:
+    """What the model gets: (system prompt, messages), read from the tags."""
+    said, chat, mine = f"{me}.said", [], set()
+    for e in context.conversation:
+        if e["tag"] == said:
+            if e["state"] == "streaming":
+                continue
+            calls = e["data"].get("calls") or []
             mine |= {c["id"] for c in calls}
-            text = m["text"] + (f" …[cut off: {data.get('cut') or 'stopped'}]" if m.get("state") == "cut" else "")
+            text = e["text"] + (f" …[cut off: {e['data'].get('cut') or 'stopped'}]" if e["state"] == "cut" else "")
             chat.append({"role": "assistant", "content": text or None,
                          **({"tool_calls": [{"id": c["id"], "type": "function", "function": {
                              "name": c["name"], "arguments": json.dumps(c.get("args") or {})}} for c in calls]} if calls else {})})
-        elif kind == "answer" and by != me and m["text"].strip():
-            who = names.get(by, by)
-            chat.append({"role": "user", "content": f"{who}: {m['text']}", "name": re.sub(r"[^A-Za-z0-9_-]", "_", who)[:40]})
-        elif kind == "result" and data.get("call_id") in mine:
-            chat.append({"role": "tool", "tool_call_id": data["call_id"], "content": m["text"]})
-        if before or after:  # attachments on something nobody said (rare): read right after it
-            chat.append({"role": "user", "content": "\n\n".join(a["text"] for a in [*before, *after])})
+        elif e["data"].get("call_id") in mine:
+            chat.append({"role": "tool", "tool_call_id": e["data"]["call_id"], "content": e["text"]})
+        elif e["text"].strip():
+            chat.append({"role": "user", "content": e["text"]})
     out: list[dict[str, Any]] = []
     for item in chat:
-        if item["role"] == "user" and out and out[-1]["role"] == "user":  # some chat templates allow no two user turns in a row
+        if item["role"] == "user" and out and out[-1]["role"] == "user":  # chat templates allow no two user turns in a row
             out[-1] = {"role": "user", "content": f"{out[-1]['content']}\n\n{item['content']}"}
         else:
             out.append(item)
@@ -63,7 +50,7 @@ def conversation(context: Context, me: str, names: dict[str, str]) -> tuple[str,
             answered = {m.get("tool_call_id") for m in chat}
             out += [{"role": "tool", "tool_call_id": c["id"], "content": "(no result: stopped)"}
                     for c in item["tool_calls"] if c["id"] not in answered]
-    return system, out
+    return context.system["text"].strip(), out
 
 
 @register
@@ -73,31 +60,32 @@ class Model(Card):
     type = "model"
     title = "Model"
     category = "Models"
-    help = ("Reads the context and answers, with the first free model of its list. Its answer goes out at 'out' to every "
-            "card wired there (a Chat shows it, Text to speech speaks it): while it works every finished sentence at once, "
-            "then the finished answer. Cards with functions wired from 'calls' (straight or through other cards) are its "
-            "tools: a call goes there along the wires and the result comes back into 'in'.")
+    help = ("Answers when the newest entry is not its own, with the first free model of its list. Its answer goes out "
+            "at 'out' (while it is written, after every finished sentence). Cards with functions wired from 'calls' "
+            "(straight or through other cards, and back into 'in') are its tools. No answer: nothing is sent.")
     outputs = {"out": "text", "calls": "text"}
-    square = {"calls"}
     calls_from = ("calls",)
     uses_tools = True
-    tags = {"answer": "its answers (with the calls it made; its thinking in data.thinking; why one was cut off in data.cut)",
-            "stop": "it was stopped (its answer is cut off)", "context_full": "its note to the model that the context is nearly full",
-            "error": "no answer came (no model available, a model failed); models never read these"}
-    ports_help = {"in": "a context arrives: the model reads it and answers; a tool's result comes back here too (a stop "
-                        "while it writes cuts the answer)",
-                  "out": "its answer, to every card wired here (while it is written, each finished sentence)",
-                  "calls": "square: a tool call goes the shortest way to the called card (the result comes back into 'in'); "
-                           "every card with functions reachable from here is a tool (For models)"}
+    tags = {"said": "its answers (its calls in data.calls, its thinking in data.thinking, why one was cut in data.cut; "
+                    "the newest has the request in data.request)",
+            "context_full": "its note to the model that the context is nearly full",
+            "error": "no answer came (no model available, a model failed)"}
+    ports_help = {"in": "a context arrives: when its newest entry is not the model's own, it answers; a tool's result "
+                        "comes back here too",
+                  "out": "its answer, to every card wired here (while it is written, after every finished sentence)",
+                  "calls": "its calls, to every card wired here: the card a call names answers (For models)"}
     settings_schema = {
         "models": {"type": "modellist", "tag": "text", "title": "Models (in order)", "default": [], "help": "The list is run through from the top: a free model takes the context; a busy one queues it if its Queue is ticked, then the next is tried; the first that gets free takes it. Empty: every model with the tag, queued."},
         "temperature": {"type": "number", "title": "Temperature", "default": 0.7, "help": "0 = always the same, higher = more varied."},
         "max_tokens": {"type": "number", "title": "Longest answer (tokens)", "default": 0,
                        "help": "0 or empty: no limit (only the model's context). A limit keeps answers short (voice); thinking counts too."},
         "max_rounds": {"type": "number", "title": "Most tool rounds without an answer", "default": 8,
-                       "help": "Model → tools → model … in one turn before it gives up. 0 or empty: no limit (Stop still ends it)."},
+                       "help": "Model → tools → model … in one go before it gives up. 0 or empty: no limit (Stop still ends it)."},
+        "silent": {"type": "text", "title": "Means no answer", "default": "nothing",
+                   "help": "An answer that is only this word (or nothing at all) is no answer: nothing is sent. For models "
+                           "that cannot stay silent. Empty: only an empty answer."},
         "context_note": {"type": "bool", "title": "Tell the model when its context is nearly full", "default": True,
-                         "help": "From 80 % on, a short note is attached to the turn (visible in Context): keep it short, older parts may soon not fit."},
+                         "help": "From 80 % on, a short note goes at the end (visible in Context): keep it short, older parts may soon not fit."},
         "thinking": {"type": "bool", "title": "Thinking", "default": False, "help": "Let models that can, think first (slower)."},
     }
     functions = {
@@ -107,159 +95,144 @@ class Model(Card):
 
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
-        self._task: asyncio.Task | None = None
-        self._stop: dict[str, Any] | None = None
-        self._sent: asyncio.Future | None = None  # the newest snapshot on its way (they go out in order)
-        self._upto: dict[str, int] = {}  # answer entry → how far its text has gone out
+        self._writing: set[asyncio.Task] = set()  # its answers being written (a stop cuts them)
         self._context_size: dict[str, int | None] = {}  # model → the tokens its context holds (the server tells)
-        self._used: dict[str, tuple[int, int]] = {}  # conversation → (tokens used last time, context size)
-        self._done: dict[str, tuple[int, int]] = {}  # turn → how much it held when this model sent it on
 
     @property
     def busy(self) -> bool:
-        return self._task is not None and not self._task.done()
+        return bool(self._writing)
 
-    async def progress(self, context: Context, port: str) -> list[Any] | None:
-        """A piece of a turn still being written elsewhere: a model answers only the finished one."""
-        return []
-
-    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
-        if port != "in":
-            return []
-        if pending := context.open_calls(self.id):  # a result came back and another call waits: on to that card
-            return [("calls", pending[0]["card"])]
-        if self._done.get(context.id) == self._size(context):  # a turn it sent out came back with nothing new (a card
-            return []  # wired from 'out' back into it passed it on): it is not asked anything, it ends here
-        self._stop = None
-        self._task = asyncio.create_task(self._round(context, step))  # its own task: a stop cancels only the writing
-        routes = None
+    async def handle(self, context: Context, port: str) -> None:
+        newest = context.newest
+        if port != "in" or newest is None or newest["tag"].startswith(f"{self.id}.") or context.streaming:
+            return  # nothing for it
+        call = context.next_call()
+        if call is not None:  # a call still waits: its own goes out (another card's is not for it)
+            if call[0]["tag"] == self.tag("said"):
+                await self.send(context, "calls")
+            return
+        task = asyncio.create_task(self._answer(context))  # its own task: a stop cuts only the writing
+        self._writing.add(task)
         try:
-            routes = await self._task
+            await task
         except asyncio.CancelledError:
-            if not self._task.cancelled():  # the whole chain is being cancelled, not a stop
+            if not task.cancelled():  # the whole chain is being cancelled, not a stop
                 raise
-            if (last := context.last("answer")) and last["by"] == self.id:
-                last["state"], last["data"]["cut"] = "cut", "stopped"
-            stop = self._stop or entry(self.id, "signal", "stop", [self.tag("stop")])
-            context.add(self.id, "signal", "stop", stop["tags"], **{**stop["data"], "done": True})  # history, no longer a running stop
+            if (said := context.get(self.tag("said"))) is not None and said["state"] == "streaming":
+                said["state"], said["data"]["cut"] = "cut", "stopped"
+                await self.send(context, "out")
         finally:
-            self._task = None
-            if self._sent:  # the snapshots first, then the finished turn
-                await self._sent
-            self._sent, self._upto = None, {}
-        self._done[context.id] = self._size(context)
-        while len(self._done) > 50:  # only recent turns can come back
-            self._done.pop(next(iter(self._done)))
-        return routes or ["out"]
+            self._writing.discard(task)
 
-    @staticmethod
-    def _size(context: Context) -> tuple[int, int]:
-        """How much a context holds: something new in it (a result, a line a Relay added) makes it bigger."""
-        return len(context.messages), len(context.events)
-
-    def _snapshot(self, context: Context, step) -> None:
-        """Send what it has so far (after the snapshots before it)."""
-        before, send = self._sent, step.progress(["out"])
-
-        async def in_order() -> None:
-            if before:
-                await before
-            await send
-        self._sent = asyncio.ensure_future(in_order())
+    # ------------------------------------------------------------------ answering
+    def _rounds(self, context: Context) -> int:
+        """Its answers since the newest entry that is neither its own nor a result."""
+        rounds = 0
+        for e in reversed(context.conversation):
+            if e["tag"] == self.tag("said"):
+                rounds += 1
+            elif not e["tag"].startswith(f"{self.id}.") and "call_id" not in e["data"]:
+                break
+        return rounds
 
     def _tools(self, context: Context) -> dict[str, dict[str, Any]]:
-        """The tools this turn (into the context's tools): the functions of the cards wired to it and back, as For
-        models names them; a name two cards offer gets the card's name in front."""
-        found = [(card, fn, spec) for card in self.domain.flow.tools(self.id) for fn, spec in card.offered().items()]
+        """The tools this time (into context.tools): the functions of the cards wired to it and back, as For models
+        names them; a name two cards offer gets the card's name in front."""
+        found = [(card, fn, spec) for card in self.tools() for fn, spec in card.offered().items()]
         names = [spec["name"] for _, _, spec in found]
         tools = {}
         for card, fn, spec in found:
             name = spec["name"] if names.count(spec["name"]) == 1 else f"{re.sub(r'[^a-z0-9]+', '_', card.name.lower()).strip('_')}_{spec['name']}"
             tools[name] = {"name": name, "card": card.id, "function": fn, "description": spec["help"], "args": spec["args"]}
-        context.tools = list(tools.values())
+        context.tools["data"]["tools"] = list(tools.values())
         return tools
 
-    async def _round(self, context: Context, step) -> list[Any] | None:
-        """Ask the model (again). Calls: their answer goes to the first called card (returns that route); an answer
-        without calls: None (it goes on as the answer)."""
-        said = max((i for i, m in enumerate(context.messages) if m["kind"] == "said"), default=-1)
-        rounds = sum(1 for m in context.messages[said + 1:] if m["kind"] == "answer" and m["by"] == self.id)
-        if (most := int(self.settings.get("max_rounds") or 0)) > 0 and rounds >= most:
-            context.add(self.id, "error", f"Error: {most} rounds of tool calls without an answer.", ["error"])
-            return None
+    def _note(self, context: Context) -> None:
+        """Its note when the conversation fills 80 % of the model's context (as its newest answer used it)."""
+        for e in context.find(self.tag("context_full")):
+            context.remove(e)
+        usage = ((context.get(self.tag("said")) or {}).get("data") or {}).get("usage") or {}
+        full = round(100 * usage["total_tokens"] / usage["context"]) if usage.get("context") and usage.get("total_tokens") else 0
+        if self.settings.get("context_note", True) and full >= 80:
+            context.add(self.tag("context_full"), f"(This conversation fills {full} % of your context: keep answers "
+                        "short; older parts may soon not fit.)")
+
+    def _silent(self, text: str) -> bool:
+        """An answer that is no answer."""
+        word = (self.settings.get("silent") or "").strip().lower()
+        said = text.strip().lower().rstrip(".!…")
+        return not said or bool(word) and said == word
+
+    async def _answer(self, context: Context) -> None:
+        """Ask the model; its answer goes out at `out`, its calls at `calls`."""
+        if (most := int(self.settings.get("max_rounds") or 0)) > 0 and self._rounds(context) >= most:
+            context.add(self.tag("error"), f"Error: {most} rounds of tool calls without an answer.")
+            await self.send(context, "out")
+            return
+        entries = self.core.pool.entries(self.settings.get("models"), "text")
+        if not entries:
+            context.add(self.tag("error"), "Error: no model for text is set up (Models in the sidebar).")
+            await self.send(context, "out")
+            return
         tools = self._tools(context)
         specs = [tool_spec(t["name"], {"help": t["description"], "args": t["args"]}) for t in tools.values()]
-        names = {c.id: c.name for c in self.domain.cards.values()}
         params = {"temperature": float(self.settings.get("temperature") or 0.7),
                   **({"max_tokens": n} if (n := int(self.settings.get("max_tokens") or 0)) > 0 else {})}
         if not self.settings.get("thinking"):
             params["chat_template_kwargs"] = {"enable_thinking": False}
-        pool = self.core.pool
-        entries = pool.entries(self.settings.get("models"), "text")
-        if not entries:
-            context.add(self.id, "error", "Error: no model for text is set up (Models in the sidebar).", ["error"])
-            return None
-        answer = context.add(self.id, "answer", "", ["answer"])
-        answer["state"] = "open"
-        if not rounds:
-            self._snapshot(context, step)  # under way: a chat shows the question at once (a spoken one too)
-            await self._sent  # before the model is asked (only a few cards pass it on)
-        used = self._used.get(conversation_key(context))  # how full this conversation was last time
-        full = round(100 * used[0] / used[1]) if used and used[1] else 0
-        if self.settings.get("context_note", True) and not rounds:
-            context.put(self.id, "trailer", f"(This conversation fills {full} % of your context: keep answers short; older "
-                        "parts may soon not fit.)" if full >= 80 else "", "context_full")
-        system, chat = conversation(context, self.id, names)
+        self._note(context)
+        for e in context.find(self.tag("said")):  # only the newest answer keeps its request
+            e["data"].pop("request", None)
+        system, chat = conversation(context, self.id)
         payload = ([{"role": "system", "content": system}] if system else []) + chat
-        reply, tried, dropped, failed = None, set(), False, ""
-        while True:  # down the list (a free model, else the queues); one that does not answer is skipped
-            left = [e for e in entries if e["model"] not in tried]
-            async with pool.slot(left) as model_id:
-                if model_id is None:
-                    dropped = any(pool.usable(e["model"]) for e in left)
-                    break
-                try:
-                    client = Client(self.hass, pool.get(model_id))
-                    reply = await client.chat(payload, specs or None, on_delta=lambda t, th, a=answer: self._live(a, t, th, step), **params)
-                    pool.mark_up(model_id)
-                    usage = await self._usage(context, client, model_id, reply)
-                    context.request = {"model": model_id, "body": {"messages": payload, **({"tools": specs} if specs else {}), **params},
-                                       "reply": {"content": reply["content"], "calls": [  # what it wrote
-                                           f"{c['function']['name']}({c['function']['arguments']})" for c in reply["tool_calls"]]},
-                                       **({"usage": usage} if usage else {})}
-                    break
-                except ModelUnreachable as err:
-                    pool.mark_down(model_id, str(err))
-                    tried.add(model_id)
-                except ModelError as err:
-                    self.log(f"Model {pool.name(model_id)} failed: {err}", "warning", what="model")
-                    pool.heard_from(model_id, str(err))
-                    too_long = "context" in str(err).lower() and any(w in str(err).lower() for w in ("exceed", "too long", "n_ctx"))
-                    failed = ("Error: this chat is too long for the model's context. Start a new chat, or let fewer turns go "
-                              "along (the Chat card's setting)." if too_long else f"Error: the model failed ({err}).")
-                    break
+        said = context.add(self.tag("said"))
+        said["state"] = "streaming"
+        sent: list[asyncio.Future] = []  # its snapshots on their way (they go out in order)
+        upto = [0]
+
+        def live(text: str, thinking: str) -> None:
+            said["text"] = text
+            if thinking:
+                said["data"]["thinking"] = thinking
+            self.live(context, text, thinking)
+            ends = [m.end() for m in SENTENCE.finditer(text)]
+            if ends and ends[-1] > upto[0] and not self._silent(text[:ends[-1]]):  # a finished sentence goes out
+                upto[0] = ends[-1]
+                snap, before = context.copy(), sent[-1] if sent else None
+
+                async def in_order() -> None:
+                    if before:
+                        await before
+                    await self.send(snap, "out")
+                sent.append(asyncio.ensure_future(in_order()))
+
+        try:
+            reply, failed = await self._ask(entries, payload, specs, params, live, said)
+        finally:
+            if sent:
+                await sent[-1]
         if reply is None:
-            if dropped:
-                self.log("Every model was busy and none queues: the context was dropped", "warning", what="dropped")
-            failed = failed or ("Error: every model was busy and none queues, so this was dropped." if dropped
-                                else "Error: no model was available.")
-            if answer["text"]:  # it had begun: what came stays, cut off
-                answer["state"], answer["data"]["cut"] = "cut", "the model failed"
+            if said["text"]:  # it had begun: what came stays, cut off
+                said["state"], said["data"]["cut"] = "cut", "the model failed"
             else:
-                context.remove(answer)
-            context.add(self.id, "error", failed, ["error"])  # shown and spoken, never read by a model
-            return None
-        answer["text"], answer["state"] = reply["content"].strip(), "closed"
+                context.remove(said)
+            context.add(self.tag("error"), failed)
+            await self.send(context, "out")
+            return
+        said["text"], said["state"] = reply["content"].strip(), "ended"
         if reply.get("thinking"):
-            answer["data"]["thinking"] = reply["thinking"].strip()
+            said["data"]["thinking"] = reply["thinking"].strip()
         if reply.get("finish") == "length":  # it did not finish: why
-            u = (context.request or {}).get("usage") or {}
-            answer["state"] = "cut"
-            answer["data"]["cut"] = ("context full" if u.get("context") and u.get("total_tokens", 0) >= u["context"] - 32
-                                     else f"Longest answer reached ({params['max_tokens']} tokens)" if params.get("max_tokens")
-                                     else "length limit")
+            u = (said["data"].get("request") or {}).get("usage") or {}
+            said["state"] = "cut"
+            said["data"]["cut"] = ("context full" if u.get("context") and u.get("total_tokens", 0) >= u["context"] - 32
+                                   else f"Longest answer reached ({params['max_tokens']} tokens)" if params.get("max_tokens")
+                                   else "length limit")
         if not reply["tool_calls"]:
-            return None
+            if self._silent(said["text"]):  # no answer: nothing is sent
+                return
+            await self.send(context, "out")
+            return
         calls = []
         for call in reply["tool_calls"]:
             try:
@@ -269,53 +242,71 @@ class Model(Card):
             tool = tools.get(call["function"]["name"])
             calls.append({"id": call.get("id") or new_id(), "name": call["function"]["name"], "args": args,
                           "card": tool["card"] if tool else None, "function": tool["function"] if tool else None})
-        answer["data"]["calls"] = calls
+        said["data"]["calls"] = calls
+        if said["text"].strip():  # what it said before calling goes out (a chat shows it, it is spoken)
+            await self.send(context, "out")
         for call in calls:
             if call["card"] is None:  # a tool it does not have: told at once, nothing travels
-                context.add(self.id, "result", json.dumps({"error": f"there is no tool {call['name']}"}), call_id=call["id"],
+                context.add(self.tag("result"), json.dumps({"error": f"there is no tool {call['name']}"}), call_id=call["id"],
                             name=call["name"])
-        self._snapshot(context, step)  # what it said and is calling goes out (a chat shows it)
-        if pending := context.open_calls(self.id):
-            return [("calls", pending[0]["card"])]
-        return await self._round(context, step)  # only unknown tools: it hears so and tries again
+        if context.next_call() is not None:
+            await self.send(context, "calls")
+        else:  # only unknown tools: it hears so and tries again
+            await self._answer(context)
 
-    async def _usage(self, context: Context, client: Client, model_id: str, reply: dict[str, Any]) -> dict[str, Any] | None:
+    async def _ask(self, entries: list[dict[str, Any]], payload: list[dict[str, Any]], specs: list[dict[str, Any]],
+                   params: dict[str, Any], live, said: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+        """Down the list (a free model, else the queues); one that does not answer is skipped. (reply, why it failed)."""
+        pool, tried = self.core.pool, set()
+        while True:
+            left = [e for e in entries if e["model"] not in tried]
+            async with pool.slot(left) as model_id:
+                if model_id is None:
+                    if any(pool.usable(e["model"]) for e in left):
+                        self.log("Every model was busy and none queues: the context was dropped", "warning", what="dropped")
+                        return None, "Error: every model was busy and none queues, so this was dropped."
+                    return None, "Error: no model was available."
+                try:
+                    client = Client(self.hass, pool.get(model_id))
+                    reply = await client.chat(payload, specs or None, on_delta=live, **params)
+                    pool.mark_up(model_id)
+                    usage = await self._usage(client, model_id, reply)
+                    said["data"]["request"] = {"model": model_id, "body": {"messages": payload, **({"tools": specs} if specs else {}), **params},
+                                               "reply": {"content": reply["content"], "calls": [
+                                                   f"{c['function']['name']}({c['function']['arguments']})" for c in reply["tool_calls"]]},
+                                               **({"usage": usage} if usage else {})}
+                    if usage:
+                        said["data"]["usage"] = usage
+                    return reply, ""
+                except ModelUnreachable as err:
+                    pool.mark_down(model_id, str(err))
+                    tried.add(model_id)
+                except ModelError as err:
+                    self.log(f"Model {pool.name(model_id)} failed: {err}", "warning", what="model")
+                    pool.heard_from(model_id, str(err))
+                    too_long = "context" in str(err).lower() and any(w in str(err).lower() for w in ("exceed", "too long", "n_ctx"))
+                    return None, ("Error: this chat is too long for the model's context. Start a new chat." if too_long
+                                  else f"Error: the model failed ({err}).")
+
+    async def _usage(self, client: Client, model_id: str, reply: dict[str, Any]) -> dict[str, Any] | None:
         """The tokens this request used, and how many the model's context holds (asked once per model)."""
         if not (usage := reply.get("usage")):
             return None
         if model_id not in self._context_size:
             self._context_size[model_id] = await client.context_size()
-        usage = {**usage, "context": self._context_size[model_id]}
-        self._used[conversation_key(context)] = (usage.get("total_tokens") or 0, usage["context"] or 0)
-        while len(self._used) > 50:  # conversations long gone
-            self._used.pop(next(iter(self._used)))
-        return usage
+        return {**usage, "context": self._context_size[model_id]}
 
-    def _live(self, answer: dict[str, Any], text: str, thinking: str, step) -> None:
-        answer["text"] = text
-        if thinking:
-            answer["data"]["thinking"] = thinking
-        step.live(text, thinking)
-        ends = [m.end() for m in SENTENCE.finditer(text)]
-        if ends and ends[-1] > self._upto.get(answer["id"], 0):  # a sentence was finished: it goes out
-            self._upto[answer["id"]] = ends[-1]
-            self._snapshot(step.context, step)
-
-    async def stop(self, stop: dict[str, Any] | None = None) -> bool:
-        if not self._task or self._task.done():
-            return False
-        self._stop = dict(stop) if stop else None
-        self._task.cancel()
-        return True
+    async def stop(self) -> None:
+        for task in list(self._writing):
+            task.cancel()
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         if function == "ask":  # a question of its own, answered from what it knows (its tools stay out)
             ask = Context()
             if context is not None:
-                ask.system = [dict(e) for e in context.system]
-            ask.add(self.id, "said", str(args.get("text") or ""))
-            names = {c.id: c.name for c in self.domain.cards.values()}
-            system, chat = conversation(ask, self.id, names)
+                ask.system["text"] = context.system["text"]
+            ask.add(self.tag("asked"), str(args.get("text") or ""))
+            system, chat = conversation(ask, self.id)
             payload = ([{"role": "system", "content": system}] if system else []) + chat
             params = {"temperature": float(self.settings.get("temperature") or 0.7),
                       **({"max_tokens": n} if (n := int(self.settings.get("max_tokens") or 0)) > 0 else {})}

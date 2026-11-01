@@ -30,6 +30,7 @@ from .models import ModelPool
 
 UNDO_STEPS = 20
 SLOTS = ("1", "2", "3")
+STORM = 30  # contexts within a second that turn a wire red (AAC's settings change it: a fast model's snapshots must not)
 
 
 def slug(text: str) -> str:
@@ -590,6 +591,11 @@ class Core:
     def watched(self, card_id: str) -> bool:
         """A Cards page shows this card's view now."""
         return self._watching.get(card_id, 0) > time.monotonic()
+
+    @property
+    def storm(self) -> int:
+        """The storm limit (AAC's settings): contexts within a second that turn a wire red."""
+        return int((self.data.get("settings") or {}).get("storm") or STORM)
 
     @property
     def cards_page_open(self) -> bool:

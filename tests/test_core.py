@@ -27,18 +27,18 @@ async def test_a_chat_round_trip(hass: HomeAssistant, mock_entry, aioclient_mock
     core = await setup_aac(hass, mock_entry)
     asked = model_answers(aioclient_mock, reply("Hello!"), reply("You said hi."))
     chat = core.domain.cards["chat"]
-    chat_id, answer = await chat.send("hi")
+    chat_id, answer = await chat.write("hi")
     assert answer == "Hello!"
     first = asked[0]["messages"]
     assert first[0] == {"role": "system", "content": "Be kind."}
     assert first[-1]["role"] == "user" and first[-1]["content"].startswith("hi\n\nLocal time: ")
-    _, answer = await chat.send("what did I say?", chat_id)
+    _, answer = await chat.write("what did I say?", chat_id)
     second = asked[1]["messages"]
     assert answer == "You said hi." and [m["role"] for m in second] == ["system", "user", "assistant", "user"]
     assert second[1]["content"] == first[-1]["content"]  # earlier turns stay as they were: the server's cache
     assert [m["text"] for m in chat.get(chat_id)["messages"]] == ["hi", "Hello!", "what did I say?", "You said hi."]
-    behind = chat.get(chat_id)["behind"]  # Behind the scenes: the newest turn as the model got it, each part's card
-    assert [e["by"] for e in behind["system"]] == ["charter"] and behind["messages"][-2]["attachments"][0]["by"] == "time"
+    behind = chat.get(chat_id)["behind"]["entries"]  # the Context view: every entry with its tag
+    assert behind[0]["text"] == "Be kind." and [e["tag"] for e in behind].count("time.time") == 2
 
 
 async def test_tools_are_the_cards_wired_out_and_back(hass: HomeAssistant, mock_entry, aioclient_mock):
@@ -46,7 +46,7 @@ async def test_tools_are_the_cards_wired_out_and_back(hass: HomeAssistant, mock_
     core = await setup_aac(hass, mock_entry)
     asked = model_answers(aioclient_mock, reply(calls=[("add_items", {"list": "Shopping", "items": ["Milk"]})]),
                           reply("Added milk."))
-    _, answer = await core.domain.cards["chat"].send("put milk on the shopping list")
+    _, answer = await core.domain.cards["chat"].write("put milk on the shopping list")
     names = {t["function"]["name"] for t in asked[0]["tools"]}
     assert {"add_items", "find", "call_service"} <= names  # the function's own name: no card id
     assert answer == "Added milk."
@@ -70,7 +70,7 @@ async def test_the_next_model_when_a_machine_is_off(hass: HomeAssistant, mock_en
         return AiohttpClientMockResponse(method, url, json=reply("small here"))
 
     aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=side_effect)
-    _, answer = await core.domain.cards["chat"].send("hi")
+    _, answer = await core.domain.cards["chat"].write("hi")
     assert answer == "small here" and seen == ["big", "small"] and not core.pool.usable("m_big")
 
 
@@ -180,7 +180,7 @@ async def test_every_card_survives_remove_and_undo(hass: HomeAssistant, mock_ent
     domain.set_wires([*domain.wires, *({"from": f"{a}.out", "to": f"{b}.in"} for a, b in zip(ids, ids[1:]))])
     assert len(domain.wires) > wires  # only the wires of matching kinds stay
     await domain.cards["lists"].call("add_items", {"list": "Project Portfolio", "items": ["Survives Undo"]})
-    chat_id, answer = await domain.cards["chat"].send("hi")
+    chat_id, answer = await domain.cards["chat"].write("hi")
     assert answer == "Hello!"
     before = {"setup": domain.export(), "data": {i: deepcopy(c.data) for i, c in domain.cards.items()},
               "titles": {i: c.title for i, c in domain.cards.items()}}
@@ -192,7 +192,7 @@ async def test_every_card_survives_remove_and_undo(hass: HomeAssistant, mock_ent
     assert domain.export() == before["setup"]
     assert {i: c.data for i, c in domain.cards.items()} == before["data"]
     assert {i: c.title for i, c in domain.cards.items()} == before["titles"]
-    _, answer = await domain.cards["chat"].send("still there?", chat_id)
+    _, answer = await domain.cards["chat"].write("still there?", chat_id)
     assert answer == "Still here." and len(domain.cards["chat"].get(chat_id)["messages"]) == 4
     assert "Survives Undo" in str(await domain.cards["lists"].call("read_list", {"list": "Project Portfolio"}))
 
@@ -210,11 +210,9 @@ async def test_setup_file_round_trip(hass: HomeAssistant, mock_entry, aioclient_
 
 
 async def test_stop_cuts_the_answer_and_stays_visible(hass: HomeAssistant, mock_entry, aioclient_mock):
-    """The chat's Stop while the model writes: the answer is cut, the stop is the context's last entry, and the next
-    turn tells the model it was stopped (an old stop does not stop the next turn)."""
+    """Stop (a core function: the chat's Stop button) while the model writes: its answer is cut and goes out, the chat
+    shows "stopped", and the next turn tells the model it was stopped."""
     import asyncio
-
-    from custom_components.aac.context import is_stop
 
     from .conftest import BASE_URL
 
@@ -230,14 +228,14 @@ async def test_stop_cuts_the_answer_and_stays_visible(hass: HomeAssistant, mock_
         return AiohttpClientMockResponse(method, url, json=reply("Fine."))
 
     aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=slow)
-    sending = hass.async_create_task(chat.send("tell me a long story"))
+    sending = hass.async_create_task(chat.write("tell me a long story"))
     await started.wait()
     chat_id = chat.chats()[0]["id"]
-    await chat.stop_chat(chat_id)
+    await chat.stop_all()
     _, answer = await sending
     kept = chat.get(chat_id)
-    assert answer == "" and kept["messages"][-1]["cut"] and is_stop(kept["behind"]["events"][-1])
-    _, answer = await chat.send("go on", chat_id)
+    assert answer == "" and kept["messages"][-1]["cut"] == "stopped"
+    _, answer = await chat.write("go on", chat_id)
     assert answer == "Fine." and any("[cut off: stopped]" in str(m["content"]) for m in asked[-1]["messages"])
 
 
@@ -273,11 +271,11 @@ class Shout(Card):
     title = "Shout"
     help = "Makes the newest line upper case."
 
-    async def handle(self, context, port, step):
-        said = context.last("said")
+    async def handle(self, context, port):
+        said = context.get("*.said")
         if said:
             said["text"] = said["text"].upper()
-        return None
+            await self.send(context)
 ''')
     (folder / "broken.py").write_text("this is not python")
     builtin_relay = CARD_TYPES["relay"]
@@ -296,9 +294,9 @@ class MyRelay(Card):
         shout = await core.domain.add_card("shout", "Shout")
         from custom_components.aac.context import Context
         context = Context()
-        context.add("chat", "said", "hello")
-        await shout.handle(context, "in", None)
-        assert context.last("said")["text"] == "HELLO" and CARD_TYPES["relay"].title == "My relay"
+        context.add("chat.said", "hello")
+        await shout.handle(context, "in")
+        assert context.get("*.said")["text"] == "HELLO" and CARD_TYPES["relay"].title == "My relay"
         assert CARD_TYPES["relay"].version == "9.0.0" and CARD_TYPES["chat"].version == _shipped_version("chat")
     finally:  # HA's test config folder is shared by every test
         CARD_TYPES["relay"] = builtin_relay
@@ -328,17 +326,17 @@ async def test_a_model_talks_while_it_works(hass: HomeAssistant, mock_entry, aio
         return pcm_to_wav(b"\x00\x00" * 160)
     shown = []
     chat = d.cards["chat"]
-    real = chat.progress
+    real = chat.handle
 
     async def watch(context, port):
-        shown.append([e["text"] for e in context.entries if e["kind"] == "answer" and e.get("state") == "closed"])
+        shown.append([e["text"] for e in context.find("model.said") if e["state"] == "ended"])
         return await real(context, port)
     def clip(card, port, clip):  # only this test's Text to speech (a voice chain may have its own)
         if card == voice.id:
             clips.append(clip["text"])
-    with patch.object(core.audio, "tts", AsyncMock(side_effect=tts)), patch.object(chat, "progress", watch), \
+    with patch.object(core.audio, "tts", AsyncMock(side_effect=tts)), patch.object(chat, "handle", watch), \
             patch.object(d.flow, "clip", clip):
-        _, answer = await chat.send("what lists do I have?")
+        _, answer = await chat.write("what lists do I have?")
         await hass.async_block_till_done()
     assert answer == "You have no lists yet. Shall I make one?"
     assert clips == ["Let me check.", "You have no lists yet.", "Shall I make one?"]
@@ -347,15 +345,14 @@ async def test_a_model_talks_while_it_works(hass: HomeAssistant, mock_entry, aio
 
 async def test_the_answer_goes_to_every_card_wired_from_out(hass: HomeAssistant, mock_entry, aioclient_mock):
     """A turn the Chat started: the answer goes to the Chat and to every other card wired from out too (no rule sends
-    it only back where it started); a card wired from out back into the Model (Lists, which passes a context on)
-    brings the turn back, and the Model, asked nothing new, does not answer again."""
+    it only back where it started); Lists gets it, finds no call for it and sends nothing."""
     core = await setup_aac(hass, mock_entry)
     d = core.domain
     d.set_wires([*d.wires, {"from": "model.out", "to": "lists.in"}])  # lists.out → model.in is there (it is a tool)
     asked = model_answers(aioclient_mock, reply("Hello."), reply("Hello again."))
-    _, answer = await d.cards["chat"].send("hi")
-    assert answer == "Hello." and len(asked) == 1  # asked once: the turn that came back held nothing new
-    assert d.flow.held["lists.out"].answer == "Hello."  # Lists got the answer and passed it on
+    _, answer = await d.cards["chat"].write("hi")
+    assert answer == "Hello." and len(asked) == 1
+    assert d.flow.last["model.out"]["time"] and "lists.out" not in d.flow.held  # Lists got it and sent nothing
 
 
 async def test_tools_are_the_cards_its_calls_reach(hass: HomeAssistant, mock_entry):
@@ -375,25 +372,31 @@ async def test_tools_are_the_cards_its_calls_reach(hass: HomeAssistant, mock_ent
     assert "lists" not in {c.id for c in d.flow.tools("model")}
 
 
-async def test_a_stop_passes_every_card_once(hass: HomeAssistant, mock_entry):
-    """A stop runs forward through the cards that are not busy; round a loop it ends (owner 2026-11-01: "stop the
-    vacuum" made the Stop word send one; the Model's out to Chat and Schedule, both back into the Charter, doubled it
-    every round until Home Assistant froze)."""
+async def test_stop_is_a_core_function(hass: HomeAssistant, mock_entry):
+    """Stop goes to every card at once and travels nowhere (owner 2026-11-01: "stop the vacuum" made the Stop word send
+    one; the Model's out to Chat and Schedule, both back into the Charter, doubled it every round until Home Assistant
+    froze)."""
     core = await setup_aac(hass, mock_entry)
     d = core.domain
     sched = await d.add_card("schedule", "Schedule")
     d.set_wires([*d.wires, {"from": "model.out", "to": f"{sched.id}.answers"}, {"from": f"{sched.id}.out", "to": "charter.in"}])
-    seen = []
+    seen, stopped = [], []
     real = d.flow.enter
 
     async def counted(card, port, context):
         seen.append(card.id)
         await real(card, port, context)
     d.flow.enter = counted
-    chat = d.cards["chat"]
-    await chat.stop_chat(chat._new("x")["id"])
+    for card in d.cards.values():
+        real_stop = card.stop
+
+        async def stop(card=card, real_stop=real_stop):
+            stopped.append(card.id)
+            await real_stop()
+        card.stop = stop
+    await d.cards["chat"].stop_all()
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert 0 < len(seen) < 20 and not d.red
+    assert seen == [] and set(stopped) == set(d.cards) and not d.red
 
 
 async def test_a_storm_turns_the_wire_red(hass: HomeAssistant, mock_entry, hass_ws_client):
@@ -402,7 +405,7 @@ async def test_a_storm_turns_the_wire_red(hass: HomeAssistant, mock_entry, hass_
     from unittest.mock import patch
 
     from custom_components.aac.context import Context
-    from custom_components.aac.flow import STORM
+    from custom_components.aac.core import STORM
 
     core = await setup_aac(hass, mock_entry)
     d = core.domain
@@ -412,12 +415,11 @@ async def test_a_storm_turns_the_wire_red(hass: HomeAssistant, mock_entry, hass_
     loop = [("a.out", "b.in"), ("b.out", "c.in"), ("c.out", "a.in")]
     d.set_wires([*d.wires, *({"from": a, "to": b} for a, b in loop)])  # a loop
     context = Context()
-    context.add("a", "said", "round and round", [])
+    context.add("a.said", "round and round")
     with patch("custom_components.aac.core.persistent_notification.async_create") as note:
-        await d.flow.send(context, "a", "out")
+        await d.flow.send(d.cards["a"], context, "out")
     assert len(d.red) == 1 and (d.red[0]["from"], d.red[0]["to"]) in loop and note.call_count == 1
-    assert not d.log.read(levels=["warning"], what="loop")  # it ended there, long before the 400 steps
-    assert d.flow.passes("x.out", "y.in") and STORM >= 10
+    assert d.flow.passes("x.out", "y.in") and STORM >= 10 and core.storm == STORM
     assert d.log.read(levels=["error"], what="red")
     red = d.red[0]
     assert d._data()["red"] == d.red and d.summary()["red"] == d.red  # kept, and the panel shows it
@@ -443,20 +445,21 @@ async def test_a_call_left_behind_is_not_made_again(hass: HomeAssistant, mock_en
     turn, the model is asked (the old call is not sent around again; owner 2026-11-01: it went Model ↔ Home 200 times)."""
     core = await setup_aac(hass, mock_entry)
     chat = core.domain.cards["chat"]
+    from custom_components.aac.context import Context
+
     half = chat._new("Half")
-    half["context"]["messages"] += [
-        {"id": "s1", "by": "chat", "kind": "said", "text": "is the TV on?", "tags": [], "time": "", "data": {}, "state": "closed"},
-        {"id": "a1", "by": "model", "kind": "answer", "text": "", "tags": [], "time": "", "state": "closed",
-         "data": {"calls": [{"id": "c1", "name": "home", "card": "home", "function": "find", "args": {}}]}}]
+    held = Context()
+    held.add("chat.said", "is the TV on?")
+    held.add("model.said", "", calls=[{"id": "c1", "name": "home", "card": "home", "function": "find", "args": {}}])
+    half["context"] = held.to_dict()
     aioclient_mock.post(f"{BASE_URL}/chat/completions", json=reply("Hello."))
-    _, answer = await chat.send("computer?", half["id"])
+    _, answer = await chat.write("computer?", half["id"])
     assert answer == "Hello." and aioclient_mock.call_count == 1
-    assert not core.domain.log.read(levels=["warning"], what="loop")
 
 
-async def test_a_closed_connection_is_tried_again_and_errors_are_not_read(hass: HomeAssistant, mock_entry, aioclient_mock):
+async def test_a_closed_connection_is_tried_again_and_errors_are_read(hass: HomeAssistant, mock_entry, aioclient_mock):
     """A kept-alive connection the server had closed is tried once more (the model is not taken for off); when no
-    model answers, the turn gets an error entry: shown and returned, but never read by a model (it would copy it)."""
+    model answers, the turn gets an error entry: shown, returned, and read by a model next time like any entry."""
     import aiohttp
     from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
 
@@ -471,20 +474,22 @@ async def test_a_closed_connection_is_tried_again_and_errors_are_not_read(hass: 
             raise aiohttp.ServerDisconnectedError()
         return AiohttpClientMockResponse(method, url, json=reply("Fine."))
     aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=flaky)
-    _, answer = await core.domain.cards["chat"].send("hi")
+    _, answer = await core.domain.cards["chat"].write("hi")
     assert answer == "Fine." and len(tries) == 2 and all(core.pool.usable(m["id"]) for m in core.pool.models)
     aioclient_mock.clear_requests()
 
     async def off(method, url, data):
         raise aiohttp.ClientConnectionError("off")
     aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=off)
-    chat_id, answer = await core.domain.cards["chat"].send("still there?")
+    chat_id, answer = await core.domain.cards["chat"].write("still there?")
     assert answer == "Error: no model was available."
+    from custom_components.aac.context import Context
+
     card = core.domain.cards["chat"]
-    held = card._context(card.data["chats"][chat_id])
-    assert held.entries[-1]["kind"] == "error" and held.events[-1]["kind"] == "error"  # an event
-    _, chat = conversation(held, "model", {})
-    assert "Error" not in str(chat)
+    held = Context.from_dict(card.data["chats"][chat_id]["context"])
+    assert held.newest["tag"] == "model.error"
+    _, chat = conversation(held, "model")
+    assert "Error: no model was available." in str(chat)
 
 
 async def test_domains_new_rename_delete(hass: HomeAssistant, mock_entry, hass_storage):
@@ -555,7 +560,7 @@ async def test_for_models_and_short_card_lists(hass: HomeAssistant, mock_entry, 
                                                          "add_items": {"name": "add_to_list"}, "delete_list": {"on": False}}})
     await d.update_card("home", settings={"levels": {f"light.l{i}": "read" for i in range(40)}})
     asked = model_answers(aioclient_mock, reply("Fine."))
-    await d.cards["chat"].send("hi")
+    await d.cards["chat"].write("hi")
     tools = {t["function"]["name"]: t["function"]["description"] for t in asked[0]["tools"]}
     assert tools["read_list"] == "Look here before saying you do not know." and "add_to_list" in tools
     assert "add_items" not in tools and "delete_list" not in tools and asked[0]["messages"][0]["content"] == "Be kind."
@@ -631,7 +636,7 @@ async def test_redo_and_buffer_provides(hass: HomeAssistant, mock_entry):
     await buf.call("add", {"text": "first"})
     await buf.call("add", {"text": "second"})
     held = buf.held("provides")
-    assert [e["text"] for e in held.entries] == ["first", "second"] and held.entries[0]["id"] == buf.held("provides").entries[0]["id"]
+    assert [e["text"] for e in held.conversation] == ["first", "second"] and held.conversation[0]["id"] == buf.held("provides").conversation[0]["id"]
     d.set_wires([*d.wires, {"from": "room.provides", "to": "other.reads"}])
     assert {"from": "room.provides", "to": "other.reads"} in d.wires
 
@@ -645,7 +650,7 @@ async def test_a_card_id_is_its_name(hass: HomeAssistant, mock_entry, aioclient_
     d = core.domain
     model_answers(aioclient_mock, reply("Hi."))
     chat = d.cards["chat"]
-    await chat.send("hi")
+    await chat.write("hi")
     await d.cards["lists"].call("add_items", {"list": "Car", "items": ["Radio"]})
     script = 'context = input("in")\nseen = context.get("time.time")\nprint(seen, lists.total, seen.data.get("lists"), cards["lists"])\n'
     await d.add_card("relay", "Watcher", {"script": script})
@@ -664,11 +669,11 @@ async def test_a_card_id_is_its_name(hass: HomeAssistant, mock_entry, aioclient_
 
     await d.update_card("time", title="Clock")
     stored = json.dumps(chat.data)
-    assert '"by": "clock"' in stored and '"clock.time"' in stored and '"by": "time"' not in stored
+    assert '"clock.time"' in stored and '"time.time"' not in stored
     assert 'context.get("clock.time")' in d.cards["watcher"].settings["script"]
     assert await d.undo_last() and "time" in d.cards and "clock" not in d.cards and d.cards["time"].name == "Time"
-    assert '"by": "time"' in json.dumps(d.cards["chat"].data) and 'context.get("time.time")' in d.cards["watcher"].settings["script"]
-    assert await d.redo_last() and "clock" in d.cards and '"by": "clock"' in json.dumps(d.cards["chat"].data)  # Undo made the cards again
+    assert '"time.time"' in json.dumps(d.cards["chat"].data) and 'context.get("time.time")' in d.cards["watcher"].settings["script"]
+    assert await d.redo_last() and "clock" in d.cards and '"clock.time"' in json.dumps(d.cards["chat"].data)  # Undo made the cards again
 
     d._specs["charter"]["title"] = "Rules"  # noqa: SLF001 - as an older AAC left it: a name its id does not fit
     await d.save_now()
@@ -694,24 +699,24 @@ async def test_aacs_own_log(hass: HomeAssistant, mock_entry, hass_ws_client):
     await d.add_card("log", "Sink")
     d.set_wires([*d.wires, {"from": "a.out", "to": "sink.in"}])
     first = Context()
-    first.add("a", "said", "first line", [])
-    await d.flow.send(first, "a", "out")
+    first.add("a.said", "first line")
+    await d.flow.send(d.cards["a"], first, "out")
     out = d.log.read(card="a", what="out")
     assert out[-1]["text"] == "first line" and out[-1]["port"] == "out" and out[-1]["to"] == ["sink.in"] and "context" not in out[-1]
     assert not d.log.read(card="a", what="in")  # by default only what goes out
 
     a = await d.update_card("a", settings={"log": "context", "log_at": "both"})
     second = Context()
-    second.add("x", "said", "second", [])
+    second.add("x.said", "second")
     await d.flow.enter(a, "in", second)
     got = d.log.read(card="a", levels=["flow"], last=2)
-    assert [e["what"] for e in got] == ["in", "out"] and all(e["context"]["messages"] for e in got)
+    assert [e["what"] for e in got] == ["in", "out"] and all(e["context"]["entries"] for e in got)
     with patch("custom_components.aac.log.time.time", return_value=time.time() + 601):  # whole contexts go
         assert all("context" not in e for e in d.log.read(card="a"))
 
     await d.update_card("a", settings={"log": "nothing"})
     before = len(d.log.read(card="a", levels=["flow"]))
-    await d.flow.send(first, "a", "out")
+    await d.flow.send(d.cards["a"], first, "out")
     assert len(d.log.read(card="a", levels=["flow"])) == before
     client = await hass_ws_client(hass)
     await client.send_json({"id": 1, "type": "aac/monitor", "wire": "a.out"})
@@ -724,7 +729,7 @@ async def test_aacs_own_log(hass: HomeAssistant, mock_entry, hass_ws_client):
 
     sink = d.cards["sink"]
     with patch.object(type(sink), "handle", side_effect=RuntimeError("boom")):
-        await d.flow.send(first, "a", "out")
+        await d.flow.send(d.cards["a"], first, "out")
     err = d.log.read(levels=["error"])[-1]
     assert err["card"] == "sink" and "boom" in err["text"] and "RuntimeError" in err["trace"]
     await d.update_card("sink", title="Drain")  # its entries follow its id
@@ -738,10 +743,10 @@ async def test_aacs_own_log(hass: HomeAssistant, mock_entry, hass_ws_client):
             d.log.write("flow", f"f{i}", card="a", what="out", port="out")
         assert [e["text"] for e in d.log.entries] == ["n3", "n4", "n5", "n6", "n7", "f3", "f4", "f5", "f6", "f7"]
     a = await d.update_card("a", settings={"log": "context"})
-    await d.flow.send(first, "a", "out")
+    await d.flow.send(d.cards["a"], first, "out")
     await d.log.flush()
     on_disk = await hass.async_add_executor_job(d.log.path.read_text)
-    assert '"messages"' not in on_disk and "n7" in on_disk  # a whole context never reaches the disk
+    assert '"entries"' not in on_disk and "n7" in on_disk  # a whole context never reaches the disk
 
     await client.send_json({"id": 2, "type": "aac/log", "search": "n7"})
     assert [e["text"] for e in (await client.receive_json())["result"]["entries"]] == ["n7"]

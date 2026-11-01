@@ -43,7 +43,8 @@ async def test_a_spoken_round_trip(hass: HomeAssistant, hass_client, mock_entry,
     async def model(method, url, data):  # what the chat shows while the model is still working
         asked.append(data)
         chat = d.cards["chat"]
-        in_chat.append([m["text"] for m in chat.get(chat.chats()[0]["id"])["messages"]] if chat.chats() else [])  # the newest
+        voiced = [c for c in chat.chats() if c["title"].startswith("Voice")]  # the newest spoken chat
+        in_chat.append([m["text"] for m in chat.get(voiced[0]["id"])["messages"]] if voiced else [])
         return AiohttpClientMockResponse(method, url, json=answers[len(asked) - 1])
     aioclient_mock.post(f"{BASE_URL}/chat/completions", side_effect=model)
     heard = AsyncMock(side_effect=[{"text": "Computer, what time is it?"}, {"text": "see you in the next video"}])
@@ -72,18 +73,19 @@ async def test_a_spoken_round_trip(hass: HomeAssistant, hass_client, mock_entry,
     assert asked[1]["messages"][-1]["content"].startswith(FOLLOW_UP)
     assert "It is five." in str(asked[1]["messages"])  # the follow-up sees the conversation (read from the chat)
     chat = d.cards["chat"]
-    kept = chat.get(chat.chats()[0]["id"])
+    kept = chat.get(next(c for c in chat.chats() if c["title"].startswith("Voice"))["id"])
     assert kept["title"].startswith("Voice · PC · ") and [m["text"] for m in kept["messages"]] == ["Computer, what time is it?", "It is five."]
-    assert in_chat[0] == ["Computer, what time is it?"]  # shown at once, before the answer came
-    assert in_chat[1][-1].endswith("see you in the next video")  # the follow-up showed too, and went with its "nothing"
+    assert in_chat[0] == []  # a heard line shows with its answer (no answer: it never shows)
+    assert in_chat[1] == ["Computer, what time is it?", "It is five."]  # the follow-up's "nothing" sent nothing
 
 
-async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry, start):
+async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry):
     """Stop word, Wake word and Follow-up each get every heard line; only the right one passes it on."""
     from unittest.mock import patch
 
+    from unittest.mock import AsyncMock
+
     from custom_components.aac.defaults import async_voice_chain
-    from custom_components.aac.flow import Step
     from custom_components.aac.context import Context
     core = await setup_aac(hass, mock_entry)
     core.audio.settings["known"] = [{"id": "pc", "name": "PC"}]
@@ -96,36 +98,34 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
     assert {"from": "model.out", "to": "chat.answers"} in d.wires and {"from": "model.out", "to": "text_to_speech.in"} in d.wires
     sent = []
 
-    async def caught(card, context, picks):  # what a Relay sends, without running the cards after it
-        sent.append((picks, context))
+    async def caught(card, context, port):  # what a Relay sends, without running the cards after it
+        sent.append(port)
 
     async def route(card, text, seconds=1.0, **data):
         m = Context()
-        m.add("speech_to_text", "said", text, ["heard"], mic="pc", seconds=seconds, **data)
+        m.add("speech_to_text.said", text, mic="pc", seconds=seconds, **data)
         sent.clear()
-        with patch.object(d.flow, "out", caught):
-            await d.cards[card].handle(m, "in", Step(d.flow, d.cards[card], "in", m))
-        return [p for picks, _ in sent for p in picks], (sent[0][1] if sent else m)
-    assert (await route("wake_word", "Computer, lights on"))[0] == [("yes", "spoken_turn")]
-    assert (await route("wake_word", "see you in the next video"))[0] == []
-    out, m = await route("stop_word", "stop it")
-    assert out == [("stop", "charter")] and m.stopped
-    assert (await route("follow_up", "and the kitchen too"))[0] == []  # AAC has not spoken
+        with patch.object(d.flow, "send", caught):
+            await d.cards[card].handle(m, "in")
+        return list(sent)
+    assert await route("wake_word", "Computer, lights on") == ["yes"]
+    assert await route("wake_word", "see you in the next video") == []
+    with patch.object(d, "stop", AsyncMock()) as stopped:
+        assert await route("stop_word", "stop it") == [] and stopped.call_count == 1  # every card stops, nothing travels
+    assert await route("follow_up", "and the kitchen too") == []  # AAC has not spoken
     core.audio._spoke["pc"] = __import__("time").time()
-    assert (await route("follow_up", "and the kitchen too"))[0] == [("yes", "follow_up_turn")]
-    assert (await route("follow_up", "computer, and the kitchen"))[0] == []  # the Wake word takes that one
-    if start == "fresh":  # the window counts from where you started talking (the backup keeps its older rule)
-        core.audio._spoke["pc"] = __import__("time").time() - 25
-        assert (await route("follow_up", "a long answer", seconds=22))[0] == [("yes", "follow_up_turn")]  # began 3 s after
-        assert (await route("follow_up", "something later", seconds=2))[0] == []  # began 23 s after
-        core.audio._spoke["pc"] = __import__("time").time()
-        assert (await route("follow_up", "thank you", aac_spoke=True))[0] == []  # began while AAC spoke: its own voice
+    assert await route("follow_up", "and the kitchen too") == ["yes"]
+    assert await route("follow_up", "computer, and the kitchen") == []  # the Wake word takes that one
+    core.audio._spoke["pc"] = __import__("time").time() - 25
+    assert await route("follow_up", "a long answer", seconds=22) == ["yes"]  # began 3 s after
+    assert await route("follow_up", "something later", seconds=2) == []  # began 23 s after
+    core.audio._spoke["pc"] = __import__("time").time()
+    assert await route("follow_up", "thank you", aac_spoke=True) == []  # began while AAC spoke: its own voice
 
 
 async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, mock_entry, aioclient_mock):
     """HA plays on the satellite and stops it; Text to speech makes a clip the Speaker plays at the satellite the line
     came from; a stop reaching Text to speech goes on to the Speaker and cuts it off."""
-    from custom_components.aac.flow import Step
     from custom_components.aac.context import Context
 
     core = await setup_aac(hass, mock_entry)
@@ -158,11 +158,11 @@ async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, m
         speaker = await core.domain.add_card("speaker", "Speaker")
         core.domain.set_wires([*core.domain.wires, {"from": f"{voice.id}.out", "to": f"{speaker.id}.in"}])
         m = Context()
-        m.add("speech_to_text", "said", "computer, tell me a story", mic="pc")
-        m.add("model", "answer", "Once upon a time …")
-        await voice.handle(m, "in", Step(core.domain.flow, voice, "in", m))
+        m.add("speech_to_text.said", "computer, tell me a story", mic="pc")
+        m.add("model.said", "Once upon a time …")
+        await voice.handle(m, "in")
         assert (await ws.receive_json())["text"] == "Once upon a time …" and await ws.receive_bytes() == spoken
-        assert not await voice.stop({"kind": "signal", "text": "stop"})  # it was not busy; its stop clip goes on
+        await voice.stop()  # its stop clip goes to the Speaker
         assert await ws.receive_json() == {"type": "stop"}
         await ws.close()
     core.audio.forget("pc")  # gone for good: out of the known ones, its media player removed
@@ -229,8 +229,9 @@ async def test_a_level_card_keeps_the_size_of_any_card(hass, mock_entry):
         level.stream("in", audio((LOUD, 0.1)), {"source": "pc"})
         for data in ({"cut": "start", "utterance": "u1", "ago": 0.3}, {"cut": "end", "utterance": "u1", "parts": 1}):
             c = Context()
-            c.add("audio_clipper", "signal", f"cut: {data['cut']}", [data["cut"]], **data)
-            assert await level.handle(c, "cuts", None) is None  # on at 'cuts'
+            c.add(f"audio_clipper.{data['cut']}", "", **data)
+            await level.handle(c, "cuts")
+            assert core.domain.flow.held[f"{level.id}.cuts"] is not None  # on at 'cuts'
 
     assert len(shown) == 3 and -40 < shown[0]["db"] < 0
     assert shown[1] == {"mark": "start", "ago": 0.3} and shown[2] == {"mark": "end", "ago": 0.0}
@@ -285,19 +286,19 @@ async def test_phrase_joiner_and_its_wiring(hass, mock_entry):
     assert [c.id for c in d.cards.values() if c.type == "phrase_joiner"] == [joiner.id]
     assert {"from": "audio_clipper.cuts", "to": f"{joiner.id}.cuts"} in d.wires
     sent = []
-    with patch.object(d.flow, "send", AsyncMock(side_effect=lambda ctx, card, port: sent.append(ctx))):
+    with patch.object(d.flow, "send", AsyncMock(side_effect=lambda card, ctx, port: sent.append(ctx))):
         for part, text in ((2, "what time is it?"), (1, "computer,")):  # out of order
             c = Context()
-            c.add("speech_to_text", "said", text, ["heard"], mic="pc", utterance="u1", part=part, seconds=0.6)
-            assert await joiner.handle(c, "lines", None) == []
+            c.add("speech_to_text.said", text, mic="pc", utterance="u1", part=part, seconds=0.6)
+            await joiner.handle(c, "lines")
         assert sent == []
         for data in ({"cut": "phrase", "utterance": "u1", "part": 2}, {"cut": "end", "utterance": "u1", "parts": 2}):
             c = Context()
-            c.add("audio_clipper", "signal", f"cut: {data['cut']}", [data["cut"]], **data)
-            assert await joiner.handle(c, "cuts", None) == []
+            c.add(f"audio_clipper.{data['cut']}", "", **data)
+            await joiner.handle(c, "cuts")
             assert (sent == []) == (data["cut"] == "phrase")  # only the end counts
     (whole,) = sent
-    assert whole.last("said")["text"] == "computer, what time is it?" and whole.last("said")["data"]["mic"] == "pc"
+    assert whole.get("*.said")["text"] == "computer, what time is it?" and whole.get("*.said")["data"]["mic"] == "pc"
 
 
 async def test_undo_with_phrases_makes_every_card(hass, mock_entry):

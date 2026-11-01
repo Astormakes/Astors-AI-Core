@@ -11,7 +11,7 @@ from typing import Any
 
 from custom_components.aac.api import SAMPLE_RATE, Card, pcm_to_wav, register
 
-VERSION = "2.10.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 
 def _test_sound() -> bytes:
@@ -92,7 +92,7 @@ class Microphone(Card):
                 chunk = self._subtract(chunk, meta["reference"], meta["source"])
         if meta.get("speaking") and (self.settings.get("speaking") or "mute") == "mute":
             return
-        self.domain.flow.stream(self.id, "out", chunk, meta)
+        self.stream_out("out", chunk, meta)
 
     def _subtract(self, chunk: bytes, reference: bytes, source: str) -> bytes:
         """microphone − gain × the speaker's sound, shifted by the delay (whole samples; a negative one delays the

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
 
 from custom_components.aac.api import Card, Client, Context, register, run
 
-VERSION = "1.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 LOOK_BACK = 8  # entries the deciding model reads
 
@@ -19,8 +18,8 @@ class Decide(Card):
     title = "Decide"
     category = "Logic"
     help = ("A model reads the newest entries and picks one of the outputs you name (with what each is for); the context "
-            "goes on there (a fast small model is enough).")
-    tags = {"choice": "what it picked"}
+            "goes on there, every wire of it (a fast small model is enough).")
+    tags = {"choice": "what it picked (no text: data.choice)"}
     settings_schema = {
         "outputs": {"type": "outputs", "title": "Outputs", "default": [{"name": "yes", "description": "it applies"},
                                                                        {"name": "no", "description": "anything else"}],
@@ -29,23 +28,20 @@ class Decide(Card):
         "models": {"type": "modellist", "tag": "text", "title": "Models (in order)", "default": [], "help": "The list is run through from the top: a free model takes it; a busy one queues it if its Queue is ticked, then the next is tried. Empty: every model with the tag, queued."},
     }
 
-    def ports(self) -> tuple[dict[str, str], dict[str, str], set[str]]:
+    def ports(self) -> tuple[dict[str, str], dict[str, str]]:
         names = [o["name"] for o in self.settings.get("outputs") or [] if o.get("name")]
-        return dict(self.inputs), {n: "text" for n in names}, set(names)
+        return dict(self.inputs), {n: "text" for n in names}
 
-    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
-        if port != "in":
-            return []
+    async def handle(self, context: Context, port: str) -> None:
         outs = [o for o in self.settings.get("outputs") or [] if o.get("name")]
-        if not outs:
-            return []
-        choice = await self._choose(context, outs, step)
-        context.add(self.id, "signal", f"decided: {choice}", ["choice"])
-        return [(choice, c.id) for c, _ in step.targets(choice)]
+        if port != "in" or not outs or context.streaming or context.waiting:
+            return
+        choice = await self._choose(context, outs)
+        context.add(self.tag("choice"), "", choice=choice)
+        await self.send(context, choice)
 
-    async def _choose(self, context: Context, outs: list[dict[str, str]], step) -> str:
-        lines = [f"{e['by']} ({e['kind']}): {e['text']}" for e in context.entries
-                 if e["kind"] in ("said", "answer", "note", "trailer") and e["text"].strip()][-LOOK_BACK:]
+    async def _choose(self, context: Context, outs: list[dict[str, str]]) -> str:
+        lines = [f"{e['tag']}: {e['text']}" for e in context.conversation if e["text"].strip()][-LOOK_BACK:]
         options = "\n".join(f"- {o['name']}: {o.get('description', '')}" for o in outs)
         prompt = (f"{self.settings.get('question') or ''}\n\nOptions:\n{options}\n\nAnswer with exactly one option name, "
                   "nothing else.")

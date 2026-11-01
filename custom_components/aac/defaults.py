@@ -17,16 +17,16 @@ CHARTER = """Charter (the owner's values; you follow it and never change it):
 - What you learn about me stays private.
 - Limits are not puzzles: if a rule stops you, say so instead of working around it."""
 TIME = """context = input("in")
-context.attach("time", f"Local time: {now():%A %Y-%m-%d %H:%M}")
+context.add("time", f"Local time: {now():%A %Y-%m-%d %H:%M}")
 output("out", context)
 """
 
 
-def new_text(name: str, text: str, at: str = "first", reads: str | None = None) -> str:
-    """A Relay script that writes one text and passes the context on: as the first part of the system prompt, or
-    attached to the last entry (what was just said: this turn); reads: a dotted input whose context comes first."""
+def new_text(name: str, text: str, at: str = "system", reads: str | None = None) -> str:
+    """A Relay script that writes one text and passes the context on: as the system prompt, or as an entry of its own
+    at the end (this turn); reads: a dotted input whose context comes first."""
     arrived = f'input("{reads}", read=True) + input("in")' if reads else 'input("in")'
-    write = f'context.add("{name}", """{text}""", at="first", role="system")' if at == "first" else f'context.attach("{name}", """{text}""")'
+    write = f'context.set("context.system", """{text}""")' if at == "system" else f'context.add("{name}", """{text}""")'
     return f'context = {arrived}\n{write}\noutput("out", context)\n'
 
 
@@ -68,18 +68,17 @@ async def build_default(domain) -> None:
 VOICE_RULES = ("You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look "
                "something up or do something, call the tool first, then answer.")
 STOP_WORD = """context = input("in")
-heard = context.get("EARS.heard")
+heard = context.get("EARS.said")
 if heard and "stop" in heard.text.lower():
     stop()
-    output("stop", context)
 """
 WAKE_WORD = """context = input("in")
-heard = context.get("EARS.heard")
+heard = context.get("EARS.said")
 if heard and any(word in heard.text.lower() for word in [WORDS]):
     output("yes", context)
 """
 FOLLOW_UP_CHECK = """context = input("in")
-heard = context.get("EARS.heard")
+heard = context.get("EARS.said")
 if heard:
     # you started talking less than 6 s after AAC spoke at that satellite (long answers too)
     spoke = audio.satellites.get(heard.data.get("mic"), {}).get("seconds", 999999)
@@ -90,10 +89,10 @@ if heard:
 """
 FOLLOW_UP = "(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) "
 FOLLOW_UP_TURN = f"""context = input("chat", read=True) + input("in")
-heard = context.get("EARS.heard")
+heard = context.get("EARS.said")
 if heard:
     heard.text = "{FOLLOW_UP}" + heard.text
-context.attach("rules", \"\"\"RULES\"\"\")
+context.add("rules", \"\"\"RULES\"\"\")
 output("out", context)
 """
 
@@ -142,8 +141,7 @@ async def _voice_cards(domain, names: list[str]) -> None:
               {"from": f"{wake}.yes", "to": f"{spoken}.in"}, {"from": f"{follow}.yes", "to": f"{followed}.in"},
               {"from": f"{voice}.out", "to": f"{speaker}.in"}]
     if first:
-        wires += [{"from": f"{stop}.stop", "to": f"{first}.in"}, {"from": f"{spoken}.out", "to": f"{first}.in"},
-                  {"from": f"{followed}.out", "to": f"{first}.in"}]
+        wires += [{"from": f"{spoken}.out", "to": f"{first}.in"}, {"from": f"{followed}.out", "to": f"{first}.in"}]
     if chat:
         wires += [{"from": f"{chat}.provides", "to": f"{spoken}.chat"}, {"from": f"{chat}.provides", "to": f"{followed}.chat"}]
     if model:  # the answer goes to every card wired from out: the Chat shows it, Text to speech speaks a heard turn's

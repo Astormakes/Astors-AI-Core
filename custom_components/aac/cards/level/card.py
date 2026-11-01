@@ -10,7 +10,7 @@ import numpy as np
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.5.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -42,7 +42,7 @@ class Level(Card):
         self._next, self._peak = 0.0, 0.0
 
     def stream(self, port: str, chunk: bytes, meta: dict[str, Any]) -> None:
-        self.domain.flow.stream(self.id, "out", chunk, meta)
+        self.stream_out("out", chunk, meta)
         if not self.watched:
             return
         x = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768
@@ -53,9 +53,9 @@ class Level(Card):
             self.show({"db": round(20 * np.log10(self._peak + 1e-9), 1)})
             self._peak = 0.0
 
-    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
-        """A cut (a signal entry with data cut: start / phrase / end): a line; the context goes on at 'cuts'."""
-        cut = next((e["data"] for e in reversed(context.entries) if e["kind"] == "signal" and e["data"].get("cut")), None)
+    async def handle(self, context: Context, port: str) -> None:
+        """A cut (an entry with data cut: start / phrase / end): a line; the context goes on at 'cuts'."""
+        cut = next((e["data"] for e in reversed(context.conversation) if e["data"].get("cut")), None)
         if self.watched and cut and cut["cut"] in ("start", "phrase", "end"):  # a start knows how long ago speech began
             self.show({"mark": cut["cut"], "ago": float(cut.get("ago") or 0)})
-        return None
+        await self.send(context, "cuts")

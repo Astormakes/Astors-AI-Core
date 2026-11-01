@@ -8,7 +8,6 @@ from homeassistant.core import Context as HaContext, HomeAssistant
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed, async_mock_service
 
-from custom_components.aac.flow import Step
 from custom_components.aac.context import Context
 
 from .conftest import model_answers, reply, setup_aac
@@ -88,8 +87,8 @@ async def test_schedule_like_v1(hass: HomeAssistant, mock_entry, aioclient_mock,
     await hass.async_block_till_done(wait_background_tasks=True)
     tea = next(x for x in s.data["log"] if x["name"] == "Tea")
     assert not s.data["waiting"] and tea["failed"] and tea["unanswered"]  # the model failed: it went out at 'unanswered'
-    sent = d.flow.last["schedule.unanswered"]["messages"][-1]
-    assert sent["kind"] == "answer" and "Not answered" in sent["text"] and "the tea is ready" in sent["text"]
+    sent = d.flow.last["schedule.unanswered"]["entries"][-1]
+    assert sent["tag"] == "schedule.unanswered" and "Not answered" in sent["text"] and "the tea is ready" in sent["text"]
     assert d.log.read(card="schedule", what="unanswered") and not d.log.read(levels=["error"])  # a model error, no crash
 
     d.set_wires([w for w in d.wires if w["to"] != "schedule.answers"])  # nothing comes back at all: after 5 minutes
@@ -100,7 +99,7 @@ async def test_schedule_like_v1(hass: HomeAssistant, mock_entry, aioclient_mock,
     freezer.tick(timedelta(minutes=6))
     async_fire_time_changed(hass)
     await hass.async_block_till_done(wait_background_tasks=True)
-    assert alarm["unanswered"] and "failed" not in alarm and "Wake up." in d.flow.last["schedule.unanswered"]["messages"][-1]["text"]
+    assert alarm["unanswered"] and "failed" not in alarm and "Wake up." in d.flow.last["schedule.unanswered"]["entries"][-1]["text"]
     await s.call("run", {"name": "Alarm"})  # Run now is watched like a ring
     await hass.async_block_till_done(wait_background_tasks=True)
     assert s.data["log"][-1]["text"].startswith("Run now (Alarm): Wake up.") and not s.data["log"][-1].get("unanswered")
@@ -172,8 +171,9 @@ async def test_decide_picks_an_output(hass: HomeAssistant, mock_entry, aioclient
     core.domain.set_wires([*core.domain.wires, {"from": "for_me.yes", "to": "go.in"}, {"from": "models.models", "to": "for_me.pool"}])
     model_answers(aioclient_mock, reply("yes"))
     context = Context()
-    context.add("chat", "said", "computer, lights on")
-    assert await decide.handle(context, "in", Step(core.domain.flow, decide, "in", context)) == [("yes", yes.id)]
+    context.add("chat.said", "computer, lights on")
+    await decide.handle(context, "in")
+    assert core.domain.flow.held["for_me.yes"].get("for_me.choice")["data"]["choice"] == "yes" and "for_me.no" not in core.domain.flow.held
 
 
 async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
@@ -182,9 +182,9 @@ async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
     memory = await core.domain.add_card("memory", "Memory")
     await memory.call("remember", {"text": "The drill is on basement shelf 2."})
     context = Context()
-    context.add("chat", "said", "where is the drill?")
-    await memory.handle(context, "in", None)
-    assert "basement shelf 2" in context.last("note")["text"]
+    context.add("chat.said", "where is the drill?")
+    await memory.handle(context, "in")
+    assert "basement shelf 2" in context.get("memory.recall")["text"]
     await memory.call("remember", {"text": "The car is blue."})
     missed = await memory.call("forget", {"text": "the"})  # a word is not a memory: nothing goes, the close ones are named
     assert missed["error"] and len(memory.data["memories"]) == 2 and missed["close"]
@@ -195,15 +195,18 @@ async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
     await file.call("write", {"text": "# Hi"})
     await file.call("append", {"text": "more"})
     assert await file.call("read", {}) == "# Hi\nmore\n"
-    (held,) = file.held("provides").entries  # its read output: the file as one entry
-    assert held["text"] == "# Hi\nmore\n" and held["tags"] == ["notes.text"]
+    (held,) = file.held("provides").conversation  # its read output: the file as one entry
+    assert held["text"] == "# Hi\nmore\n" and held["tag"] == "notes.text"
     again = await core.domain.add_card("file", "Same", {"name": "test"})  # reads the file when it starts
-    assert again.held("provides").entries[0]["text"] == "# Hi\nmore\n"
+    assert again.held("provides").conversation[0]["text"] == "# Hi\nmore\n"
     await core.domain.add_card("relay", "Reader", {"script": 'context = input("in") + input("reads", read=True)\noutput("out", context)\n'})
     core.domain.set_wires([*core.domain.wires, {"from": "notes.provides", "to": "reader.reads"}])
     assert {"from": "notes.provides", "to": "reader.reads"} in core.domain.wires  # a dotted wire into a read input
     timer = await core.domain.add_card("timer", "Wait", {"seconds": 0})
-    assert await timer.handle(Context(), "in", None) is None
+    core.domain.set_wires([*core.domain.wires, {"from": "wait.out", "to": "reader.in"}])
+    await timer.handle(Context(), "in")
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert "wait.out" in core.domain.flow.held  # held on its own, then sent on
     builder = await core.domain.add_card("builder", "Builder")
     added = await builder.call("add_card", {"type": "buffer", "name": "Room"})
     assert added["id"] == "room" and (await builder.call("remove_card", {"card": "room"}))["error"]
@@ -300,28 +303,22 @@ async def test_busy_models_queue_or_drop(hass: HomeAssistant, mock_entry):
     assert [m["busy"] for m in pool.summary()] == [0, 0]
 
 
-async def test_chat_finds_and_switches_to_old_chats(hass: HomeAssistant, mock_entry, aioclient_mock):
-    """A model looks up older chats and switches to one: when the turn is done, that chat is the current one and the
-    asking turn is not kept (a chat that was only that turn goes)."""
+async def test_chat_finds_old_chats(hass: HomeAssistant, mock_entry):
+    """A model looks up older chats by words and reads one; quiet for long, none is the current one."""
     core = await setup_aac(hass, mock_entry)
     card = core.domain.cards["chat"]
     old, other = card._new("About the drone"), card._new("Groceries")
-    old["context"]["messages"] = [{"id": "e1", "by": "chat", "kind": "said", "text": "the LoRa mast drone", "tags": [], "time": "", "data": {}, "state": "closed"}]
-    d = core.domain  # the Chat as the model's tool: wired from its calls straight to it and back
-    d.set_wires([w for w in d.wires if w["from"] != "chat.said"] + [{"from": "chat.said", "to": "model.in"}])
+    held = Context()
+    held.add("chat.said", "the LoRa mast drone")
+    old["context"] = held.to_dict()
     old["updated"], other["updated"] = "2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00"
+    for c in card.data["chats"].values():
+        c["updated"] = min(c["updated"], "2026-01-02T00:00:00+00:00")
     await card.save()
     found = await card.call("chats", {"search": "lora"})
     assert [c["id"] for c in found] == [old["id"]] and found[0]["first"] == "the LoRa mast drone"
     assert (await card.call("read", {"chat": old["id"]}))[0]["text"] == "the LoRa mast drone"
-    assert card.current() is None  # both quiet for long: the next spoken turn would start a new chat
-    model_answers(aioclient_mock, reply(calls=[("continue", {"chat": old["id"]})]), reply("Back to the drone."))
-    before = {c["id"] for c in card.chats()}
-    chat_id, answer = await card.send("let's go on with the drone chat")
-    assert chat_id == old["id"] and answer == "Back to the drone."
-    assert card.current()["id"] == old["id"]
-    assert {c["id"] for c in card.chats()} == before  # the asking chat is gone
-    assert [m["text"] for m in card.get(old["id"])["messages"]] == ["the LoRa mast drone"]  # the switch is not kept
+    assert card.current() is None  # all quiet for long: the next spoken turn would start a new chat
 
 
 async def test_home_access_list(hass: HomeAssistant, mock_entry):
@@ -348,9 +345,8 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
     d.set_wires([*d.wires, {"from": "chat.provides", "to": f"{log.id}.in"}, {"from": "model.out", "to": f"{log.id}.in"}])
     assert {"from": "chat.provides", "to": f"{log.id}.in"} in d.wires and {"from": "model.out", "to": f"{log.id}.in"} in d.wires
     c = Context()
-    c.way = ["model", log.id]
-    c.add("model", "answer", "Hello there", ["answer"])
-    await log.handle(c, "in", None)
+    c.add("model.said", "Hello there")
+    await log.handle(c, "in")
     await log.clip("in", {"pcm": b"\x01\x00" * 160, "seconds": 1.4, "name": "PC", "part": 2})
     log.stream("in", b"\x00\x00", {"source": "pc", "name": "PC"})
     log._audio["PC"] = [time_mod.monotonic() - 5, time_mod.monotonic() - 3]  # quiet for a while
@@ -359,72 +355,71 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
         await asyncio.sleep(0.05)
         chat = d.cards["chat"]
         talk = chat._new("Talk")
-        talk["context"]["messages"].append({"id": "n1", "by": "chat", "kind": "said", "text": "a new line", "tags": [], "time": "", "data": {}, "state": "closed"})
+        held = Context()
+        held.add("chat.said", "a new line")
+        talk["context"] = held.to_dict()
         await asyncio.sleep(0.05)
         task.cancel()
     own = (await log.ui_call("entries", {}))
     texts = [(x["what"], x["text"]) for x in own["entries"]]
     assert not own["all"] and all(x["card"] == log.id for x in own["entries"])  # not allowed: only what it wrote
-    assert ("context", "Model: answer #model.answer: Hello there  [1 entries]") in texts
+    assert ("context", "Model: #model.said: Hello there  [3 entries]") in texts
     assert ("clip", "PC: 1.4 s, phrase 2") in texts and ("audio", "PC: started") in texts
-    assert any(w == "audio" and t.startswith("PC: stopped") for w, t in texts) and ("read", f"Chat.provides: said #chat.{talk['id']}: a new line") in texts  # the chat's tag, plainly
+    assert any(w == "audio" and t.startswith("PC: stopped") for w, t in texts) and ("read", "Chat.provides: #chat.said: a new line") in texts
     kept = next(x for x in own["entries"] if x["what"] == "clip")
     assert kept["audio"].endswith(".wav") and (await log.ui_call("audio", {"file": kept["audio"]}))  # playable
-    assert "may not read" in (await log.call("read", {}))["error"] and not log.held("provides").entries
+    assert "may not read" in (await log.call("read", {}))["error"] and not log.held("provides").conversation
     log = await d.update_card(log.id, settings={"may_read_log": True})  # the Permissions page
     assert (await log.ui_call("entries", {}))["all"]
     found = await log.call("read", {"card": "Log", "search": "phrase"})
     assert "Log clip: PC: 1.4 s, phrase 2" in found and found.count("\n") == 0
-    assert "Added (Log)" in log.held("provides").entries[0]["text"]
+    assert "Added (Log)" in log.held("provides").conversation[0]["text"]
 
 
-async def test_the_chat_files_a_turn_by_its_tag(hass: HomeAssistant, mock_entry):
-    """Every context that reaches 'answers' is kept: in the chat its messages are tagged with (a turn built on a read
-    of the chat), else in a new chat; the tag is plainly in the context, a Relay may take it off."""
-    from custom_components.aac.context import Context
-
+async def test_the_chat_files_a_context_by_its_id_entry(hass: HomeAssistant, mock_entry):
+    """Every context that reaches 'answers' is kept: by the chat whose id entry it holds (a turn built on a read of the
+    chat), else as a new chat named by its first entry; a Relay that takes the id entry off makes a new chat."""
     core = await setup_aac(hass, mock_entry)
     chat = core.domain.cards["chat"]
+    for c in chat.data["chats"].values():  # a backup's chats are old
+        c["updated"] = "2020-01-01T00:00:00+00:00"
     talk = chat._new("Talk")
-    talk["context"]["messages"].append({"id": "m1", "by": "chat", "kind": "said", "text": "hi", "tags": ["chat.said"],
-                                        "time": "", "data": {}, "state": "closed"})
+    held = Context()
+    held.add("chat.id." + talk["id"])
+    held.add("chat.said", "hi")
+    talk["context"] = held.to_dict()
     before = len(chat.chats())
-    turn = chat.held("provides")  # the current chat, its messages tagged
-    assert turn.messages[0]["tags"] == ["chat.said", f"chat.{talk['id']}"]
-    turn.add("ears", "said", "and now?", ["heard"])
-    turn.add("model", "answer", "Now this.", ["answer"])
-    await chat.handle(turn, "answers", None)
+    turn = chat.held("provides")  # the current chat, with its id entry
+    assert turn.conversation[0]["tag"] == f"chat.id.{talk['id']}"
+    turn.add("speech_to_text.said", "and now?")
+    turn.add("model.said", "Now this.")
+    await chat.handle(turn, "answers")
     assert [m["text"] for m in chat.get(talk["id"])["messages"]] == ["hi", "and now?", "Now this."]
 
     alone = Context()  # a heard line on its own (nothing read): a chat of its own
-    alone.add("ears", "said", "what time is it?", ["heard"], mic_name="PC")
-    alone.add("model", "answer", "Five.", ["answer"])
-    await chat.handle(alone, "answers", None)
-    made = chat.data["chats"][alone.id]
+    first = alone.add("speech_to_text.said", "what time is it?", mic_name="PC")
+    alone.add("model.said", "Five.")
+    await chat.handle(alone, "answers")
+    made = chat.data["chats"][first["id"]]
     assert made["title"].startswith("Voice · PC · ") and len(chat.chats()) == before + 1
-    assert all(f"chat.{alone.id}" in m["tags"] for m in made["context"]["messages"])
+    assert Context.from_dict(made["context"]).conversation[0]["tag"] == f"chat.id.{first['id']}"
 
-    fresh = chat._context(chat.data["chats"][talk["id"]])  # the tag taken off (as a Relay could): a new chat
-    for m in fresh.messages:
-        m["tags"].remove(f"chat.{talk['id']}")
-    fresh.add("model", "answer", "Fresh.", ["answer"])
-    await chat.handle(fresh, "answers", None)
-    assert fresh.id in chat.data["chats"] and len(chat.get(talk["id"])["messages"]) == 3
-
-    quiet = Context()  # not meant for AAC: not kept
-    quiet.add("ears", "said", "see you", ["heard"])
-    quiet.add("model", "answer", "nothing", ["answer"])
-    await chat.handle(quiet, "answers", None)
-    assert quiet.id not in chat.data["chats"] and len(chat.chats()) == before + 2
+    fresh = Context.from_dict(chat.data["chats"][talk["id"]]["context"])  # the id entry taken off: a new chat
+    fresh.remove(fresh.conversation[0])
+    fresh.add("model.said", "Fresh.")
+    await chat.handle(fresh, "answers")
+    assert len(chat.chats()) == before + 2 and len(chat.get(talk["id"])["messages"]) == 3
 
 
 async def test_chat_archive(hass: HomeAssistant, mock_entry):
     """Sidebar actions: archive moves a chat into 'Archive (n)'; an archived chat is never the current one, and models
-    see it marked but cannot read or continue it; restore and delete work the same way."""
+    see it marked but cannot read it; restore and delete work the same way."""
     core = await setup_aac(hass, mock_entry)
     card = core.domain.cards["chat"]
     chat = card._new("Old talk")
-    chat["context"]["messages"] = [{"id": "e1", "by": "chat", "kind": "said", "text": "hello", "tags": [], "time": "", "data": {}, "state": "closed"}]
+    held = Context()
+    held.add("chat.said", "hello")
+    chat["context"] = held.to_dict()
     await card.save()
     entry = next(e for e in card.nav()["entries"] if e["id"] == chat["id"])
     assert [a["id"] for a in entry["actions"]] == ["delete", "archive", "rename"]
@@ -434,7 +429,7 @@ async def test_chat_archive(hass: HomeAssistant, mock_entry):
     assert [c["id"] for c in await card.ui_call("archived", {})] == [chat["id"]]
     assert (card.current() or {}).get("id") != chat["id"]
     assert next(c for c in await card.call("chats", {}) if c["id"] == chat["id"])["archived"] is True
-    assert "error" in await card.call("read", {"chat": chat["id"]}) and "error" in await card.call("continue", {"chat": chat["id"]})
+    assert "error" in await card.call("read", {"chat": chat["id"]})
     await card.ui_call("nav_action", {"entry": chat["id"], "action": "rename", "value": "Renamed"})
     await card.ui_call("nav_action", {"entry": chat["id"], "action": "restore"})
     assert next(e for e in card.nav()["entries"] if e["id"] == chat["id"])["title"] == "Renamed"

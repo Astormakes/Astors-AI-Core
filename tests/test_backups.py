@@ -40,7 +40,7 @@ async def test_the_backup_is_of_this_major_version(hass: HomeAssistant, mock_ent
     await async_voice_chain(core)
     d = core.domain
     model_answers(aioclient_mock, reply("It is noon."))
-    await d.cards["chat"].send("what time is it?")
+    await d.cards["chat"].write("what time is it?")
     await d.cards["lists"].call("add_items", {"list": "Shopping", "items": ["Oat milk", "Coffee"]})
     await d.cards["calendar"].call("add", {"summary": "Dentist", "start": "2026-11-02T10:00"})
     chat = d.cards["chat"]  # an old install: its chats were quiet for long
@@ -74,7 +74,7 @@ async def test_the_backup_still_loads(hass: HomeAssistant, mock_entry, aioclient
     assert (await d.cards["lists"].call("read_list", {"list": "Shopping"}))["items"][0]["text"] == "Oat milk"
     assert any(e["summary"] == "Dentist" for e in await d.cards["calendar"].call("calendar", {"start": "2026-11-01", "end": "2026-11-05"}))
     model_answers(aioclient_mock, reply("Still here."))
-    _, answer = await chat.send("still there?")
+    _, answer = await chat.write("still there?")
     assert answer == "Still here."
     await d.import_setup(setup)
     assert names() == saved

@@ -10,7 +10,7 @@ import numpy as np
 
 from custom_components.aac.api import SAMPLE_RATE, Card, register
 
-VERSION = "1.0.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 KEEP = 2048  # samples it looks at (0.13 s at 16 kHz)
 BANDS = 40  # spectrum bars, spread like hearing (log)
@@ -44,7 +44,7 @@ class Scope(Card):
         self._window = np.hanning(KEEP).astype(np.float32)
 
     def stream(self, port: str, chunk: bytes, meta: dict[str, Any]) -> None:
-        self.domain.flow.stream(self.id, "out", chunk, meta)
+        self.stream_out("out", chunk, meta)
         if not self.watched:
             return
         new = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768

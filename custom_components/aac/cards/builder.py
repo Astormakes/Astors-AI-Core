@@ -7,9 +7,9 @@ import json
 
 from typing import Any
 
-from custom_components.aac.api import CARD_TYPES, Card, Context, register
+from custom_components.aac.api import CARD_TYPES, RULES, Card, Context, register
 
-VERSION = "1.7.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 SHORT = 80  # longer settings are shortened in the list of cards (characters)
@@ -54,6 +54,8 @@ class Builder(Card):
         "may_remove": {"type": "bool", "title": "May remove cards", "default": False, "permission": True},
     }
     functions = {
+        "rules": {"help": "How AAC works: the few rules every card follows (entries, contexts, when a card acts and "
+                          "sends, calls, stop). Read them before building or wiring."},
         "cards": {"help": "An overview of this domain: each card's id, type, name, inputs and outputs and settings (long "
                           "ones shortened: see card), and the wires."},
         "card": {"help": "One card with all its settings.", "args": {"card": {"type": "string", "help": "Its id.", "required": True}}},
@@ -91,6 +93,8 @@ class Builder(Card):
 
     async def _call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         domain = self.domain
+        if function == "rules":
+            return RULES
         if function == "cards":  # an overview that fits: long settings shortened (`card` gives one card in full)
             def short(v: Any) -> Any:
                 if isinstance(v, (dict, list)) and len(json.dumps(v)) > SHORT:

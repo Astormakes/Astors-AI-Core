@@ -11,7 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, parse_when, register
 
-VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -94,8 +94,7 @@ class Calendar(Card):
         return {"events": []}
 
     def _name(self, card_id: str) -> str:
-        card = self.domain.cards.get(card_id)
-        return card.name if card else card_id
+        return next((c.name for c in self.all_cards() if c.id == card_id), card_id)
 
     async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
         """Its page: the entries of a period (AAC's calendar and the Home Assistant calendars picked)."""

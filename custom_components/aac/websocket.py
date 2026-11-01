@@ -383,7 +383,25 @@ async def ws_domain_switch(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"id": domain.id})
 
 
-# ---------------------------------------------------------------------- audio (core)
+# ---------------------------------------------------------------------- AAC's settings (core)
+@command({vol.Required("type"): "aac/settings"})
+async def ws_settings(hass, connection, msg) -> None:
+    """AAC's own settings (every domain): the storm limit; and the rules every card follows (How AAC works)."""
+    from .rules import RULES  # noqa: PLC0415
+
+    connection.send_result(msg["id"], {"storm": _core(hass).storm, "rules": RULES})
+
+
+@command({vol.Required("type"): "aac/settings/set", vol.Optional("storm"): vol.All(int, vol.Range(min=1, max=10000))})
+async def ws_settings_set(hass, connection, msg) -> None:
+    """Change AAC's settings."""
+    core = _core(hass)
+    if "storm" in msg:
+        core.data.setdefault("settings", {})["storm"] = msg["storm"]
+    core.save()
+    connection.send_result(msg["id"], {"storm": core.storm})
+
+
 @command({vol.Required("type"): "aac/appearance"})
 async def ws_appearance(hass, connection, msg) -> None:
     """The skins and the one in use (shared by every device)."""

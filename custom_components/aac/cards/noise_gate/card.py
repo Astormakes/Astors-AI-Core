@@ -10,7 +10,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, level, register
 
-VERSION = "2.10.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -37,5 +37,5 @@ class NoiseGate(Card):
         if level(chunk) >= float(self.settings.get("level") or 25):
             self._open[key] = now + timedelta(milliseconds=int(self.settings.get("hold") or 300))
         passes = now <= self._open.get(key, now - timedelta(seconds=1))
-        self.domain.flow.stream(self.id, "out", chunk if passes else bytes(len(chunk)), meta)
+        self.stream_out("out", chunk if passes else bytes(len(chunk)), meta)
 

@@ -18,24 +18,21 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, register
 
-VERSION = "1.3.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 MAX_PLANS = 20  # entries AAC may have at once
 DAYS = ["mo", "tu", "we", "th", "fr", "sa", "su"]
 
-SILENT = ("nothing", "nothing.", "")
-
-
 class AutoCard(Card):
-    """A card that starts messages by itself and keeps a log of what came back."""
+    """A card that starts contexts by itself and keeps a log of what came back."""
 
     category = "In and out"
     inputs = {"answers": "text"}
     outputs = {"out": "text"}
     ui = True
     keeps_data = True
-    tags = {"fired": "what woke the chain"}
+    tags = {"said": "what woke the chain: its instruction"}
 
     def default_data(self) -> dict[str, Any]:
         return {"log": []}
@@ -51,35 +48,42 @@ class AutoCard(Card):
         self._unsubs = []
 
     def fire(self, name: str, text: str) -> str:
-        """Start a context at the output (in the background); its id."""
+        """Start a context at the output (in the background); the id of its entry."""
         context = Context()
-        context.add(self.id, "said", text, ["fired"], name=name)
-        self._log(name, text, None, context.id)
-        task = self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "out"), f"aac {self.id}")
+        fired = context.add(self.tag("said"), text, name=name)
+        self._log(name, text, None, fired["id"])
+        task = self.hass.async_create_background_task(self.send(context, "out"), f"aac {self.id}")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-        return context.id
+        return fired["id"]
 
-    def _log(self, name: str, text: str, answer: str | None, message_id: str) -> None:
+    def _log(self, name: str, text: str, answer: str | None, entry_id: str) -> None:
         self.data["log"] = [*self.data["log"], {"time": dt_util.utcnow().isoformat(), "name": name, "text": text,
-                                                 "answer": answer, "id": message_id}][-LOG_SIZE:]
+                                                 "answer": answer, "id": entry_id}][-LOG_SIZE:]
         self.hass.async_create_task(self.save())
         self.core.notify("card", domain=self.domain.id, card=self.id)
 
-    async def progress(self, context: Context, port: str) -> list[Any] | None:
-        """A turn still being worked on: only the finished answer counts (nothing goes on from here)."""
-        return []
-
-    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
-        """What the chain concluded."""
-        answer = context.answer.strip()
+    def answered(self, context: Context) -> dict[str, Any] | None:
+        """The log item a context answers (it holds the entry the card fired), with the answer written in: the newest
+        said line or error after it (an error: failed, with why)."""
         for item in reversed(self.data["log"]):
-            if item.get("id") == context.id:
-                item["answer"] = "" if answer.lower() in SILENT else answer
-                break
+            at = next((i for i, e in enumerate(context.entries) if e["id"] == item.get("id")), None)
+            if at is None:
+                continue
+            found = [e for e in context.entries[at + 1:] if e["tag"].endswith((".said", ".error")) and e["text"].strip()]
+            if found:
+                item["answer"] = found[-1]["text"].strip()
+                if found[-1]["tag"].endswith(".error"):
+                    item["failed"] = item["answer"][:200]
+            return item
+        return None
+
+    async def handle(self, context: Context, port: str) -> None:
+        """What the chain concluded."""
+        if port != "answers" or context.streaming or self.answered(context) is None:
+            return
         await self.save()
         self.core.notify("card", domain=self.domain.id, card=self.id)
-        return []
 
 
 def days(value: Any) -> list[int]:
@@ -128,9 +132,9 @@ class Schedule(AutoCard):
             "page and on AAC's calendar; a model can add its own through its functions, as Permissions allow. What "
             "nobody answers goes out at 'unanswered'.")
     outputs = {"out": "text", "unanswered": "text"}
-    ports_help = {"out": "an entry that is due: its instruction as a said line", "answers": "what the chain answered",
-                  "unanswered": "an entry nobody answered in time (no model, or it failed): its instruction as an answer, for a Notify card"}
-    tags = {"fired": "what woke the chain", "unanswered": "an entry nobody answered"}
+    ports_help = {"out": "an entry that is due: its instruction (<this card>.said)", "answers": "what the chain answered",
+                  "unanswered": "an entry nobody answered in time (no answer, or the model failed): its instruction, for a Notify card"}
+    tags = {"said": "what woke the chain: its instruction", "unanswered": "an entry nobody answered"}
     settings_schema = {
         "plans": {"type": "select", "title": "Entries a model makes", "default": "allowed", "permission": True,
                   "options": [["allowed", "allowed at once"], ["ask", "wait for my OK (on its page)"], ["off", "not allowed"]],
@@ -224,7 +228,7 @@ class Schedule(AutoCard):
         text = (f"{when}: {entry.get('text', '')}\n(It is due now. A reminder: say it now. A task: "
                 "do it. Something to check: only speak if it matters.)")
         message_id = self.fire(entry["name"], text)
-        if not self.domain.flow.wired_from(self.id, "out"):  # nothing can answer
+        if not self.wired("out"):  # nothing can answer
             next(i for i in self.data["log"] if i["id"] == message_id)["failed"] = "nothing is wired to its output"
             self._unanswered(message_id)
         elif limit := float(self.settings.get("answer_within") or 0) * 60:
@@ -244,22 +248,21 @@ class Schedule(AutoCard):
         item["unanswered"] = True
         text, failed = item["text"].split("\n(It is due now.")[0], f" ({item['failed']})" if item.get("failed") else ""
         context = Context()
-        context.add(self.id, "answer", f"Not answered{failed}: {text}", ["unanswered"])
+        context.add(self.tag("unanswered"), f"Not answered{failed}: {text}")
         self.log(f"{item['name']}: nobody answered{failed}", "warning", what="unanswered")
         self.hass.async_create_task(self._saved())
-        task = self.hass.async_create_background_task(self.domain.flow.send(context, self.id, "unanswered"), f"aac {self.id} unanswered")
+        task = self.hass.async_create_background_task(self.send(context, "unanswered"), f"aac {self.id} unanswered")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
+    async def handle(self, context: Context, port: str) -> None:
         """What the chain concluded; a model that failed counts as no answer."""
-        await super().handle(context, port, step)
-        if errors := [e for e in context.events if e["kind"] == "error"]:
-            item = next((i for i in self.data["log"] if i.get("id") == context.id), None)
-            if item is not None:
-                item["failed"] = errors[-1]["text"][:200]
-                self._unanswered(context.id)
-        return []
+        if port != "answers" or context.streaming or (item := self.answered(context)) is None:
+            return
+        await self.save()
+        self.core.notify("card", domain=self.domain.id, card=self.id)
+        if item.get("failed"):
+            self._unanswered(item["id"])
 
     # ------------------------------------------------------------------ AAC's calendar
     def _calendar(self, start: datetime, end: datetime) -> list[dict[str, Any]]:

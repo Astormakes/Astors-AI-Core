@@ -16,35 +16,34 @@ const crosses = (a, b, c, d) => { // do the segments a–b and c–d cross
 };
 const KIND_NAMES = { text: "context", read: "read (dotted)", audio: "audio stream", clip: "audio clip", any: "anything" };
 const KIND_NAME = new Proxy(KIND_NAMES, { get: (t, k) => String(k).split("|").map((x) => t[x] || x).join(" or ") }); // "audio|clip": either
-// A context as the model gets it (docs/v2 page 3), top to bottom in the order the model reads it; a colour per part
-// (system, tools, said, answer, tool result), only what belongs together folds (the tool list, a call with its result, a
-// long text); the events below, set apart. The monitor and a chat's Context view show it.
-// ctx: {system, messages, tools, events} (a context's summary); name(id): a card's name.
+// A context (docs/v2 page 5): its entries in order, each with its tag (the card that wrote it in front), its state
+// (streaming, cut; nothing when it ended), its text, its calls with their results and its data (folded). The monitor,
+// the log and a chat's Context view show it. ctx: {entries} (a context's summary); name(id): a card's name.
 const contextView = (ctx, name) => {
   const body = (text) => {
     const s = String(text ?? "");
+    if (!s) return "";
     return s.length > 600 ? `<details><summary class="cvmore">${esc(s.slice(0, 220).replace(/\s+/g, " "))}…</summary><pre class="cvtext">${esc(s)}</pre></details>`
       : `<pre class="cvtext">${esc(s)}</pre>`;
   };
-  const tags = (e) => (e.tags || []).map((x) => `<code class="cvtag">#${esc(x)}</code>`).join(" ");
-  const label = (kind, text, e) => `<div class="cvhead"><span class="cvlab ${kind}">${esc(text)}</span> ${e ? tags(e) : ""}</div>`;
-  const results = Object.fromEntries((ctx.messages || []).filter((m) => m.kind === "result").map((m) => [m.data?.call_id, m]));
-  const att = (a) => `<div class="cvatt">${label("att", `attached by ${name(a.by)} · ${a.kind === "note" ? "before" : "after"}`, a)}${body(a.text)}</div>`;
+  const entries = ctx.entries || [];
+  const results = Object.fromEntries(entries.filter((e) => e.data?.call_id).map((e) => [e.data.call_id, e]));
+  const card = (tag) => tag.split(".")[0];
+  const head = (e, kind) => `<div class="cvhead"><span class="cvlab ${kind}">${esc(e.tag)}</span>${card(e.tag) !== "context" ? ` <span class="hint">${esc(name(card(e.tag)))}</span>` : ""}${e.state && e.state !== "ended" ? ` <span class="cvstate">${esc(e.state)}</span>` : ""}</div>`;
   const call = (c) => { const r = results[c.id]; return `<details class="cvcall"><summary><code>${esc(c.name)}(${esc(JSON.stringify(c.args || {}).slice(1, -1))})</code> <span class="hint">→ ${esc(name(c.card || ""))}${r ? "" : " · no result yet"}</span></summary>
-    ${r ? `<div class="cvpart result">${label("result", `tool result · ${name(r.by)}`, r)}${body(r.text)}</div>` : ""}</details>`; };
-  const msg = (m) => {
-    if (m.kind === "result") return ""; // under the call it answers
-    const kind = m.kind === "said" ? "said" : "answer", attached = m.attachments || [];
-    const who = m.kind === "said" ? `${name(m.by)} · said` : `${name(m.by)} · answered${m.state === "cut" ? " (stopped)" : m.state === "open" ? " (writing…)" : ""}`;
-    return `<div class="cvpart ${kind}">${attached.filter((a) => a.kind === "note").map(att).join("")}${label(kind, who, m)}${m.text ? body(m.text) : ""}
-      ${(m.data?.calls || []).map(call).join("")}${attached.filter((a) => a.kind !== "note").map(att).join("")}</div>`;
+    ${r ? `<div class="cvpart result">${head(r, "result")}${body(r.text)}</div>` : ""}</details>`; };
+  const data = (e) => { const { calls, call_id, tools, ...rest } = e.data || {}; return Object.keys(rest).length ? `<details class="cvdata"><summary class="cvmore">data</summary><pre class="cvtext">${esc(JSON.stringify(rest, null, 1))}</pre></details>` : ""; };
+  const one = (e) => {
+    if (e.data?.call_id && entries.some((x) => (x.data?.calls || []).some((c) => c.id === e.data.call_id))) return ""; // under the call it answers
+    if (e.tag === "context.tools") {
+      const tools = e.data?.tools || [];
+      return `<details class="cvpart tools"><summary>${head(e, "tools")}<span class="hint">${tools.length ? tools.map((x) => esc(x.name)).join(", ") : "none"}</span></summary>
+        ${tools.map((x) => `<div class="cvtool"><code>${esc(x.name)}(${Object.entries(x.args || {}).map(([a, y]) => `${esc(a)}${y.required ? "" : "?"}`).join(", ")})</code> <span class="hint">${esc(name(x.card))}</span><div>${esc(x.description || "")}</div></div>`).join("")}</details>`;
+    }
+    const kind = e.tag === "context.system" ? "system" : e.data?.call_id ? "result" : e.tag.endsWith(".said") ? "said" : "entry";
+    return `<div class="cvpart ${kind}">${head(e, kind)}${body(e.text)}${(e.data?.calls || []).map(call).join("")}${data(e)}</div>`;
   };
-  const tools = ctx.tools || [];
-  return (ctx.system || []).map((e) => `<div class="cvpart system">${label("system", `system · ${name(e.by)}`, e)}${body(e.text)}</div>`).join("")
-    + (tools.length ? `<details class="cvpart tools"><summary>${label("tools", `tools · ${tools.length}`)}<span class="hint">${tools.map((x) => esc(x.name)).join(", ")}</span></summary>
-      ${tools.map((x) => `<div class="cvtool"><code>${esc(x.name)}(${Object.entries(x.args || {}).map(([a, y]) => `${esc(a)}${y.required ? "" : "?"}`).join(", ")})</code> <span class="hint">${esc(name(x.card))}</span><div>${esc(x.description || "")}</div></div>`).join("")}</details>` : "")
-    + (ctx.messages || []).map(msg).join("")
-    + ((ctx.events || []).length ? `<div class="cvaac"><div class="hint">AAC only, never sent to the model</div>${(ctx.events || []).map((e) => `<div class="cvpart event">${label("event", `${e.kind} · ${name(e.by)}`, e)}${e.text ? body(e.text) : ""}</div>`).join("")}</div>` : "");
+  return entries.map(one).join("");
 };
 
 const ICON = { // the grid's round buttons (drawn, so they look the same everywhere)
@@ -192,16 +191,14 @@ textarea { resize: vertical; }
 .fold { margin-top: 8px; font-size: 12px; } .fold > summary { cursor: pointer; color: var(--secondary-text-color); font-weight: 500; }
 .cvpart { border-left: 3px solid var(--divider-color); padding: 4px 8px; margin: 6px 0; font-size: 13px; }
 .cvpart.system { border-left-color: #8e8e93; } .cvpart.tools { border-left-color: #26a69a; } .cvpart.said { border-left-color: var(--primary-color); }
-.cvpart.answer { border-left-color: #f5a623; } .cvpart.result { border-left-color: #9c27b0; margin-left: 10px; } .cvpart.event { border-left-style: dashed; }
-.cvlab { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .03em; }
-.cvlab.system { color: #8e8e93; } .cvlab.tools { color: #26a69a; } .cvlab.said { color: var(--primary-color); } .cvlab.answer { color: #f5a623; }
-.cvlab.result { color: #9c27b0; } .cvlab.att, .cvlab.event { color: var(--secondary-text-color); }
-.cvatt { margin: 4px 0 4px 10px; padding: 2px 8px; border-left: 2px dashed var(--divider-color); font-size: 12px; }
+.cvpart.result { border-left-color: #9c27b0; margin-left: 10px; }
+.cvlab { font-size: 11px; font-weight: 500; font-family: ui-monospace, monospace; }
+.cvlab.system { color: #8e8e93; } .cvlab.tools { color: #26a69a; } .cvlab.said { color: var(--primary-color); } .cvlab.result { color: #9c27b0; }
+.cvstate { font-size: 10px; text-transform: uppercase; color: #f5a623; }
 .cvcall { margin: 4px 0 2px 10px; font-size: 12px; } .cvcall > summary, .cvpart.tools > summary { cursor: pointer; }
 .cvtool { margin: 4px 0 4px 10px; font-size: 12px; } .cvpart.tools > summary .cvhead { display: inline; margin-right: 6px; }
-.cvhead { font-size: 12px; } .cvtag { font-size: 10px; opacity: .6; } .cvmore { cursor: pointer; font-size: 12px; color: var(--secondary-text-color); }
+.cvhead { font-size: 12px; } .cvmore { cursor: pointer; font-size: 12px; color: var(--secondary-text-color); } .cvdata { margin-top: 2px; }
 .cvtext { white-space: pre-wrap; word-break: break-word; margin: 2px 0; font: inherit; font-size: 12px; }
-.cvaac { margin-top: 16px; padding-top: 6px; border-top: 1px dashed var(--divider-color); opacity: .8; }
 .fnrow { border-left: 3px solid var(--divider-color); padding: 4px 8px; margin: 6px 0; } .fnrow.off { opacity: .55; }
 .fnrow input[type=text], .fnrow textarea { width: 100%; box-sizing: border-box; font-size: 12px; }
 .gridtools { position: absolute; right: 30px; top: 10px; z-index: 6; display: flex; flex-direction: column; gap: 6px; }
@@ -432,6 +429,7 @@ class AacPanel extends HTMLElement {
     if (kind === "card" && !this.nav.some((n) => n.card === card)) this.view.card = this.nav[0]?.card || null;
     if (kind === "models") { this.servers = null; this._loadServers(); clearInterval(this._srvLive); this._srvLive = setInterval(() => { if (this.view.kind !== "models") { clearInterval(this._srvLive); return; } this._loadServers(); }, 3000); }
     if (kind === "logs") await this._loadLogs();
+    if (kind === "rules") this.aacSettings = await this.ws("aac/settings");
     if (kind === "audio") { this.audio = await this.ws("aac/audio"); clearInterval(this._live); this._live = setInterval(async () => { if (this.view.kind !== "audio") { clearInterval(this._live); return; } this.audio = await this.ws("aac/audio"); const b = this.shadowRoot.querySelector("#meters"); if (b) b.innerHTML = this._meters(); }, 700); }
     this.render();
     if (kind === "card") await this._showCard();
@@ -483,7 +481,7 @@ class AacPanel extends HTMLElement {
     if (!this.state) { this.shadowRoot.innerHTML = `<style>${STYLE}</style><p style="padding:20px">Loading…</p>`; return; }
     const v = this.view;
     const main = v.kind === "cards" ? this._cardsView() : v.kind === "models" ? this._models() : v.kind === "audio" ? this._audioView()
-      : v.kind === "appearance" ? this._appearanceView() : v.kind === "permissions" ? this._permissionsView() : v.kind === "logs" ? this._logsView() : v.card ? '<div id="cardhost"></div>'
+      : v.kind === "appearance" ? this._appearanceView() : v.kind === "rules" ? this._rulesView() : v.kind === "permissions" ? this._permissionsView() : v.kind === "logs" ? this._logsView() : v.card ? '<div id="cardhost"></div>'
       : `${this._header("AAC")}<div class="content"><p>No card with a page in this domain (a Chat, Lists …). Add one on the Cards page.</p></div>`;
     const skin = this.look?.skins.find((k) => k.id && k.id === this.look.skin);
     const page = `${v.kind}/${v.card || ""}`, before = this.shadowRoot.querySelector("main .content");
@@ -861,9 +859,9 @@ class AacPanel extends HTMLElement {
       `data-go="card" data-card="${esc(n.card)}" data-id="" title="Open its page"`)).join("");
     const single = this.nav.filter((n) => !n.nav).map((n) => item(n.title, "card", n.card)).join("");
     const failing = this._failing();
-    const pages = ["audio", "models", "logs", "appearance"];
+    const pages = ["audio", "models", "logs", "appearance", "rules"];
     const settings = group("settings", "Settings", pages.includes(v.kind),
-      `${item("Audio", "audio")}${item("Models", "models").replace('data-go="models"', `data-go="models" ${failing.length ? "data-warn" : ""}`)}${item("Logs", "logs")}${item("Appearance", "appearance")}`, "",
+      `${item("Audio", "audio")}${item("Models", "models").replace('data-go="models"', `data-go="models" ${failing.length ? "data-warn" : ""}`)}${item("Logs", "logs")}${item("Appearance", "appearance")}${item("How AAC works", "rules")}`, "",
       `data-go="${pages.includes(v.kind) ? v.kind : failing.length ? "models" : "audio"}" data-peek="settings" ${failing.length ? `data-alarm title="Not answering: ${esc(failing.join(", "))}"` : ""}`);
     return `<nav><div class="top"><button class="menu" id="habtn" title="Home Assistant's menu">⌂</button><b>AAC</b><span>v${esc(s.version)}</span></div>
       <div class="dom">${this._domainMenu()}</div>
@@ -879,6 +877,13 @@ class AacPanel extends HTMLElement {
       <button class="small" data-say="${esc(src.id)}" style="margin-left:auto">Test voice</button></div>
       <div style="display:flex;align-items:flex-end;gap:2px;height:40px;margin-top:6px">${(src.meter || []).map(([lvl, sp]) => `<i style="flex:1;height:${Math.max(2, lvl)}%;background:${sp > 0.3 ? "var(--primary-color)" : "var(--divider-color)"}"></i>`).join("")}</div></div>`).join("")
       || '<p class="hint">No satellite connected (the AAC satellite add-on, or the PC program).</p>';
+  }
+
+  _rulesView() { // the rules every card follows (the Card editor gives models the same text), and the storm limit
+    const st = this.aacSettings || {};
+    return `${this._header("How AAC works")}<div class="content"><div class="card"><pre class="cvtext" style="font-size:13px">${esc(st.rules || "")}</pre></div>
+      <div class="card"><h3 style="margin-top:0">Storm limit ${tip("Rule 6: a wire that carries more contexts within a second than this turns red (blocked until you unblock it on the Cards page). A model writing sends its answer after every sentence: keep it well above that.")}</h3>
+        <div class="row"><input type="number" id="storm" min="1" max="10000" value="${esc(st.storm ?? "")}" style="max-width:120px"><span class="hint">contexts per second through one wire</span></div></div></div>`;
   }
 
   _appearanceView() {
@@ -1148,7 +1153,7 @@ class AacPanel extends HTMLElement {
     const fns = Object.keys(t?.functions || {}).length;
     const help = { ...(fns ? { in: "used as a tool: wire it from a Model (or a Relay) and back, and its functions are called", out: "back to the card that called it" } : {}), ...(t?.ports_help || {}) };
     const kind = (k) => KIND_NAME[k] || k;
-    const row = (dir, [p, k]) => `<div class="fn"><code>${esc(p)}</code> <span class="hint">${dir} · ${esc(kind(k))}${c.square.includes(p) ? " · square: goes to one wire" : dir === "out" ? " · round: every wire gets it" : ""}</span>${help[p] || help["*"] ? `<br>${esc(help[p] || help["*"])}` : ""}</div>`;
+    const row = (dir, [p, k]) => `<div class="fn"><code>${esc(p)}</code> <span class="hint">${dir} · ${esc(kind(k))}${dir === "out" ? " · every wire gets it" : ""}</span>${help[p] || help["*"] ? `<br>${esc(help[p] || help["*"])}` : ""}</div>`;
     const list = [...Object.entries(c.inputs).map((x) => row("in", x)), ...Object.entries(c.outputs).map((x) => row("out", x))];
     return list.length ? `<details class="fold"><summary>Ports</summary>${list.join("")}</details>` : "";
   }
@@ -1348,8 +1353,7 @@ class AacPanel extends HTMLElement {
         <rect class="box" width="${W}" height="${height(c)}" rx="8"></rect>
         <text x="10" y="18">${esc(c.title)}</text><text class="sub" x="10" y="30">${esc(this._sub(c))}</text>
         ${ins.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-in="${esc(n)}" data-kind="${k}" points="${this._tri(inX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : k.includes("|") ? this._halves(inX, HEAD + ROW * i + ROW / 2, n, k) : `<circle class="dot" data-in="${esc(n)}" data-kind="${k}" cx="${inX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${inT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
-        ${outs.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-out="${esc(n)}" data-kind="${k}" points="${this._tri(outX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : c.square.includes(n) ? `<rect class="dot" data-out="${esc(n)}" data-kind="${k}" x="${outX - 6}" y="${HEAD + ROW * i + ROW / 2 - 6}" width="12" height="12" fill="${KIND_COLOR[k] || "#999"}"></rect>`
-          : `<circle class="dot" data-out="${esc(n)}" data-kind="${k}" cx="${outX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${outT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
+        ${outs.map(([n, k], i) => `${k === "read" ? `<polygon class="dot" data-out="${esc(n)}" data-kind="${k}" points="${this._tri(outX, HEAD + ROW * i + ROW / 2, m)}" fill="${KIND_COLOR[k]}"></polygon>` : `<circle class="dot" data-out="${esc(n)}" data-kind="${k}" cx="${outX}" cy="${HEAD + ROW * i + ROW / 2}" r="6" fill="${KIND_COLOR[k] || "#999"}"></circle>`}<text class="port" ${outT} y="${HEAD + ROW * i + ROW / 2 + 3}">${esc(n)}</text>`).join("")}
         ${c.view ? `<foreignObject ${c.view.inline ? `x="34" y="${HEAD + 2}" width="${W - 76}" height="${ROW - 4}"` : `x="8" y="${this._ports(c) + 2}" width="${W - 16}" height="${c.view.height}"`}><div xmlns="http://www.w3.org/1999/xhtml" data-viewhost="${esc(c.id)}" style="width:100%;height:100%"></div></foreignObject>` : ""}
       </g>`;
     }).join("");
@@ -1923,6 +1927,7 @@ class AacPanel extends HTMLElement {
     $("#unpick")?.addEventListener("click", () => this._unpick());
     $$("[data-selcard]").forEach((el) => el.addEventListener("click", () => { this.sel = el.dataset.selcard; this.render(); }));
     $$("[data-skin]").forEach((el) => el.addEventListener("change", async () => { await this.ws("aac/appearance/set", { skin: el.dataset.skin }); }));
+    $("#storm")?.addEventListener("change", async (e) => { const n = Math.round(Number(e.target.value)); if (n >= 1) this.aacSettings = { ...this.aacSettings, ...(await this.ws("aac/settings/set", { storm: n })) }; });
     $$("[data-foldmode]").forEach((el) => el.addEventListener("change", async () => { await this.ws("aac/appearance/set", { folds: { [el.dataset.foldmode]: el.value } }); }));
     $("#values")?.addEventListener("click", () => { this.showValues = !this.showValues; this.values = null; this.render(); if (this.showValues) this._loadValues(); });
     $("#valrefresh")?.addEventListener("click", () => this._loadValues());

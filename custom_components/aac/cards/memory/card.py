@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, ModelError, ModelUnreachable, new_id, register, run
 
-VERSION = "1.1.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WORD = re.compile(r"\w{3,}")
 
@@ -32,13 +32,14 @@ class Memory(Card):
     type = "memory"
     title = "Memory"
     category = "Data"
-    help = ("Its own memories. In the line it adds those that match what was said (a note); wired from a model and back, "
-            "the model remembers, recalls and forgets. An embedding model finds memories by meaning.")
+    help = ("Its own memories. In the line it adds those that match the newest entry (one entry at the end) and sends the "
+            "context on; wired from a model and back, the model remembers, recalls and forgets. An embedding model finds "
+            "memories by meaning.")
     ui = True
     keeps_data = True
     tags = {"recall": "memories that matched"}
-    ports_help = {"in": "in the line: it adds the memories that match what was said; as a model's tool (wired from the "
-                        "model and back) the model remembers, recalls and forgets",
+    ports_help = {"in": "in the line: it adds the memories that match the newest entry (not while the context waits for "
+                        "a call); as a model's tool (wired from the model and back) the model remembers, recalls and forgets",
                   "out": "the context with the matching memories, or back to the model"}
     settings_schema = {
         "models": {"type": "modellist", "tag": "embeddings", "title": "Embedding models (in order)", "default": [],
@@ -94,11 +95,15 @@ class Memory(Card):
             scored = [x for x in scored if x[0] > 0]
         return [m for _, m in sorted(scored, key=lambda x: -x[0])[:limit]]
 
-    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
-        if self.settings.get("in_line", True) and context.text:
-            found = await self.find(context.text, int(self.settings.get("how_many") or 3))
-            context.put(self.id, "note", "Memories that may matter:\n" + "\n".join(f"- {m['text']}" for m in found) if found else "", "recall")
-        return None
+    async def handle(self, context: Context, port: str) -> None:
+        newest = context.newest
+        if not self.settings.get("in_line", True) or context.streaming or context.waiting or newest is None or not newest["text"].strip():
+            return
+        for old in context.find(self.tag("recall")):
+            context.remove(old)
+        if found := await self.find(newest["text"], int(self.settings.get("how_many") or 3)):
+            context.add(self.tag("recall"), "Memories that may matter:\n" + "\n".join(f"- {m['text']}" for m in found))
+        await self.send(context, "out")
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         memories = self.data["memories"]

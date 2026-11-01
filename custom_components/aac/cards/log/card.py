@@ -14,7 +14,7 @@ from typing import Any
 
 from custom_components.aac.api import SAMPLE_RATE, Card, Context, new_id, pcm_to_wav, register
 
-VERSION = "1.3.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 READ_EVERY = 2  # seconds between looks at what dotted wires provide
 QUIET = 1.5  # seconds without audio from a satellite: it stopped
@@ -73,19 +73,14 @@ class Log(Card):
 
     @staticmethod
     def _entry(e: dict[str, Any]) -> str:
-        tags = " ".join(f"#{t}" for t in e.get("tags") or [])
-        body = e.get("text") or (f"{e['data'].get('function')}({e['data'].get('args') or {}})" if e["data"].get("function") else "")
-        return f"{e['kind']} {tags}: {body}".strip()
+        calls = ", ".join(f"{c['name']}({c.get('args') or {}})" for c in e["data"].get("calls") or [])
+        return f"#{e['tag']}: {e['text'] or calls}".strip()
 
-    async def handle(self, context: Context, port: str, step) -> list[Any] | None:
-        came_from = context.way[-2] if len(context.way) > 1 else context.way[0] if context.way else ""
-        newest = context.entries[-1] if context.entries else None
-        what = "snapshot" if context.progress else "context"
-        self._write(what, self._name(came_from), (self._entry(newest) if newest else "(empty)") + f"  [{len(context.entries)} entries]", context)
-        return []
-
-    async def progress(self, context: Context, port: str) -> list[Any] | None:
-        return await self.handle(context, port, None)
+    async def handle(self, context: Context, port: str) -> None:
+        newest = context.newest
+        what = "snapshot" if context.streaming else "context"
+        by = newest["tag"].split(".", 1)[0] if newest else ""
+        self._write(what, self._name(by), (self._entry(newest) if newest else "(empty)") + f"  [{len(context.entries)} entries]", context)
 
     async def clip(self, port: str, clip: dict[str, Any]) -> None:
         if clip.get("stop"):
@@ -125,27 +120,26 @@ class Log(Card):
                 if now - last > QUIET:
                     self._audio.pop(source)
                     self._write("audio", source, f"stopped ({round(last - began)} s)")
-            for card, port in self.domain.flow.wired_into(self.id, "in"):
+            for card, port in self.wired_into("in"):
                 if card.ports()[1].get(port) != "read":
                     continue
                 held = card.held(port)
-                key, ids = f"{card.id}.{port}", [e["id"] for e in (held.entries if held else [])]
+                key, ids = f"{card.id}.{port}", [e["id"] for e in (held.conversation if held else [])]
                 if key not in self._seen:  # the first look: what is there now is the start
                     self._seen[key] = set(ids)
                     continue
-                new = [e for e in held.entries if e["id"] not in self._seen[key]] if held else []
+                new = [e for e in held.conversation if e["id"] not in self._seen[key]] if held else []
                 self._seen[key] = set(ids)
                 for e in new[-5:]:
                     self._write("read", f"{card.name}.{port}", self._entry(e))
 
     def _name(self, card_id: str) -> str:
-        card = self.domain.cards.get(card_id)
-        return card.name if card else card_id
+        return next((c.name for c in self.all_cards() if c.id == card_id), card_id)
 
     def _card_id(self, name: str) -> str | None:
         """A card named so (or with that id)."""
         word = name.strip().lower()
-        return next((c.id for c in self.domain.cards.values() if word in (c.id, c.name.lower())), word or None)
+        return next((c.id for c in self.all_cards() if word in (c.id, c.name.lower())), word or None)
 
     def _lines(self, entries: list[dict[str, Any]]) -> str:
         """Entries as text for a model: time, level, who, what."""
@@ -177,7 +171,7 @@ class Log(Card):
             return context
         if found:
             text = self._lines(found)
-            entry = context.add(self.id, "note", text, ["text"])
+            entry = context.add(self.tag("text"), text)
             entry["id"] = hashlib.sha1(f"{self.id}|{text}".encode()).hexdigest()[:10]
         return context
 
@@ -186,7 +180,7 @@ class Log(Card):
             allowed = bool(self.settings.get("may_read_log"))
             before = int(args["before"]) if args.get("before") else None
             found = self.read_log(card=None if allowed else self.id, before=before, last=SHOWN)
-            names = {c.id: c.name for c in self.domain.cards.values()}
+            names = {c.id: c.name for c in self.all_cards()}
             return {"entries": found, "all": allowed, "names": names}
         if action == "audio":  # one kept clip, to play
             name = str(args.get("file") or "")

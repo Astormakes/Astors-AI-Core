@@ -8,24 +8,24 @@ const KEYWORDS = ["def", "if", "elif", "else", "for", "in", "not", "and", "or", 
 const GLOBALS = [
   ["input(\"in\")", "what arrived at the input in (a context)"], ["input(\"chat\", read=True)", "a dotted input: read, never starts the script"],
   ["input()", "what arrived, at whichever input"], ["output(\"out\", context)", "sends it out at out (nothing leaves otherwise)"],
-  ["stop()", "stops the turn"], ["signal(\"\")", "adds a signal of this Relay"], ["print()", "shows under Printed"], ["print_log()", "writes into AAC's log"],
+  ["stop()", "stops every card (a model writing cuts its answer)"], ["print()", "shows under Printed"], ["print_log()", "writes into AAC's log"],
   ["now()", "the time now: now().hour, f\"{now():%H:%M}\""], ["states(\"\")", "a Home Assistant state"], ["state_attr(\"\", \"\")", "an attribute of an entity"],
   ["is_state(\"\", \"on\")", "True when the entity is in that state"], ["audio", "when AAC last spoke"], ["cards[\"\"]", "a card by its id"],
   ["len()", "how long"], ["str()", "as text"], ["int()", "as a whole number"], ["any(… for x in …)", "True when one is"],
   ["re.search(r\"\", text, re.I)", "a pattern"], ["re.sub(r\"\", \"\", text)", "replace a pattern"],
 ];
-const ENTRY = [["text", "its text (set it to change it)"], ["tags", "its tags"], ["by", "the card that wrote it"], ["data", "what its card added"],
-  ["role", "how a model reads it: system, user, assistant, tool"]];
+const ENTRY = [["text", "its text (set it to change it)"], ["tag", "its tag (the card that wrote it in front)"], ["id", "its own id"],
+  ["data", "what its card added (writable)"], ["state", "streaming, ended or cut"], ["time", "when it was written"]];
 const TEXT = [["replace(\"\", \"\")", "every a becomes b"], ["strip()", "spaces and empty lines off both ends"], ["lower()", "small letters"],
   ["upper()", "capitals"], ["startswith(\"\")", "starts so?"], ["endswith(\"\")", "ends so?"], ["split(\",\")", "a list of the parts"],
   ["find(\"\")", "where it is (-1: not there)"], ["count(\"\")", "how often"]];
-const CONTEXT = [["get(\"\")", "the newest entry with a tag, or None"], ["all(\"\")", "every entry with a tag (.text: as one)"], ["text", "every entry's text as one"],
-  ["add(\"\", \"\")", "a new message from the user at the end (at=\"first\", role=\"system\")"],
-  ["add(\"\", \"\", at=\"first\", role=\"system\")", "a new first part of the system prompt"],
-  ["attach(\"\", \"\")", "onto the last entry: read with it (at=\"first\": the first)"],
-  ["set(\"\", \"\")", "writes the entry with that tag (none: added, at= role= as add)"],
+const CONTEXT = [["get(\"\")", "the newest entry with a tag, or None"], ["all(\"\")", "every entry with a tag (.text: as one)"], ["text", "the conversation's texts as one"],
+  ["add(\"\", \"\")", "a new entry at the end (at=\"first\": at the beginning of the conversation)"],
+  ["set(\"\", \"\")", "writes the newest entry with that tag (none: added, at= as add)"],
+  ["set(\"context.system\", \"\")", "the system prompt"],
   ["remove(\"\")", "takes out every entry with a tag (at=\"first\" / \"last\": one)"],
-  ["finished", "False while a model is still writing"], ["input", "the input it came in at"]];
+  ["system", "the system prompt's entry"], ["tools", "the tools' entry"],
+  ["streaming", "True while an entry is still being written"], ["input", "the input it came in at"]];
 const SNIPPETS = [
   ["def …", 'def ${name}():\n    """What it does (a model reads this)."""\n    return ""', "a function this Relay offers (models, other Relays)"],
   ["start", 'context = input("in")\n\noutput("out", context)', "what arrived, and send it on"],
@@ -393,7 +393,7 @@ class AacRelayScript extends HTMLElement {
       • Plain names (<b>output</b>, <b>stop</b>, <b>print</b>) are the script's own; <b>lists.add_items(…)</b> asks another card for something.<br>
       • A <b>def</b> is a function this Relay offers to models and other Relays; a call runs only that def.<br>
       • Text goes in quotes; <b>#</b> starts a note that does not run. Click any name below to put it in the code; the Simple view writes code from rows.</div>
-      <div class="note"><b>Speed:</b> the model server keeps what it has already read (its cache). The system prompt (role="system") is fast as long as it stays the same; a change there, or in the middle of the conversation, makes the server read everything from there again. Changes at the end (attach onto what was just said, add at the end) are cheap.</div>
+      <div class="note"><b>Speed:</b> the model server keeps what it has already read (its cache). The system prompt (context.system) is fast as long as it stays the same; a change there, or in the middle of the conversation, makes the server read everything from there again. Changes at the end (add) are cheap.</div>
       ${Object.entries(groups).map(([g, rows]) => `<h5>${esc(g)}</h5>${rows.map((r) => `<div class="fn">${ins(r.sig)} ${esc(r.what)}${r.example ? `<pre class="ex">${esc(r.example)}</pre>` : ""}</div>`).join("")}`).join("")}
       <h5>Tags in this domain</h5>${this.dom.tags.map((t) => `<div class="fn">${ins(t.tag)} <span class="hint">${esc(t.card)}: ${esc(t.what)}</span></div>`).join("")}
       <h5>Cards it reaches (their functions)</h5>${tools.length ? tools.map((c) => Object.entries(c.functions || this.panel.type(c.type)?.functions || {}).map(([n, f]) => `<div class="fn">${ins(`${c.id}.${n}(${Object.keys(f.args || {}).map((a) => `${a}=`).join(", ")})`)} <span class="hint">${esc(f.help || "")}</span></div>`).join("")).join("")
@@ -441,7 +441,7 @@ class AacRelayScript extends HTMLElement {
     };
     const block = (b, i) => b.type === "text"
       ? `<div class="blk" data-b="${i}"><div class="row"><b>Add a text</b><span>named</span><input data-f="name" value="${esc(b.name || "")}" placeholder="name" style="max-width:110px">
-          <span>as</span><select data-f="where">${opt("first", b.where, "the first part of the system prompt")}${opt("last", b.where, "attached to what was just said (this turn)")}</select>${this._moveBtns(i)}</div>
+          <span>as</span><select data-f="where">${opt("system", b.where, "the system prompt")}${opt("last", b.where, "an entry at the end (this turn)")}</select>${this._moveBtns(i)}</div>
           <textarea data-f="text" placeholder="The text">${esc(b.text || "")}</textarea></div>`
       : b.type === "send"
       ? `<div class="blk" data-b="${i}"><div class="row"><b>Send the context to</b><input data-f="a" list="outs" value="${esc(b.a || "")}" placeholder="out" style="max-width:150px">${this._moveBtns(i)}</div></div>`
@@ -485,7 +485,7 @@ class AacRelayScript extends HTMLElement {
     root.querySelectorAll("[data-del]").forEach((el) => el.addEventListener("click", () => { blocks().splice(Number(el.dataset.del), 1); store(true); }));
     root.querySelectorAll("[data-move]").forEach((el) => el.addEventListener("click", () => { const [i, d] = el.dataset.move.split("|").map(Number), l = blocks(); [l[i], l[i + d]] = [l[i + d], l[i]]; store(true); }));
     root.querySelector("#addif")?.addEventListener("click", () => { blocks().push({ type: "if", tag: "*.said", test: "contains", value: "", actions: [{ do: "output", a: "yes" }] }); store(true); });
-    root.querySelector("#addtext")?.addEventListener("click", () => { blocks().push({ type: "text", name: `text_${blocks().length + 1}`, where: "first", text: "" }); store(true); });
+    root.querySelector("#addtext")?.addEventListener("click", () => { blocks().push({ type: "text", name: `text_${blocks().length + 1}`, where: "system", text: "" }); store(true); });
     root.querySelector("#addsend")?.addEventListener("click", () => { blocks().push({ type: "send", a: "out" }); store(true); });
   }
 
@@ -494,7 +494,7 @@ class AacRelayScript extends HTMLElement {
     const rows = (blocks || []).map((b, i) => {
       if (b.type === "text") {
         const n = name(b.name, `text_${i + 1}`);
-        return b.where === "last" ? `context.attach(${py(n)}, ${py(b.text || "")})` : `context.add(${py(n)}, ${py(b.text || "")}, at="first", role="system")`;
+        return b.where === "last" ? `context.add(${py(n)}, ${py(b.text || "")})` : `context.set("context.system", ${py(b.text || "")})`;
       }
       if (b.type === "send") return `output(${py(name(b.a, "out"))}, context)`;
       const found = `found_${i + 1}`, v = py(String(b.value || "").toLowerCase());
