@@ -3,7 +3,17 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-11-01) – 2.6.1, live on the owner's HA
+## Current state (2026-11-01) – 2.6.2, live on the owner's HA
+
+- **2026-11-01 (2.6.2, satellite 0.3.6): audio died again** (owner). The satellite had hung since between 11:46 and
+  11:58: no reconnect after HA's restarts at 11:58 and 14:23 (no "Disconnected" logged), its event loop still alive
+  (it hung up the BT600 cleanly when restarted). Where exactly is not known; every wait on a player or recorder that
+  had no limit has one now (`GRACE`, `ended()`, a player gets the WAV's length + 10 s) and logs when it fires: the
+  next hang names its place. Restarted 15:24, updated 15:29, connected, the mic hears the room. Found on the way, a
+  real AAC bug: at 11:44:57 a context went Model ↔ Home 400 times in a second. The Chat had kept a Follow-up turn
+  half-way (an answer whose Home call had no result yet); Wake word read it with "Okay, computer." on top; the Model
+  took the old call as still waiting, the flow did not. One rule now: `Context.open_calls` counts a call only while
+  its answer is the newest thing said or answered (test `test_a_call_left_behind_is_not_made_again`).
 
 - **2026-11-01 (2.6.1): a chat is a tag, plainly in the context** (owner: he unwired Wake word's read and expected a
   new chat per spoken turn, got nothing in the Chat; "nothing should be hidden, mechanisms have to be discoverable and
