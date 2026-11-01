@@ -3,7 +3,7 @@
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
 
-## Current state (2026-11-01) – 3.0.0 on branch `v3` (not deployed); 2.6.3 live on the owner's HA
+## Current state (2026-11-01) – 3.0.0 on branch `v3`, live on the owner's HA
 
 - **2026-11-01 (3.0.0): the rules from the ground up** (owner: "lets scrap the old rules and build from the ground
   up"; docs/v2 page 5, the rules in `custom_components/aac/rules.py`: the Card editor's `rules`, the panel's Settings →
@@ -21,8 +21,12 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   `continue` dropped; its page kept. Text to speech speaks by a tag setting; the Speaker plays a clip without a
   satellite where its new setting says (else the log says so). Buffer: no system position. The card interface is
   written in `api.py` (cards stop reaching into the flow; a sandbox later). Every card file got a major version; the
-  backup is 3.0.0 (stored chats are not converted: the owner lets them go). Not yet: deployed, the owner's Relay
-  scripts rewritten (by hand, together), the live check in a test domain.
+  backup is 3.0.0 (stored chats are not converted: the owner lets them go). Live 22:46: the board saved first
+  (scratchpad board_before_3.json), deployed, the old chats deleted, three scripts converted (Charter:
+  `context.set("context.system", text())`; Follow-up turn and Stop word: `*.said`; the Stop word's stop output and its
+  wire into the Charter went), two browser messages answered (one with a tool call). Not yet tried live: a spoken
+  turn. Open: the Speaker's "A clip without a satellite plays at" is empty (typed answers are not played, the log says
+  so); the owner wanted typed answers spoken, with a Relay deciding.
 
 
 - **2026-11-01 (2.6.3): the storm stop** (owner's design). HA Core froze at 15:56:25: the owner said "stop the vacuum",
