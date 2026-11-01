@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+import contextlib
 from copy import deepcopy
 from pathlib import Path
 import re
@@ -15,6 +16,7 @@ import time
 from traceback import format_exc
 from typing import Any
 
+from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
@@ -93,6 +95,7 @@ class Domain:
         self.undo: list[dict[str, Any]] = []
         self.slots: dict[str, Any] = {}
         self.user_tags: list[str] = []
+        self.red: list[dict[str, Any]] = []  # blocked wires (a storm went through them): {from, to, since, count}
         self.flow = Flow(self)
         self.log = DomainLog(self)
         self._specs: dict[str, dict[str, Any]] = {}
@@ -110,6 +113,7 @@ class Domain:
         self.redo: list[dict[str, Any]] = []  # what Undo took back (until the next change; not kept over a restart)
         self.slots = data.get("slots", {})
         self.user_tags = data.get("user_tags", [])
+        self.red = data.get("red", [])
         self.cards = {}
         for card_id, spec in list(self._specs.items()):  # a card made here may add another
             await self._make(card_id, spec)
@@ -158,7 +162,51 @@ class Domain:
 
     def _data(self) -> dict[str, Any]:
         return {"cards": self._specs, "wires": self.wires, "positions": self.positions,
-                "undo": packed(self.undo, {"cards": self._specs, "wires": self.wires}), "slots": self.slots, "user_tags": self.user_tags}
+                "undo": packed(self.undo, {"cards": self._specs, "wires": self.wires}), "slots": self.slots, "user_tags": self.user_tags,
+                "red": self.red}
+
+    # ------------------------------------------------------------------ red wires (a storm stop)
+    def is_red(self, a: str, b: str) -> bool:
+        """A wire (output `card.port` → input `card.port`) is blocked."""
+        return any(r["from"] == a and r["to"] == b for r in self.red)
+
+    def redden(self, a: str, b: str, count: int, seconds: float) -> None:
+        """A storm went through a wire: it is blocked (red on the Cards page) until the owner, or a model through the
+        Card editor, unblocks it. The owner gets a Home Assistant notification."""
+        if self.is_red(a, b):
+            return
+        self.red.append({"from": a, "to": b, "since": time.time(), "count": count})
+        text = (f"More than {count} contexts went through the wire {a} → {b} within {seconds:g} s (the wiring loops?). It is "
+                "blocked now, red on the Cards page, until you unblock it there (click the wire) or a model does with the "
+                "Card editor.")
+        self.log.write("error", f"Storm stop: {text}", card=a.split(".")[0], what="red")
+        self.save()
+        self.core.notify("setup", domain=self.id)
+        try:
+            persistent_notification.async_create(self.hass, text, title=f"AAC ({self.name}): a wire was blocked",
+                                                 notification_id=self._red_note(a, b))
+        except Exception as err:  # noqa: BLE001 - the block counts, the notification is extra
+            self.log.write("warning", f"No Home Assistant notification: {err!r}", what="red")
+
+    def unblock(self, a: str, b: str, by: str = "you") -> bool:
+        """A red wire carries again."""
+        if not self.is_red(a, b):
+            return False
+        self.red = [r for r in self.red if not (r["from"] == a and r["to"] == b)]
+        self.log.write("info", f"The wire {a} → {b} was unblocked ({by})", card=a.split(".")[0], what="red")
+        with contextlib.suppress(Exception):
+            persistent_notification.async_dismiss(self.hass, self._red_note(a, b))
+        self.save()
+        self.core.notify("setup", domain=self.id)
+        return True
+
+    def _unred_gone(self) -> None:
+        """A wire that is gone is no longer red."""
+        for r in [r for r in self.red if {"from": r["from"], "to": r["to"]} not in self.wires]:
+            self.unblock(r["from"], r["to"], "the wire was removed")
+
+    def _red_note(self, a: str, b: str) -> str:
+        return f"aac_red_{self.id}_{slug(a)}_{slug(b)}"
 
     def save(self) -> None:
         """Keep the setup (soon)."""
@@ -240,6 +288,7 @@ class Domain:
                 await self._end(card)
             self.positions.pop(card_id, None)
         self.wires = [w for w in self.wires if w["from"].split(".")[0] not in gone and w["to"].split(".")[0] not in gone]
+        self._unred_gone()
         if drop_data:
             await self._drop_data(set(gone))
         for card_id in gone:
@@ -286,6 +335,7 @@ class Domain:
         if found != self.wires:
             self.log.write("info", f"Wires changed ({len(found)} now)", what="wires")
         self.wires = found
+        self._unred_gone()
         self.save()
         self.core.notify("setup", domain=self.id)
 
@@ -317,6 +367,7 @@ class Domain:
             return
         self._specs = deepcopy(setup["cards"])
         self.wires = deepcopy(setup["wires"])
+        self._unred_gone()
         for card in list(self.cards.values()):
             await self._end(card)
         self.cards = {}
@@ -457,7 +508,7 @@ class Domain:
         """For the panel."""
         return {"id": self.id, "name": self.name, "cards": [c.summary() for c in self.cards.values()],
                 "wires": self.wires, "positions": self.positions, "undo": len(self.undo), "redo": len(self.redo),
-                "slots": {s: bool(self.slots.get(s)) for s in SLOTS}, "tags": self.tag_pool()}
+                "slots": {s: bool(self.slots.get(s)) for s in SLOTS}, "tags": self.tag_pool(), "red": self.red}
 
 
 class Core:

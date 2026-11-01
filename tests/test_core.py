@@ -375,6 +375,69 @@ async def test_tools_are_the_cards_its_calls_reach(hass: HomeAssistant, mock_ent
     assert "lists" not in {c.id for c in d.flow.tools("model")}
 
 
+async def test_a_stop_passes_every_card_once(hass: HomeAssistant, mock_entry):
+    """A stop runs forward through the cards that are not busy; round a loop it ends (owner 2026-11-01: "stop the
+    vacuum" made the Stop word send one; the Model's out to Chat and Schedule, both back into the Charter, doubled it
+    every round until Home Assistant froze)."""
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    sched = await d.add_card("schedule", "Schedule")
+    d.set_wires([*d.wires, {"from": "model.out", "to": f"{sched.id}.answers"}, {"from": f"{sched.id}.out", "to": "charter.in"}])
+    seen = []
+    real = d.flow.enter
+
+    async def counted(card, port, context):
+        seen.append(card.id)
+        await real(card, port, context)
+    d.flow.enter = counted
+    chat = d.cards["chat"]
+    await chat.stop_chat(chat._new("x")["id"])
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert 0 < len(seen) < 20 and not d.red
+
+
+async def test_a_storm_turns_the_wire_red(hass: HomeAssistant, mock_entry, hass_ws_client):
+    """More than STORM contexts through one wire within a second: it is blocked (red), kept over a restart, the owner
+    gets a notification, a model hears it from the Card editor with every answer; unblocked by the owner or a model."""
+    from unittest.mock import patch
+
+    from custom_components.aac.context import Context
+    from custom_components.aac.flow import STORM
+
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    await d.add_card("relay", "A")
+    await d.add_card("relay", "B")
+    await d.add_card("relay", "C")
+    loop = [("a.out", "b.in"), ("b.out", "c.in"), ("c.out", "a.in")]
+    d.set_wires([*d.wires, *({"from": a, "to": b} for a, b in loop)])  # a loop
+    context = Context()
+    context.add("a", "said", "round and round", [])
+    with patch("custom_components.aac.core.persistent_notification.async_create") as note:
+        await d.flow.send(context, "a", "out")
+    assert len(d.red) == 1 and (d.red[0]["from"], d.red[0]["to"]) in loop and note.call_count == 1
+    assert not d.log.read(levels=["warning"], what="loop")  # it ended there, long before the 400 steps
+    assert d.flow.passes("x.out", "y.in") and STORM >= 10
+    assert d.log.read(levels=["error"], what="red")
+    red = d.red[0]
+    assert d._data()["red"] == d.red and d.summary()["red"] == d.red  # kept, and the panel shows it
+
+    editor = await d.add_card("builder", "Card editor")
+    told = await editor.call("types", {})
+    assert told["red_wires"] == [f"{red['from']} -> {red['to']}"] and isinstance(told["result"], list)
+    assert "(red: blocked)" in str((await editor.call("cards", {}))["wires"])
+    assert (await editor.call("unblock", {"from": red["from"], "to": red["to"]}))["unblocked"] is True
+    assert not d.red and "red_wires" not in await editor.call("cards", {})  # fixed: nothing to tell
+
+    d.red.append(dict(red))  # again, unblocked by the owner on the Cards page
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "aac/wire/unblock", "from": red["from"], "to": red["to"]})
+    assert (await client.receive_json())["result"] == {"unblocked": True, "red": []}
+    d.red.append(dict(red))  # a red wire that is removed is no longer red
+    d.set_wires([w for w in d.wires if not (w["from"] == red["from"] and w["to"] == red["to"])])
+    assert not d.red
+
+
 async def test_a_call_left_behind_is_not_made_again(hass: HomeAssistant, mock_entry, aioclient_mock):
     """A chat that kept a turn half-way (an answer whose call has no result yet) and a new line said on top: a new
     turn, the model is asked (the old call is not sent around again; owner 2026-11-01: it went Model ↔ Home 200 times)."""

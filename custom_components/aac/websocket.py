@@ -142,6 +142,13 @@ async def ws_wires(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"wires": domain.wires})
 
 
+@command({vol.Required("type"): "aac/wire/unblock", vol.Required("from"): str, vol.Required("to"): str})
+async def ws_wire_unblock(hass, connection, msg) -> None:
+    """A red wire (the storm stop blocked it) carries again."""
+    domain = _core(hass).domain
+    connection.send_result(msg["id"], {"unblocked": domain.unblock(msg["from"], msg["to"]), "red": domain.red})
+
+
 @command({vol.Required("type"): "aac/positions", vol.Required("positions"): dict, vol.Optional("undoable", default=False): bool})
 async def ws_positions(hass, connection, msg) -> None:
     """Where the cards sit in the grid (Arrange: undoable)."""

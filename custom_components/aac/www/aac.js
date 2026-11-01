@@ -211,6 +211,7 @@ textarea { resize: vertical; }
 .gridtools button.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
 .grid.tool-select svg, .grid.tool-cut svg { cursor: crosshair; }
 .wire.cut { stroke: #e53935 !important; stroke-width: 3.5; stroke-dasharray: 6 4; }
+.wire.red { stroke: #e53935 !important; stroke-width: 4; opacity: 1; }
 #cutline { fill: none; stroke: #e53935; stroke-width: 2; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; }
 .legend { position: absolute; right: 8px; bottom: 6px; font-size: 10px; color: var(--secondary-text-color); line-height: 1.5; opacity: .8; }
 .legend div { display: flex; align-items: center; gap: 4px; } .grid .legend svg { flex: none; width: 20px; height: 8px; }
@@ -1283,7 +1284,9 @@ class AacPanel extends HTMLElement {
     if (this.selMon) return this._monitorSide(this.selMon);
     if (this.selWire) {
       const key = `${this.selWire.from}|${this.selWire.to}`, on = this._monitors().includes(key);
+      const red = (d.red || []).find((r) => `${r.from}|${r.to}` === key);
       return `<b>Wire</b><p class="hint">${esc(this.selWire.from)} → ${esc(this.selWire.to)}</p>
+        ${red ? `<p class="hint" style="color:#e53935"><b>Blocked (red)</b> since ${esc(new Date(red.since * 1000).toLocaleString())}: more than ${red.count} contexts went through it within a second, so the wiring probably loops. It carries nothing until it is unblocked.</p><div class="row" style="margin-bottom:8px"><button class="small" id="unblock">Unblock</button></div>` : ""}
         <div class="row" style="gap:8px"><button class="small" id="monitor" title="A window above the wire with what passes it, live">${on ? "Stop monitoring" : "Monitor"}</button><button class="small danger" id="unwire">Remove wire</button></div>`;
     }
     if (this.many.size) return `<b>${this.many.size} cards selected</b><p class="hint">Drag one of them and they all move, the bin or Del removes them. With Select on, a click on a card or a long press on a phone adds or removes it (Ctrl+click without it), a frame adds the cards in it. Esc or a click on the empty grid lets go.</p>
@@ -1354,7 +1357,8 @@ class AacPanel extends HTMLElement {
     const routes = this._routes(wires, port);
     this.shadowRoot.querySelector("#wires").innerHTML = wires.map((w) => {
       const path = routes[w.key], sel = this.selWire && `${this.selWire.from}|${this.selWire.to}` === w.key;
-      return `<path class="wire ${w.read ? "read" : ""} ${w.loop ? "loop" : ""} ${sel ? "sel" : ""}" data-from="${esc(`${w.a.id}.${w.ap}`)}" data-to="${esc(`${w.b.id}.${w.bp}`)}" d="${path}" stroke="${KIND_COLOR[w.kind] || "#999"}"></path>
+      const red = (d.red || []).some((r) => `${r.from}|${r.to}` === `${w.a.id}.${w.ap}|${w.b.id}.${w.bp}`); // the storm stop blocked it
+      return `<path class="wire ${w.read ? "read" : ""} ${w.loop ? "loop" : ""} ${sel ? "sel" : ""} ${red ? "red" : ""}" data-from="${esc(`${w.a.id}.${w.ap}`)}" data-to="${esc(`${w.b.id}.${w.bp}`)}" d="${path}" stroke="${KIND_COLOR[w.kind] || "#999"}"></path>
         <path class="hit" data-wire="${esc(w.key)}" d="${path}"><title>${esc(w.a.title)}.${esc(w.ap)} → ${esc(w.b.title)}.${esc(w.bp)} (${esc(w.kind)})</title></path>`;
     }).join("");
     this._view();
@@ -1971,6 +1975,7 @@ class AacPanel extends HTMLElement {
     }));
     $("#remove")?.addEventListener("click", () => this._removeCards());
     $("#unwire")?.addEventListener("click", () => this._unwire());
+    $("#unblock")?.addEventListener("click", async () => { const w = this.selWire; await this.ws("aac/wire/unblock", { from: w.from, to: w.to }); await this._load(); this.render(); });
     // watches: the whole list is saved on any change
     const collect = (sel, attr) => [...$$(sel)].map((box) => {
       const o = {};

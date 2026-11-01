@@ -12,6 +12,8 @@ monitors read it there), what goes wrong too; open panels hear about it (live wi
 
 from __future__ import annotations
 
+import asyncio
+from collections import deque
 from collections.abc import Awaitable
 import time
 from traceback import format_exc
@@ -25,6 +27,8 @@ if TYPE_CHECKING:
 
 LEVEL_EVERY = 0.1  # seconds between an audio wire's loudness updates (only while a Cards page is open)
 MAX_STEPS = 400  # a context that visits more cards than this is stopped (the wiring loops; calls travel through the loop too)
+STORM = 30  # contexts per STORM_SECONDS through one wire that make it red (blocked until unblocked); a busy turn sends a few
+STORM_SECONDS = 1.0
 
 
 class Step:
@@ -69,6 +73,22 @@ class Flow:
         self.last: dict[str, dict[str, Any]] = {}  # "card.port" → the newest context that left there
         self.held: dict[str, Context] = {}  # "card.port" → a copy of the newest context that left there (dotted wires read it)
         self._level_at: dict[str, float] = {}
+        self._through: dict[tuple[str, str], deque[float]] = {}  # wire → when contexts went through it lately
+
+    def passes(self, a: str, b: str) -> bool:
+        """A context may go through the wire a → b (`card.port` each): not when it is red; it turns red when more than
+        STORM contexts went through it within STORM_SECONDS (a storm: the wiring loops)."""
+        if self.domain.is_red(a, b):
+            return False
+        now, seen = time.monotonic(), self._through.setdefault((a, b), deque())
+        seen.append(now)
+        while seen and now - seen[0] > STORM_SECONDS:
+            seen.popleft()
+        if len(seen) > STORM:
+            seen.clear()
+            self.domain.redden(a, b, STORM, STORM_SECONDS)
+            return False
+        return True
 
     def wired_from(self, card_id: str, port: str) -> list[tuple[Card, str]]:
         """Targets of an output."""
@@ -132,6 +152,8 @@ class Flow:
     async def carry(self, context: Context, way: list[tuple[str, str, str, str]]) -> None:
         """A call or its result along a way: every wire lights, the cards between only pass it on, the last takes it."""
         for a, ap, b, bp in way:
+            if not self.passes(f"{a}.{ap}", f"{b}.{bp}"):  # a red wire: the call or its result ends here
+                return
             self.record(a, ap, context, [f"{b}.{bp}"])
             if (a, ap, b, bp) != way[-1]:
                 context.way.append(b)
@@ -214,6 +236,7 @@ class Flow:
 
     async def enter(self, card: Card, port: str, context: Context) -> None:
         """A context arrives at a card's input."""
+        await asyncio.sleep(0)  # Home Assistant gets its turn between two cards (a storm cannot freeze it)
         context.way.append(card.id)
         if len(context.way) > MAX_STEPS:
             self.domain.log.write("warning", f"A context visited {MAX_STEPS} cards: the wiring may loop (stopped here)", card=card.id, what="loop")
@@ -227,6 +250,8 @@ class Flow:
             await self.out(card, context, result)
             return
         if context.stopped:  # a stop runs forward: a busy card cuts and sends its own context on, the stop ends there
+            if card.id in context.way[:-1]:  # every card once: a stop that came round a loop ends (it doubled each round)
+                return
             if await card.stop(context.events[-1]):
                 return
             await self.out(card, context, None)
@@ -279,7 +304,8 @@ class Flow:
         sends: list[tuple[Card, str]] = []
         for pick in picks:
             port, only = pick if isinstance(pick, tuple) else (pick, None)
-            targets = [(c, p) for c, p in self.wired_from(card.id, port) if only is None or c.id == only]
+            targets = [(c, p) for c, p in self.wired_from(card.id, port) if (only is None or c.id == only)
+                       and self.passes(f"{card.id}.{port}", f"{c.id}.{p}")]  # a red wire carries nothing
             if targets:
                 self.record(card.id, port, context, [f"{c.id}.{p}" for c, p in targets])
             elif only and (way := self.way(card.id, only, port) or self.way(card.id, only)):  # a call: the way through the loop

@@ -72,6 +72,16 @@ the same name. The card id never reaches a model. A Model's answer leaves at `ou
 rule); its calls leave at `calls` (square). A turn that comes back to a Model holding nothing new (a card wired from
 `out` back into it passed it on) ends there.
 
+**Loops** (2.6.3). A context that visits more than 400 cards stops there (`MAX_STEPS`). A stop runs forward through
+the cards that are not busy and passes every card once (round a loop it ends). Home Assistant gets its turn between
+two cards (`flow.enter` yields). **The storm stop:** more than `STORM` (30) contexts through one wire within
+`STORM_SECONDS` (1) make it red (`flow.passes()`, `domain.redden()`): it carries nothing (calls and results neither)
+until it is unblocked, it stays red over a restart (`domain.red`: `{from, to, since, count}`, in the domain's store and
+its summary), the owner gets a Home Assistant notification, the log an error (`what` red). Unblocked by the owner (the
+Cards page: click the wire, Unblock; `aac/wire/unblock {from, to}`) or a model through the Card editor (`unblock`);
+a wire that is removed is no longer red. While a wire is red, every answer of the Card editor carries `red_wires`
+(only the ones red right now) and its `cards` overview marks them.
+
 More a card may define: `busy` (a property: True while it works on something; a newer version of its file waits),
 `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
 self.save()`; `async upgrade_data(settings, made_with)`: made from a setup saved by another version of its file, after
