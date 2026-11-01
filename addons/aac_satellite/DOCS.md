@@ -27,3 +27,10 @@ The option `reference` also sends what the speaker plays (PulseAudio's monitor o
 sample next to the microphone. AAC's Microphone card can then subtract it with a delay, a gain and an invert (its
 "Waveforms…" view lines them up): for a microphone and speaker in one housing, where the speaker's sound reaches the
 microphone directly. It does not need `echo_cancel`.
+
+## Hunting a hardware fault (`debug`)
+The option `debug` keeps a record of what the hardware does, next to the app's work (`debug.py`): every loud stretch
+on the raw microphone (before echo cancellation) or on the speaker's PulseAudio monitor (when, how loud, how
+noise-like, whether AAC was playing), saved as a stereo WAV (left the microphone, right the monitor) in `/share/aac_satellite_debug/`;
+PulseAudio's card, sink and source events; the levels every 5 minutes; and what a device reports (the BT600's HID
+reports). Everything goes into the app's log.

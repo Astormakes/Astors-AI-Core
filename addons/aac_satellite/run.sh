@@ -13,6 +13,7 @@ bashio::config.has_value 'mic' && ARGS+=(--mic "$(bashio::config 'mic')")
 bashio::config.has_value 'speaker' && ARGS+=(--speaker "$(bashio::config 'speaker')")
 bashio::config.true 'echo_cancel' && ARGS+=(--echo-cancel)
 bashio::config.true 'reference' && ARGS+=(--reference)
+bashio::config.true 'debug' && ARGS+=(--debug)
 
 bashio::log.info "Microphones and speakers HA's audio system offers:"
 pactl list sources short 2>/dev/null | grep -v '\.monitor' | cut -f2

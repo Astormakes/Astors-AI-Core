@@ -31,6 +31,7 @@ import tempfile
 
 import aiohttp
 
+import debug
 import devices
 
 RATE = 16000
@@ -101,6 +102,7 @@ class Satellite:
         self.token = token
         self.playing = False
         self._proc: asyncio.subprocess.Process | None = None
+        self.watch: debug.Watch | None = None
         self.devices = [] if args.input_file else devices.attached()
         for plugin in self.devices:  # a device plugin knows its own mic and speaker
             args.mic = args.mic or find_audio("sources", plugin.mic_hint)
@@ -115,7 +117,14 @@ class Satellite:
         """Start the devices, connect, stream, reconnect with backoff; hang the devices up at the end."""
         for plugin in self.devices:
             await plugin.start()
+        mic, speaker = self.args.mic, self.args.speaker  # the real ones (echo cancellation puts its own in between)
         echo = await self._echo_cancel() if self.args.echo_cancel else None
+        if self.args.debug:
+            self.watch = debug.Watch(mic or "@DEFAULT_SOURCE@", f"{speaker}.monitor" if speaker else "@DEFAULT_MONITOR@",
+                                     lambda: self.playing)
+            await self.watch.start()
+            for plugin in self.devices:
+                plugin.debug()
         ticker = asyncio.create_task(self._tick())
         delay = 1
         try:
@@ -129,6 +138,8 @@ class Satellite:
                 delay = min(delay * 2, 30)
         finally:
             ticker.cancel()
+            if self.watch:
+                self.watch.stop()
             if echo:
                 await (await asyncio.create_subprocess_exec("pactl", "unload-module", echo)).wait()
             for plugin in self.devices:
@@ -304,6 +315,8 @@ def main() -> None:
                         help="PulseAudio's echo canceller: AAC's own voice is taken out of the microphone (so AAC can keep listening while it speaks)")
     parser.add_argument("--reference", action="store_true",
                         help="Also send what the speaker plays (its PulseAudio monitor) as a second channel: AAC's Microphone subtracts it (AAC's own voice out of the microphone)")
+    parser.add_argument("--debug", action="store_true",
+                        help="Log and record what the hardware does (loud stretches, PulseAudio events, device reports): debug.py")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(message)s")

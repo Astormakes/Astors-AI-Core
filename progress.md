@@ -5,6 +5,9 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
 
 ## Current state (2026-10-31) – 2.5.0, live on the owner's HA
 
+- **2026-11-01 (satellite 0.3.5): hunting the Calisto's noise blasts** (item 61). The satellite app runs with the
+  new option `debug` (`addons/aac_satellite/debug.py`), on the live HA since 09:25.
+
 - **2026-10-31 (2.5.0): where a Relay writes says what a model reads it as** (owner: his Wake word's `attach_first`
   landed in the system prompt, visible only in Plain text). `add(tag, text, at="last"|"first", role="user"|"system")`
   makes a new entry (a user message, or a part of the system prompt, which a model always reads first);
@@ -777,3 +780,29 @@ pencil edit is missing" is item 11.
     write (today only the Calendar card's page shows them, calling HA itself; ties in with 20); one AAC calendar per
     domain in HA (today one, the running domain's); moving or cancelling AAC's own Schedule entries from the calendar
     (read only there now); the next 24 hours for runs nobody asked for.
+61. **Hardware: the Calisto blares white noise by itself** (owner, 2026-11-01; open, being caught). Twice now, left on
+    overnight, the speaker suddenly played loud white noise, in bursts ("white noise, then cuts, then again"); this
+    morning about 07:27, the owner switched it off within about 8 s. What is known:
+    - **AAC played nothing**: the satellite's log has no "AAC: …" line all night (only the later sound tests).
+    - **No command from the satellite before it**: the BT600 watchdog last sent off-hook at 05:50:38; the noise
+      started 07:27:07 (the microphone's clip start), the watchdog only started again at 07:27:15 (switched off).
+    - **Batmon (BMS monitor app) restarts every ~5.5 min, all day and night**: its Bluetooth stick (UGREEN BT6.0,
+      33fa:0012, hci0) hangs (kernel: `hci0: command 0x2042 tx timeout`, since 2026-10-30 12:40; the owner has to
+      replug it often), Batmon fails 200 times and its watchdog restarts it. Of this morning's 12 loud moments on
+      the microphone, three fell within 2 s of a Batmon container exit (05:47:00 −2.1 s, 06:14:52 +0.5 s,
+      07:27:07 −0.1 s); by chance about 1 in 80 each. The other nine did not line up.
+    - **Both dongles sit side by side** on the PC's front USB 3.0 header, on one controller of the Proxmox host
+      (bus 1, ports 5 and 6; passed to VM 100 as `usb0: host=33fa:0012`, `usb1: host=047f:0417`). On 2026-10-29
+      19:20 the UGREEN's replug made the kernel reset the BT600 twice: trouble on one reaches the other. No USB
+      errors on the Proxmox host or in HA at 07:27.
+    - **Debug on (satellite 0.3.5, option `debug`)**: logs every loud stretch (≥ −40 dBFS for 0.3 s) on the raw
+      microphone (before echo cancellation) or on the BT300C sink's monitor, with zero-crossing rate (white noise
+      ≈ 0.5, speech ≈ 0.1) and whether AAC was playing, and saves it as a stereo WAV (left mic, right monitor) in
+      `/share/aac_satellite_debug/`; PulseAudio's card/sink/source events; levels every 5 min; the BT600's HID
+      reports. The Calisto cancels its own playback in hardware (a test sentence: monitor −26 dBFS, raw mic −66):
+      a loud mic with a silent monitor means the noise did not come from this machine's software.
+    - **When it happens again** (the owner says when): the satellite's log around that time (`ha apps logs
+      local_aac_satellite`), the WAV, HA's host journal (`ha host logs`: Batmon's container exits, kernel), the
+      Proxmox host's `journalctl -k` (`claude@192.168.1.10`).
+    - **Ideas once caught**: move the BT600 to a rear port (another controller, away from the UGREEN); stop Batmon
+      or fix its stick; hang up the BT600 on noise. Afterwards set `debug` off again.

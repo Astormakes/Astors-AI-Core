@@ -40,6 +40,9 @@ class DevicePlugin:
     async def tick(self) -> None:
         """Every few seconds (e.g. notice a replug)."""
 
+    def debug(self) -> None:
+        """Option debug: log what the device itself reports."""
+
 
 def attached() -> list[DevicePlugin]:
     """Instances of every plugin whose device is attached."""
