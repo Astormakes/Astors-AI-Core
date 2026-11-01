@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from .core import Core
 
 SAMPLE_RATE = 16000
+TTS_WAIT = 30  # seconds one text may take to be spoken by an engine (a text that never finishes must not hold up the rest)
 CLIP_SECONDS = 300  # how long a clip for a media player stays fetchable
 QUEUE_WAIT = 120  # seconds a queued clip waits for the one before it at most
 TIMING_START, TIMING_KEEP = "speech ended", 8  # the step that starts a spoken turn; turns kept for the Audio page
@@ -420,7 +421,8 @@ class AudioHub:
     async def tts(self, text: str, language: str | None = None, engine: str | None = None,
                   voices: dict[str, dict[str, str]] | None = None) -> bytes | None:
         """Text to speech (WAV) with an HA engine (a card's, else the Audio page's default), in the voice a card set for
-        the language ({code: {language: locale, voice}}), else the engine's default."""
+        the language ({code: {language: locale, voice}}), else the engine's default; one that takes longer than TTS_WAIT
+        is given up (the log says so)."""
         engine = engine or self.settings.get("tts")
         if not engine:
             self.core.log("audio", "warning", "No voice engine set (Settings → Audio)")
@@ -433,7 +435,12 @@ class AudioHub:
             try:
                 stream = tts.async_create_stream(self.hass, engine, lang, opts)
                 stream.async_set_message(text)
-                return b"".join([chunk async for chunk in stream.async_stream_result()])
+                async with asyncio.timeout(TTS_WAIT):
+                    return b"".join([chunk async for chunk in stream.async_stream_result()])
+            except TimeoutError:
+                self.core.log("audio", "warning", f"Text to speech with {engine} took longer than {TTS_WAIT} s, given up: "
+                              f"{text[:80]}{'…' if len(text) > 80 else ''} ({len(text)} characters)")
+                return None
             except Exception as err:  # noqa: BLE001
                 self.core.log("audio", "warning", f"Text to speech with {engine} failed: {err}")
         return None

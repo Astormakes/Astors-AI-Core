@@ -386,3 +386,24 @@ async def test_echo_subtraction(hass: HomeAssistant, mock_entry):
 
     got = await mic_card.ui_call("recent", {"seconds": 0.1})
     assert got["source"] == "box" and len(base64.b64decode(got["mic"])) == 3200 and len(base64.b64decode(got["reference"])) == 3200
+
+
+async def test_a_text_to_speech_that_never_finishes_is_given_up(hass, mock_entry):
+    """An engine that never finishes (owner 2026-11-01: a whole context sent to Piper) holds up nothing: after TTS_WAIT
+    it is given up, the log says so, and the next text is spoken."""
+    import asyncio
+
+    core = await setup_aac(hass, mock_entry)
+    core.audio.settings["tts"] = "tts.test"
+
+    class Stuck:
+        def async_set_message(self, text):
+            pass
+
+        async def async_stream_result(self):
+            await asyncio.sleep(3600)
+            yield b""
+    with patch("custom_components.aac.audio.TTS_WAIT", 0.05), \
+            patch("custom_components.aac.audio.tts.async_create_stream", return_value=Stuck()):
+        assert await core.audio.tts("a very long text") is None
+    assert "given up" in core.domain.log.read(part="audio", levels=["warning"])[-1]["text"]
