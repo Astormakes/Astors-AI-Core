@@ -407,3 +407,25 @@ async def test_a_text_to_speech_that_never_finishes_is_given_up(hass, mock_entry
             patch("custom_components.aac.audio.tts.async_create_stream", return_value=Stuck()):
         assert await core.audio.tts("a very long text") is None
     assert "given up" in core.domain.log.read(part="audio", levels=["warning"])[-1]["text"]
+
+
+async def test_text_to_speech_speaks_each_entry_once(hass, mock_entry):
+    """Whatever Speaks says (owner 2026-11-01: it matched every entry, and a long chat was read out from the start on
+    every turn): only entries written after the card started, each once; a long conversation is not read again."""
+    from custom_components.aac.context import Context
+
+    core = await setup_aac(hass, mock_entry)
+    old = Context()
+    for i in range(120):
+        old.add("chat.said", f"old line {i}.")
+    voice = await core.domain.add_card("text_to_speech", "Voice", {"speaks": "*"})
+    spoken = []
+    with patch.object(type(voice), "_queue", lambda self, text, heard: spoken.append(text)):
+        await voice.handle(old, "in")
+        assert spoken == []  # written before it started
+        old.add("model.said", "Hello there.")
+        await voice.handle(old, "in")
+        await voice.handle(old, "in")
+        old.add("chat.said", "And now?")
+        await voice.handle(old, "in")
+    assert spoken == ["Hello there.", "And now?"]

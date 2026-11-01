@@ -9,9 +9,11 @@ import asyncio
 import re
 from typing import Any
 
+from homeassistant.util import dt as dt_util
+
 from custom_components.aac.api import Card, Context, matches, register, wav_to_pcm
 
-VERSION = "3.1.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.2.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
@@ -54,7 +56,9 @@ class TextToSpeech(Card):
 
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
-        self._spoken: dict[str, int] = {}  # entry → how much of its text is spoken
+        self._since = dt_util.utcnow().isoformat()  # it speaks only entries written after it started
+        self._upto = ""  # the time of the newest entry it spoke to the end: older ones are never spoken (again)
+        self._spoken: dict[str, int] = {}  # an entry still being written → how much of its text is spoken
         self._last: asyncio.Future | None = None  # the newest sentence on its way (they go out in order)
         self._round = 0  # a stop starts a new round: sentences of the old one are dropped
 
@@ -72,12 +76,13 @@ class TextToSpeech(Card):
 
     def _speak(self, context: Context) -> None:
         """Queue what is newly finished in the entries it speaks after the last one it does not (an entry still being
-        written: up to its last finished sentence)."""
+        written: up to its last finished sentence). Each entry once: only those written after it started and after the
+        newest one it spoke to the end (however long the conversation, whatever Speaks says)."""
         entries = context.conversation
         last = max((i for i, e in enumerate(entries) if not self._speaks(e)), default=-1)
         heard = next((e["data"] for e in reversed(entries) if e["data"].get("mic")), {})
         for e in entries[last + 1:]:
-            if e["state"] == "cut":
+            if e["state"] == "cut" or e["time"] < self._since or (e["time"] <= self._upto and e["id"] not in self._spoken):
                 continue
             text, upto = e["text"], self._spoken.get(e["id"], 0)
             if e["state"] == "streaming":
@@ -85,14 +90,14 @@ class TextToSpeech(Card):
                 end = ends[-1] if ends else 0
             else:
                 end = len(text)
-            if end <= upto:
-                continue
-            self._spoken[e["id"]] = end
-            if part := text[upto:end].strip():
+            if e["state"] == "streaming":
+                self._spoken[e["id"]] = max(end, upto)
+            else:
+                self._spoken.pop(e["id"], None)
+                self._upto = max(self._upto, e["time"])
+            if end > upto and (part := text[upto:end].strip()):
                 self.core.audio.mark(heard.get("mic"), "first sentence")
                 self._queue(part, heard)
-        while len(self._spoken) > 50:  # only recent turns matter
-            self._spoken.pop(next(iter(self._spoken)))
 
     def _queue(self, text: str, heard: dict[str, Any]) -> None:
         before, round_ = self._last, self._round

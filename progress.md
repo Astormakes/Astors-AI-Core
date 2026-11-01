@@ -5,6 +5,11 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
 
 ## Current state (2026-11-01) – 3.0.0 on branch `v3`, live on the owner's HA
 
+- **Text to speech 3.2.0:** each entry once, by time: only entries written after the card started and after the
+  newest one it spoke to the end (live 2026-11-01 23:53: Speaks matched every entry, its 50-entry memory let a
+  100-entry chat be read out from the start on every turn; minutes of speech, the Microphone kept listening, Whisper
+  heard "Thank you." in what got past the Calisto, the owner's Follow-up turn answered each one: a loop through the
+  air. The Follow-up turn's input wire was taken off to stop it; the owner puts it back.)
 - **3.0.1:** a text-to-speech request is given up after Text to speech's setting Gives up after (default 30 s), with a log warning (live 23:35: the whole
   context went to Piper as one text, it never finished, and every sentence after it waited behind it).
 
