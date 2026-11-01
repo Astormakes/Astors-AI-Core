@@ -155,9 +155,11 @@ class Context:
         return bool(last) and is_stop(last) and not last["data"].get("done") and last.get("at", 0) >= len(self.messages)
 
     def open_calls(self, by: str) -> list[dict[str, Any]]:
-        """The calls of a card's newest answer that have no result yet (in the order it made them)."""
-        mine = next((m for m in reversed(self.messages) if m["kind"] == "answer" and m["by"] == by), None)
-        if mine is None:
+        """The calls still waiting (in the order they were made): those of a card's answer that have no result yet,
+        while that answer is the newest thing said or answered. A line said after it is a new turn: a call left behind
+        (a turn kept half-way, read again) is not made any more."""
+        mine = next((m for m in reversed(self.messages) if m["kind"] in ("answer", "said")), None)
+        if mine is None or mine["kind"] != "answer" or mine["by"] != by:
             return []
         done = {m["data"].get("call_id") for m in self.messages if m["kind"] == "result"}
         return [c for c in mine["data"].get("calls") or [] if c["id"] not in done]

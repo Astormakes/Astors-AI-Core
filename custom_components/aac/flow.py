@@ -246,9 +246,7 @@ class Flow:
     def _call_for(card: Card, context: Context) -> tuple[str, dict[str, Any]] | None:
         """The next unanswered call of the newest answer, when it is addressed to this card: (caller, call)."""
         last = next((m for m in reversed(context.messages) if m["kind"] in ("answer", "said")), None)
-        if last is None or last["kind"] != "answer":
-            return None
-        pending = context.open_calls(last["by"])
+        pending = context.open_calls(last["by"]) if last else []
         return (last["by"], pending[0]) if pending and pending[0]["card"] == card.id else None
 
     async def _answer_call(self, card: Card, context: Context, caller: str, call: dict[str, Any]) -> None:

@@ -18,6 +18,7 @@ import argparse
 from array import array
 import asyncio
 import contextlib
+import io
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ import signal
 import socket
 import subprocess
 import tempfile
+import wave
 
 import aiohttp
 
@@ -36,6 +38,7 @@ import devices
 
 RATE = 16000
 CHUNK = 640  # 20 ms of 16-bit mono
+GRACE = 5  # seconds a player or recorder gets to end once told to (a hung audio device must not hang the satellite)
 LOG = logging.getLogger("aac_satellite")
 
 
@@ -55,6 +58,25 @@ def monitor_cmd(speaker: str | None) -> list[str]:
     echo subtraction."""
     return ["parec", "--raw", "--format=s16le", f"--rate={RATE}", "--channels=1", "--latency-msec=20",
             f"--device={speaker}.monitor" if speaker else "--device=@DEFAULT_MONITOR@"]
+
+
+def seconds(wav: bytes) -> float:
+    """How long a WAV plays."""
+    try:
+        with wave.open(io.BytesIO(wav)) as w:
+            return w.getnframes() / w.getframerate()
+    except (wave.Error, EOFError, ZeroDivisionError):
+        return 60.0
+
+
+async def ended(proc: asyncio.subprocess.Process, what: str) -> None:
+    """Kill a player or recorder and wait for it, not forever: one stuck in a hung audio device is logged and left."""
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
+    try:
+        await asyncio.wait_for(proc.wait(), GRACE)
+    except TimeoutError:
+        LOG.warning("%s (pid %s) did not end within %s s of being killed: left behind", what, proc.pid, GRACE)
 
 
 def play_cmd(path: str, device: str | None) -> list[str]:
@@ -195,9 +217,7 @@ class Satellite:
             finally:
                 sender.cancel()
                 for proc in procs:
-                    with contextlib.suppress(ProcessLookupError):
-                        proc.kill()
-                    await proc.wait()
+                    await ended(proc, "The microphone's recorder")
             LOG.info("Disconnected")
 
     def _mic_cmd(self) -> list[str]:
@@ -265,7 +285,13 @@ class Satellite:
                 pending = None
                 if player and not player.done():  # a new answer replaces the one still playing
                     self._cut()
-                    await player
+                    try:
+                        await asyncio.wait_for(asyncio.shield(player), GRACE)
+                    except TimeoutError:
+                        LOG.warning("The answer playing did not stop within %s s: killed", GRACE)
+                        if self._proc:
+                            await ended(self._proc, "The player")
+                        player.cancel()
                     self.playing = True
                 player = asyncio.create_task(self._play_then_tell(ws, msg.data))  # in the background: a stop can come
 
@@ -275,7 +301,8 @@ class Satellite:
         finally:
             self.playing = False
             if not ws.closed:
-                await ws.send_json({"type": "played"})
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(ws.send_json({"type": "played"}), GRACE)
 
     def _cut(self) -> None:
         if self._proc and self._proc.returncode is None:
@@ -293,7 +320,11 @@ class Satellite:
             file.write(wav)
             file.flush()
             self._proc = await asyncio.create_subprocess_exec(*play_cmd(file.name, self.args.speaker))
-            await self._proc.wait()
+            try:
+                await asyncio.wait_for(self._proc.wait(), seconds(wav) + 10)
+            except TimeoutError:
+                LOG.warning("Playing %.1f s took more than %.0f s more: stopped", seconds(wav), 10)
+                await ended(self._proc, "The player")
 
 
 def main() -> None:

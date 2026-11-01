@@ -375,6 +375,22 @@ async def test_tools_are_the_cards_its_calls_reach(hass: HomeAssistant, mock_ent
     assert "lists" not in {c.id for c in d.flow.tools("model")}
 
 
+async def test_a_call_left_behind_is_not_made_again(hass: HomeAssistant, mock_entry, aioclient_mock):
+    """A chat that kept a turn half-way (an answer whose call has no result yet) and a new line said on top: a new
+    turn, the model is asked (the old call is not sent around again; owner 2026-11-01: it went Model ↔ Home 200 times)."""
+    core = await setup_aac(hass, mock_entry)
+    chat = core.domain.cards["chat"]
+    half = chat._new("Half")
+    half["context"]["messages"] += [
+        {"id": "s1", "by": "chat", "kind": "said", "text": "is the TV on?", "tags": [], "time": "", "data": {}, "state": "closed"},
+        {"id": "a1", "by": "model", "kind": "answer", "text": "", "tags": [], "time": "", "state": "closed",
+         "data": {"calls": [{"id": "c1", "name": "home", "card": "home", "function": "find", "args": {}}]}}]
+    aioclient_mock.post(f"{BASE_URL}/chat/completions", json=reply("Hello."))
+    _, answer = await chat.send("computer?", half["id"])
+    assert answer == "Hello." and aioclient_mock.call_count == 1
+    assert not core.domain.log.read(levels=["warning"], what="loop")
+
+
 async def test_a_closed_connection_is_tried_again_and_errors_are_not_read(hass: HomeAssistant, mock_entry, aioclient_mock):
     """A kept-alive connection the server had closed is tried once more (the model is not taken for off); when no
     model answers, the turn gets an error entry: shown and returned, but never read by a model (it would copy it)."""
