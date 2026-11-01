@@ -11,7 +11,7 @@ from typing import Any
 
 from custom_components.aac.api import Card, Context, matches, register, wav_to_pcm
 
-VERSION = "3.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.0.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
@@ -23,17 +23,20 @@ class TextToSpeech(Card):
     type = "text_to_speech"
     title = "Text to speech"
     category = "Audio"
-    help = ("Speaks the entries its Speaks setting names that came after the last entry it does not speak, each once, "
-            "sentence by sentence while they are written, in a voice per language (the language it was spoken to in). "
-            "A clip carries the satellite of the newest heard line; wire it into a Speaker.")
+    help = ("Speaks the new answers in a context: the entries tagged as in its Speaks setting (default model.said, "
+            "model.error) at the end of the context, after the last entry of anything else; each once, sentence by "
+            "sentence while it is written. Each clip carries the satellite of the newest entry that has one (data.mic, "
+            "which a heard line has): the Speaker plays it there. No such entry (a typed turn, or a script that copied "
+            "only the text of a heard line): no satellite, the Speaker's setting decides.")
     inputs = {"in": "text"}
     outputs = {"out": "clip"}
-    ports_help = {"in": "a context: the entries Speaks names after the last one it does not speak (while they are "
-                        "written: each finished sentence)",
+    ports_help = {"in": "a context: its new answers are spoken (the Speaks entries at its end; while they are written, "
+                        "each finished sentence)",
                   "out": "each spoken sentence as a clip (the satellite it was heard at, the text, the language); Stop "
                          "sends a stop clip"}
     settings_schema = {"speaks": {"type": "text", "title": "Speaks", "default": "model.said, model.error",
-                                  "help": "The entries it speaks (tags, comma separated; * stands for anything)."},
+                                  "help": "The entries it speaks (tags, comma separated; * stands for anything): only those at "
+                                          "the end of a context, after the last entry it does not speak, each once."},
                        "engine": {"type": "tts_engine", "title": "Voice engine", "default": "",
                                   "help": "A Home Assistant text-to-speech engine. Empty: the default on the Audio page."},
                        "voices": {"type": "voices", "title": "Voice per language", "default": {},
