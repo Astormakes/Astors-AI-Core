@@ -18,8 +18,10 @@ What a card uses, and nothing else (so cards can run in a sandbox later):
   "ha_conversation"), `calendar` (`offer`, `entries`, `add`, `change`, `remove`; `parse_when` below), `pool` (models:
   `entries`, `slot`, `tags`, `find`, `offers`; with `run` and `Client` below), `save_model`, `audio` (`say`, `play`,
   `stop`, `spoken`, `tts`, `stt`), `notify`
-- the setup, for cards that build (the Card editor, an Audio clipper adding its Phrase joiner): `self.domain`'s
-  `add_card`, `update_card`, `remove_card`, `set_wires`, `wires`, `export`
+- the setup, for cards that build (the Card editor, an Audio clipper adding its Phrase joiner), setup at read:
+  `read_setup`; at full: `add_card`, `change_card` (its own settings always), `remove_card`, `set_wires`, `unblock`;
+  a permission setting never (the owner's alone); the model servers: `servers` (read), `server` (full)
+- open panels: `tell` (something of this card changed: its page, the sidebar)
 """
 
 from .audio import SAMPLE_RATE, Segmenter, level, make_vad, pcm_to_wav, resample, wav_to_pcm

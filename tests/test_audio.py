@@ -276,11 +276,12 @@ async def test_phrase_joiner_and_its_wiring(hass, mock_entry):
     core.data["voice_chain"] = False
     await async_voice_chain(core)
     d = core.domain
-    wake_x, ears = d.positions["wake_word"]["x"], dict(d.positions["speech_to_text"])
+    wake, ears = dict(d.positions["wake_word"]), dict(d.positions["speech_to_text"])
+    await allow(d, "audio_clipper", {"setup": "full"})  # it builds through the setup interface
     await d.update_card("audio_clipper", settings={"phrase": 250})
     await hass.async_block_till_done()
     joiner = next(c for c in d.cards.values() if c.type == "phrase_joiner")
-    assert d.positions["wake_word"]["x"] == wake_x + 290 and d.positions[joiner.id] == {"x": ears["x"] + 290, "y": ears["y"]}
+    assert d.positions["wake_word"] == wake and d.positions[joiner.id] == {"x": ears["x"], "y": ears["y"] + 160}  # below, nothing moved
     assert {"from": "audio_clipper.cuts", "to": f"{joiner.id}.cuts"} in d.wires and {"from": "speech_to_text.out", "to": f"{joiner.id}.lines"} in d.wires
     assert {"from": f"{joiner.id}.out", "to": "wake_word.in"} in d.wires and {"from": "speech_to_text.out", "to": "wake_word.in"} not in d.wires
     d.set_wires([w for w in d.wires if w["from"] != "audio_clipper.cuts"])  # its cuts wire lost (a port renamed): no second joiner

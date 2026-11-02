@@ -13,7 +13,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, matches, register, wav_to_pcm
 
-VERSION = "3.2.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.2.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
@@ -138,7 +138,7 @@ class TextToSpeech(Card):
                 if voice is None:
                     return {"error": f"no voice {wanted} for {code}", "voices": [v["name"] for v in got["voices"]]}
                 voices[code] = {"language": voice["locale"], "voice": voice["id"]}
-            await self.domain.update_card(self.id, settings={"voices": voices})  # the card is made again with it
+            await self.change_card(self.id, settings={"voices": voices})  # its own settings: the card is made again with them
             return {"done": "set_voice", "language": code, "voice": wanted or "the engine's default"}
         return await super().call(function, args, context)
 

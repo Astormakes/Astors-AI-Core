@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, ModelError, ModelUnreachable, new_id, register, run
 
-VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WORD = re.compile(r"\w{3,}")
 
@@ -126,5 +126,5 @@ class Memory(Card):
         else:
             return await super().call(function, args, context)
         await self.save()
-        self.core.notify("card", domain=self.domain.id, card=self.id)
+        self.tell()
         return {"done": function, "memories": len(self.data["memories"])}

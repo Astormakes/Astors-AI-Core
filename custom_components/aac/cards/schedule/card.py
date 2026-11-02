@@ -18,7 +18,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, register
 
-VERSION = "2.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 MAX_PLANS = 20  # entries AAC may have at once
@@ -61,7 +61,7 @@ class AutoCard(Card):
         self.data["log"] = [*self.data["log"], {"time": dt_util.utcnow().isoformat(), "name": name, "text": text,
                                                  "answer": answer, "id": entry_id}][-LOG_SIZE:]
         self.hass.async_create_task(self.save())
-        self.core.notify("card", domain=self.domain.id, card=self.id)
+        self.tell()
 
     def answered(self, context: Context) -> dict[str, Any] | None:
         """The log item a context answers (it holds the entry the card fired), with the answer written in: the newest
@@ -83,7 +83,7 @@ class AutoCard(Card):
         if port != "answers" or context.streaming or self.answered(context) is None:
             return
         await self.save()
-        self.core.notify("card", domain=self.domain.id, card=self.id)
+        self.tell()
 
 
 def days(value: Any) -> list[int]:
@@ -260,7 +260,7 @@ class Schedule(AutoCard):
         if port != "answers" or context.streaming or (item := self.answered(context)) is None:
             return
         await self.save()
-        self.core.notify("card", domain=self.domain.id, card=self.id)
+        self.tell()
         if item.get("failed"):
             self._unanswered(item["id"])
 
@@ -286,7 +286,7 @@ class Schedule(AutoCard):
     # ------------------------------------------------------------------ changing entries
     async def _saved(self) -> None:
         await self.save()
-        self.core.notify("card", domain=self.domain.id, card=self.id)
+        self.tell()
 
     @staticmethod
     def _checked(entry: dict[str, Any]) -> dict[str, Any]:

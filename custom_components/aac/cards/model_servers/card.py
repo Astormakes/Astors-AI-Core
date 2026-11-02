@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from custom_components.aac.api import Card, Client, Context, ModelError, register
+from custom_components.aac.api import Card, Context, ModelError, register
 
-VERSION = "1.4.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.4.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -41,37 +41,16 @@ class ModelServers(Card):
     }
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
-        if function in self.functions and not self.may("servers", "read" if function == "servers" else "full"):
-            return {"error": f"{self.name} may not {'see the servers' if function == 'servers' else function + ' models'} "
-                             f"(servers at {self.level('servers')}): the owner allows it on the Permissions page"}
-        pool = self.core.pool
-        if function == "servers":
-            return [{"address": s["address"], "aac_models": [f"{u['name']} (uses {u['model']})" for u in s["uses"]],
-                     "offers": [{"model": m["id"], "state": m["status"], **({"progress": f"{m['progress']} %"} if "progress" in m else {})}
-                                for m in s["models"]] if s.get("models") else (s.get("error") or "one fixed model (no router)")}
-                    for s in await pool.offers()]
-        if function == "bench":
-            model = pool.find(str(args.get("aac_model") or ""))
-            if model is None:
-                return {"error": f"AAC has no model {args.get('aac_model')!r}"}
-            try:
-                result = await pool.bench(Client(self.hass, model), str(args.get("model") or ""))
-            except ModelError as err:
-                return {"error": str(err)}
-            self.core.save()
-            return {"reads": f"{result['read']} tokens/s", "writes": f"{result['write']} tokens/s"}
-        if function in ("use", "load", "unload"):
-            model = pool.find(str(args.get("aac_model") or ""))
-            if model is None:
-                return {"error": f"AAC has no model {args.get('aac_model')!r}"}
-            name = str(args.get("model") or "")
-            try:
-                if function == "use":
-                    self.core.save_model({"id": model["id"], "model": name})
-                    self.core.save()
-                await Client(self.hass, model).router_do("unload" if function == "unload" else "load", name)
-            except ModelError as err:
-                return {"error": str(err)}
-            return {"done": f"{model['name']} uses {name}" if function == "use" else f"{function}ed {name}"}
-        return await super().call(function, args, context)
+        if function not in self.functions:
+            return await super().call(function, args, context)
+        try:
+            if function == "servers":
+                return [{"address": s["address"], "aac_models": [f"{u['name']} (uses {u['model']})" for u in s["uses"]],
+                         "offers": [{"model": m["id"], "state": m["status"], **({"progress": f"{m['progress']} %"} if "progress" in m else {})}
+                                    for m in s["models"]] if s.get("models") else (s.get("error") or "one fixed model (no router)")}
+                        for s in await self.servers()]
+            return await self.server(function, str(args.get("aac_model") or ""), str(args.get("model") or ""))
+        except (PermissionError, ValueError, ModelError) as err:
+            return {"error": str(err)}
+
 

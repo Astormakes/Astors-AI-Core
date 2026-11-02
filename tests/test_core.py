@@ -572,7 +572,7 @@ async def test_for_models_and_short_card_lists(hass: HomeAssistant, mock_entry, 
     assert home["settings"]["access"] == "(40 entries: see card)" and "chat.said -> charter.in" in listed["wires"]
     assert listed["count"] == len(d.cards)
     assert len((await editor.call("card", {"card": "home"}))["settings"]["access"]) == 40
-    assert "may not change the setup" in (await editor.call("wire", {"from": "chat.said", "to": "model.in"}))["error"]
+    assert "may not use setup at full" in (await editor.call("wire", {"from": "chat.said", "to": "model.in"}))["error"]
 
 
 async def test_a_card_file_with_a_new_version_loads_while_aac_runs(hass: HomeAssistant, mock_entry):

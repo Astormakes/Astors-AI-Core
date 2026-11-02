@@ -12,7 +12,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "2.1.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 
@@ -53,7 +53,7 @@ class AutoCard(Card):
         self.data["log"] = [*self.data["log"], {"time": dt_util.utcnow().isoformat(), "name": name, "text": text,
                                                  "answer": answer, "id": entry_id}][-LOG_SIZE:]
         self.hass.async_create_task(self.save())
-        self.core.notify("card", domain=self.domain.id, card=self.id)
+        self.tell()
 
     def answered(self, context: Context) -> dict[str, Any] | None:
         """The log item a context answers (it holds the entry the card fired), with the answer written in: the newest
@@ -75,7 +75,7 @@ class AutoCard(Card):
         if port != "answers" or context.streaming or self.answered(context) is None:
             return
         await self.save()
-        self.core.notify("card", domain=self.domain.id, card=self.id)
+        self.tell()
 
 
 @register

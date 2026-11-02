@@ -8,11 +8,11 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.api import CARD_TYPES, SAMPLE_RATE, Card, Context, Segmenter, make_vad, new_id, register
+from custom_components.aac.api import SAMPLE_RATE, Card, Context, Segmenter, make_vad, new_id, register
 
-VERSION = "3.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.1.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
-COLUMN = 290  # one column in the grid (the panel's card width and gap)
+ROW = 160  # one row in the grid: a Phrase joiner it adds goes below the card it follows
 
 
 @register
@@ -34,6 +34,7 @@ class PauseCut(Card):
                           "the parts, the satellite): for a Phrase joiner, a Level card, or any card"}
     tags = {"start": "speech began (data: ago = how many seconds back)", "phrase": "a phrase was cut (data: part)",
             "end": "the sentence is done (data: parts)"}
+    needs = {"setup"}  # read: is a Phrase joiner wired after it; full: add one (phrases on)
     settings_schema = {"pause": {"type": "number", "title": "Pause that ends a clip (ms)", "default": 800,
                                  "help": "Shorter: quicker, but a pause mid-sentence cuts it. Longer: whole sentences."},
                        "longest": {"type": "number", "title": "Longest clip (s)", "default": 30},
@@ -55,8 +56,8 @@ class PauseCut(Card):
         self._parts: dict[str, int] = {}  # sentence → phrases sent
 
     async def start(self) -> None:
-        if int(self.settings.get("phrase") or 0) > 0 and not self._joined():
-            self.hass.async_create_task(self._add_joiner())  # after this card is set up
+        if int(self.settings.get("phrase") or 0) > 0:
+            self.hass.async_create_task(self._add_joiner())  # after this card is set up (nothing when it has one)
 
     def _cut(self, what: str, meta: dict[str, Any], **data: Any) -> None:
         """A cut goes out at 'cuts' as a small context: one entry without text tagged start / phrase / end."""
@@ -64,42 +65,36 @@ class PauseCut(Card):
         context.add(self.tag(what), "", cut=what, source=meta.get("source"), name=meta.get("name"), **data)
         self.hass.async_create_background_task(self.send(context, "cuts"), f"aac {self.id} cut")
 
-    def _joined(self) -> bool:
+    def _joined(self, setup: dict[str, Any]) -> bool:
         """A card at its cuts that also takes heard lines puts phrases together (a Phrase joiner, or one of your own).
         Read from the domain's setup, not its running cards: while a setup is made (start, Undo), not all are there yet."""
-        setup = self.domain.export()["cards"]
-        def takes_lines(card_id: str) -> bool:
-            if (card := self.domain.cards.get(card_id)) is not None:
-                return "lines" in card.ports()[0]
-            kind = CARD_TYPES.get(setup.get(card_id, {}).get("type", ""))
-            return kind is not None and "lines" in kind.inputs
-        return any(w["from"] == f"{self.id}.cuts" and takes_lines(w["to"].split(".")[0]) for w in self.domain.wires)
+        return any(w["from"] == f"{self.id}.cuts" and "lines" in (setup["cards"].get(w["to"].split(".")[0]) or {}).get("inputs", {})
+                   for w in setup["wires"])
 
     async def _add_joiner(self) -> None:
         """Phrases need their sister card: a Phrase joiner after the cards it feeds (Speech to text), which takes over
-        their outgoing wires; its 'cuts' come from here."""
-        d = self.domain
-        if self._joined():
-            return
-        fed = [w["to"].split(".")[0] for w in d.wires if w["from"] == f"{self.id}.out"]
-        for w in d.wires:  # a joiner already behind Speech to text (only its cuts wire was lost): wire that one
-            target = d.cards.get(w["to"].split(".")[0])
-            if w["from"].split(".")[0] in fed and target is not None and {"lines", "cuts"} <= set(target.ports()[0]):
-                d.set_wires([*d.wires, {"from": f"{self.id}.cuts", "to": f"{target.id}.cuts"}])
+        their outgoing wires; its 'cuts' come from here (it builds through the setup interface: setup at full)."""
+        try:
+            setup = self.read_setup()
+            if self._joined(setup):
                 return
-        at = dict(d.positions.get(fed[0] if fed else self.id, {"x": 0, "y": 0}))
-        for card_id, p in d.positions.items():  # room: what is right of Speech to text moves one column over
-            if p["x"] > at["x"] and card_id != self.id:
-                p["x"] += COLUMN
-        joiner = await d.add_card("phrase_joiner", "Phrase joiner", at={"x": at["x"] + COLUMN, "y": at["y"]})
-        wires = [{"from": f"{self.id}.cuts", "to": f"{joiner.id}.cuts"}]
-        for w in d.wires:
-            if w["from"].split(".")[0] in fed and w["from"].endswith(".out"):  # what Speech to text fed, the joiner feeds now
-                wires.append({"from": f"{joiner.id}.out", "to": w["to"]})
-            else:
-                wires.append(w)
-        wires += [{"from": f"{c}.out", "to": f"{joiner.id}.lines"} for c in fed]
-        d.set_wires(wires)
+            fed = [w["to"].split(".")[0] for w in setup["wires"] if w["from"] == f"{self.id}.out"]
+            for w in setup["wires"]:  # a joiner already behind Speech to text (only its cuts wire was lost): wire that one
+                target = setup["cards"].get(w["to"].split(".")[0])
+                if w["from"].split(".")[0] in fed and target is not None and {"lines", "cuts"} <= set(target["inputs"]):
+                    self.set_wires([*setup["wires"], {"from": f"{self.id}.cuts", "to": f"{w['to'].split('.')[0]}.cuts"}])
+                    return
+            at = dict(setup["positions"].get(fed[0] if fed else self.id, {"x": 0, "y": 0}))
+            joiner = (await self.add_card("phrase_joiner", "Phrase joiner", at={"x": at["x"], "y": at["y"] + ROW}))["id"]
+            wires = [{"from": f"{self.id}.cuts", "to": f"{joiner}.cuts"}]
+            for w in self.read_setup()["wires"]:
+                if w["from"].split(".")[0] in fed and w["from"].endswith(".out"):  # what Speech to text fed, the joiner feeds now
+                    wires.append({"from": f"{joiner}.out", "to": w["to"]})
+                else:
+                    wires.append(w)
+            self.set_wires(wires + [{"from": f"{c}.out", "to": f"{joiner}.lines"} for c in fed])
+        except PermissionError as err:  # phrases stay off until the owner allows it (or adds a joiner)
+            self.log(f"No Phrase joiner added: {err}", "warning", what="permission")
 
     def stream(self, port: str, chunk: bytes, meta: dict[str, Any]) -> None:
         key = meta.get("source", "")

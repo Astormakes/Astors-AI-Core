@@ -12,7 +12,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "2.1.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -99,7 +99,7 @@ class File(Card):
         if function in ("append", "write"):
             text = str(args.get("text") or "")
             self.text = (await self.hass.async_add_executor_job(self._write, text if text.endswith("\n") else text + "\n", function == "append"))[-8000:]
-            self.core.notify("card", domain=self.domain.id, card=self.id)
+            self.tell()
             return {"done": function}
         return await super().call(function, args, context)
 

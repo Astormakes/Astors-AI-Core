@@ -11,7 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, parse_when, register
 
-VERSION = "2.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -81,7 +81,7 @@ class Calendar(Card):
 
     async def _saved(self) -> None:
         await self.save()
-        self.core.notify("card", domain=self.domain.id, card=self.id)
+        self.tell()
 
     def current(self) -> dict[str, Any]:
         now = dt_util.now()

@@ -20,7 +20,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Client, Context, matches, new_id, register
 
-VERSION = "3.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.1.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds what you write may take to be answered
 NOT_WIRED = "Nothing is wired to this chat's output 'said': what you write goes nowhere."
@@ -149,7 +149,7 @@ class Chat(Card):
         chat["updated"] = dt_util.utcnow().isoformat()
         if not context.streaming:
             await self.save()
-        self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=chat["id"])
+        self.tell("chat", chat_id=chat["id"])
 
     def current(self) -> dict[str, Any] | None:
         """The chat that cards reading this one continue: the newest, unless it has been quiet too long."""
@@ -179,12 +179,12 @@ class Chat(Card):
             return
         if context.streaming or context.waiting:  # no chat yet: shown while it is answered, filed once it is finished
             self._answering = context
-            self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=ANSWERING)
+            self.tell("chat", chat_id=ANSWERING)
             return
         self._answering = None
         chat = self._new(self._title(context))
         await self._keep(chat, context)
-        self.core.notify("chat", domain=self.domain.id, card=self.id, chat_id=chat["id"], was=ANSWERING)
+        self.tell("chat", chat_id=chat["id"], was=ANSWERING)
 
     def _title(self, context: Context) -> str:
         """A new chat's title: "Voice · <satellite> · HH:MM" for a heard line, else its first text."""
@@ -240,7 +240,7 @@ class Chat(Card):
         """Delete a chat."""
         self.data["chats"].pop(chat_id, None)
         await self.save()
-        self.core.notify("chat", domain=self.domain.id, card=self.id)
+        self.tell("chat")
 
     # ------------------------------------------------------------------ what it shows
     def _shown(self, e: dict[str, Any]) -> bool:
@@ -333,7 +333,7 @@ class Chat(Card):
             elif what == "rename" and str(args.get("value") or "").strip():
                 chat["title"] = str(args["value"]).strip()[:48]
             await self.save()
-            self.core.notify("chat", domain=self.domain.id, card=self.id)
+            self.tell("chat")
             return {"done": what}
         if action == "archived":  # the Archive page: archived chats, newest first
             return [c for c in self.chats() if c.get("archived")]

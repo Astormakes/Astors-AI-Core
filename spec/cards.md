@@ -131,7 +131,12 @@ exist, each with the domain's level as `cap`). It asks with `self.level(thing)`,
 `call(domain, service, id, data)`: a service of the entity's own domain or homeassistant.turn_on / turn_off / toggle,
 its data naming no other target; `watch(ids, handler)`, `calendar_events(id, start, end)`), `self.web()` (the HTTP
 session), `self.notification(service, message, title)`, `self.files(write)` (`<config>/aac/files`),
-`self.listen(handler)` (the satellites' microphones), `self.play(source, wav, text, queue)`, `self.stop_playing(source)`.
+`self.listen(handler)` (the satellites' microphones), `self.play(source, wav, text, queue)`, `self.stop_playing(source)`. The setup
+too goes only through the Card: `self.read_setup()` (setup at read: cards with type, name, settings, ports; wires;
+positions; red wires), `self.add_card`, `self.change_card` (a card may always change its own settings),
+`self.remove_card`, `self.set_wires`, `self.unblock` (setup at full); a permission setting is refused for every card
+(PermissionError). Model servers: `self.servers()` (servers at read), `self.server(action, aac_model, model)` (bench,
+use, load, unload; at full). `self.tell(what="card", **data)` lets open panels know something of the card changed.
 A setting of type `element` (with `element`: a custom element's name, `file`: a .js in the card's folder) is edited
 by the card's own element: the panel imports the file and hands the element `.panel` (as a page's below, with
 `save(settings)` saving and redrawing, `type(t)`, `domain()`, `card()`), calls `setup({card, key, value, settings})`

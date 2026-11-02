@@ -9,7 +9,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, register
 
-VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 ARG_LIST = {"type": "string", "help": "The list's name.", "required": True}
 
@@ -163,5 +163,5 @@ class Lists(Card):
                 return await super().call(function, args, context)
             li["updated"] = dt_util.utcnow().isoformat()
         await self.save()
-        self.core.notify("card", domain=self.domain.id, card=self.id)
+        self.tell()
         return {"done": function}

@@ -209,6 +209,88 @@ class Card:
         self.need("audio", "full")
         return await self.core.audio.stop(source_id)
 
+    # ------------------------------------------------------------------ the model servers (servers at read, to act at full)
+    async def servers(self) -> list[dict[str, Any]]:
+        """The servers behind AAC's models and what they offer now (needs servers at read)."""
+        self.need("servers", "read")
+        return await self.core.pool.offers()
+
+    async def server(self, action: str, aac_model: str, model: str) -> dict[str, Any]:
+        """On the server of one of AAC's models (needs servers at full): bench, use (the AAC model asks for that model
+        from now on, and loads it), load, unload."""
+        self.need("servers", "full")
+        from ..models import Client  # noqa: PLC0415
+
+        pool, core = self.core.pool, self.core
+        if (found := pool.find(aac_model)) is None:
+            raise ValueError(f"AAC has no model {aac_model!r}")
+        if action == "bench":
+            result = await pool.bench(Client(self.hass, found), model)
+            core.save()
+            return {"reads": f"{result['read']} tokens/s", "writes": f"{result['write']} tokens/s"}
+        if action not in ("use", "load", "unload"):
+            raise ValueError(f"no server action {action}")
+        if action == "use":
+            core.save_model({"id": found["id"], "model": model})
+            core.save()
+        await Client(self.hass, found).router_do("unload" if action == "unload" else "load", model)
+        return {"done": f"{found['name']} uses {model}" if action == "use" else f"{action}ed {model}"}
+
+    # ------------------------------------------------------------------ the setup (setup at read, to change it at full)
+    def read_setup(self) -> dict[str, Any]:
+        """The domain's setup: cards {id: {type, name, settings, inputs, outputs}} (also those not made yet, while a
+        setup is being made), wires, positions, red wires."""
+        self.need("setup", "read")
+        domain, cards = self.domain, {}
+        for card_id, spec in domain.export()["cards"].items():
+            made, kind = domain.cards.get(card_id), CARD_TYPES.get(spec.get("type", ""))
+            ins, outs = made.ports() if made else (dict(kind.inputs), dict(kind.outputs)) if kind else ({}, {})
+            cards[card_id] = {"type": spec.get("type"), "name": made.name if made else spec.get("title"),
+                              "settings": dict(made.settings if made else spec.get("settings") or {}), "inputs": ins, "outputs": outs}
+        return {"cards": cards, "wires": [dict(w) for w in domain.wires], "positions": dict(domain.positions),
+                "red": [f"{r['from']} -> {r['to']}" for r in domain.red]}
+
+    async def add_card(self, card_type: str, name: str = "", settings: dict[str, Any] | None = None,
+                       at: dict[str, float] | None = None) -> dict[str, Any]:
+        """Add a card (needs setup at full; never with a permission setting: those are the owner's)."""
+        self.need("setup", "full")
+        if card_type not in CARD_TYPES:
+            raise ValueError(f"no card type {card_type}")
+        _owners(CARD_TYPES[card_type], settings or {})
+        return (await self.domain.add_card(card_type, name, settings or {}, at=at)).summary()
+
+    async def change_card(self, card_id: str, name: str | None = None, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Change a card's name or settings (needs setup at full; its own settings it may always change; never a
+        permission setting)."""
+        if card_id != self.id:
+            self.need("setup", "full")
+        if (card := self.domain.cards.get(card_id)) is None:
+            raise ValueError("no such card")
+        _owners(type(card), settings or {}, card.settings)
+        return (await self.domain.update_card(card_id, name, settings)).summary()
+
+    async def remove_card(self, card_id: str) -> None:
+        """Remove a card (needs setup at full)."""
+        self.need("setup", "full")
+        if card_id not in self.domain.cards:
+            raise ValueError("no such card")
+        await self.domain.remove_card(card_id)
+
+    def set_wires(self, wires: list[dict[str, str]]) -> list[dict[str, str]]:
+        """The domain's wires, all of them (needs setup at full); returns them as they are now (only fitting ones)."""
+        self.need("setup", "full")
+        self.domain.set_wires(wires)
+        return [dict(w) for w in self.domain.wires]
+
+    def unblock(self, a: str, b: str) -> bool:
+        """A red wire carries again (needs setup at full)."""
+        self.need("setup", "full")
+        return self.domain.unblock(a, b, by=f"{self.name}, for a model")
+
+    def tell(self, what: str = "card", **data: Any) -> None:
+        """Open panels hear that something of this card changed (its page, the sidebar)."""
+        self.core.notify(what, domain=self.domain.id, card=self.id, **data)
+
     def current(self) -> dict[str, Any]:
         """Its values now (see `values`)."""
         return {}
@@ -388,6 +470,13 @@ class Card:
                 "has_data": self.keeps_data and self.data != self.default_data(),
                 **({"tools": [c.id for c in self.tools()]} if self.uses_tools else {}),
                 "tags": {self.tag(t): what for t, what in self.tags.items()}}
+
+
+def _owners(kind: type[Card], settings: dict[str, Any], now: dict[str, Any] | None = None) -> None:
+    """Raises PermissionError when a change would set a permission setting (fields marked so: the owner's alone)."""
+    if found := [k for k, v in settings.items() if (kind.settings_schema.get(k) or {}).get("permission")
+                 and (now is None or now.get(k) != v)]:
+        raise PermissionError(f"{', '.join(found)}: permissions are the owner's to set (the Permissions page), not a card's")
 
 
 def tool_spec(name: str, spec: dict[str, Any]) -> dict[str, Any]:
