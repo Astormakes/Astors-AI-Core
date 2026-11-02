@@ -10,10 +10,12 @@ The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "
 - **Safety (items 19, 20, 21, 47) is under way: docs/v2 page 6** (settled points, open points, build order). Done:
   1 (Relay: a script stops itself when its own time is up: 3 s since 3.1.2, waiting for called cards not counted),
   2 (3.1.0: permissions in two layers, the domain's sheet on top; 3.1.1: everything a card does goes through its
-  interface, the setup and model servers too). Next: 3 (requests, `ask`), 4 (drafts: switch, keep or roll back;
-  auto / ask), 5 (owner: one worker process for all cards, separate from HA; a hung card: ask it to stop, raise an
-  error into its thread, last restart the worker). Asked, no answer yet: the owner's "do 5, it's a happy medium"
-  (step 5 next?).
+  interface, the setup and model servers too), 3 (3.1.3: `ask`, every action waits for the owner's yes: panel popup
+  top right, phone with Allow / Deny via `notify.mobile_app_cph2581` (AAC's settings); requests via
+  `request_access`; on a card's own sheet not set is list now). Live 11:36: an ask from the Card editor denied in a
+  real browser, nothing added, the editor back at full. Next: 4 (drafts: switch, keep or roll back; auto / ask), 5
+  (one worker process for all cards, separate from HA; a hung card: ask it to stop, raise an error into its thread,
+  last restart the worker; time limit per card 3 s: a card holding the worker that long without giving it back).
 - **3.1.2 (owner's idea): the Audio clipper and the Phrase joiner are one card** (`pause_cut` 4.0.0: in, lines → out,
   said, cuts); no card builds by itself any more. The owner's board converted live 10:48 (stores before:
   `/config/aac/bak-3.1.1-storage/`); the Chat's Shown as you holds `Follow-up_turn.said` with a capital F (never
