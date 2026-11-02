@@ -1,9 +1,22 @@
 # AAC – progress
 
 Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
-The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress).
+The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress), page 5
+"The rules" (AAC 3, settled; replaces pages 3 and 4).
 
-## Current state (2026-11-01) – 3.0.0 on branch `v3`, live on the owner's HA
+## Current state (2026-11-02) – 3.0.2 on `main` (v3 merged, not pushed), live on the owner's HA
+
+**Where to pick up** (owner, 2026-11-02: "v3 was a success"):
+- **Next session: safety as one design, items 19, 20 and 21** (code injection, permissions as in v0/v1, card
+  sandboxing): talk it through as one page like page 5 first. The card interface written down in `api.py` is what a
+  sandbox wraps.
+- **Postponed until the owner is home (voice):** test the voice settings and the day chat; put the wire
+  `phrase_joiner.out → follow_up_turn.in` back; suggested: the Follow-up turn skips what AAC itself said
+  (`heard.data.get("aac_spoke")`) and names today's chat like the Wake word. Offered, no answer yet: tag matching
+  without capitals (`matches()`; the owner's `answerOut.*` never matched).
+- **Models:** the owner switched the PC to Qwen3.8 27B (does Gemma 4 do well, or did AAC get clearer?); it did a
+  multi-turn tool use without trouble. Next the owner tries a small model again. The AAC model entry is still named
+  "Gemma4-26bA4" (it follows the server). Item 9 (tool menus) waits: tools seem no big issue now.
 
 - **Chat 3.1.0: a context can name its chat** (owner 2026-11-02: one chat per day for voice and the Schedule): a
   context whose id entry names a chat that is not there yet makes it with that id; one built on the chat (holds its
@@ -51,7 +64,7 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   wire into the Charter went), two browser messages answered (one with a tool call). Not yet tried live: a spoken
   turn. The Speaker's "A clip without a satellite plays at" is set to Home Assistant (`ha_app`, owner 23:11: fix A):
   typed answers and heard turns whose script copied only the text (Wake word's `context.add("said", heard)`) play
-  there. Open: the owner's Follow-up turn has a typo (`comtext.add`), so it sends nothing.
+  there.
 
 
 - **2026-11-01 (2.6.3): the storm stop** (owner's design). HA Core froze at 15:56:25: the owner said "stop the vacuum",
@@ -673,7 +686,8 @@ by it). 2.2.0 and 2.3.0 were misnamed (minor instead of X): they are 2.1.1 and 2
 6. ~~Relay and Conditional UI~~ **done (2.2.0): Relay scripts** (see Current state). (2.1.40, owner: the Nodes page's side panels fold away: arrows at the grid's edges, a click on a card opens the settings; on a phone they lie over the grid, Back closes the right one, then the left, then goes to the last opened chat.)
 7. ~~Card folders~~ **done (2.1.1):** `chat/card.py` + `page.js` (+ `view.js`); old flat files go when AAC starts.
 8. ~~Card files reload while AAC runs~~ **done (2.1.23).**
-9. **Tool menus (v0's idea)** (owner): instead of every function at once, a model sees one entry per card and opens it
+9. **Tool menus (v0's idea)** (owner; 2026-11-02: waits, tools seem no big issue with Qwen3.8 27B / Gemma 4 26B; the
+   owner tries a small model first): instead of every function at once, a model sees one entry per card and opens it
    to get that card's functions; fewer tools per turn, maybe better for weaker models (the 35B still makes many tool
    mistakes). v0.40.0 did it as areas first, then `open_area` + `use_tool`, the tool list staying fixed so the prompt
    cache holds. Try it as a Model setting and compare.
