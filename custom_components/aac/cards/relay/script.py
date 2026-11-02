@@ -1,7 +1,8 @@
 """The Relay's script (docs/v2 page 4): plain Python, checked before it runs, that runs top to bottom every time a
 context arrives. `input("in")` is what arrived, `output("out", what)` sends; nothing leaves otherwise. A `def` is a
 function the Relay offers: a call runs only that def. Only the parts of Python listed in ALLOWED run (no imports, no
-while, nothing starting with `_`); the code runs in a worker thread, a card's function is called back on HA's loop."""
+while, nothing starting with `_`); the code runs in a worker thread, a card's function is called back on HA's loop. A
+script stops itself when its time is up (WAIT): a thread cannot be stopped from outside, so it checks on every line."""
 
 from __future__ import annotations
 
@@ -10,6 +11,8 @@ import asyncio
 from copy import deepcopy
 from dataclasses import dataclass, field
 import re
+import sys
+import time
 import traceback
 from types import SimpleNamespace
 from typing import Any
@@ -34,6 +37,7 @@ NOT_ALLOWED = {ast.While: "while (use for)", ast.Import: "import", ast.ImportFro
 HIDDEN_ATTRS = {"format", "format_map", "mro"}  # str.format can reach inside objects
 HIDDEN_PREFIX = ("_", "gi_", "f_", "cr_", "ag_", "tb_", "co_")
 MAX_RANGE = 10000
+WAIT = 20  # seconds a script (or one of its defs) may run
 INNER_IMPORTS = {"time", "_strptime", "datetime", "calendar", "locale", "re", "_locale"}
 PORT = re.compile(r"[a-z0-9_]+")
 BUILTINS = ("len", "str", "int", "float", "bool", "round", "min", "max", "abs", "sorted", "reversed", "any", "all",
@@ -624,7 +628,8 @@ class Run:
     def go(self, script: Script) -> None:
         """Run the script, top to bottom."""
         try:
-            exec(script.code, self.names())  # noqa: S102 - checked by check(): no imports, nothing starting with _
+            with timed():
+                exec(script.code, self.names())  # noqa: S102 - checked by check(): no imports, nothing starting with _
         except Exception as err:  # noqa: BLE001
             self.problems.append(_where(err))
 
@@ -633,9 +638,28 @@ class Run:
         names = self.names()
         exec(script.defs, names)  # noqa: S102
         try:
-            return names[function](**args)
+            with timed():
+                return names[function](**args)
         except Exception as err:
             raise ScriptError(_where(err)) from err
+
+
+class timed:  # noqa: N801 - used as `with timed():`
+    """While the script's own lines run in this thread, each one first checks the time: past WAIT the script stops
+    there with a mistake on that line (the lines of AAC's helpers it calls are not checked, only counted as time)."""
+
+    def __enter__(self) -> None:
+        until = time.monotonic() + WAIT
+
+        def line(frame: Any, event: str, arg: Any) -> Any:
+            if event == "line" and time.monotonic() > until:
+                raise ScriptError(f"it ran longer than {WAIT} s")
+            return line
+
+        sys.settrace(lambda frame, event, arg: line if frame.f_code.co_filename == "<script>" else None)
+
+    def __exit__(self, *exc: object) -> None:
+        sys.settrace(None)
 
 
 def _inner_import(name: str, *args: Any, **kwargs: Any) -> Any:

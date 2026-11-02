@@ -15,11 +15,10 @@ from typing import Any
 from custom_components.aac.api import Card, Context, new_id, register
 
 sys.modules.pop(f"{__name__}.script", None)  # a newer card file brings a newer script.py
-from .script import DEFAULT, OWN, REFERENCE, Run, Script, check, joined, reference_text  # noqa: E402
+from .script import DEFAULT, OWN, REFERENCE, WAIT, Run, Script, check, joined, reference_text  # noqa: E402
 
-VERSION = "4.1.0"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
+VERSION = "4.1.1"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
 
-WAIT = 20  # seconds a script may run
 PRINTED = 200  # print entries it keeps
 PRINTED_FOR = 1800  # seconds they are kept
 
@@ -101,8 +100,8 @@ class Relay(Card):
         audio = self.core.audio.spoken() if "audio" in script.names else None
         run = Run(self, context, port, reads, self.hass.loop, audio)
         try:
-            await asyncio.wait_for(self.hass.async_add_executor_job(run.go, script), WAIT)
-        except TimeoutError:  # the thread goes on by itself; the turn does not wait for it
+            await asyncio.wait_for(self.hass.async_add_executor_job(run.go, script), WAIT + 2)
+        except TimeoutError:  # stuck inside one line (the script stops itself on its next line); the turn goes on
             run.problems.append(f"the script ran longer than {WAIT} s")
         self._after(run, context.streaming)
         if run.stop_now:
@@ -164,7 +163,7 @@ class Relay(Card):
         run = Run(self, None, None, {}, self.hass.loop, self.core.audio.spoken() if "audio" in script.names else None,
                   calling=context or Context())
         try:
-            result = await asyncio.wait_for(self.hass.async_add_executor_job(run.answer, script, function, args), WAIT)
+            result = await asyncio.wait_for(self.hass.async_add_executor_job(run.answer, script, function, args), WAIT + 2)
         except TimeoutError as err:
             raise ValueError(f"{function} ran longer than {WAIT} s") from err
         finally:

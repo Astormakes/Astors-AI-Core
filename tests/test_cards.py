@@ -110,6 +110,28 @@ async def test_relay_script_problems(hass: HomeAssistant, mock_entry):
     assert not heard["problems"]  # checked only when it runs (an entry has no "in": look in its text)
 
 
+async def test_relay_script_stops_itself_when_its_time_is_up(hass: HomeAssistant, mock_entry, monkeypatch):
+    """A thread cannot be stopped from outside: a script that runs too long stops itself on its next line (it does not
+    run on in the background, filling Home Assistant's worker threads); its defs too."""
+    import re
+    import sys
+
+    import pytest
+
+    core = await setup_aac(hass, mock_entry)
+    monkeypatch.setattr(sys.modules["aac_cards.relay.script"], "WAIT", 0.3)
+    endless = "for a in range(10000):\n    for b in range(10000):\n        x = a * b\n"
+    relay = await core.domain.add_card("relay", "Endless", {"script": 'context = input("in")\n' + endless +
+                                                             'def spin():\n    "Spins."\n' + endless.replace("\n", "\n    ").replace("for a", "    for a", 1)})
+    context = Context()
+    context.add("chat.said", "hi")
+    await relay.handle(context, "in")
+    assert re.fullmatch(r"line [34]: it ran longer than 0.3 s", relay.last_run["problems"][0])
+    with pytest.raises(Exception, match=r"line (7|8): it ran longer than 0.3 s"):
+        await relay.call("spin", {})
+    assert sys.gettrace() is None  # the check ends with the script
+
+
 async def test_relay_runs_on_every_snapshot(hass: HomeAssistant, mock_entry):
     """A context still being written runs the script too: output sends it on (streaming); a card call waits for the
     finished context; context.streaming says which one it is."""
