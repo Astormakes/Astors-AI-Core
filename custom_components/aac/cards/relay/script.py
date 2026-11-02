@@ -153,7 +153,8 @@ REFERENCE = [
      "context. Then only that def runs, not the script: it gets its arguments, not the context. What it returns travels "
      "back along the wires to whoever asked. A Relay with only defs is a toolbox: it only answers calls.", ""),
     ("Values", "now()", "The time now: now().hour, f\"{now():%A %H:%M}\".", ""),
-    ("Values", 'states("sensor.x")', "A Home Assistant state (state_attr(id, \"name\"), is_state(id, \"on\")).", ""),
+    ("Values", 'states("sensor.x")', "A Home Assistant state (state_attr(id, \"name\"), is_state(id, \"on\")), as far as the "
+                                       "Relay's May use lets it read (else \"unknown\").", ""),
     ("Values", "audio.last.seconds", "How long ago AAC last spoke (audio.satellites[id].seconds per satellite).", ""),
     ("While a model writes", "context.streaming", "A model's answer arrives after every finished sentence while it is "
      "written, and the script runs every time: output sends each one on (that is how Text to speech starts early). "
@@ -575,17 +576,17 @@ class Run:
 
     def names(self) -> dict[str, Any]:
         """Everything a script can use by name."""
-        hass, relay = self.relay.hass, self.relay
+        relay = self.relay
 
         def now():
             return dt_util.now()
 
-        def states(entity_id: str) -> str:
-            state = hass.states.get(str(entity_id))
+        def states(entity_id: str) -> str:  # as far as the Relay may read it (else as if it were not there)
+            state = relay.ha.state(str(entity_id))
             return state.state if state else "unknown"
 
         def state_attr(entity_id: str, name: str) -> Any:
-            state = hass.states.get(str(entity_id))
+            state = relay.ha.state(str(entity_id))
             return wrap(state.attributes.get(name)) if state else None
 
         def get_input(name: str | None = None, read: bool = False) -> ContextView | None:

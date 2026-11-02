@@ -8,7 +8,7 @@ from typing import Any
 
 from custom_components.aac.api import Card, Client, Context, ModelError, register
 
-VERSION = "1.3.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.4.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -20,6 +20,7 @@ class ModelServers(Card):
     category = "Models"
     help = ("The servers behind AAC's models and what they offer now. A llama-server in router mode serves many models "
             "and loads one at a time: a model or a Relay's script can see them and switch (the same as the Models page).")
+    needs = {"servers"}  # read: see them; full: bench, use, load, unload
     functions = {
         "servers": {"help": "Every model server: AAC's models on it (and which server model each uses), and what it offers "
                             "with each one's state (loaded, unloaded, loading, downloading)."},
@@ -40,6 +41,9 @@ class ModelServers(Card):
     }
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
+        if function in self.functions and not self.may("servers", "read" if function == "servers" else "full"):
+            return {"error": f"{self.name} may not {'see the servers' if function == 'servers' else function + ' models'} "
+                             f"(servers at {self.level('servers')}): the owner allows it on the Permissions page"}
         pool = self.core.pool
         if function == "servers":
             return [{"address": s["address"], "aac_models": [f"{u['name']} (uses {u['model']})" for u in s["uses"]],

@@ -16,6 +16,7 @@ from .cards import CARD_TYPES, CATEGORIES
 from .const import DOMAIN, SIGNAL
 from .core import UNDO_STEPS
 from .models import MODEL_TAGS, ModelError
+from .permissions import LEVELS, catalog
 
 COMMANDS: list = []
 
@@ -147,6 +148,41 @@ async def ws_wire_unblock(hass, connection, msg) -> None:
     """A red wire (the storm stop blocked it) carries again."""
     domain = _core(hass).domain
     connection.send_result(msg["id"], {"unblocked": domain.unblock(msg["from"], msg["to"]), "red": domain.red})
+
+
+@command({vol.Required("type"): "aac/permissions"})
+async def ws_permissions(hass, connection, msg) -> None:
+    """The running domain's sheet, every thing it can be about, and whether the copy slot holds one."""
+    core = _core(hass)
+    connection.send_result(msg["id"], {"levels": core.domain.permissions, "things": catalog(hass), "levels_all": list(LEVELS),
+                                       "copied": core.data.get("permissions_copied") is not None})
+
+
+@command({vol.Required("type"): "aac/permissions/set", vol.Required("levels"): {str: vol.In(LEVELS)}})
+async def ws_permissions_set(hass, connection, msg) -> None:
+    """The owner changes the running domain's sheet (hidden takes a thing off it)."""
+    domain = _core(hass).domain
+    await domain.set_permissions(msg["levels"])
+    connection.send_result(msg["id"], {"levels": domain.permissions})
+
+
+@command({vol.Required("type"): "aac/permissions/copy"})
+async def ws_permissions_copy(hass, connection, msg) -> None:
+    """The running domain's sheet into the copy slot (one slot, AAC-wide)."""
+    core = _core(hass)
+    core.data["permissions_copied"] = deepcopy(core.domain.permissions)
+    core.save()
+    connection.send_result(msg["id"], {"copied": True})
+
+
+@command({vol.Required("type"): "aac/permissions/paste"})
+async def ws_permissions_paste(hass, connection, msg) -> None:
+    """The copy slot's sheet replaces the running domain's."""
+    core = _core(hass)
+    if (copied := core.data.get("permissions_copied")) is None:
+        return await _fail(connection, msg, ValueError("nothing copied yet"))
+    await core.domain.set_permissions({**{t: "hidden" for t in core.domain.permissions}, **copied})
+    connection.send_result(msg["id"], {"levels": core.domain.permissions})
 
 
 @command({vol.Required("type"): "aac/positions", vol.Required("positions"): dict, vol.Optional("undoable", default=False): bool})

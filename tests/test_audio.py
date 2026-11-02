@@ -10,7 +10,7 @@ from custom_components.aac.audio import EnergyVad, Segmenter
 
 from custom_components.aac.audio import pcm_to_wav
 
-from .conftest import BASE_URL, reply, setup_aac
+from .conftest import BASE_URL, allow, reply, setup_aac
 
 WAVE = pcm_to_wav(b"\x01\x00" * 1600, 22050)  # what a voice engine gives back
 
@@ -156,6 +156,7 @@ async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, m
         assert hass.states.get(player).state == "idle"
         voice = await core.domain.add_card("text_to_speech", "Text to speech")
         speaker = await core.domain.add_card("speaker", "Speaker")
+        speaker = await allow(core.domain, speaker.id, {"audio": "full"})
         core.domain.set_wires([*core.domain.wires, {"from": f"{voice.id}.out", "to": f"{speaker.id}.in"}])
         m = Context()
         m.add("speech_to_text.said", "computer, tell me a story", mic="pc")
@@ -328,6 +329,7 @@ async def test_microphone_mutes_or_keeps_listening_while_aac_speaks(hass, mock_e
     listening (with echo cancellation a stop word works mid-answer)."""
     core = await setup_aac(hass, mock_entry)
     mic = await core.domain.add_card("microphone", "Mic")
+    mic = await allow(core.domain, mic.id, {"audio": "read"})
     sent = []
     with patch.object(core.domain.flow, "stream", lambda card, port, chunk, meta: sent.append(meta.get("speaking"))):
         mic.hear(b"\x00\x00", {"source": "pc", "speaking": False})
@@ -351,6 +353,7 @@ async def test_echo_subtraction(hass: HomeAssistant, mock_entry):
     source = hub.connect("box", "Box", None, send, reference=True)
     mic_card = await core.domain.add_card("microphone", "Box mic", {"source": "box", "speaking": "listen", "echo": True,
                                                                      "echo_delay": 1.0, "echo_gain": 0.5})
+    mic_card = await allow(core.domain, mic_card.id, {"audio": "read"})
     heard = []
     mic_card.domain.flow.stream = lambda card_id, port, chunk, meta: heard.append(chunk) if card_id == mic_card.id else None
     speaker = array("h", (int(8000 * ((i * 37) % 101 - 50) / 50) for i in range(3200)))  # what the speaker plays

@@ -9,7 +9,7 @@ from typing import Any
 
 from custom_components.aac.api import SAMPLE_RATE, Card, pcm_to_wav, register
 
-VERSION = "3.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.1.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 STREAM_PIECE = 2  # seconds of a live stream the Speaker plays at a time
 
@@ -27,6 +27,7 @@ class Speaker(Card):
     inputs = {"in": "audio|clip"}
     outputs: dict[str, str] = {}
     ports_help = {"in": "clips or a live stream (half green, half purple: it takes both)"}
+    needs = {"audio", "entities"}  # satellites' speakers (audio at full), media players (each at full)
     settings_schema = {"source": {"type": "player", "title": "Plays at", "default": "",
                                   "help": "Empty: the satellite the clip came from. Or a satellite or any media player."},
                        "without": {"type": "player", "title": "A clip without a satellite plays at", "default": "",
@@ -63,23 +64,22 @@ class Speaker(Card):
 
     async def _play(self, where: str, wav: bytes, text: str, queue: bool = False) -> None:
         self._played_at.add(where)
-        if not where.startswith("media_player."):
-            await self.core.audio.play(where, wav, text, queue=queue)  # clips one after another, a stream at once
-            return
         try:
-            await self.hass.services.async_call("media_player", "play_media", {
-                "entity_id": where, "media_content_id": self.core.audio.clip_url(wav), "media_content_type": "music",
-                "announce": True}, blocking=True)
-        except Exception as err:  # noqa: BLE001 - a speaker that fails must not break the chain
+            if not where.startswith("media_player."):
+                await self.play(where, wav, text, queue=queue)  # clips one after another, a stream at once
+                return
+            await self.ha.call("media_player", "play_media", where, {
+                "media_content_id": self.core.audio.clip_url(wav), "media_content_type": "music", "announce": True})
+        except Exception as err:  # noqa: BLE001 - a speaker that fails (or may not play there) must not break the chain
             self.log(f"Playing on {where} failed: {err}", "warning", what="play")
 
     async def stop(self) -> None:
         for where in list(self._played_at):
             if where.startswith("media_player."):
-                if (state := self.hass.states.get(where)) and state.state == "playing":
-                    await self.hass.services.async_call("media_player", "media_stop", {"entity_id": where}, blocking=True)
-            else:
-                await self.core.audio.stop(where)
+                if (state := self.ha.state(where)) and state.state == "playing":
+                    await self.ha.call("media_player", "media_stop", where)
+            elif self.may("audio", "full"):
+                await self.stop_playing(where)
         self._played_at.clear()
         self._buffers.clear()
 

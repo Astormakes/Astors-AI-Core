@@ -12,7 +12,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "2.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -29,6 +29,7 @@ class File(Card):
     ports_help = {"provides": "the file's text, for cards that read it (dotted): one entry"}
     tags = {"text": "the file's text (one entry)"}
     ui = True
+    needs = {"files"}
     text = ""  # the file as last read or written (what 'provides' holds: held() may not touch the disk)
     settings_schema = {
         "name": {"type": "text", "title": "File name", "default": "notes"},
@@ -42,23 +43,25 @@ class File(Card):
         "write": {"help": "Replace the whole file (Markdown).", "args": {"text": {"type": "string", "help": "The text.", "required": True}}},
     }
 
-    def path(self) -> Path:
-        """Where the file lives (a plain name, no folders)."""
+    def path(self, write: bool = False) -> Path:
+        """Where the file lives (a plain name, no folders): needs files at read, to write at full."""
         name = re.sub(r"[^\w\- ]", "", str(self.settings.get("name") or "notes")).strip() or "notes"
-        return Path(self.hass.config.path("aac", "files", f"{name}.md"))
+        return self.files(write) / f"{name}.md"
 
     def _read(self) -> str:
         return self.path().read_text(encoding="utf-8") if self.path().exists() else ""
 
     def _write(self, text: str, append: bool) -> str:
         """Write, and the whole file afterwards."""
-        self.path().parent.mkdir(parents=True, exist_ok=True)
-        with self.path().open("a" if append else "w", encoding="utf-8") as f:
+        path = self.path(write=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a" if append else "w", encoding="utf-8") as f:
             f.write(text)
         return self._read()
 
     async def start(self) -> None:
-        self.text = (await self.hass.async_add_executor_job(self._read))[-8000:]
+        if self.may("files", "read"):
+            self.text = (await self.hass.async_add_executor_job(self._read))[-8000:]
 
     def held(self, port: str) -> Context | None:
         """What a dotted wire from 'provides' reads: the file's text as one entry (its id changes with the text)."""
@@ -76,10 +79,20 @@ class File(Card):
         if found is None or not found["text"].strip():
             return
         stamp = dt_util.now().strftime("%Y-%m-%d %H:%M")
-        self.text = (await self.hass.async_add_executor_job(self._write, f"\n## {stamp}\n\n{found['text'].strip()}\n", True))[-8000:]
+        try:
+            self.text = (await self.hass.async_add_executor_job(self._write, f"\n## {stamp}\n\n{found['text'].strip()}\n", True))[-8000:]
+        except PermissionError as err:  # nothing written: nothing to send
+            self.log(str(err), "warning", what="permission")
+            return
         await self.send(context, "out")
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
+        try:
+            return await self._call(function, args, context)
+        except PermissionError as err:
+            return {"error": str(err)}
+
+    async def _call(self, function: str, args: dict[str, Any], context: Context | None) -> Any:
         if function == "read":
             self.text = (await self.hass.async_add_executor_job(self._read))[-8000:]
             return self.text

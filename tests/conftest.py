@@ -68,6 +68,15 @@ async def setup_aac(hass: HomeAssistant, entry: MockConfigEntry):
     return core
 
 
+async def allow(domain, card_id: str, levels: dict[str, str]):
+    """The owner allows a card these things (docs/v2 page 6): the domain's sheet raised where it is lower, the card's
+    May use set; returns the card (made again)."""
+    from custom_components.aac.permissions import rank
+
+    await domain.set_permissions({t: lvl for t, lvl in levels.items() if rank(domain.allows(t)) < rank(lvl)})
+    return await domain.update_card(card_id, settings={"access": {**(domain.cards[card_id].settings.get("access") or {}), **levels}})
+
+
 def reply(text: str = "", calls: list[tuple[str, dict]] | None = None) -> dict[str, Any]:
     """A model's (non-streamed) answer."""
     context: dict[str, Any] = {"role": "assistant", "content": text}

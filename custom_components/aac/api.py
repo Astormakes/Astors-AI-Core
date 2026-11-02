@@ -9,7 +9,11 @@ What a card uses, and nothing else (so cards can run in a sandbox later):
   `held` (what its dotted outputs give), `call` (its functions), `stop` (the core's stop reaches it), `stop_all`
   (stop every card), `tools`, `wired`, `wired_into`, `reaches`, `all_cards` (other cards, used only by what they
   offer: functions, values, held()), `stream_out` / `clip_out` (audio), `live` (text still growing), `show` (its view)
-- its own data and files: `data`, `load`, `save`, `folder`; the log: `log`, `read_log` (a permission in `needs`)
+- its own data and files: `data`, `load`, `save`, `folder`; the log: `log`, `read_log` (log at read)
+- outside AAC, only as far as its permissions reach (docs/v2 page 6: the lower of what the domain allows and its own
+  May use, for the kinds in its `needs`): `level`, `may`, `need`; `ha` (`entities`, `state`, `call`, `watch`,
+  `calendar_events`), `web()`, `notification`, `files(write)`, `listen` (the satellites' microphones), `play`,
+  `stop_playing` (their speakers)
 - the core's services through `self.core`: `subscribe(channel, card, handler)` (channels: "audio",
   "ha_conversation"), `calendar` (`offer`, `entries`, `add`, `change`, `remove`; `parse_when` below), `pool` (models:
   `entries`, `slot`, `tags`, `find`, `offers`; with `run` and `Client` below), `save_model`, `audio` (`say`, `play`,

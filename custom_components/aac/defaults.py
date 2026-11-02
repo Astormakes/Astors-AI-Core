@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .const import LOGGER
+from .permissions import THINGS
 
 if TYPE_CHECKING:
     from .core import Core
@@ -39,11 +40,20 @@ async def async_first_start(core: Core) -> None:
     core.data["active"] = "assistant"
     domain = Domain(core, "assistant", "Assistant")
     await domain.load()
+    domain.permissions = {thing: "full" for thing in THINGS}  # AAC's own setup: its things; entities are the owner's pick
     await build_default(domain)
+    await grant_things(domain)
     domain.undo = []
     await domain.save_now()
     core.save()
     LOGGER.info("AAC: default domain built")
+
+
+async def grant_things(domain) -> None:
+    """The default cards may use the things they need as far as the domain allows (not entities: the owner picks)."""
+    for card in list(domain.cards.values()):
+        if own := {t: domain.allows(t) for t in card.needs if t in THINGS and domain.allows(t) != "hidden"}:
+            await domain.update_card(card.id, settings={"access": {**(card.settings.get("access") or {}), **own}})
 
 
 async def build_default(domain) -> None:
@@ -114,6 +124,7 @@ async def async_voice_chain(core: Core) -> None:
     await add("speaker", "Speaker", at={"x": 1730, "y": 600})
     domain.set_wires([*domain.wires, {"from": f"{mic}.out", "to": f"{cut}.in"}, {"from": f"{cut}.out", "to": f"{ears}.in"}])
     await _voice_cards(domain, ["computer"])
+    await grant_things(domain)
     domain.undo = []
     LOGGER.info("AAC: the voice chain was added to the default domain")
 

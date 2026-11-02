@@ -10,7 +10,7 @@ from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.aac.context import Context
 
-from .conftest import model_answers, reply, setup_aac
+from .conftest import allow, model_answers, reply, setup_aac
 
 
 async def test_a_schedule_fires_at_its_time(hass: HomeAssistant, mock_entry, aioclient_mock, freezer: FrozenDateTimeFactory):
@@ -110,6 +110,7 @@ async def test_schedule_like_v1(hass: HomeAssistant, mock_entry, aioclient_mock,
 
     calls = async_mock_service(hass, "notify", "mobile_app_phone")  # nothing is wired to its output: it goes out at once
     await d.add_card("notify", "Notify", {"service": "notify.mobile_app_phone"})
+    await allow(d, "notify", {"notify": "full"})
     d.set_wires([w for w in d.wires if w["from"] != "schedule.out"] + [{"from": "schedule.unanswered", "to": "notify.in"}])
     await s.ui_call("run", {"id": next(e for e in s.entries if e["name"] == "Alarm")["id"]})
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -120,7 +121,8 @@ async def test_schedule_like_v1(hass: HomeAssistant, mock_entry, aioclient_mock,
 async def test_ha_event_and_heartbeat_fire(hass: HomeAssistant, mock_entry, aioclient_mock):
     """A watched entity change starts the chain (once, cooldown)."""
     core = await setup_aac(hass, mock_entry)
-    event = await core.domain.add_card("ha_event", "Door", {"watches": [{"name": "door", "entity_id": "binary_sensor.door", "to": "on", "text": "Tell me."}]})
+    await core.domain.add_card("ha_event", "Door", {"watches": [{"name": "door", "entity_id": "binary_sensor.door", "to": "on", "text": "Tell me."}]})
+    event = await allow(core.domain, "door", {"binary_sensor.door": "read"})  # it watches only what it may read
     fired = []
     event.fire = lambda name, text: fired.append(text)
     hass.states.async_set("binary_sensor.door", "off")
@@ -192,12 +194,13 @@ async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
     assert (await memory.call("forget", {"text": car}))["memories"] == 1
     assert (await memory.call("forget", {"text": "the drill is on basement shelf 2."}))["memories"] == 0  # its whole text
     file = await core.domain.add_card("file", "Notes", {"name": "test"})
+    file = await allow(core.domain, file.id, {"files": "full"})
     await file.call("write", {"text": "# Hi"})
     await file.call("append", {"text": "more"})
     assert await file.call("read", {}) == "# Hi\nmore\n"
     (held,) = file.held("provides").conversation  # its read output: the file as one entry
     assert held["text"] == "# Hi\nmore\n" and held["tag"] == "notes.text"
-    again = await core.domain.add_card("file", "Same", {"name": "test"})  # reads the file when it starts
+    again = await core.domain.add_card("file", "Same", {"name": "test", "access": {"files": "read"}})  # reads the file when it starts
     assert again.held("provides").conversation[0]["text"] == "# Hi\nmore\n"
     await core.domain.add_card("relay", "Reader", {"script": 'context = input("in") + input("reads", read=True)\noutput("out", context)\n'})
     core.domain.set_wires([*core.domain.wires, {"from": "notes.provides", "to": "reader.reads"}])
@@ -208,9 +211,13 @@ async def test_memory_file_timer_builder(hass: HomeAssistant, mock_entry):
     await hass.async_block_till_done(wait_background_tasks=True)
     assert "wait.out" in core.domain.flow.held  # held on its own, then sent on
     builder = await core.domain.add_card("builder", "Builder")
+    builder = await allow(core.domain, builder.id, {"setup": "full"})
     added = await builder.call("add_card", {"type": "buffer", "name": "Room"})
     assert added["id"] == "room" and (await builder.call("remove_card", {"card": "room"}))["error"]
     assert (await builder.call("wire", {"from": "room.out", "to": "notes.in"}))["wired"]
+    for change in ({"card": "home", "settings": {"access": {"lock.door": "full"}}}, {"card": "builder", "settings": {"may_remove": True}}):
+        assert "permissions are the owner's" in (await builder.call("change_card", change))["error"]  # never a model's
+    assert "permissions are the owner's" in (await builder.call("add_card", {"type": "web", "settings": {"access": {"web": "full"}}}))["error"]
     assert any(t.startswith("relay (Relay): ") for t in await builder.call("types", {}))  # one line each
     relay = await builder.call("help", {"type": "relay"})  # one type in full: its settings' help (the script reference)
     assert relay.startswith("Relay (type relay") and 'output("out", context)' in relay and "Settings:\n- script" in relay
@@ -321,14 +328,30 @@ async def test_chat_finds_old_chats(hass: HomeAssistant, mock_entry):
     assert card.current() is None  # all quiet for long: the next spoken turn would start a new chat
 
 
-async def test_home_access_list(hass: HomeAssistant, mock_entry):
-    """The Home card's access list: its entries come from HA, anything not set is hidden."""
+async def test_home_access_list(hass: HomeAssistant, mock_entry, hass_ws_client):
+    """A card's May use lists what it needs that the domain lets exist, each with the domain's level as its cap; the
+    domain's Permissions page lists everything, and its sheet copies to another domain (one slot, two buttons)."""
     core = await setup_aac(hass, mock_entry)
     hass.states.async_set("light.desk", "on", {"friendly_name": "Desk"})
+    hass.states.async_set("light.hall", "on")
     home = core.domain.cards["home"]
-    items = await home.ui_call("access_items", {})
-    assert {"id": "light.desk", "name": "Desk", "area": "", "group": "light"} in items
-    assert home.level("light.desk") == "hidden"
+    assert not [x for x in await home.ui_call("access_items", {}) if x["id"].startswith("light.")]  # the domain hides them
+    await core.domain.set_permissions({"light.desk": "read"})
+    items = await core.domain.cards["home"].ui_call("access_items", {})
+    assert [x for x in items if x["id"].startswith("light.")] == [{"id": "light.desk", "name": "Desk", "area": "", "group": "light",
+                                                                    "help": "", "cap": "read"}]
+    assert core.domain.cards["home"].level("light.desk") == "hidden"  # the card's own is not set yet
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "aac/permissions"})
+    got = (await client.receive_json())["result"]
+    assert got["levels"]["light.desk"] == "read" and {"web", "light.hall"} <= {t["id"] for t in got["things"]}
+    await client.send_json_auto_id({"type": "aac/permissions/copy"})
+    assert (await client.receive_json())["success"]
+    other = await core.create("Other")
+    await core.switch(other)
+    assert core.domain.permissions == {}  # a new domain starts with nothing
+    await client.send_json_auto_id({"type": "aac/permissions/paste"})
+    assert (await client.receive_json())["result"]["levels"] == got["levels"]
 
 
 async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
@@ -368,8 +391,8 @@ async def test_log_takes_anything(hass: HomeAssistant, mock_entry):
     assert any(w == "audio" and t.startswith("PC: stopped") for w, t in texts) and ("read", "Chat.provides: #chat.said: a new line") in texts
     kept = next(x for x in own["entries"] if x["what"] == "clip")
     assert kept["audio"].endswith(".wav") and (await log.ui_call("audio", {"file": kept["audio"]}))  # playable
-    assert "may not read" in (await log.call("read", {}))["error"] and not log.held("provides").conversation
-    log = await d.update_card(log.id, settings={"may_read_log": True})  # the Permissions page
+    assert "may not use log" in (await log.call("read", {}))["error"] and not log.held("provides").conversation
+    log = await allow(d, log.id, {"log": "read"})  # the Permissions page
     assert (await log.ui_call("entries", {}))["all"]
     found = await log.call("read", {"card": "Log", "search": "phrase"})
     assert "Log clip: PC: 1.4 s, phrase 2" in found and found.count("\n") == 0
@@ -522,6 +545,7 @@ async def test_model_servers(hass: HomeAssistant, mock_entry, aioclient_mock, ha
     assert (await client.receive_json())["success"]
 
     card = await core.domain.add_card("model_servers", "Servers")
+    card = await allow(core.domain, card.id, {"servers": "full"})
     assert await card.call("bench", {"aac_model": "Small", "model": "big"}) == {"reads": "1044 tokens/s", "writes": "107 tokens/s"}
     (listed,) = await card.call("servers", {})
     assert listed["aac_models"] == ["Big (uses big)", "Small (uses big)"]

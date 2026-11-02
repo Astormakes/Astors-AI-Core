@@ -9,11 +9,10 @@ from urllib.parse import quote_plus, unquote
 
 import aiohttp
 
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.3.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.4.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 TAG = re.compile(r"<[^>]+>")
 
@@ -30,13 +29,19 @@ class Web(Card):
         "searx": {"type": "text", "title": "SearXNG address (optional)", "default": "",
                   "help": "e.g. http://192.168.1.20:8888; empty: DuckDuckGo's plain page."},
     }
+    needs = {"web"}
     functions = {
         "search": {"help": "Search: titles, links and snippets.", "args": {"query": {"type": "string", "help": "What to look for.", "required": True}}},
         "read": {"help": "A page as plain text.", "args": {"url": {"type": "string", "help": "The address.", "required": True}}},
     }
 
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
-        session = async_get_clientsession(self.hass)
+        if function not in self.functions:
+            return await super().call(function, args, context)
+        try:
+            session = self.web()
+        except PermissionError as err:
+            return {"error": str(err)}
         timeout = aiohttp.ClientTimeout(total=20)
         headers = {"User-Agent": "Mozilla/5.0 (AAC)"}
         try:

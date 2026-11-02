@@ -117,9 +117,21 @@ removing a card whose data differs from `default_data()` is asked: keep it, or l
 reads), `current()` (its values), `ui = True` (a page of its own, see below). A setting of type `modellist` with a
 `tag` gives it a list of models with queues. A setting may say `min` (and `off`, the value that turns it off),
 and `confirm` (a question the panel asks before it is first turned on, for a setting that changes more than itself). A setting marked
-`permission` also shows on the domain's Permissions page (what the domain's cards may do, all in one place). A
-setting of type `access` is a list of the card's own entries, each hidden / read-only / full (not set: hidden):
-the card returns them from `ui_call("access_items")` as `[{id, name, area, group}]`; the value is `{id: level}`.
+`permission` also shows on the domain's Permissions page (what the domain's cards may do, all in one place) and is
+the owner's alone: the Card editor refuses to set one for a model. **Outside AAC** (docs/v2 page 6) a card reaches
+only through the core, as far as two layers allow: the domain's sheet (per thing: hidden, list, read, full; set by
+the owner only, `aac/permissions`, `aac/permissions/set`; not part of the setup: Undo, slots and loaded files leave it;
+a copy slot moves it to another domain: `aac/permissions/copy`, `aac/permissions/paste`; a new domain starts empty)
+and the card's own `access` setting; it can use the lower of the two. A thing is an entity id or one of `web`,
+`notify`, `files`, `servers`, `log`, `setup`, `audio` (`permissions.THINGS` says what read and full allow). A card
+names the kinds it uses in `needs` (`{"entities", "web"}` …): it then gets the setting `access` (type `access`,
+`{thing: level}`, not set: hidden; its entries come from `ui_call("access_items")`: what it needs that the domain lets
+exist, each with the domain's level as `cap`). It asks with `self.level(thing)`, `self.may(thing, level)`,
+`self.need(thing, level)` (raises PermissionError) and reaches out with `self.ha` (`entities()`, `state(id)`,
+`call(domain, service, id, data)`: a service of the entity's own domain or homeassistant.turn_on / turn_off / toggle,
+its data naming no other target; `watch(ids, handler)`, `calendar_events(id, start, end)`), `self.web()` (the HTTP
+session), `self.notification(service, message, title)`, `self.files(write)` (`<config>/aac/files`),
+`self.listen(handler)` (the satellites' microphones), `self.play(source, wav, text, queue)`, `self.stop_playing(source)`.
 A setting of type `element` (with `element`: a custom element's name, `file`: a .js in the card's folder) is edited
 by the card's own element: the panel imports the file and hands the element `.panel` (as a page's below, with
 `save(settings)` saving and redrawing, `type(t)`, `domain()`, `card()`), calls `setup({card, key, value, settings})`
@@ -207,8 +219,7 @@ entries of what passed the wires (level flow) stay, and the newest 5,000 of ever
 whole `context` (only in memory, never on disk). A card writes with `self.log(text, level="info", what="", context=None,
 **extra)` (the context goes along only when its Log setting says the whole context) and reads with
 `self.read_log(card=, part=, port=, what=, levels=, search=, before=, last=)` (part `"*"`: AAC itself): its own entries
-always, the rest only when the owner allowed it. Asking for that: `needs = {"read_log"}` on the class gives it the
-permission setting `may_read_log` (off; on the Permissions page). Every card has the settings `log` (`text`: what
+always, the rest with `log` at read (`needs = {"log"}`, see Outside AAC above). Every card has the settings `log` (`text`: what
 changed, the default; `context`: the whole context too; `nothing`) and `log_at` (`out`, the default; `in`; `both`) in
 the fold "Log": what passes its wires is written as `flow` entries (`what` in or out, `port`, `to`); snapshots are
 not. The core writes what fails (with the trace), a model that does not answer, a wire turned red, and what the

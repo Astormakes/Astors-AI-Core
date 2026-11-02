@@ -233,6 +233,8 @@ textarea { resize: vertical; }
   .models tr { display: flex; flex-wrap: wrap; align-items: baseline; border-bottom: 1px solid var(--divider-color); } .models td { border: none; padding: 2px 8px; } .models tr.hint { display: none; } }
 `;
 
+const ACC = ["hidden", "list", "read", "full"]; // the levels of a permission (docs/v2 page 6), lowest first
+
 class AacPanel extends HTMLElement {
   constructor() {
     super();
@@ -267,8 +269,8 @@ class AacPanel extends HTMLElement {
       const box = e.target.dataset?.accsearch;
       if (!box) return;
       (this._accFilter ||= {})[box] = e.target.value;
-      const [cardId, key] = box.split("|"), rows = this.shadowRoot.querySelector(`[data-accbox="${CSS.escape(box)}"]`);
-      if (rows) rows.innerHTML = this._accessRows(this._card(cardId), key);
+      const rows = this.shadowRoot.querySelector(`[data-accbox="${CSS.escape(box)}"]`);
+      if (rows) rows.innerHTML = this._accessRows(box);
     });
     // one listener for what is drawn by others or redrawn often: the sidebar, a card page's ☰, the Audio page's meters
     this.shadowRoot.addEventListener("click", (e) => {
@@ -280,7 +282,7 @@ class AacPanel extends HTMLElement {
       if (wave) { this._openWave(wave.dataset.wave); return; }
       const m = e.target.closest?.("[data-rload],[data-ract],[data-rdl],[data-srvadd],[data-srvsave],[data-srvedit],[data-srvdel],[data-srvcancel],[data-amadd],[data-amsave],[data-amedit],[data-amdel],[data-amcancel]");
       if (m) { this._modelsClick(m); return; }
-      const t = e.target.closest?.("[data-navact],[data-navmore],[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],[data-acclevel],[data-accall],[data-permopen],#dombtn,#navbtn");
+      const t = e.target.closest?.("[data-navact],[data-navmore],[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],[data-acclevel],[data-accall],[data-permopen],[data-permcopy],[data-permpaste],#dombtn,#navbtn");
       if (!t) return;
       const d = t.dataset;
       if (d.say) this.ws("aac/audio/say", { source: d.say, text: "This is how I sound." });
@@ -289,11 +291,16 @@ class AacPanel extends HTMLElement {
       else if (d.navact) { e.stopPropagation(); this._navAction(d.entry, d.navact); }
       else if (d.acclevel) this._setAccess(d.acc, [d.accid], d.acclevel);
       else if (d.accall) {
-        const [cardId] = d.acc.split("|"), q = ((this._accFilter || {})[d.acc] || "").toLowerCase();
-        const shown = (this._accItems?.[cardId] || []).filter((x) => !q || `${x.name} ${x.id} ${x.area} ${x.group}`.toLowerCase().includes(q));
+        const shown = this._accShown(d.acc);
         (async () => {
-          if (shown.length > 20 && !(await this.confirm(`Set ${shown.length} entries to ${d.accall === "read" ? "read-only" : d.accall}?`))) return;
+          if (shown.length > 20 && !(await this.confirm(`Set ${shown.length} entries to ${d.accall}?`))) return;
           this._setAccess(d.acc, shown.map((x) => x.id), d.accall);
+        })();
+      } else if (d.permcopy !== undefined) this.ws("aac/permissions/copy").then(() => { this._sheet = null; this.render(); });
+      else if (d.permpaste !== undefined) {
+        (async () => {
+          if (!(await this.confirm(`Replace what "${this.state.domain.name}" allows with the copied sheet?`, "Paste", true))) return;
+          await this.ws("aac/permissions/paste"); this._sheet = null; this._accItems = {}; await this._load(); this.render();
         })();
       } else if (d.permopen) { this.permOpen = this.permOpen === d.permopen ? null : d.permopen; this.render(); }
       else if (d.domact) this._domainAction(d.domact);
@@ -422,6 +429,7 @@ class AacPanel extends HTMLElement {
   disconnectedCallback() { window.removeEventListener("popstate", this._back); }
 
   async go(kind, card = null, id = null) {
+    if (kind === "permissions") { this._sheet = null; this._accItems = {}; } // fresh: the domain, its things and caps may have changed
     if (kind === "card") this._lastCard = { card, id }; // Back from the Cards page on a phone goes here
     if (kind === "cards" && this.view.kind !== "cards") {
       const phone = this._phone();
@@ -807,7 +815,7 @@ class AacPanel extends HTMLElement {
   _permSummary(c, fs) { // a folded card's permissions in a few words
     return fs.map(([k, f]) => { const v = c.settings[k] ?? f.default;
       if (f.type === "bool") return `${v ? "✓" : "✗"} ${f.title.toLowerCase()}`;
-      if (f.type === "access") { const n = Object.values(v || {}); return `${n.filter((x) => x === "read").length} read-only, ${n.filter((x) => x === "full").length} full`; }
+      if (f.type === "access") { const n = Object.values(v || {}); return ACC.slice(1).map((l) => `${n.filter((x) => x === l).length} ${l}`).join(", "); }
       if (f.type === "functions") { const fns = Object.keys(c.functions || {}), defOn = this._type(c.type)?.offers !== false;
         return fns.length ? `${fns.filter((fn) => (v || {})[fn]?.on ?? defOn).length} of ${fns.length} functions for models` : ""; }
       return `${f.title}: ${v}`; }).filter(Boolean).join(" · ") || "no functions";
@@ -815,8 +823,14 @@ class AacPanel extends HTMLElement {
 
   _permissionsView() { // every setting a card marks as a permission, all cards of this domain on one page
     const cards = this.state.domain.cards.map((c) => [c, Object.entries(this._type(c.type)?.settings || {}).filter(([, f]) => f.permission)]).filter(([, fs]) => fs.length);
-    return `${this._header(`Permissions of "${this.state.domain.name}"`, tip("What this domain's cards may do, gathered from their settings (the same fields as on the Cards page): which entities AAC may see or switch, what the Card editor may change, which cards models may use as tools."))}
-      <div class="content">${cards.map(([c, fs]) => { const open = this.permOpen === c.id; return `<div class="card"><h3 class="permhead" data-permopen="${esc(c.id)}">${open ? "▾" : "▸"} ${esc(c.title)} <span class="hint">${esc(this._type(c.type)?.title || c.type)} · ${esc(this._permSummary(c, fs))}</span></h3>${open ? fs.map((e) => this._field(c, e)).join("") : ""}</div>`; }).join("") || '<p class="hint">No card here has permissions.</p>'}
+    const sheet = this._sheet;
+    if (!sheet) this.ws("aac/permissions").then((r) => { this._sheet = r; this._accItems = { ...(this._accItems || {}), domain: r.things }; this.render(); });
+    const name = esc(this.state.domain.name);
+    return `${this._header(`Permissions of "${name}"`, tip("Two layers (the same levels): what this domain lets exist at all, then what each card may use within that. hidden: it does not exist · list: cards may know it exists and ask for it · read · full. A card can use the lower of the two."))}
+      <div class="content"><div class="card"><h3>What "${name}" allows ${tip("Only you set this; a model never can. Not set: hidden. A new domain, or a file loaded from elsewhere, starts with nothing. Undo and the slots leave it as it is.")}
+        <span style="float:right"><button class="small" data-permcopy title="Into the copy slot (one, for all domains)">Copy</button> <button class="small" data-permpaste ${sheet?.copied ? "" : "disabled"} title="The copied sheet replaces this one">Paste</button></span></h3>
+        ${sheet ? `<div class="access"><input data-accsearch="domain" placeholder="Search: name, id, area, kind (e.g. light.)" value="${esc((this._accFilter || {}).domain || "")}"><div data-accbox="domain">${this._accessRows("domain")}</div></div>` : '<p class="hint">Loading…</p>'}</div>
+      <h3 style="margin:18px 0 6px">What each card may use</h3>${cards.map(([c, fs]) => { const open = this.permOpen === c.id; return `<div class="card"><h3 class="permhead" data-permopen="${esc(c.id)}">${open ? "▾" : "▸"} ${esc(c.title)} <span class="hint">${esc(this._type(c.type)?.title || c.type)} · ${esc(this._permSummary(c, fs))}</span></h3>${open ? fs.map((e) => this._field(c, e)).join("") : ""}</div>`; }).join("") || '<p class="hint">No card here has permissions.</p>'}
       <p class="hint">Fields save when you leave them.</p></div>`;
   }
 
@@ -1197,7 +1211,7 @@ class AacPanel extends HTMLElement {
     if (this.showValues) this.render();
   }
 
-  _accessField(c, key) { // an access list: the card's own entries, each hidden / read-only / full (not set: hidden)
+  _accessField(c, key) { // a card's May use: what it needs that the domain lets exist, each up to the domain's level
     const box = `${c.id}|${key}`, items = (this._accItems ||= {})[c.id];
     if (!items) {
       this._accItems[c.id] = "loading";
@@ -1205,26 +1219,46 @@ class AacPanel extends HTMLElement {
         .catch(() => { this._accItems[c.id] = []; this.render(); });
     }
     return `<div class="access"><input data-accsearch="${esc(box)}" placeholder="Search: name, id, area, kind (e.g. light.)" value="${esc((this._accFilter || {})[box] || "")}">
-      <div data-accbox="${esc(box)}">${this._accessRows(c, key)}</div></div>`;
+      <div data-accbox="${esc(box)}">${this._accessRows(box)}</div></div>`;
   }
 
-  _accessRows(c, key) {
-    const box = `${c.id}|${key}`, items = this._accItems?.[c.id], levels = c.settings[key] || {};
-    if (!Array.isArray(items)) return '<p class="hint">Loading…</p>';
-    const q = ((this._accFilter || {})[box] || "").toLowerCase();
-    const shown = items.filter((x) => !q || `${x.name} ${x.id} ${x.area} ${x.group}`.toLowerCase().includes(q));
-    const seg = (x) => ["hidden", "read", "full"].map((l) => `<button class="small ${(levels[x.id] || "hidden") === l ? "on" : ""}" data-acclevel="${l}" data-accid="${esc(x.id)}" data-acc="${esc(box)}">${{ hidden: "hidden", read: "read-only", full: "full" }[l]}</button>`).join("");
-    const counts = ["read", "full"].map((l) => Object.values(levels).filter((v) => v === l).length);
-    return `<div class="row" style="flex-wrap:wrap;gap:4px;margin:6px 0">${[["hidden", "Hide"], ["read", "Read-only"], ["full", "Full"]].map(([l, t]) => `<button class="small" data-accall="${l}" data-acc="${esc(box)}" title="Every entry shown">${t} all${q ? " shown" : ""}</button>`).join("")}
-        <span class="hint" style="margin-left:auto">${shown.length} shown · ${counts[0]} read-only · ${counts[1]} full</span></div>
-      <div class="acclist">${shown.slice(0, 400).map((x) => `<div class="accrow"><span class="t">${esc(x.name)}<div class="hint">${esc(x.id)}${x.area ? ` · ${esc(x.area)}` : ""}</div></span><span class="seg">${seg(x)}</span></div>`).join("")}
+  _accLevels(box) { // a sheet's levels: the domain's ("domain") or a card's setting ("card|key")
+    if (box === "domain") return this._sheet?.levels || {};
+    const [cardId, key] = box.split("|");
+    return this._card(cardId)?.settings[key] || {};
+  }
+
+  _accShown(box) {
+    const items = this._accItems?.[box === "domain" ? "domain" : box.split("|")[0]], q = ((this._accFilter || {})[box] || "").toLowerCase();
+    return Array.isArray(items) ? items.filter((x) => !q || `${x.name} ${x.id} ${x.area} ${x.group}`.toLowerCase().includes(q)) : null;
+  }
+
+  _accessRows(box) {
+    const shown = this._accShown(box), levels = this._accLevels(box);
+    if (!shown) return '<p class="hint">Loading…</p>';
+    const upto = (x) => ACC.slice(0, x.cap ? ACC.indexOf(x.cap) + 1 : ACC.length); // a card: never above the domain
+    const seg = (x) => upto(x).map((l) => `<button class="small ${(levels[x.id] || "hidden") === l ? "on" : ""}" data-acclevel="${l}" data-accid="${esc(x.id)}" data-acc="${esc(box)}">${l}</button>`).join("");
+    const counts = ACC.slice(1).map((l) => `${Object.values(levels).filter((v) => v === l).length} ${l}`).join(" · ");
+    const q = (this._accFilter || {})[box];
+    return `<div class="row" style="flex-wrap:wrap;gap:4px;margin:6px 0">${ACC.map((l) => `<button class="small" data-accall="${l}" data-acc="${esc(box)}" title="Every entry shown${box === "domain" ? "" : " (up to what the domain allows)"}">${l[0].toUpperCase() + l.slice(1)} all${q ? " shown" : ""}</button>`).join("")}
+        <span class="hint" style="margin-left:auto">${shown.length} shown · ${counts}</span></div>
+      ${shown.length ? "" : `<p class="hint">${box === "domain" ? "Nothing to show." : "Nothing here yet: the domain lets none of what this card needs exist (its sheet above)."}</p>`}
+      <div class="acclist">${shown.slice(0, 400).map((x) => `<div class="accrow"><span class="t">${esc(x.name)}<div class="hint">${esc(x.id)}${x.area ? ` · ${esc(x.area)}` : ""}${x.help ? ` · ${esc(x.help)}` : ""}${x.cap ? ` · the domain allows ${esc(x.cap)}` : ""}</div></span><span class="seg">${seg(x)}</span></div>`).join("")}
         ${shown.length > 400 ? `<p class="hint">${shown.length - 400} more: search to narrow it down.</p>` : ""}</div>`;
   }
 
   async _setAccess(box, ids, level) {
-    const [cardId, key] = box.split("|"), c = this._card(cardId), levels = { ...(c.settings[key] || {}) };
-    for (const id of ids) { if (level === "hidden") delete levels[id]; else levels[id] = level; }
-    await this.ws("aac/card/update", { card: cardId, settings: { [key]: levels } });
+    if (box === "domain") {
+      this._sheet = { ...this._sheet, levels: (await this.ws("aac/permissions/set", { levels: Object.fromEntries(ids.map((id) => [id, level])) })).levels };
+      this._accItems = { domain: this._accItems.domain }; // the cards' caps changed
+    } else {
+      const [cardId, key] = box.split("|"), levels = { ...this._accLevels(box) }, caps = Object.fromEntries((this._accItems[cardId] || []).map((x) => [x.id, x.cap]));
+      for (const id of ids) {
+        const l = ACC[Math.min(ACC.indexOf(level), ACC.indexOf(caps[id] || "full"))];
+        if (l === "hidden") delete levels[id]; else levels[id] = l;
+      }
+      await this.ws("aac/card/update", { card: cardId, settings: { [key]: levels } });
+    }
     await this._load(); this.render();
   }
 

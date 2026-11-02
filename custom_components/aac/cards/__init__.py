@@ -18,6 +18,7 @@ import types
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from ..const import LOGGER
+from ..permissions import Home, catalog, kinds_of, lower, rank
 
 if TYPE_CHECKING:
     from ..core import Domain
@@ -37,8 +38,9 @@ LOG = {"log": {"type": "select", "title": "What it writes in the log", "default"
                        "wrong is always written."},
        "log_at": {"type": "select", "title": "When", "default": "out", "fold": "Log",
                   "options": [["out", "what goes out"], ["in", "what comes in"], ["both", "both"]]}}
-NEEDS = {"read_log": {"type": "bool", "title": "May read AAC's log", "default": False, "permission": True,
-                      "help": "The log of this domain: what passed the cards' wires, what went wrong, what was changed."}}
+ACCESS = {"type": "access", "title": "May use", "default": {}, "permission": True,
+          "help": "What this card may reach outside AAC, each thing hidden, list (it may know it exists), read or full; "
+                  "never more than the domain allows (its Permissions page). Not set: hidden."}
 CATEGORIES = ["In and out", "Text", "Logic", "Models", "Data", "Home Assistant", "Audio", "Other"]
 
 
@@ -91,7 +93,7 @@ def register(cls: type[Card]) -> type[Card]:
                                for k, f in cls.settings_schema.items()}
     if (cls.functions or cls.dynamic_functions) and "functions" not in cls.settings_schema:  # every card with functions
         cls.settings_schema = {**cls.settings_schema, "functions": FUNCTIONS}
-    cls.settings_schema = {**cls.settings_schema, **{f"may_{n}": NEEDS[n] for n in sorted(cls.needs)}, **LOG}  # every card
+    cls.settings_schema = {**cls.settings_schema, **({"access": ACCESS} if cls.needs else {}), **LOG}  # every card
     CARD_TYPES[cls.type] = cls
     return cls
 
@@ -120,7 +122,8 @@ class Card:
     view: ClassVar[dict[str, Any] | None] = None  # a view inside the card in the grid ({"height": px}): view.js in its folder
     view_url: ClassVar[str | None] = None
     keeps_data: ClassVar[bool] = False
-    needs: ClassVar[set[str]] = set()  # what it asks the owner for (NEEDS): a permission setting may_<need>, off until allowed
+    needs: ClassVar[set[str]] = set()  # the kinds of things outside AAC it uses ("entities", or names of THINGS): its
+    # setting `access` says how far, within what the domain allows (docs/v2 page 6)
     version: ClassVar[str] = "0"  # its file's VERSION
 
     def __init__(self, domain: Domain, card_id: str, title: str, settings: dict[str, Any] | None) -> None:
@@ -143,11 +146,68 @@ class Card:
         return self.domain.log.write(level, text, card=self.id, what=what, context=whole, **extra)
 
     def read_log(self, **filters: Any) -> list[dict[str, Any]]:
-        """AAC's log of its domain (DomainLog.read's filters), when the owner allowed it ("read_log" in its needs); what
-        it wrote itself (card=its id) it may always read."""
-        if not self.settings.get("may_read_log") and filters.get("card") != self.id:
-            raise PermissionError(f"{self.name} may not read AAC's log (allow it on the Permissions page)")
+        """AAC's log of its domain (DomainLog.read's filters): needs log at read; what it wrote itself (card=its id) it
+        may always read."""
+        if filters.get("card") != self.id:
+            self.need("log", "read")
         return self.domain.log.read(**filters)
+
+    # ------------------------------------------------------------------ outside AAC (docs/v2 page 6)
+    def level(self, thing: str) -> str:
+        """How far it may reach a thing (an entity id or one of THINGS): the lower of what the domain allows and its
+        own `access`; hidden for a kind it does not need."""
+        if kinds_of(thing) not in self.needs:
+            return "hidden"
+        return lower(self.domain.allows(thing), (self.settings.get("access") or {}).get(thing))
+
+    def may(self, thing: str, level: str) -> bool:
+        """It may reach the thing at least this far."""
+        return rank(self.level(thing)) >= rank(level)
+
+    def need(self, thing: str, level: str) -> None:
+        """Raises PermissionError (with what to do) unless it may reach the thing this far."""
+        if not self.may(thing, level):
+            mine, domain = (self.settings.get("access") or {}).get(thing) or "hidden", self.domain.allows(thing)
+            raise PermissionError(f"{self.name} may not use {thing} at {level} (the domain allows {domain}, the card "
+                                  f"{mine}): the owner allows it on the Permissions page")
+
+    @property
+    def ha(self) -> Home:
+        """Home Assistant's entities, as far as it may reach them."""
+        return Home(self)
+
+    def web(self) -> Any:
+        """The web session (needs web at read)."""
+        self.need("web", "read")
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession  # noqa: PLC0415
+        return async_get_clientsession(self.hass)
+
+    async def notification(self, service: str, message: str, title: str) -> None:
+        """A notification through one of Home Assistant's notify services (needs notify at full)."""
+        self.need("notify", "full")
+        if not self.hass.services.has_service("notify", service):
+            raise ValueError(f"Home Assistant has no notify service {service}")
+        await self.hass.services.async_call("notify", service, {"message": message, "title": title}, blocking=True)
+
+    def files(self, write: bool = False) -> Path:
+        """The shared files folder <config>/aac/files (needs files at read; to write, at full)."""
+        self.need("files", "full" if write else "read")
+        return Path(self.hass.config.path("aac", "files"))
+
+    def listen(self, handler: Any) -> None:
+        """The satellites' microphones: handler(source_id, chunk, meta) gets their audio (needs audio at read)."""
+        self.need("audio", "read")
+        self.core.subscribe("audio", self, handler)
+
+    async def play(self, source_id: str, wav: bytes, text: str = "", queue: bool = False) -> bool:
+        """Play on a satellite's speaker (needs audio at full)."""
+        self.need("audio", "full")
+        return await self.core.audio.play(source_id, wav, text, queue=queue)
+
+    async def stop_playing(self, source_id: str) -> bool:
+        """Stop what a satellite plays (needs audio at full)."""
+        self.need("audio", "full")
+        return await self.core.audio.stop(source_id)
 
     def current(self) -> dict[str, Any]:
         """Its values now (see `values`)."""
@@ -299,7 +359,12 @@ class Card:
         return None
 
     async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
-        """A request from its own page (its .js): what the page needs that is not a function for models."""
+        """A request from its own page (its .js): what the page needs that is not a function for models. Every card
+        with needs: "access_items", the things its May use can be about (what the domain lets exist), each with the
+        domain's level as its cap."""
+        if action == "access_items" and self.needs:
+            return [{**x, "cap": cap} for x in catalog(self.hass, set(self.needs))
+                    if (cap := self.domain.allows(x["id"])) != "hidden"]
         raise ValueError(f"{self.type} has no page action {action}")
 
     @property

@@ -7,7 +7,7 @@ from typing import Any
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "2.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -19,6 +19,7 @@ class Notify(Card):
     category = "Home Assistant"
     help = ("Sends a notification through Home Assistant (your phone's notify service). In the line: the newest entry's "
             "text, then the context goes on.")
+    needs = {"notify"}
     settings_schema = {
         "service": {"type": "text", "title": "Notify service", "default": "notify.notify", "help": "e.g. notify.mobile_app_my_phone"},
         "in_line": {"type": "bool", "title": "In the line: send the newest entry's text", "default": True},
@@ -28,10 +29,11 @@ class Notify(Card):
                                                                   "title": {"type": "string", "help": "A title."}}}}
 
     async def _send(self, text: str, title: str | None = None) -> dict[str, Any]:
-        domain, _, service = str(self.settings.get("service") or "notify.notify").partition(".")
-        if not self.hass.services.has_service(domain, service):
-            return {"error": f"There is no service {domain}.{service}"}
-        await self.hass.services.async_call(domain, service, {"message": text, "title": title or self.settings.get("title") or "AAC"}, blocking=True)
+        service = str(self.settings.get("service") or "notify.notify").removeprefix("notify.")
+        try:
+            await self.notification(service, text, title or self.settings.get("title") or "AAC")
+        except (PermissionError, ValueError) as err:
+            return {"error": str(err)}
         return {"sent": True}
 
     async def handle(self, context: Context, port: str) -> None:

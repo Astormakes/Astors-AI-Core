@@ -14,7 +14,7 @@ from typing import Any
 
 from custom_components.aac.api import SAMPLE_RATE, Card, Context, new_id, pcm_to_wav, register
 
-VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 READ_EVERY = 2  # seconds between looks at what dotted wires provide
 QUIET = 1.5  # seconds without audio from a satellite: it stopped
@@ -41,7 +41,7 @@ class Log(Card):
                                  "help": "Each clip is saved as a WAV file (config/aac/data/<domain>/<card>/) and can be played on its page."},
                        "audio_kept": {"type": "number", "title": "Clips kept", "default": 50, "min": 1,
                                       "help": "Older clips' audio is deleted."}}
-    needs = {"read_log"}
+    needs = {"log"}
     functions = {"read": {"help": "AAC's log of this domain, newest last: what passed the cards' wires, what went wrong, "
                                   "what was changed.",
                           "args": {"search": {"type": "string", "help": "A word in the entry."},
@@ -177,7 +177,7 @@ class Log(Card):
 
     async def ui_call(self, action: str, args: dict[str, Any]) -> Any:
         if action == "entries":  # for its page: the whole log when it may read it, else what it wrote itself
-            allowed = bool(self.settings.get("may_read_log"))
+            allowed = self.may("log", "read")
             before = int(args["before"]) if args.get("before") else None
             found = self.read_log(card=None if allowed else self.id, before=before, last=SHOWN)
             names = {c.id: c.name for c in self.all_cards()}

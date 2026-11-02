@@ -424,7 +424,8 @@ async def test_a_storm_turns_the_wire_red(hass: HomeAssistant, mock_entry, hass_
     red = d.red[0]
     assert d._data()["red"] == d.red and d.summary()["red"] == d.red  # kept, and the panel shows it
 
-    editor = await d.add_card("builder", "Card editor")
+    await d.set_permissions({"setup": "full"})
+    editor = await d.add_card("builder", "Card editor", {"access": {"setup": "full"}})
     told = await editor.call("types", {})
     assert told["red_wires"] == [f"{red['from']} -> {red['to']}"] and isinstance(told["result"], list)
     assert "(red: blocked)" in str((await editor.call("cards", {}))["wires"])
@@ -530,7 +531,7 @@ async def test_domains_new_rename_delete(hass: HomeAssistant, mock_entry, hass_s
     assert core.domain.id == "home" and core.data["active"] == "home" and "chat" in core.domain.cards
     assert "aac2.domain.home" in hass_storage and f"aac2.domain.{first}" not in hass_storage
     perms = [k for c in core.domain.cards.values() for k, f in c.settings_schema.items() if f.get("permission")]
-    assert {"functions", "levels"} <= set(perms) and "default" not in perms
+    assert {"functions", "access"} <= set(perms) and "default" not in perms
 
 
 async def test_a_model_that_does_not_answer_is_flagged_until_it_does(hass: HomeAssistant, mock_entry):
@@ -558,18 +559,20 @@ async def test_for_models_and_short_card_lists(hass: HomeAssistant, mock_entry, 
     d = core.domain
     await d.update_card("lists", settings={"functions": {"read_list": {"help": "Look here before saying you do not know."},
                                                          "add_items": {"name": "add_to_list"}, "delete_list": {"on": False}}})
-    await d.update_card("home", settings={"levels": {f"light.l{i}": "read" for i in range(40)}})
+    await d.update_card("home", settings={"access": {f"light.l{i}": "read" for i in range(40)}})
     asked = model_answers(aioclient_mock, reply("Fine."))
     await d.cards["chat"].write("hi")
     tools = {t["function"]["name"]: t["function"]["description"] for t in asked[0]["tools"]}
     assert tools["read_list"] == "Look here before saying you do not know." and "add_to_list" in tools
     assert "add_items" not in tools and "delete_list" not in tools and asked[0]["messages"][0]["content"] == "Be kind."
-    editor = await d.add_card("builder", "Card editor")
+    await d.set_permissions({"setup": "read"})
+    editor = await d.add_card("builder", "Card editor", {"access": {"setup": "full"}})
     listed = await editor.call("cards", {})
     home = next(c for c in listed["cards"] if c["id"] == "home")
-    assert home["settings"]["levels"] == "(40 entries: see card)" and "chat.said -> charter.in" in listed["wires"]
+    assert home["settings"]["access"] == "(40 entries: see card)" and "chat.said -> charter.in" in listed["wires"]
     assert listed["count"] == len(d.cards)
-    assert len((await editor.call("card", {"card": "home"}))["settings"]["levels"]) == 40
+    assert len((await editor.call("card", {"card": "home"}))["settings"]["access"]) == 40
+    assert "may not change the setup" in (await editor.call("wire", {"from": "chat.said", "to": "model.in"}))["error"]
 
 
 async def test_a_card_file_with_a_new_version_loads_while_aac_runs(hass: HomeAssistant, mock_entry):

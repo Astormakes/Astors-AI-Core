@@ -27,6 +27,7 @@ from .const import LOGGER, SIGNAL
 from .flow import Flow
 from .log import DomainLog
 from .models import ModelPool
+from .permissions import LEVELS
 
 UNDO_STEPS = 20
 SLOTS = ("1", "2", "3")
@@ -97,6 +98,7 @@ class Domain:
         self.slots: dict[str, Any] = {}
         self.user_tags: list[str] = []
         self.red: list[dict[str, Any]] = []  # blocked wires (a storm went through them): {from, to, since, count}
+        self.permissions: dict[str, str] = {}  # its sheet: thing → level, the owner's alone (docs/v2 page 6); not set: hidden
         self.flow = Flow(self)
         self.log = DomainLog(self)
         self._specs: dict[str, dict[str, Any]] = {}
@@ -115,6 +117,7 @@ class Domain:
         self.slots = data.get("slots", {})
         self.user_tags = data.get("user_tags", [])
         self.red = data.get("red", [])
+        self.permissions = data.get("permissions", {})
         self.cards = {}
         for card_id, spec in list(self._specs.items()):  # a card made here may add another
             await self._make(card_id, spec)
@@ -164,7 +167,29 @@ class Domain:
     def _data(self) -> dict[str, Any]:
         return {"cards": self._specs, "wires": self.wires, "positions": self.positions,
                 "undo": packed(self.undo, {"cards": self._specs, "wires": self.wires}), "slots": self.slots, "user_tags": self.user_tags,
-                "red": self.red}
+                "red": self.red, "permissions": self.permissions}
+
+    # ------------------------------------------------------------------ permissions (docs/v2 page 6)
+    def allows(self, thing: str) -> str:
+        """How far this domain lets its cards reach a thing (its sheet; not on it: hidden)."""
+        return self.permissions.get(thing) or "hidden"
+
+    async def set_permissions(self, levels: dict[str, str]) -> None:
+        """The owner changes the sheet (hidden takes a thing off it). Not part of the setup: Undo, the slots and a file
+        loaded into the domain leave it as it is. Every card is made again with it."""
+        for thing, level in levels.items():
+            if level not in LEVELS:
+                raise ValueError(f"no level {level}")
+            if level == "hidden":
+                self.permissions.pop(thing, None)
+            else:
+                self.permissions[thing] = level
+        self.log.write("info", f"Permissions changed: {', '.join(f'{t} {l}' for t, l in levels.items())}"[:500], what="permissions")
+        self.save()
+        for card_id, spec in list(self._specs.items()):  # what a card set up at its start (listeners) follows the sheet
+            if self.cards.get(card_id) is not None and self.cards[card_id].needs:
+                await self._make(card_id, spec)
+        self.core.notify("setup", domain=self.id)
 
     # ------------------------------------------------------------------ red wires (a storm stop)
     def is_red(self, a: str, b: str) -> bool:
@@ -737,6 +762,7 @@ class Core:
         await src.log.flush()
         dst = Domain(self, new_id, name)
         dst._specs, dst.wires, dst.positions = deepcopy(src._specs), deepcopy(src.wires), deepcopy(src.positions)  # noqa: SLF001
+        dst.permissions = deepcopy(src.permissions)  # your own copy: it may reach what the original may
         await dst.save_now()
         for card_id in src._specs:  # noqa: SLF001
             if (data := await src.load_card_data(card_id)) is not None:

@@ -8,12 +8,11 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.core import Event, callback
-from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "2.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 
@@ -86,6 +85,7 @@ class HaEvent(AutoCard):
     type = "ha_event"
     title = "HA event"
     help = "Wakes the chain when an entity changes (e.g. the door opens), with an instruction; a cooldown keeps it calm."
+    needs = {"entities"}  # the entities it watches, at read
     settings_schema = {
         "watches": {"type": "watches", "title": "Watches", "default": [],
                     "help": "Each: a name, an entity, the state that counts (empty: any change), what to do, a cooldown (s)."},
@@ -95,7 +95,7 @@ class HaEvent(AutoCard):
         entities = sorted({w["entity_id"] for w in self.settings.get("watches") or [] if w.get("entity_id")})
         self._last: dict[str, datetime] = {}
         if entities:
-            self._unsubs.append(async_track_state_change_event(self.hass, entities, self._changed))
+            self._unsubs.append(self.ha.watch(entities, self._changed))
 
     @callback
     def _changed(self, event: Event) -> None:

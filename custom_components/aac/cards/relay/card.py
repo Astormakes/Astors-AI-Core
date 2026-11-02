@@ -17,7 +17,7 @@ from custom_components.aac.api import Card, Context, new_id, register
 sys.modules.pop(f"{__name__}.script", None)  # a newer card file brings a newer script.py
 from .script import DEFAULT, OWN, REFERENCE, WAIT, Run, Script, check, joined, reference_text  # noqa: E402
 
-VERSION = "4.1.1"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
+VERSION = "4.2.0"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
 
 PRINTED = 200  # print entries it keeps
 PRINTED_FOR = 1800  # seconds they are kept
@@ -38,6 +38,7 @@ class Relay(Card):
     ports_help = {"in": "what arrives here runs the script (input(\"in\")); the script names its inputs",
                   "out": "what the script sends with output(\"out\", …); the script names its outputs",
                   "*": "an input or output the script names: input(\"x\"), input(\"x\", read=True) (dotted), output(\"x\", …)"}
+    needs = {"entities"}  # states() and state_attr() in its script, at read
     settings_schema = {
         "script": {"type": "element", "element": "aac-relay-script", "file": "editor.js", "title": "Script", "default": DEFAULT,
                    "help": "Python, checked before it runs. The ? button lists everything with examples. For models:\n"

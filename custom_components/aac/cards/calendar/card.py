@@ -11,7 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, parse_when, register
 
-VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -25,6 +25,7 @@ class Calendar(Card):
             "Assistant shows the same. A model reads and changes it through its functions.")
     keeps_data = True
     ui = True
+    needs = {"entities"}  # the Home Assistant calendars on its page
     settings_schema = {"ha_calendars": {"type": "list", "title": "Home Assistant calendars on its page", "default": [],
                                         "help": "Entity ids, comma separated (e.g. calendar.family). Its page shows them too; "
                                                 "they stay in Home Assistant."},
@@ -109,13 +110,12 @@ class Calendar(Card):
                   "notes": e.get("description", "")} for e in self.core.calendar.entries(start, end)]
         for entity in [x for x in self.settings.get("ha_calendars") or [] if x and x != "calendar.aac_calendar"]:
             try:
-                got = await self.hass.services.async_call("calendar", "get_events", {"entity_id": entity, "start_date_time": start,
-                                                          "end_date_time": end}, blocking=True, return_response=True)
-            except Exception as err:  # noqa: BLE001 - a missing calendar must not hide the others
+                events = await self.ha.calendar_events(entity, start.isoformat(), end.isoformat())
+            except Exception as err:  # noqa: BLE001 - a missing (or not allowed) calendar must not hide the others
                 found.append({"name": f"{entity}: {err}", "start": start.isoformat(), "all_day": True, "source": "error"})
                 continue
-            name = (self.hass.states.get(entity).attributes.get("friendly_name") if self.hass.states.get(entity) else None) or entity
-            for e in (got or {}).get(entity, {}).get("events", []):
+            name = (state.attributes.get("friendly_name") if (state := self.ha.state(entity)) else None) or entity
+            for e in events:
                 found.append({"name": e.get("summary", ""), "start": e["start"], "end": e.get("end"), "all_day": len(e["start"]) == 10,
                               "source": "ha", "calendar": name, "notes": e.get("location") or e.get("description") or ""})
         return {"entries": sorted(found, key=lambda e: e["start"]), "view": self.settings.get("view") or "week",

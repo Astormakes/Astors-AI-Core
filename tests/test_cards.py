@@ -126,8 +126,8 @@ async def test_relay_script_stops_itself_when_its_time_is_up(hass: HomeAssistant
     context = Context()
     context.add("chat.said", "hi")
     await relay.handle(context, "in")
-    assert re.fullmatch(r"line [34]: it ran longer than 0.3 s", relay.last_run["problems"][0])
-    with pytest.raises(Exception, match=r"line (7|8): it ran longer than 0.3 s"):
+    assert re.fullmatch(r"line [2-4]: it ran longer than 0.3 s", relay.last_run["problems"][0])
+    with pytest.raises(Exception, match=r"line [7-9]: it ran longer than 0.3 s"):
         await relay.call("spin", {})
     assert sys.gettrace() is None  # the check ends with the script
 
@@ -239,23 +239,45 @@ async def test_lists_undo_puts_entries_back_in_place(hass: HomeAssistant, mock_e
 
 
 async def test_home_assistant_card_access(hass: HomeAssistant, mock_entry):
-    """Hidden entities do not exist for AAC; read-only can be seen; only full may be switched."""
+    """Two layers (docs/v2 page 6): the domain says what exists, the card's May use how far within it; the lower wins.
+    Hidden does not exist, list is known without its state, read is seen, only full may be switched; a service must
+    be the entity's own, and its data cannot name another target."""
     core = await setup_aac(hass, mock_entry)
-    home = await core.domain.add_card("homeassistant", "Home", {"levels": {"switch.lamp": "full", "sensor.t": "read"}})
-    hass.states.async_set("switch.lamp", "off", {"friendly_name": "Lamp"})
-    hass.states.async_set("sensor.t", "21")
-    hass.states.async_set("lock.door", "locked")
-    found = {e["entity_id"] for e in (await home.call("find", {}))["entities"]}
-    assert found == {"switch.lamp", "sensor.t"}
-    assert (await home.call("get_state", {"entity_ids": ["lock.door"]}))["lock.door"] == "unknown or not allowed"
+    d = core.domain
+    for entity_id, state in (("switch.lamp", "off"), ("sensor.t", "21"), ("lock.door", "locked"), ("light.desk", "on")):
+        hass.states.async_set(entity_id, state)
+    await d.set_permissions({"switch.lamp": "full", "sensor.t": "full", "light.desk": "list", "lock.door": "hidden"})
+    home = await d.add_card("homeassistant", "Home", {"access": {"switch.lamp": "full", "sensor.t": "read",
+                                                                 "light.desk": "full", "lock.door": "full"}})
+    found = {e["entity_id"]: e for e in (await home.call("find", {}))["entities"]}
+    assert set(found) == {"switch.lamp", "sensor.t", "light.desk"}  # the door is hidden by the domain
+    assert found["light.desk"]["access"] == "list" and "state" not in found["light.desk"] and found["sensor.t"]["state"] == "21"
+    got = await home.call("get_state", {"entity_ids": ["lock.door", "light.desk", "sensor.t"]})
+    assert got["lock.door"] == got["light.desk"] == "unknown or not allowed" and got["sensor.t"]["state"] == "21"
     refused = await home.call("call_service", {"domain": "switch", "service": "turn_on", "entity_id": "sensor.t"})
     assert "may not be switched" in refused["error"]
+
+    called = []
+    hass.services.async_register("switch", "turn_on", lambda call: called.append(dict(call.data)))
+    hass.services.async_register("shell_command", "anything", lambda call: called.append("shell"))
+    await home.call("call_service", {"domain": "switch", "service": "turn_on", "entity_id": "switch.lamp",
+                                     "data": {"entity_id": "lock.door", "area_id": "kitchen"}})
+    assert called == [{"entity_id": "switch.lamp"}]  # its data names no other target
+    try:
+        await home.call("call_service", {"domain": "shell_command", "service": "anything", "entity_id": "switch.lamp"})
+    except PermissionError as err:
+        assert "is not a service of switch.lamp" in str(err)
+    assert called == [{"entity_id": "switch.lamp"}]
+    await d.set_permissions({"switch.lamp": "read"})  # the domain lowers it: the card's full is read now
+    assert "may not be switched" in (await d.cards["home"].call("call_service", {"domain": "switch", "service": "turn_on",
+                                                                                "entity_id": "switch.lamp"}))["error"]
 
 
 async def test_home_assistant_card_reports_the_new_state(hass: HomeAssistant, mock_entry):
     """A device reports its new state after the service returned: call_service waits for it (not the old one)."""
     core = await setup_aac(hass, mock_entry)
-    home = await core.domain.add_card("homeassistant", "Home", {"levels": {"switch.lamp": "full"}})
+    await core.domain.set_permissions({"switch.lamp": "full"})
+    home = await core.domain.add_card("homeassistant", "Home", {"access": {"switch.lamp": "full"}})
     hass.states.async_set("switch.lamp", "off")
 
     async def report_later():

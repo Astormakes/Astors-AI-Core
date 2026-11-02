@@ -11,7 +11,7 @@ from typing import Any
 
 from custom_components.aac.api import SAMPLE_RATE, Card, pcm_to_wav, register
 
-VERSION = "3.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.1.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 
 def _test_sound() -> bytes:
@@ -42,6 +42,7 @@ class Microphone(Card):
     inputs: dict[str, str] = {}
     outputs = {"out": "audio"}
     ports_help = {"out": "the satellite's live audio (a stream; the wire swells with the loudness)"}
+    needs = {"audio"}  # the satellites' microphones, at read
     settings_schema = {"source": {"type": "source", "title": "Listens to", "default": "any",
                                   "help": "One satellite (each its own chain), or any of them."},
                        "speaking": {"type": "select", "title": "While AAC speaks there", "default": "mute",
@@ -72,7 +73,10 @@ class Microphone(Card):
         self._other = bytearray()  # another satellite's speaker, as it came, until the microphone takes it
 
     async def start(self) -> None:
-        self.core.subscribe("audio", self, self.hear)
+        try:
+            self.listen(self.hear)
+        except PermissionError as err:  # hears nothing until the owner allows it
+            self.log(str(err), "warning", what="permission")
 
     def hear(self, chunk: bytes, meta: dict[str, Any]) -> None:
         """Audio from the core's "audio" channel (only the satellite it listens to; muted while AAC speaks there unless
