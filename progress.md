@@ -7,9 +7,11 @@ The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "
 ## Current state (2026-11-02) – 3.0.2 on `main` (v3 merged, not pushed), live on the owner's HA
 
 **Where to pick up** (owner, 2026-11-02: "v3 was a success"):
-- **Next session: safety as one design, items 19, 20 and 21** (code injection, permissions as in v0/v1, card
-  sandboxing): talk it through as one page like page 5 first. The card interface written down in `api.py` is what a
-  sandbox wraps.
+- **Safety (items 19, 20, 21, 47) is under way: docs/v2 page 6** (settled points, open points, build order). Done:
+  1 (Relay 4.1.1: a script stops itself when its time is up), 2 (3.1.0: permissions in two layers, the domain's sheet
+  on top). Next: 3 (requests, `ask`), 4 (drafts: switch, keep or roll back; auto / ask), 5 (every card on its own).
+  Open with the owner: process instead of thread (a thread cannot be killed), and a wall needs seccomp (HA OS has no
+  Landlock).
 - **Postponed until the owner is home (voice):** test the voice settings and the day chat; put the wire
   `phrase_joiner.out → follow_up_turn.in` back; suggested: the Follow-up turn skips what AAC itself said
   (`heard.data.get("aac_spoke")`) and names today's chat like the Wake word. Offered, no answer yet: tag matching
