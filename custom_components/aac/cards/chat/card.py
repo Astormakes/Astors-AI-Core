@@ -20,7 +20,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Client, Context, matches, new_id, register
 
-VERSION = "3.1.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.1.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds what you write may take to be answered
 NOT_WIRED = "Nothing is wired to this chat's output 'said': what you write goes nowhere."
@@ -59,7 +59,7 @@ class Chat(Card):
         "shown": {"type": "text", "title": "Shown", "default": "*.said, *.post, *.error",
                   "help": "The entries the chat shows (tags, comma separated; * stands for anything). The Context view "
                           "shows every entry."},
-        "as_you": {"type": "text", "title": "Shown as you", "default": "chat.said, speech_to_text.said, phrase_joiner.said",
+        "as_you": {"type": "text", "title": "Shown as you", "default": "chat.said, speech_to_text.said, audio_clipper.said",
                    "help": "Of those, the ones on your side (what you typed or said); the others on the other side."},
         "ha_agent": {"type": "bool", "title": "Takes Home Assistant's conversations", "default": False,
                      "help": "When AAC is the agent in an HA Assist pipeline (the HA app, voice devices, automations), each "

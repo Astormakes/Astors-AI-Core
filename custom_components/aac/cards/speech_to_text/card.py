@@ -7,7 +7,7 @@ from typing import Any
 
 from custom_components.aac.api import SAMPLE_RATE, Card, Context, register, resample
 
-VERSION = "3.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.0.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -41,7 +41,7 @@ class SpeechToText(Card):
         text = ((heard or {}).get("text") or "").strip()
         if not text:
             return
-        if not clip.get("utterance"):  # a phrase's text is not the turn's yet (the Phrase joiner says when it is)
+        if not clip.get("utterance"):  # a phrase's text is not the turn's yet (the Audio clipper says when it is)
             self.core.audio.mark(clip.get("source"), "text ready")
         context = Context()
         context.add(self.tag("said"), text, mic=clip.get("source"), mic_name=clip.get("name"),

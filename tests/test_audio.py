@@ -4,6 +4,7 @@ import asyncio
 from array import array
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from homeassistant.core import HomeAssistant
 
 from custom_components.aac.audio import EnergyVad, Segmenter
@@ -265,9 +266,11 @@ def test_phrases_inside_the_speech():
     assert len(whole.feed(audio((SILENCE, 0.2), (LOUD, 0.6), (SILENCE, 0.3), (LOUD, 0.6), (SILENCE, 0.8)))) == 1
 
 
-async def test_phrase_joiner_and_its_wiring(hass, mock_entry):
-    """Setting a phrase pause adds a Phrase joiner after Speech to text (it takes over its wires); the joiner sends the
-    sentence once all its phrases are heard, in order."""
+@pytest.mark.fresh  # the default voice chain's wiring (an older install keeps its own)
+async def test_the_audio_clipper_puts_its_phrases_together(hass, mock_entry):
+    """One card for both halves: the voice chain wires Speech to text's lines back into the Audio clipper and what was
+    said leaves there (the Stop word hears Speech to text at once); a whole line goes straight on, phrases wait for the
+    sentence's end and leave as one line, in order."""
     from custom_components.aac.context import Context
     from custom_components.aac.defaults import async_voice_chain
 
@@ -276,53 +279,27 @@ async def test_phrase_joiner_and_its_wiring(hass, mock_entry):
     core.data["voice_chain"] = False
     await async_voice_chain(core)
     d = core.domain
-    wake, ears = dict(d.positions["wake_word"]), dict(d.positions["speech_to_text"])
-    await allow(d, "audio_clipper", {"setup": "full"})  # it builds through the setup interface
-    await d.update_card("audio_clipper", settings={"phrase": 250})
-    await hass.async_block_till_done()
-    joiner = next(c for c in d.cards.values() if c.type == "phrase_joiner")
-    assert d.positions["wake_word"] == wake and d.positions[joiner.id] == {"x": ears["x"], "y": ears["y"] + 160}  # below, nothing moved
-    assert {"from": "audio_clipper.cuts", "to": f"{joiner.id}.cuts"} in d.wires and {"from": "speech_to_text.out", "to": f"{joiner.id}.lines"} in d.wires
-    assert {"from": f"{joiner.id}.out", "to": "wake_word.in"} in d.wires and {"from": "speech_to_text.out", "to": "wake_word.in"} not in d.wires
-    d.set_wires([w for w in d.wires if w["from"] != "audio_clipper.cuts"])  # its cuts wire lost (a port renamed): no second joiner
-    await d.update_card("audio_clipper", settings={"pause": 700})
-    await hass.async_block_till_done()
-    assert [c.id for c in d.cards.values() if c.type == "phrase_joiner"] == [joiner.id]
-    assert {"from": "audio_clipper.cuts", "to": f"{joiner.id}.cuts"} in d.wires
+    for wire in (("speech_to_text.out", "audio_clipper.lines"), ("audio_clipper.said", "wake_word.in"),
+                 ("audio_clipper.said", "follow_up.in"), ("speech_to_text.out", "stop_word.in")):
+        assert {"from": wire[0], "to": wire[1]} in d.wires
+    clipper = await d.update_card("audio_clipper", settings={"phrase": 250})
     sent = []
-    with patch.object(d.flow, "send", AsyncMock(side_effect=lambda card, ctx, port: sent.append(ctx))):
+    with patch.object(d.flow, "send", AsyncMock(side_effect=lambda card, ctx, port: sent.append((port, ctx)))):
+        line = Context()
+        line.add("speech_to_text.said", "a whole line", mic="pc")
+        await clipper.handle(line, "lines")
+        assert [(p, c.get("*.said")["text"]) for p, c in sent] == [("said", "a whole line")]  # straight on
+        sent.clear()
         for part, text in ((2, "what time is it?"), (1, "computer,")):  # out of order
             c = Context()
             c.add("speech_to_text.said", text, mic="pc", utterance="u1", part=part, seconds=0.6)
-            await joiner.handle(c, "lines")
+            await clipper.handle(c, "lines")
         assert sent == []
-        for data in ({"cut": "phrase", "utterance": "u1", "part": 2}, {"cut": "end", "utterance": "u1", "parts": 2}):
-            c = Context()
-            c.add(f"audio_clipper.{data['cut']}", "", **data)
-            await joiner.handle(c, "cuts")
-            assert (sent == []) == (data["cut"] == "phrase")  # only the end counts
-    (whole,) = sent
-    assert whole.get("*.said")["text"] == "computer, what time is it?" and whole.get("*.said")["data"]["mic"] == "pc"
-
-
-async def test_undo_with_phrases_makes_every_card(hass, mock_entry):
-    """Undo (or a start) makes the cards one after another; an Audio clipper with a phrase pause must not add a second
-    joiner because its joiner is not made yet (it read the running cards, and the loop broke: 2026-10-24)."""
-    from custom_components.aac.defaults import async_voice_chain
-
-    core = await setup_aac(hass, mock_entry)
-    core.audio.settings["known"] = [{"id": "pc", "name": "PC"}]
-    core.data["voice_chain"] = False
-    await async_voice_chain(core)
-    d = core.domain
-    await d.update_card("audio_clipper", settings={"phrase": 300})
-    await hass.async_block_till_done()
-    joiners = [c.id for c in d.cards.values() if c.type == "phrase_joiner"]
-    await d.update_card("follow_up", settings={"script": ""})  # one more change, then Undo
-    assert await d.undo_last()
-    await hass.async_block_till_done()
-    assert set(d.export()["cards"]) == set(d.cards)  # every card made
-    assert [c.id for c in d.cards.values() if c.type == "phrase_joiner"] == joiners and d.cards["follow_up"].settings["script"]
+        await clipper._ended("u1", 2)  # noqa: SLF001 - its own cut: the sentence is done, with two parts
+    ((port, whole),) = sent
+    said = whole.get("*.said")
+    assert port == "said" and said["tag"] == "audio_clipper.said" and said["text"] == "computer, what time is it?"
+    assert said["data"]["mic"] == "pc" and said["data"]["phrases"] == 2
 
 
 async def test_microphone_mutes_or_keeps_listening_while_aac_speaks(hass, mock_entry):

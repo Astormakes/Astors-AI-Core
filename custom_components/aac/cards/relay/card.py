@@ -15,9 +15,9 @@ from typing import Any
 from custom_components.aac.api import Card, Context, new_id, register
 
 sys.modules.pop(f"{__name__}.script", None)  # a newer card file brings a newer script.py
-from .script import DEFAULT, OWN, REFERENCE, WAIT, Run, Script, check, joined, reference_text  # noqa: E402
+from .script import DEFAULT, OWN, REFERENCE, TOTAL, Run, Script, check, joined, reference_text  # noqa: E402
 
-VERSION = "4.2.0"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
+VERSION = "4.2.2"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
 
 PRINTED = 200  # print entries it keeps
 PRINTED_FOR = 1800  # seconds they are kept
@@ -101,9 +101,9 @@ class Relay(Card):
         audio = self.core.audio.spoken() if "audio" in script.names else None
         run = Run(self, context, port, reads, self.hass.loop, audio)
         try:
-            await asyncio.wait_for(self.hass.async_add_executor_job(run.go, script), WAIT + 2)
+            await asyncio.wait_for(self.hass.async_add_executor_job(run.go, script), TOTAL)
         except TimeoutError:  # stuck inside one line (the script stops itself on its next line); the turn goes on
-            run.problems.append(f"the script ran longer than {WAIT} s")
+            run.problems.append(f"the script ran longer than {TOTAL} s in all")
         self._after(run, context.streaming)
         if run.stop_now:
             await self.stop_all()
@@ -164,9 +164,9 @@ class Relay(Card):
         run = Run(self, None, None, {}, self.hass.loop, self.core.audio.spoken() if "audio" in script.names else None,
                   calling=context or Context())
         try:
-            result = await asyncio.wait_for(self.hass.async_add_executor_job(run.answer, script, function, args), WAIT + 2)
+            result = await asyncio.wait_for(self.hass.async_add_executor_job(run.answer, script, function, args), TOTAL)
         except TimeoutError as err:
-            raise ValueError(f"{function} ran longer than {WAIT} s") from err
+            raise ValueError(f"{function} ran longer than {TOTAL} s in all") from err
         finally:
             self._after(run, False)
             if run.stop_now:

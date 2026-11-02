@@ -2,7 +2,8 @@
 context arrives. `input("in")` is what arrived, `output("out", what)` sends; nothing leaves otherwise. A `def` is a
 function the Relay offers: a call runs only that def. Only the parts of Python listed in ALLOWED run (no imports, no
 while, nothing starting with `_`); the code runs in a worker thread, a card's function is called back on HA's loop. A
-script stops itself when its time is up (WAIT): a thread cannot be stopped from outside, so it checks on every line."""
+script stops itself when its own time is up (WAIT; waiting for the cards it calls does not count): a thread cannot be
+stopped from outside, so it checks on every line."""
 
 from __future__ import annotations
 
@@ -37,7 +38,9 @@ NOT_ALLOWED = {ast.While: "while (use for)", ast.Import: "import", ast.ImportFro
 HIDDEN_ATTRS = {"format", "format_map", "mro"}  # str.format can reach inside objects
 HIDDEN_PREFIX = ("_", "gi_", "f_", "cr_", "ag_", "tb_", "co_")
 MAX_RANGE = 10000
-WAIT = 20  # seconds a script (or one of its defs) may run
+WAIT = 3  # seconds a script's own lines (or one of its defs') may run; waiting for the cards it calls does not count
+CALL_WAIT = 60  # seconds one card call of a script may take
+TOTAL = 120  # seconds a run may take in all, waiting included (then the turn goes on without it)
 INNER_IMPORTS = {"time", "_strptime", "datetime", "calendar", "locale", "re", "_locale"}
 PORT = re.compile(r"[a-z0-9_]+")
 BUILTINS = ("len", "str", "int", "float", "bool", "round", "min", "max", "abs", "sorted", "reversed", "any", "all",
@@ -71,7 +74,7 @@ REFERENCE = [
     ("Python basics", "None", "Nothing. if x: is False for None, an empty text and an empty list.", ""),
     ("The context", "what a context is", "A list of entries in order. First always context.system (the system prompt), "
      "second context.tools (what a model may call), then the conversation. Every entry has a tag: the card that wrote "
-     "it, a dot, a name (chat.said: what was typed in the chat card; phrase_joiner.said: a heard line; model.said: a "
+     "it, a dot, a name (chat.said: what was typed in the chat card; audio_clipper.said: a heard line; model.said: a "
      "model's answer). Everything anyone says is .said. The ? panel lists this domain's tags.", ""),
     ("The context", 'context.get("chat.said")', "The newest entry with that tag, or None when there is none.",
      'said = context.get("chat.said")\nif said:\n    print(said.text)'),
@@ -96,7 +99,7 @@ REFERENCE = [
     ("The context", 'context.set("charter", text)', "Writes the newest entry with that tag where it is; when there is "
      "none, a new one, as add makes it (at= the same). The system prompt: context.set(\"context.system\", text).",
      'context.set("context.system", """You are AAC, a helpful assistant.""")'),
-    ("The context", 'context.remove("phrase_joiner.said")', "Takes out every entry with that tag. at=\"first\" / "
+    ("The context", 'context.remove("audio_clipper.said")', "Takes out every entry with that tag. at=\"first\" / "
      "at=\"last\": only the oldest / newest. context.system and context.tools always stay: context.remove(\"*\") empties "
      "the conversation.", ""),
     ("The context", 'context.set("chat.id.2026-11-02", "")', "Names a chat: a Chat keeps the context in the chat with "
@@ -549,6 +552,7 @@ class Run:
         self.logged: list[str] = []
         self.problems: list[str] = []
         self.stop_now = False  # stop(): every card of the domain stops once the script is done
+        self.waited = 0.0  # seconds spent waiting for the cards it called
 
     def call(self, card: Any, name: str, args: dict[str, Any]) -> Any:
         if not self.relay.reaches(card.id):
@@ -556,7 +560,11 @@ class Run:
         if self.arrived is not None and self.arrived.streaming:
             raise ScriptError(f"{card.id}.{name}(): a card call waits for the finished context (put it under if not context.streaming:)")
         context = self.calling.copy() if self.calling is not None else self.arrived if self.arrived is not None else Context()
-        return asyncio.run_coroutine_threadsafe(self.relay.travel(card, name, args, context), self.loop).result(60)
+        began = time.monotonic()
+        try:
+            return asyncio.run_coroutine_threadsafe(self.relay.travel(card, name, args, context), self.loop).result(CALL_WAIT)
+        finally:
+            self.waited += time.monotonic() - began  # not the script's own time
 
     def _what(self, what: Any) -> Context:
         """What output() sends: a context as it is; anything else as this Relay's said in the context that arrived."""
@@ -629,7 +637,7 @@ class Run:
     def go(self, script: Script) -> None:
         """Run the script, top to bottom."""
         try:
-            with timed():
+            with timed(self):
                 exec(script.code, self.names())  # noqa: S102 - checked by check(): no imports, nothing starting with _
         except Exception as err:  # noqa: BLE001
             self.problems.append(_where(err))
@@ -639,22 +647,25 @@ class Run:
         names = self.names()
         exec(script.defs, names)  # noqa: S102
         try:
-            with timed():
+            with timed(self):
                 return names[function](**args)
         except Exception as err:
             raise ScriptError(_where(err)) from err
 
 
-class timed:  # noqa: N801 - used as `with timed():`
-    """While the script's own lines run in this thread, each one first checks the time: past WAIT the script stops
-    there with a mistake on that line (the lines of AAC's helpers it calls are not checked, only counted as time)."""
+class timed:  # noqa: N801 - used as `with timed(run):`
+    """While the script's own lines run in this thread, each one first checks the time: past WAIT of its own (the time
+    it waited for the cards it called taken off) the script stops there with a mistake on that line."""
+
+    def __init__(self, run: Run) -> None:
+        self.run = run
 
     def __enter__(self) -> None:
-        until = time.monotonic() + WAIT
+        began, run = time.monotonic(), self.run
 
         def line(frame: Any, event: str, arg: Any) -> Any:
-            if event == "line" and time.monotonic() > until:
-                raise ScriptError(f"it ran longer than {WAIT} s")
+            if event == "line" and time.monotonic() - began - run.waited > WAIT:
+                raise ScriptError(f"it ran longer than {WAIT:g} s")
             return line
 
         sys.settrace(lambda frame, event, arg: line if frame.f_code.co_filename == "<script>" else None)

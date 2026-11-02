@@ -237,9 +237,9 @@ Logs (filters, Save as text, Clear); a wire's monitor shows the entries of its o
 port)`, `read(port)`, `held(port)`, `call`, `stop`, `stop_all()`, `tools()`, `wired(port)`, `wired_into(port)`,
 `reaches(card_id, ports=None)`, `all_cards()` (other cards, used only through what they offer: `call`, `current()`,
 `held()`), `stream_out`, `clip_out`, `live(context, text, thinking)`, `show(data)`, its data and folder, the log, and
-the core's services above. Cards that build (the Card editor; an Audio clipper adding its Phrase joiner) also use the
-setup through `self.domain`: `add_card`, `update_card`, `remove_card`, `set_wires`, `wires`, `export`,
-`template_values()`.
+the core's services above, outside AAC only as far as its permissions reach (the checked helpers above). Cards that
+build (the Card editor) use the setup through the same interface: `read_setup`, `add_card`, `change_card`,
+`remove_card`, `set_wires`, `unblock`.
 
 **A card's id is its name** (lowercase, other characters `_`: "Speech to text" is `speech_to_text`; a second card of
 that name `speech_to_text_2`), so a card is called the same everywhere. Renamed (by the owner, the Card editor, Undo,

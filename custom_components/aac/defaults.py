@@ -78,17 +78,17 @@ async def build_default(domain) -> None:
 VOICE_RULES = ("You are heard and answer aloud: one or two short sentences, plain words, no lists. If you need to look "
                "something up or do something, call the tool first, then answer.")
 STOP_WORD = """context = input("in")
-heard = context.get("EARS.said")
+heard = context.get("*.said")
 if heard and "stop" in heard.text.lower():
     stop()
 """
 WAKE_WORD = """context = input("in")
-heard = context.get("EARS.said")
+heard = context.get("*.said")
 if heard and any(word in heard.text.lower() for word in [WORDS]):
     output("yes", context)
 """
 FOLLOW_UP_CHECK = """context = input("in")
-heard = context.get("EARS.said")
+heard = context.get("*.said")
 if heard:
     # you started talking less than 6 s after AAC spoke at that satellite (long answers too)
     spoke = audio.satellites.get(heard.data.get("mic"), {}).get("seconds", 999999)
@@ -99,7 +99,7 @@ if heard:
 """
 FOLLOW_UP = "(Said right after you spoke aloud; it may not be meant for you. If it is not, answer only: nothing) "
 FOLLOW_UP_TURN = f"""context = input("chat", read=True) + input("in")
-heard = context.get("EARS.said")
+heard = context.get("*.said")
 if heard:
     heard.text = "{FOLLOW_UP}" + heard.text
 context.add("rules", \"\"\"RULES\"\"\")
@@ -137,18 +137,21 @@ async def _voice_cards(domain, names: list[str]) -> None:
     add = domain.add_card
     chat = "chat" if "chat" in domain.cards else None
     reads = "chat" if chat else None
-    stop = (await add("relay", "Stop word", {"script": STOP_WORD.replace("EARS", ears)}, at={"x": 0, "y": 300})).id
-    wake = (await add("relay", "Wake word", {"script": WAKE_WORD.replace("EARS", ears).replace("WORDS", words)}, at={"x": 0, "y": 420})).id
-    follow = (await add("relay", "Follow-up", {"script": FOLLOW_UP_CHECK.replace("EARS", ears).replace("WORDS", f'"stop", {words}')},
+    stop = (await add("relay", "Stop word", {"script": STOP_WORD}, at={"x": 0, "y": 300})).id
+    wake = (await add("relay", "Wake word", {"script": WAKE_WORD.replace("WORDS", words)}, at={"x": 0, "y": 420})).id
+    follow = (await add("relay", "Follow-up", {"script": FOLLOW_UP_CHECK.replace("WORDS", f'"stop", {words}')},
                         at={"x": 0, "y": 540})).id
     spoken = (await add("relay", "Spoken turn", {"script": new_text("rules", VOICE_RULES, "last", reads)}, at={"x": 240, "y": 420})).id
-    followed_script = FOLLOW_UP_TURN.replace("EARS", ears).replace("RULES", VOICE_RULES)
+    followed_script = FOLLOW_UP_TURN.replace("RULES", VOICE_RULES)
     if not chat:
         followed_script = followed_script.replace('input("chat", read=True) + input("in")', 'input("in")')
     followed = (await add("relay", "Follow-up turn", {"script": followed_script}, at={"x": 240, "y": 540})).id
     first = "charter" if "charter" in domain.cards else None
     model = find("model")
-    wires = [*domain.wires, {"from": f"{ears}.out", "to": f"{stop}.in"}, {"from": f"{ears}.out", "to": f"{wake}.in"}, {"from": f"{ears}.out", "to": f"{follow}.in"},
+    cut = find("pause_cut")  # Speech to text's lines go back into the Audio clipper; what was said leaves there (the Stop word hears each phrase at once)
+    heard = f"{cut}.said" if cut else f"{ears}.out"
+    wires = [*domain.wires, *([{"from": f"{ears}.out", "to": f"{cut}.lines"}] if cut else []),
+             {"from": f"{ears}.out", "to": f"{stop}.in"}, {"from": heard, "to": f"{wake}.in"}, {"from": heard, "to": f"{follow}.in"},
               {"from": f"{wake}.yes", "to": f"{spoken}.in"}, {"from": f"{follow}.yes", "to": f"{followed}.in"},
               {"from": f"{voice}.out", "to": f"{speaker}.in"}]
     if first:

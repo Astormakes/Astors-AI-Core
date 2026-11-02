@@ -131,6 +131,19 @@ async def test_relay_script_stops_itself_when_its_time_is_up(hass: HomeAssistant
         await relay.call("spin", {})
     assert sys.gettrace() is None  # the check ends with the script
 
+    slow = await core.domain.add_card("relay", "Slow", {"script": 'def wait():\n    "Waits."\n    for i in range(10000):\n        x = i\n    return "done"\n'})
+    monkeypatch.setattr(sys.modules["aac_cards.relay.script"], "WAIT", 0.05)
+    calls = await core.domain.add_card("relay", "Caller", {"script": 'context = input("in")\nresult = slow.wait()\noutput("out", context)\n'})
+    core.domain.set_wires([*core.domain.wires, {"from": "caller.out", "to": "slow.in"}, {"from": "slow.out", "to": "caller.in"}])
+    real = calls.travel
+
+    async def slowly(*args):  # the card it calls takes its time: not the script's own
+        await asyncio.sleep(0.3)
+        return await real(*args)
+    calls.travel = slowly
+    await calls.handle(context, "in")
+    assert calls.last_run["problems"] == []
+
 
 async def test_relay_runs_on_every_snapshot(hass: HomeAssistant, mock_entry):
     """A context still being written runs the script too: output sends it on (streaming); a card call waits for the
