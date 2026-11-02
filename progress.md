@@ -8,12 +8,19 @@ The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "
 
 **Where to pick up** (owner, 2026-11-02: "v3 was a success"):
 - **Safety (items 19, 20, 21, 47) is under way: docs/v2 page 6** (settled points, open points, build order). Done:
-  1 (Relay 4.1.1: a script stops itself when its time is up), 2 (3.1.0: permissions in two layers, the domain's sheet
-  on top). Next: 3 (requests, `ask`), 4 (drafts: switch, keep or roll back; auto / ask), 5 (every card on its own).
-  Open with the owner: process instead of thread (a thread cannot be killed), and a wall needs seccomp (HA OS has no
-  Landlock).
-- **Postponed until the owner is home (voice):** test the voice settings and the day chat; put the wire
-  `phrase_joiner.out → follow_up_turn.in` back; suggested: the Follow-up turn skips what AAC itself said
+  1 (Relay: a script stops itself when its own time is up: 3 s since 3.1.2, waiting for called cards not counted),
+  2 (3.1.0: permissions in two layers, the domain's sheet on top; 3.1.1: everything a card does goes through its
+  interface, the setup and model servers too). Next: 3 (requests, `ask`), 4 (drafts: switch, keep or roll back;
+  auto / ask), 5 (owner: one worker process for all cards, separate from HA; a hung card: ask it to stop, raise an
+  error into its thread, last restart the worker). Asked, no answer yet: the owner's "do 5, it's a happy medium"
+  (step 5 next?).
+- **3.1.2 (owner's idea): the Audio clipper and the Phrase joiner are one card** (`pause_cut` 4.0.0: in, lines → out,
+  said, cuts); no card builds by itself any more. The owner's board converted live 10:48 (stores before:
+  `/config/aac/bak-3.1.1-storage/`); the Chat's Shown as you holds `Follow-up_turn.said` with a capital F (never
+  matches: the card is follow_up_turn).
+- **Postponed until the owner is home (voice):** test the voice settings and the day chat (and 3.1.2's Audio clipper
+  that joins its own phrases: not yet heard live); put the wire `audio_clipper.said → follow_up_turn.in` back (the
+  Phrase joiner is gone); suggested: the Follow-up turn skips what AAC itself said
   (`heard.data.get("aac_spoke")`) and names today's chat like the Wake word. Offered, no answer yet: tag matching
   without capitals (`matches()`; the owner's `answerOut.*` never matched).
 - **Models:** the owner switched the PC to Qwen3.8 27B (does Gemma 4 do well, or did AAC get clearer?); it did a
