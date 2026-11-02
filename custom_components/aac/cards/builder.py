@@ -9,7 +9,7 @@ from typing import Any
 
 from custom_components.aac.api import CARD_TYPES, RULES, Card, Context, register
 
-VERSION = "2.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 SHORT = 80  # longer settings are shortened in the list of cards (characters)
@@ -127,10 +127,10 @@ class Builder(Card):
         if function == "change_card":
             return await self.change_card(str(args.get("card")), args.get("name"), args.get("settings"))
         if function == "unblock":
-            return {"unblocked": True} if self.unblock(str(args.get("from")), str(args.get("to"))) else {"error": "that wire is not red"}
+            return {"unblocked": True} if await self.unblock(str(args.get("from")), str(args.get("to"))) else {"error": "that wire is not red"}
         if function in ("wire", "unwire"):
             wire = {"from": str(args.get("from")), "to": str(args.get("to"))}
             wires = [w for w in self.read_setup()["wires"] if w != wire] + ([wire] if function == "wire" else [])
-            now = self.set_wires(wires)
+            now = await self.set_wires(wires)
             return {"wired": wire in now} if function == "wire" else {"unwired": wire not in now}
         return await super().call(function, args, context)

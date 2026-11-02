@@ -125,17 +125,24 @@ a copy slot moves it to another domain: `aac/permissions/copy`, `aac/permissions
 and the card's own `access` setting; it can use the lower of the two. A thing is an entity id or one of `web`,
 `notify`, `files`, `servers`, `log`, `setup`, `audio` (`permissions.THINGS` says what read and full allow). A card
 names the kinds it uses in `needs` (`{"entities", "web"}` …): it then gets the setting `access` (type `access`,
-`{thing: level}`, not set: hidden; its entries come from `ui_call("access_items")`: what it needs that the domain lets
+`{thing: level}`, not set: list, so it knows what the domain lets exist; hidden is said; its entries come from `ui_call("access_items")`: what it needs that the domain lets
 exist, each with the domain's level as `cap`). It asks with `self.level(thing)`, `self.may(thing, level)`,
-`self.need(thing, level)` (raises PermissionError) and reaches out with `self.ha` (`entities()`, `state(id)`,
+`self.need(thing, level)` (raises PermissionError), `await self.act(thing, what)` before every action (at `ask`,
+between read and full, it waits for the owner's yes: every open panel shows Allow / Deny, and the phone when AAC's
+settings name a companion app's notify service, `aac/settings/set {ask_notify}`; the first answer counts, none in 2
+minutes is a no; `aac/asks`, `aac/ask/answer {ask, yes}`), and reaches out with `self.ha` (`entities()`, `state(id)`,
 `call(domain, service, id, data)`: a service of the entity's own domain or homeassistant.turn_on / turn_off / toggle,
 its data naming no other target; `watch(ids, handler)`, `calendar_events(id, start, end)`), `self.web()` (the HTTP
-session), `self.notification(service, message, title)`, `self.files(write)` (`<config>/aac/files`),
+session), `self.notification(service, message, title)`, `self.read_file(name)`, `self.write_file(name, text, append)`
+(`<config>/aac/files`),
 `self.listen(handler)` (the satellites' microphones), `self.play(source, wav, text, queue)`, `self.stop_playing(source)`. The setup
 too goes only through the Card: `self.read_setup()` (setup at read: cards with type, name, settings, ports; wires;
 positions; red wires), `self.add_card`, `self.change_card` (a card may always change its own settings),
 `self.remove_card`, `self.set_wires`, `self.unblock` (setup at full); a permission setting is refused for every card
-(PermissionError). Model servers: `self.servers()` (servers at read), `self.server(action, aac_model, model)` (bench,
+(PermissionError). **Requests:** every card with needs has the function `request_access(things, level, reason)`,
+answered by the core (`Card.run`, so a card that may do nothing can still ask): only for things the domain lets it
+know exist; it waits in the domain (`Domain.requests`, a Home Assistant notification) until the owner allows all, some
+or none (`aac/request/decide {request, allowed}`): the card gets them, the domain's sheet raised to them. Model servers: `self.servers()` (servers at read), `self.server(action, aac_model, model)` (bench,
 use, load, unload; at full). `self.tell(what="card", **data)` lets open panels know something of the card changed.
 A setting of type `element` (with `element`: a custom element's name, `file`: a .js in the card's folder) is edited
 by the card's own element: the panel imports the file and hands the element `.panel` (as a page's below, with

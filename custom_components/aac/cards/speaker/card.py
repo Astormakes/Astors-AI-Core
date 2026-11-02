@@ -9,7 +9,7 @@ from typing import Any
 
 from custom_components.aac.api import SAMPLE_RATE, Card, pcm_to_wav, register
 
-VERSION = "3.1.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.1.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 STREAM_PIECE = 2  # seconds of a live stream the Speaker plays at a time
 
@@ -78,7 +78,7 @@ class Speaker(Card):
             if where.startswith("media_player."):
                 if (state := self.ha.state(where)) and state.state == "playing":
                     await self.ha.call("media_player", "media_stop", where)
-            elif self.may("audio", "full"):
+            elif self.may("audio", "ask"):
                 await self.stop_playing(where)
         self._played_at.clear()
         self._buffers.clear()

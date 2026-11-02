@@ -4,7 +4,6 @@ line it appends the newest answer with the time; a model reads, appends and rewr
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 import re
 from typing import Any
 
@@ -12,7 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "2.1.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -43,25 +42,13 @@ class File(Card):
         "write": {"help": "Replace the whole file (Markdown).", "args": {"text": {"type": "string", "help": "The text.", "required": True}}},
     }
 
-    def path(self, write: bool = False) -> Path:
-        """Where the file lives (a plain name, no folders): needs files at read, to write at full."""
-        name = re.sub(r"[^\w\- ]", "", str(self.settings.get("name") or "notes")).strip() or "notes"
-        return self.files(write) / f"{name}.md"
-
-    def _read(self) -> str:
-        return self.path().read_text(encoding="utf-8") if self.path().exists() else ""
-
-    def _write(self, text: str, append: bool) -> str:
-        """Write, and the whole file afterwards."""
-        path = self.path(write=True)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a" if append else "w", encoding="utf-8") as f:
-            f.write(text)
-        return self._read()
+    def _name(self) -> str:
+        """Its file's name (a plain name, no folders)."""
+        return f"{re.sub(r'[^\w\- ]', '', str(self.settings.get('name') or 'notes')).strip() or 'notes'}.md"
 
     async def start(self) -> None:
         if self.may("files", "read"):
-            self.text = (await self.hass.async_add_executor_job(self._read))[-8000:]
+            self.text = (await self.read_file(self._name()))[-8000:]
 
     def held(self, port: str) -> Context | None:
         """What a dotted wire from 'provides' reads: the file's text as one entry (its id changes with the text)."""
@@ -80,7 +67,7 @@ class File(Card):
             return
         stamp = dt_util.now().strftime("%Y-%m-%d %H:%M")
         try:
-            self.text = (await self.hass.async_add_executor_job(self._write, f"\n## {stamp}\n\n{found['text'].strip()}\n", True))[-8000:]
+            self.text = (await self.write_file(self._name(), f"\n## {stamp}\n\n{found['text'].strip()}\n", append=True))[-8000:]
         except PermissionError as err:  # nothing written: nothing to send
             self.log(str(err), "warning", what="permission")
             return
@@ -94,11 +81,11 @@ class File(Card):
 
     async def _call(self, function: str, args: dict[str, Any], context: Context | None) -> Any:
         if function == "read":
-            self.text = (await self.hass.async_add_executor_job(self._read))[-8000:]
+            self.text = (await self.read_file(self._name()))[-8000:]
             return self.text
         if function in ("append", "write"):
             text = str(args.get("text") or "")
-            self.text = (await self.hass.async_add_executor_job(self._write, text if text.endswith("\n") else text + "\n", function == "append"))[-8000:]
+            self.text = (await self.write_file(self._name(), text if text.endswith("\n") else text + "\n", append=function == "append"))[-8000:]
             self.tell()
             return {"done": function}
         return await super().call(function, args, context)

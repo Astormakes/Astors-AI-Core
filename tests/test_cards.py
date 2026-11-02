@@ -6,7 +6,7 @@ from homeassistant.core import HomeAssistant
 
 from custom_components.aac.context import Context
 
-from .conftest import setup_aac
+from .conftest import allow, setup_aac
 
 
 async def sink(domain, name="Sink"):
@@ -284,6 +284,79 @@ async def test_home_assistant_card_access(hass: HomeAssistant, mock_entry):
     await d.set_permissions({"switch.lamp": "read"})  # the domain lowers it: the card's full is read now
     assert "may not be switched" in (await d.cards["home"].call("call_service", {"domain": "switch", "service": "turn_on",
                                                                                 "entity_id": "switch.lamp"}))["error"]
+
+
+async def test_ask_waits_for_the_owners_yes(hass: HomeAssistant, mock_entry, hass_ws_client):
+    """At ask an action waits for the owner (docs/v2 page 6): the panel and the phone (its two buttons) ask, the first
+    answer counts; a no is told to the model, reading needs no yes."""
+    from pytest_homeassistant_custom_component.common import async_mock_service
+
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    hass.states.async_set("switch.lamp", "off")
+    switched = async_mock_service(hass, "switch", "turn_on")
+    phone = async_mock_service(hass, "notify", "mobile_app_phone")
+    core.data.setdefault("settings", {})["ask_notify"] = "notify.mobile_app_phone"
+    home = await allow(d, "home", {"switch.lamp": "ask"})
+    assert home.ha.state("switch.lamp").state == "off"  # reading: no yes needed
+    turn_on = {"domain": "switch", "service": "turn_on", "entity_id": "switch.lamp"}
+
+    task = hass.async_create_task(home.call("call_service", turn_on))
+    for _ in range(50):
+        if core.asks.waiting:
+            break
+        await asyncio.sleep(0.01)
+    (asked,) = core.asks.waiting.values()
+    assert "switch.turn_on" in asked["action"] and asked["name"] == "Home"
+    for _ in range(50):
+        if phone:
+            break
+        await asyncio.sleep(0.01)
+    actions = phone[-1].data["data"]["actions"]
+    assert [a["title"] for a in actions] == ["Allow", "Deny"] and actions[0]["action"] == f"AAC_YES_{asked['id']}"
+    hass.bus.async_fire("mobile_app_notification_action", {"action": f"AAC_YES_{asked['id']}"})  # the phone's Allow
+    assert (await task)["done"] and len(switched) == 1 and not core.asks.waiting
+
+    task = hass.async_create_task(home.call("call_service", turn_on))
+    for _ in range(50):
+        if core.asks.waiting:
+            break
+        await asyncio.sleep(0.01)
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "aac/asks"})
+    (waiting,) = (await client.receive_json())["result"]["asks"]
+    await client.send_json_auto_id({"type": "aac/ask/answer", "ask": waiting["id"], "yes": False})  # the panel's Deny
+    assert (await client.receive_json())["result"] == {"answered": True}
+    try:
+        await task
+    except PermissionError as err:
+        assert "did not allow" in str(err)
+    else:
+        raise AssertionError("it switched without a yes")
+    assert len(switched) == 1
+
+
+async def test_a_card_asks_for_more(hass: HomeAssistant, mock_entry, hass_ws_client):
+    """request_access (every card with needs; the core answers it, so a card that may do nothing can still ask): only
+    what the domain lets it know exists; the owner allows some; then the card has it (the domain raised to it)."""
+    core = await setup_aac(hass, mock_entry)
+    d = core.domain
+    for entity_id in ("light.desk", "light.hall", "lock.door"):
+        hass.states.async_set(entity_id, "on")
+    await d.set_permissions({"light.desk": "list", "light.hall": "list"})
+    home = d.cards["home"]
+    got = await home.run("request_access", {"things": ["light.desk", "light.hall", "lock.door"], "level": "full",
+                                            "reason": "To switch the lights when asked."})
+    assert got["asked"] == {"light.desk": "full", "light.hall": "full"} and got["unknown"] == ["lock.door"]
+    (req,) = d.requests
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "aac/request/decide", "request": req["id"], "allowed": ["light.desk"]})
+    assert (await client.receive_json())["result"] == {"granted": {"light.desk": "full"}}
+    assert not d.requests and d.cards["home"].level("light.desk") == "full" and d.cards["home"].level("light.hall") == "list"
+    hall = await allow(d, "home", {"light.hall": "hidden"})  # on a card's own sheet, hidden is said out loud
+    assert "light.hall" not in {e["entity_id"] for e in hall.ha.entities()}
+    assert d.allows("light.desk") == "full"
+    assert "request_access" in d.cards["home"].offered()
 
 
 async def test_home_assistant_card_reports_the_new_state(hass: HomeAssistant, mock_entry):

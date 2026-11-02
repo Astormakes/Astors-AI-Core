@@ -105,6 +105,10 @@ nav .item { position: relative; } .item .navacts { display: none; position: abso
 .navmenu { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 8px; margin: 4px 0; padding: 2px 0;
   box-shadow: 0 4px 12px rgba(0,0,0,.2); clear: both; }
 .permhead { margin: 0; cursor: pointer; user-select: none; } .card .permhead + * { margin-top: 10px; }
+#asks { position: fixed; top: 12px; right: 12px; z-index: 60; display: flex; flex-direction: column; gap: 8px; max-width: min(420px, calc(100vw - 32px)); }
+.askbox { background: var(--card-background-color); color: var(--primary-text-color); border: 2px solid var(--primary-color); border-radius: 10px; padding: 10px 12px; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
+.askbox .row { justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.request { border-left: 3px solid var(--primary-color); }
 .access { container-type: inline-size; } .access .acclist { max-height: min(420px, 60vh); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--divider-color); border-radius: 8px; }
 .accrow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--divider-color); }
 .accrow .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; } .accrow .seg { display: flex; gap: 2px; flex: 0 0 auto; }
@@ -233,7 +237,7 @@ textarea { resize: vertical; }
   .models tr { display: flex; flex-wrap: wrap; align-items: baseline; border-bottom: 1px solid var(--divider-color); } .models td { border: none; padding: 2px 8px; } .models tr.hint { display: none; } }
 `;
 
-const ACC = ["hidden", "list", "read", "full"]; // the levels of a permission (docs/v2 page 6), lowest first
+const ACC = ["hidden", "list", "read", "ask", "full"]; // the levels of a permission (docs/v2 page 6), lowest first
 
 class AacPanel extends HTMLElement {
   constructor() {
@@ -282,7 +286,7 @@ class AacPanel extends HTMLElement {
       if (wave) { this._openWave(wave.dataset.wave); return; }
       const m = e.target.closest?.("[data-rload],[data-ract],[data-rdl],[data-srvadd],[data-srvsave],[data-srvedit],[data-srvdel],[data-srvcancel],[data-amadd],[data-amsave],[data-amedit],[data-amdel],[data-amcancel]");
       if (m) { this._modelsClick(m); return; }
-      const t = e.target.closest?.("[data-navact],[data-navmore],[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],[data-acclevel],[data-accall],[data-permopen],[data-permcopy],[data-permpaste],#dombtn,#navbtn");
+      const t = e.target.closest?.("[data-navact],[data-navmore],[data-say],[data-fold],[data-navadd],[data-go],[data-domgo],[data-domact],[data-acclevel],[data-accall],[data-permopen],[data-permcopy],[data-permpaste],[data-askyes],[data-askno],[data-reqallow],[data-reqdeny],#dombtn,#navbtn");
       if (!t) return;
       const d = t.dataset;
       if (d.say) this.ws("aac/audio/say", { source: d.say, text: "This is how I sound." });
@@ -296,6 +300,10 @@ class AacPanel extends HTMLElement {
           if (shown.length > 20 && !(await this.confirm(`Set ${shown.length} entries to ${d.accall}?`))) return;
           this._setAccess(d.acc, shown.map((x) => x.id), d.accall);
         })();
+      } else if (d.askyes || d.askno) this.ws("aac/ask/answer", { ask: d.askyes || d.askno, yes: !!d.askyes });
+      else if (d.reqallow || d.reqdeny) {
+        const id = d.reqallow || d.reqdeny, allowed = d.reqallow ? [...this.shadowRoot.querySelectorAll(`[data-reqthing][data-req="${CSS.escape(id)}"]`)].filter((b) => b.checked).map((b) => b.dataset.reqthing) : [];
+        this.ws("aac/request/decide", { request: id, allowed }).then(async () => { this._sheet = null; this._accItems = {}; await this._load(); await this._loadAsks(); this.render(); });
       } else if (d.permcopy !== undefined) this.ws("aac/permissions/copy").then(() => { this._sheet = null; this.render(); });
       else if (d.permpaste !== undefined) {
         (async () => {
@@ -327,11 +335,24 @@ class AacPanel extends HTMLElement {
     this._applyWidths();
     await this._load();
     this._hass.connection.subscribeMessage((ev) => this._event(ev), { type: "aac/subscribe" });
+    this._loadAsks();
     // what changed while it was hidden or offline (an app resumed, HA restarted) reaches no page: the sidebar reloads
     this._hass.connection.addEventListener("ready", () => this._reloadNav());
     document.addEventListener("visibilitychange", () => { if (!document.hidden) this._reloadNav(); });
     this.go("card", null, null);
   }
+
+  async _loadAsks() { // what waits for the owner: asks (Allow / Deny, top right) and requests (the Permissions page)
+    try { const r = await this.ws("aac/asks"); this.asks = Object.fromEntries(r.asks.map((a) => [a.id, a])); this._requests = r.requests; } catch (err) { this.asks = {}; }
+    this._drawAsks();
+  }
+
+  _asksHtml() {
+    return Object.values(this.asks || {}).map((a) => `<div class="askbox"><b>${esc(a.name)} asks</b> <span class="hint">(${esc(a.thing)})</span><div>${esc(a.action)}</div>
+      <div class="row"><button class="small danger" data-askno="${esc(a.id)}">Deny</button><button class="small primary" data-askyes="${esc(a.id)}">Allow</button></div></div>`).join("");
+  }
+
+  _drawAsks() { const el = this.shadowRoot.querySelector("#asks"); if (el) el.innerHTML = this._asksHtml(); }
 
   async _reloadNav() { this.nav = (await this.ws("aac/nav")).nav; this._redrawNav(); }
 
@@ -352,6 +373,9 @@ class AacPanel extends HTMLElement {
   _type(t) { return (this.state?.types || []).find((x) => x.type === t); }
 
   _event(ev) {
+    if (ev.what === "ask") { (this.asks ||= {})[ev.id] = ev; this._drawAsks(); return; }
+    if (ev.what === "asked") { delete (this.asks || {})[ev.id]; this._drawAsks(); return; }
+    if (ev.what === "requests") { this._loadAsks().then(() => { if (this.view.kind === "permissions") this.render(); }); return; }
     const pages = ev.card ? [this._els[ev.card]] : ev.what === "delta" ? Object.values(this._els) : []; // to the card's page (a growing answer: every page; a chat's finds its turn by the tag)
     for (const el of pages) { try { el?.event?.(ev); } catch (err) { console.error(err); } }
     if (["chat", "card"].includes(ev.what)) { // a card's sidebar entries may have changed
@@ -429,7 +453,7 @@ class AacPanel extends HTMLElement {
   disconnectedCallback() { window.removeEventListener("popstate", this._back); }
 
   async go(kind, card = null, id = null) {
-    if (kind === "permissions") { this._sheet = null; this._accItems = {}; } // fresh: the domain, its things and caps may have changed
+    if (kind === "permissions") { this._sheet = null; this._accItems = {}; this._loadAsks(); } // fresh: the domain, its things and caps may have changed
     if (kind === "card") this._lastCard = { card, id }; // Back from the Cards page on a phone goes here
     if (kind === "cards" && this.view.kind !== "cards") {
       const phone = this._phone();
@@ -501,7 +525,7 @@ class AacPanel extends HTMLElement {
     const scrolled = before && this._page === page ? before.scrollTop : 0; // a redraw of the same page stays where it was
     const lists = [...this.shadowRoot.querySelectorAll("[data-accbox]")].map((b) => [b.dataset.accbox, b.querySelector(".acclist")?.scrollTop || 0]); // and so do access lists
     Object.values(this._fieldEls || {}).forEach((el) => el.remember?.()); // an editor being typed in keeps its caret
-    this.shadowRoot.innerHTML = `<style>${STYLE}</style>${skin ? `<link rel="stylesheet" href="${esc(skin.url)}?v=${esc(this.state.version)}">` : ""}<div class="root ${this.navOpen ? "navopen" : ""}">${this._nav()}<div class="scrim" id="scrim"></div><div class="grip" data-grip="nav" data-target="nav" title="Drag: width of the sidebar (double-click: back to normal)"></div><main>${main}</main></div>`;
+    this.shadowRoot.innerHTML = `<style>${STYLE}</style>${skin ? `<link rel="stylesheet" href="${esc(skin.url)}?v=${esc(this.state.version)}">` : ""}<div class="root ${this.navOpen ? "navopen" : ""}">${this._nav()}<div class="scrim" id="scrim"></div><div class="grip" data-grip="nav" data-target="nav" title="Drag: width of the sidebar (double-click: back to normal)"></div><main>${main}</main></div><div id="asks">${this._asksHtml()}</div>`;
     this._page = page;
     if (scrolled) this.shadowRoot.querySelector("main .content")?.scrollTo(0, scrolled);
     for (const [box, top] of lists) this.shadowRoot.querySelector(`[data-accbox="${CSS.escape(box)}"] .acclist`)?.scrollTo(0, top);
@@ -827,7 +851,10 @@ class AacPanel extends HTMLElement {
     if (!sheet) this.ws("aac/permissions").then((r) => { this._sheet = r; this._accItems = { ...(this._accItems || {}), domain: r.things }; this.render(); });
     const name = esc(this.state.domain.name);
     return `${this._header(`Permissions of "${name}"`, tip("Two layers (the same levels): what this domain lets exist at all, then what each card may use within that. hidden: it does not exist · list: cards may know it exists and ask for it · read · full. A card can use the lower of the two."))}
-      <div class="content"><div class="card"><h3>What "${name}" allows ${tip("Only you set this; a model never can. Not set: hidden. A new domain, or a file loaded from elsewhere, starts with nothing. Undo and the slots leave it as it is.")}
+      <div class="content">${(this._requests || []).map((r) => `<div class="card request"><h3 style="margin-top:0">${esc(r.name)} asks for more</h3><p>${esc(r.reason)}</p>
+        ${Object.entries(r.things).map(([t, l]) => `<label class="check"><input type="checkbox" checked data-reqthing="${esc(t)}" data-req="${esc(r.id)}">${esc(t)}: ${esc(l)}</label>`).join("")}
+        <div class="row" style="justify-content:flex-end;gap:6px"><button class="small danger" data-reqdeny="${esc(r.id)}">Deny all</button><button class="small primary" data-reqallow="${esc(r.id)}">Allow the ticked</button></div></div>`).join("")}
+      <div class="card"><h3>What "${name}" allows ${tip("Only you set this; a model never can. Not set: hidden. A new domain, or a file loaded from elsewhere, starts with nothing. Undo and the slots leave it as it is.")}
         <span style="float:right"><button class="small" data-permcopy title="Into the copy slot (one, for all domains)">Copy</button> <button class="small" data-permpaste ${sheet?.copied ? "" : "disabled"} title="The copied sheet replaces this one">Paste</button></span></h3>
         ${sheet ? `<div class="access"><input data-accsearch="domain" placeholder="Search: name, id, area, kind (e.g. light.)" value="${esc((this._accFilter || {}).domain || "")}"><div data-accbox="domain">${this._accessRows("domain")}</div></div>` : '<p class="hint">Loading…</p>'}</div>
       <h3 style="margin:18px 0 6px">What each card may use</h3>${cards.map(([c, fs]) => { const open = this.permOpen === c.id; return `<div class="card"><h3 class="permhead" data-permopen="${esc(c.id)}">${open ? "▾" : "▸"} ${esc(c.title)} <span class="hint">${esc(this._type(c.type)?.title || c.type)} · ${esc(this._permSummary(c, fs))}</span></h3>${open ? fs.map((e) => this._field(c, e)).join("") : ""}</div>`; }).join("") || '<p class="hint">No card here has permissions.</p>'}
@@ -902,7 +929,9 @@ class AacPanel extends HTMLElement {
     const st = this.aacSettings || {};
     return `${this._header("How AAC works")}<div class="content"><div class="card"><pre class="cvtext" style="font-size:13px">${esc(st.rules || "")}</pre></div>
       <div class="card"><h3 style="margin-top:0">Storm limit ${tip("Rule 6: a wire that carries more contexts within a second than this turns red (blocked until you unblock it on the Cards page). A model writing sends its answer after every sentence: keep it well above that.")}</h3>
-        <div class="row"><input type="number" id="storm" min="1" max="10000" value="${esc(st.storm ?? "")}" style="max-width:120px"><span class="hint">contexts per second through one wire</span></div></div></div>`;
+        <div class="row"><input type="number" id="storm" min="1" max="10000" value="${esc(st.storm ?? "")}" style="max-width:120px"><span class="hint">contexts per second through one wire</span></div></div>
+      <div class="card"><h3 style="margin-top:0">Ask on the phone ${tip("A card at 'ask' waits for your yes before every action. Open panels always ask (top right); with a notify service of Home Assistant's companion app here, your phone asks too, with Allow and Deny. No answer in 2 minutes is a no.")}</h3>
+        <div class="row"><input id="asknotify" placeholder="notify.mobile_app_…" value="${esc(st.ask_notify || "")}" style="max-width:320px"><span class="hint">empty: only open panels ask</span></div></div></div>`;
   }
 
   _appearanceView() {
@@ -1237,7 +1266,8 @@ class AacPanel extends HTMLElement {
     const shown = this._accShown(box), levels = this._accLevels(box);
     if (!shown) return '<p class="hint">Loading…</p>';
     const upto = (x) => ACC.slice(0, x.cap ? ACC.indexOf(x.cap) + 1 : ACC.length); // a card: never above the domain
-    const seg = (x) => upto(x).map((l) => `<button class="small ${(levels[x.id] || "hidden") === l ? "on" : ""}" data-acclevel="${l}" data-accid="${esc(x.id)}" data-acc="${esc(box)}">${l}</button>`).join("");
+    const none = box === "domain" ? "hidden" : "list"; // not set: the domain hides it; a card knows it (and can ask)
+    const seg = (x) => upto(x).map((l) => `<button class="small ${(levels[x.id] || none) === l ? "on" : ""}" data-acclevel="${l}" data-accid="${esc(x.id)}" data-acc="${esc(box)}">${l}</button>`).join("");
     const counts = ACC.slice(1).map((l) => `${Object.values(levels).filter((v) => v === l).length} ${l}`).join(" · ");
     const q = (this._accFilter || {})[box];
     return `<div class="row" style="flex-wrap:wrap;gap:4px;margin:6px 0">${ACC.map((l) => `<button class="small" data-accall="${l}" data-acc="${esc(box)}" title="Every entry shown${box === "domain" ? "" : " (up to what the domain allows)"}">${l[0].toUpperCase() + l.slice(1)} all${q ? " shown" : ""}</button>`).join("")}
@@ -1255,7 +1285,7 @@ class AacPanel extends HTMLElement {
       const [cardId, key] = box.split("|"), levels = { ...this._accLevels(box) }, caps = Object.fromEntries((this._accItems[cardId] || []).map((x) => [x.id, x.cap]));
       for (const id of ids) {
         const l = ACC[Math.min(ACC.indexOf(level), ACC.indexOf(caps[id] || "full"))];
-        if (l === "hidden") delete levels[id]; else levels[id] = l;
+        if (l === "list") delete levels[id]; else levels[id] = l; // a card's sheet: list is its default, hidden is said
       }
       await this.ws("aac/card/update", { card: cardId, settings: { [key]: levels } });
     }
@@ -1966,6 +1996,7 @@ class AacPanel extends HTMLElement {
     $("#unpick")?.addEventListener("click", () => this._unpick());
     $$("[data-selcard]").forEach((el) => el.addEventListener("click", () => { this.sel = el.dataset.selcard; this.render(); }));
     $$("[data-skin]").forEach((el) => el.addEventListener("change", async () => { await this.ws("aac/appearance/set", { skin: el.dataset.skin }); }));
+    $("#asknotify")?.addEventListener("change", async (e) => { this.aacSettings = { ...this.aacSettings, ...(await this.ws("aac/settings/set", { ask_notify: e.target.value.trim() })) }; });
     $("#storm")?.addEventListener("change", async (e) => { const n = Math.round(Number(e.target.value)); if (n >= 1) this.aacSettings = { ...this.aacSettings, ...(await this.ws("aac/settings/set", { storm: n })) }; });
     $$("[data-foldmode]").forEach((el) => el.addEventListener("change", async () => { await this.ws("aac/appearance/set", { folds: { [el.dataset.foldmode]: el.value } }); }));
     $("#values")?.addEventListener("click", () => { this.showValues = !this.showValues; this.values = null; this.render(); if (this.showValues) this._loadValues(); });

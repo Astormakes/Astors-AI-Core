@@ -123,7 +123,7 @@ async def ws_card_call(hass, connection, msg) -> None:
     if card is None:
         return await _fail(connection, msg, ValueError("no such card"))
     try:
-        connection.send_result(msg["id"], {"result": await card.call(msg["function"], msg["args"])})
+        connection.send_result(msg["id"], {"result": await card.run(msg["function"], msg["args"])})
     except (ValueError, KeyError) as err:
         await _fail(connection, msg, err)
 
@@ -183,6 +183,29 @@ async def ws_permissions_paste(hass, connection, msg) -> None:
         return await _fail(connection, msg, ValueError("nothing copied yet"))
     await core.domain.set_permissions({**{t: "hidden" for t in core.domain.permissions}, **copied})
     connection.send_result(msg["id"], {"levels": core.domain.permissions})
+
+
+@command({vol.Required("type"): "aac/asks"})
+async def ws_asks(hass, connection, msg) -> None:
+    """What waits for the owner: the asks (a yes for one action, every domain) and the running domain's requests."""
+    core = _core(hass)
+    connection.send_result(msg["id"], {"asks": list(core.asks.waiting.values()), "requests": core.domain.requests})
+
+
+@command({vol.Required("type"): "aac/ask/answer", vol.Required("ask"): str, vol.Required("yes"): bool})
+async def ws_ask_answer(hass, connection, msg) -> None:
+    """The owner's yes or no to one action (False: nothing waits under that id any more)."""
+    connection.send_result(msg["id"], {"answered": _core(hass).asks.answer(msg["ask"], msg["yes"])})
+
+
+@command({vol.Required("type"): "aac/request/decide", vol.Required("request"): str, vol.Required("allowed"): [str]})
+async def ws_request_decide(hass, connection, msg) -> None:
+    """The owner's answer to a card's request: the things allowed (all, some, none)."""
+    try:
+        granted = await _core(hass).domain.decide(msg["request"], msg["allowed"])
+    except ValueError as err:
+        return await _fail(connection, msg, err)
+    connection.send_result(msg["id"], {"granted": granted})
 
 
 @command({vol.Required("type"): "aac/positions", vol.Required("positions"): dict, vol.Optional("undoable", default=False): bool})
@@ -425,17 +448,21 @@ async def ws_settings(hass, connection, msg) -> None:
     """AAC's own settings (every domain): the storm limit; and the rules every card follows (How AAC works)."""
     from .rules import RULES  # noqa: PLC0415
 
-    connection.send_result(msg["id"], {"storm": _core(hass).storm, "rules": RULES})
-
-
-@command({vol.Required("type"): "aac/settings/set", vol.Optional("storm"): vol.All(int, vol.Range(min=1, max=10000))})
-async def ws_settings_set(hass, connection, msg) -> None:
-    """Change AAC's settings."""
     core = _core(hass)
-    if "storm" in msg:
-        core.data.setdefault("settings", {})["storm"] = msg["storm"]
+    connection.send_result(msg["id"], {"storm": core.storm, "ask_notify": (core.data.get("settings") or {}).get("ask_notify") or "",
+                                       "rules": RULES})
+
+
+@command({vol.Required("type"): "aac/settings/set", vol.Optional("storm"): vol.All(int, vol.Range(min=1, max=10000)),
+          vol.Optional("ask_notify"): str})
+async def ws_settings_set(hass, connection, msg) -> None:
+    """Change AAC's settings: the storm limit; the notify service that asks the owner on the phone (empty: only panels)."""
+    core = _core(hass)
+    for key in ("storm", "ask_notify"):
+        if key in msg:
+            core.data.setdefault("settings", {})[key] = msg[key]
     core.save()
-    connection.send_result(msg["id"], {"storm": core.storm})
+    connection.send_result(msg["id"], {"storm": core.storm, "ask_notify": core.data["settings"].get("ask_notify") or ""})
 
 
 @command({vol.Required("type"): "aac/appearance"})

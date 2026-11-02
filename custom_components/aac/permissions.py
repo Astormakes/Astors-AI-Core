@@ -3,7 +3,8 @@
 Two layers, the same levels: the domain says per thing what exists for its cards at all (its sheet, set by the owner
 only); each card gets what it may use within that (its `access` setting). What a card can use is the lower of the two.
 A thing is a Home Assistant entity (by its id) or one of THINGS. Levels, lowest first: hidden (does not exist), list
-(cards may know it exists and ask for it), read, full. Not on a sheet: hidden.
+(cards may know it exists and ask for it), read, ask (full, but every action waits for the owner's yes), full. Not on
+the domain's sheet: hidden; not on a card's: list (it knows what the domain lets exist, and can ask).
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 if TYPE_CHECKING:
     from .cards import Card
 
-LEVELS = ("hidden", "list", "read", "full")
+LEVELS = ("hidden", "list", "read", "ask", "full")
 GENERIC = {"turn_on", "turn_off", "toggle"}  # homeassistant.<these> act on any entity
 TARGETS = ("entity_id", "device_id", "area_id", "floor_id", "label_id")  # what a service may act on besides its entity
 THINGS = {  # the things outside AAC besides Home Assistant's entities: what read and full let a card do
@@ -98,13 +99,14 @@ class Home:
         return self.hass.states.get(entity_id) if self.card.may(entity_id, "read") else None
 
     async def call(self, domain: str, service: str, entity_id: str, data: dict[str, Any] | None = None) -> None:
-        """A service on one entity (needs it at full): a service of the entity's own domain, or homeassistant.turn_on /
+        """A service on one entity (an action on it): a service of the entity's own domain, or homeassistant.turn_on /
         turn_off / toggle; the data cannot name other targets."""
-        self.card.need(entity_id, "full")
         if domain != entity_id.split(".")[0] and not (domain == "homeassistant" and service in GENERIC):
             raise PermissionError(f"{domain}.{service} is not a service of {entity_id} (only {entity_id.split('.')[0]}.… "
                                   "or homeassistant.turn_on / turn_off / toggle)")
         extra = {k: v for k, v in (data or {}).items() if k not in TARGETS}
+        name = (state.attributes.get("friendly_name") if (state := self.hass.states.get(entity_id)) else None) or entity_id
+        await self.card.act(entity_id, f"{domain}.{service} on {name}{f' {extra}' if extra else ''}")
         await self.hass.services.async_call(domain, service, {**extra, "entity_id": entity_id}, blocking=True)
 
     def watch(self, entity_ids: list[str], handler: Callable[[Any], Any]) -> Callable[[], None]:

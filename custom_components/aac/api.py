@@ -11,9 +11,10 @@ What a card uses, and nothing else (so cards can run in a sandbox later):
   offer: functions, values, held()), `stream_out` / `clip_out` (audio), `live` (text still growing), `show` (its view)
 - its own data and files: `data`, `load`, `save`, `folder`; the log: `log`, `read_log` (log at read)
 - outside AAC, only as far as its permissions reach (docs/v2 page 6: the lower of what the domain allows and its own
-  May use, for the kinds in its `needs`): `level`, `may`, `need`; `ha` (`entities`, `state`, `call`, `watch`,
-  `calendar_events`), `web()`, `notification`, `files(write)`, `listen` (the satellites' microphones), `play`,
-  `stop_playing` (their speakers)
+  May use, for the kinds in its `needs`): `level`, `may`, `need`, `act` (before every action: at ask it waits for the
+  owner's yes); `ha` (`entities`, `state`, `call`, `watch`, `calendar_events`), `web()`, `notification`, `read_file`,
+  `write_file`, `listen` (the satellites' microphones), `play`, `stop_playing` (their speakers); `request_access` is a
+  function of every card with needs, answered by the core (`run`)
 - the core's services through `self.core`: `subscribe(channel, card, handler)` (channels: "audio",
   "ha_conversation"), `calendar` (`offer`, `entries`, `add`, `change`, `remove`; `parse_when` below), `pool` (models:
   `entries`, `slot`, `tags`, `find`, `offers`; with `run` and `Client` below), `save_model`, `audio` (`say`, `play`,

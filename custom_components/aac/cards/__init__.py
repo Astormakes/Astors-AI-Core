@@ -38,9 +38,15 @@ LOG = {"log": {"type": "select", "title": "What it writes in the log", "default"
                        "wrong is always written."},
        "log_at": {"type": "select", "title": "When", "default": "out", "fold": "Log",
                   "options": [["out", "what goes out"], ["in", "what comes in"], ["both", "both"]]}}
+REQUEST = {"help": "Ask the owner for more than this card may do now (the owner decides later; nothing changes until "
+                   "then). Only for things that exist for it.",
+           "args": {"things": {"type": "array", "help": "Entity ids or web, notify, files, servers, log, setup, audio.", "required": True},
+                    "level": {"type": "string", "help": "read, ask (each action waits for the owner's yes) or full.", "required": True},
+                    "reason": {"type": "string", "help": "Why, in one sentence (the owner reads it).", "required": True}}}
 ACCESS = {"type": "access", "title": "May use", "default": {}, "permission": True,
-          "help": "What this card may reach outside AAC, each thing hidden, list (it may know it exists), read or full; "
-                  "never more than the domain allows (its Permissions page). Not set: hidden."}
+          "help": "What this card may reach outside AAC, each thing hidden, list (it may know it exists and ask for more), "
+                  "read, ask (each action waits for your yes) or full; never more than the domain allows (its Permissions "
+                  "page). Not set: list."}
 CATEGORIES = ["In and out", "Text", "Logic", "Models", "Data", "Home Assistant", "Audio", "Other"]
 
 
@@ -91,6 +97,8 @@ def register(cls: type[Card]) -> type[Card]:
         folder = file.parent.name if file.name == "card.py" else None
         cls.settings_schema = {k: {**f, "url": f"{UI_URL}/{folder}/{f['file']}?v={cls.version}"} if f.get("type") == "element" and folder else f
                                for k, f in cls.settings_schema.items()}
+    if cls.needs and "request_access" not in cls.functions:  # every card that reaches outside can ask for more
+        cls.functions = {**cls.functions, "request_access": REQUEST}
     if (cls.functions or cls.dynamic_functions) and "functions" not in cls.settings_schema:  # every card with functions
         cls.settings_schema = {**cls.settings_schema, "functions": FUNCTIONS}
     cls.settings_schema = {**cls.settings_schema, **({"access": ACCESS} if cls.needs else {}), **LOG}  # every card
@@ -155,10 +163,11 @@ class Card:
     # ------------------------------------------------------------------ outside AAC (docs/v2 page 6)
     def level(self, thing: str) -> str:
         """How far it may reach a thing (an entity id or one of THINGS): the lower of what the domain allows and its
-        own `access`; hidden for a kind it does not need."""
+        own `access` (not set there: list, so it knows what the domain lets exist and can ask for it; hidden is said out
+        loud); hidden for a kind it does not need."""
         if kinds_of(thing) not in self.needs:
             return "hidden"
-        return lower(self.domain.allows(thing), (self.settings.get("access") or {}).get(thing))
+        return lower(self.domain.allows(thing), (self.settings.get("access") or {}).get(thing) or "list")
 
     def may(self, thing: str, level: str) -> bool:
         """It may reach the thing at least this far."""
@@ -170,6 +179,15 @@ class Card:
             mine, domain = (self.settings.get("access") or {}).get(thing) or "hidden", self.domain.allows(thing)
             raise PermissionError(f"{self.name} may not use {thing} at {level} (the domain allows {domain}, the card "
                                   f"{mine}): the owner allows it on the Permissions page")
+
+    async def act(self, thing: str, what: str) -> None:
+        """Before every action on a thing (switch, send, write, change …): at full it goes on; at ask it waits for the
+        owner's yes (a popup in AAC, a phone notification; no answer in time is a no); else PermissionError."""
+        if self.level(thing) == "ask":
+            if not await self.core.asks.ask(self, thing, what):
+                raise PermissionError(f"The owner did not allow it: {what}")
+            return
+        self.need(thing, "full")
 
     @property
     def ha(self) -> Home:
@@ -183,16 +201,33 @@ class Card:
         return async_get_clientsession(self.hass)
 
     async def notification(self, service: str, message: str, title: str) -> None:
-        """A notification through one of Home Assistant's notify services (needs notify at full)."""
-        self.need("notify", "full")
+        """A notification through one of Home Assistant's notify services (an action on notify)."""
         if not self.hass.services.has_service("notify", service):
             raise ValueError(f"Home Assistant has no notify service {service}")
+        await self.act("notify", f"send a notification: {message[:120]}")
         await self.hass.services.async_call("notify", service, {"message": message, "title": title}, blocking=True)
 
-    def files(self, write: bool = False) -> Path:
-        """The shared files folder <config>/aac/files (needs files at read; to write, at full)."""
-        self.need("files", "full" if write else "read")
-        return Path(self.hass.config.path("aac", "files"))
+    def _file(self, name: str) -> Path:
+        plain = re.sub(r"[^\w\- .]", "", name).strip(" .") or "notes"  # a plain name in that folder, no folders
+        return Path(self.hass.config.path("aac", "files")) / plain
+
+    async def read_file(self, name: str) -> str:
+        """A file in the shared folder <config>/aac/files ("" when there is none; needs files at read)."""
+        self.need("files", "read")
+        path = self._file(name)
+        return await self.hass.async_add_executor_job(lambda: path.read_text(encoding="utf-8") if path.exists() else "")
+
+    async def write_file(self, name: str, text: str, append: bool = False) -> str:
+        """Write (or append to) a file in the shared folder (an action on files); returns the whole file afterwards."""
+        await self.act("files", f"{'append to' if append else 'write'} {self._file(name).name}: {text.strip()[:120]}")
+        path = self._file(name)
+
+        def write() -> str:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a" if append else "w", encoding="utf-8") as f:
+                f.write(text)
+            return path.read_text(encoding="utf-8")
+        return await self.hass.async_add_executor_job(write)
 
     def listen(self, handler: Any) -> None:
         """The satellites' microphones: handler(source_id, chunk, meta) gets their audio (needs audio at read)."""
@@ -200,13 +235,13 @@ class Card:
         self.core.subscribe("audio", self, handler)
 
     async def play(self, source_id: str, wav: bytes, text: str = "", queue: bool = False) -> bool:
-        """Play on a satellite's speaker (needs audio at full)."""
-        self.need("audio", "full")
+        """Play on a satellite's speaker (an action on audio)."""
+        await self.act("audio", f"play on {source_id}: {text[:120]}")
         return await self.core.audio.play(source_id, wav, text, queue=queue)
 
     async def stop_playing(self, source_id: str) -> bool:
-        """Stop what a satellite plays (needs audio at full)."""
-        self.need("audio", "full")
+        """Stop what a satellite plays (needs audio at ask or full; a stop never waits for a yes)."""
+        self.need("audio", "ask")
         return await self.core.audio.stop(source_id)
 
     # ------------------------------------------------------------------ the model servers (servers at read, to act at full)
@@ -216,9 +251,9 @@ class Card:
         return await self.core.pool.offers()
 
     async def server(self, action: str, aac_model: str, model: str) -> dict[str, Any]:
-        """On the server of one of AAC's models (needs servers at full): bench, use (the AAC model asks for that model
+        """On the server of one of AAC's models (an action on servers): bench, use (the AAC model asks for that model
         from now on, and loads it), load, unload."""
-        self.need("servers", "full")
+        await self.act("servers", f"{action} {model} ({aac_model})")
         from ..models import Client  # noqa: PLC0415
 
         pool, core = self.core.pool, self.core
@@ -252,39 +287,42 @@ class Card:
 
     async def add_card(self, card_type: str, name: str = "", settings: dict[str, Any] | None = None,
                        at: dict[str, float] | None = None) -> dict[str, Any]:
-        """Add a card (needs setup at full; never with a permission setting: those are the owner's)."""
-        self.need("setup", "full")
+        """Add a card (an action on the setup; never with a permission setting: those are the owner's)."""
         if card_type not in CARD_TYPES:
             raise ValueError(f"no card type {card_type}")
         _owners(CARD_TYPES[card_type], settings or {})
+        await self.act("setup", f"add a {CARD_TYPES[card_type].title} card {name!r}")
         return (await self.domain.add_card(card_type, name, settings or {}, at=at)).summary()
 
     async def change_card(self, card_id: str, name: str | None = None, settings: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Change a card's name or settings (needs setup at full; its own settings it may always change; never a
+        """Change a card's name or settings (an action on the setup; its own settings it may always change; never a
         permission setting)."""
-        if card_id != self.id:
-            self.need("setup", "full")
         if (card := self.domain.cards.get(card_id)) is None:
             raise ValueError("no such card")
         _owners(type(card), settings or {}, card.settings)
+        if card_id != self.id:
+            await self.act("setup", f"change {card.name}: {', '.join([*(['name'] if name else []), *(settings or {})])}")
         return (await self.domain.update_card(card_id, name, settings)).summary()
 
     async def remove_card(self, card_id: str) -> None:
-        """Remove a card (needs setup at full)."""
-        self.need("setup", "full")
+        """Remove a card (an action on the setup)."""
         if card_id not in self.domain.cards:
             raise ValueError("no such card")
+        await self.act("setup", f"remove {self.domain.cards[card_id].name}")
         await self.domain.remove_card(card_id)
 
-    def set_wires(self, wires: list[dict[str, str]]) -> list[dict[str, str]]:
-        """The domain's wires, all of them (needs setup at full); returns them as they are now (only fitting ones)."""
-        self.need("setup", "full")
+    async def set_wires(self, wires: list[dict[str, str]]) -> list[dict[str, str]]:
+        """The domain's wires, all of them (an action on the setup); returns them as they are now (only fitting ones)."""
+        now = [dict(w) for w in self.domain.wires]
+        added = [f"{w['from']} -> {w['to']}" for w in wires if w not in now]
+        gone = [f"{w['from']} -> {w['to']}" for w in now if w not in wires]
+        await self.act("setup", "; ".join([*(["wire " + ", ".join(added)] if added else []), *(["unwire " + ", ".join(gone)] if gone else [])]) or "wires")
         self.domain.set_wires(wires)
         return [dict(w) for w in self.domain.wires]
 
-    def unblock(self, a: str, b: str) -> bool:
-        """A red wire carries again (needs setup at full)."""
-        self.need("setup", "full")
+    async def unblock(self, a: str, b: str) -> bool:
+        """A red wire carries again (an action on the setup)."""
+        await self.act("setup", f"unblock the red wire {a} -> {b}")
         return self.domain.unblock(a, b, by=f"{self.name}, for a model")
 
     def tell(self, what: str = "card", **data: Any) -> None:
@@ -389,6 +427,15 @@ class Card:
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         """One of its functions (a model's tool call, a Relay's script)."""
         raise ValueError(f"{self.name} has no function {function}")
+
+    async def run(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
+        """How the core runs one of its functions: request_access (every card with needs) is the core's, so a card that
+        may do nothing can still ask; the rest is the card's own `call`."""
+        if function == "request_access" and self.needs:
+            things = args.get("things") or []
+            return self.domain.request(self, dict.fromkeys(things if isinstance(things, list) else [things],
+                                                           str(args.get("level") or "read")), str(args.get("reason") or ""))
+        return await self.call(function, args, context)
 
     def offered(self) -> dict[str, dict[str, Any]]:
         """Its functions as models see them: each ticked one with its name and description ("For models"; the card's

@@ -27,7 +27,8 @@ from .const import LOGGER, SIGNAL
 from .flow import Flow
 from .log import DomainLog
 from .models import ModelPool
-from .permissions import LEVELS
+from .context import new_id
+from .permissions import LEVELS, kinds_of, rank
 
 UNDO_STEPS = 20
 SLOTS = ("1", "2", "3")
@@ -99,6 +100,7 @@ class Domain:
         self.user_tags: list[str] = []
         self.red: list[dict[str, Any]] = []  # blocked wires (a storm went through them): {from, to, since, count}
         self.permissions: dict[str, str] = {}  # its sheet: thing → level, the owner's alone (docs/v2 page 6); not set: hidden
+        self.requests: list[dict[str, Any]] = []  # cards asking for more: {id, card, name, things {thing: level}, reason, since}
         self.flow = Flow(self)
         self.log = DomainLog(self)
         self._specs: dict[str, dict[str, Any]] = {}
@@ -118,6 +120,7 @@ class Domain:
         self.user_tags = data.get("user_tags", [])
         self.red = data.get("red", [])
         self.permissions = data.get("permissions", {})
+        self.requests = data.get("requests", [])
         self.cards = {}
         for card_id, spec in list(self._specs.items()):  # a card made here may add another
             await self._make(card_id, spec)
@@ -167,7 +170,7 @@ class Domain:
     def _data(self) -> dict[str, Any]:
         return {"cards": self._specs, "wires": self.wires, "positions": self.positions,
                 "undo": packed(self.undo, {"cards": self._specs, "wires": self.wires}), "slots": self.slots, "user_tags": self.user_tags,
-                "red": self.red, "permissions": self.permissions}
+                "red": self.red, "permissions": self.permissions, "requests": self.requests}
 
     # ------------------------------------------------------------------ permissions (docs/v2 page 6)
     def allows(self, thing: str) -> str:
@@ -190,6 +193,50 @@ class Domain:
             if self.cards.get(card_id) is not None and self.cards[card_id].needs:
                 await self._make(card_id, spec)
         self.core.notify("setup", domain=self.id)
+
+    def request(self, card: Card, levels: dict[str, str], reason: str) -> dict[str, Any]:
+        """A card asks the owner for more (its kinds of things only; only what the domain lets it know exists; not what
+        it has already). Waits here until the owner decides (decide)."""
+        from .asks import asked_for, request_note  # noqa: PLC0415
+
+        wanted, refused = {}, []
+        for thing, level in asked_for(levels).items():
+            if kinds_of(thing) not in card.needs or self.allows(thing) == "hidden":
+                refused.append(thing)  # unknown to it: as if there were no such thing
+            elif rank(card.level(thing)) < rank(level):
+                wanted[thing] = level
+        if not wanted:
+            return {"asked": {}, "unknown": refused, "note": "nothing to ask for (it has that already, or there is no such thing)"}
+        req = {"id": new_id(), "card": card.id, "name": card.name, "things": wanted, "reason": reason.strip()[:500] or "(no reason given)",
+               "since": time.time()}
+        self.requests.append(req)
+        self.log.write("info", f"Asks for {', '.join(f'{t} {l}' for t, l in wanted.items())}: {req['reason']}"[:500], card=card.id, what="request")
+        request_note(self.hass, self, req)
+        self.save()
+        self.core.notify("requests", domain=self.id)
+        return {"asked": wanted, "unknown": refused, "note": "the owner decides; until then nothing changes"}
+
+    async def decide(self, request_id: str, allowed: list[str]) -> dict[str, str]:
+        """The owner's answer to a request: the things allowed (all, some, none) are the card's at the level asked
+        (the domain's sheet raised where it was lower: it is the owner who says so). Returns what was granted."""
+        from .asks import request_done  # noqa: PLC0415
+
+        req = next((r for r in self.requests if r["id"] == request_id), None)
+        if req is None:
+            raise ValueError("no such request (decided already?)")
+        self.requests.remove(req)
+        granted = {t: lvl for t, lvl in req["things"].items() if t in allowed}
+        if granted and (card := self.cards.get(req["card"])) is not None:
+            await self.set_permissions({t: lvl for t, lvl in granted.items() if rank(self.allows(t)) < rank(lvl)})
+            spec = self._specs[card.id]
+            spec["settings"] = {**spec.get("settings", {}), "access": {**(spec.get("settings") or {}).get("access", {}), **granted}}
+            await self._make(card.id, spec)
+        self.log.write("info", f"Request of {req['name']}: allowed {', '.join(granted) or 'nothing'}", card=req["card"], what="request")
+        request_done(self.hass, request_id)
+        self.save()
+        self.core.notify("requests", domain=self.id)
+        self.core.notify("setup", domain=self.id)
+        return granted
 
     # ------------------------------------------------------------------ red wires (a storm stop)
     def is_red(self, a: str, b: str) -> bool:
@@ -553,6 +600,8 @@ class Core:
         from .audio import AudioHub  # noqa: PLC0415
         self.audio = AudioHub(self)
         self.calendar = Calendars(self)
+        from .asks import Asks  # noqa: PLC0415
+        self.asks = Asks(self)
 
     async def load(self) -> None:
         """Read the core; the first time, build the default domain."""

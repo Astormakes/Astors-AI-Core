@@ -170,7 +170,7 @@ class Flow:
     async def _answer(self, card: Card, context: Context, call: dict[str, Any]) -> None:
         """Run the called function, add its result, send the context on from the card's outputs."""
         try:
-            result = await card.call(call["function"], call.get("args") or {}, context)
+            result = await card.run(call["function"], call.get("args") or {}, context)
         except Exception as err:  # noqa: BLE001 - a failing tool is told to the caller
             result = {"error": str(err)}
             self.domain.log.write("warning", f"Its function {call['function']} failed: {err!r}", card=card.id, what="function")

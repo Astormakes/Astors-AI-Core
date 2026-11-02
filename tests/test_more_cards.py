@@ -340,7 +340,7 @@ async def test_home_access_list(hass: HomeAssistant, mock_entry, hass_ws_client)
     items = await core.domain.cards["home"].ui_call("access_items", {})
     assert [x for x in items if x["id"].startswith("light.")] == [{"id": "light.desk", "name": "Desk", "area": "", "group": "light",
                                                                     "help": "", "cap": "read"}]
-    assert core.domain.cards["home"].level("light.desk") == "hidden"  # the card's own is not set yet
+    assert core.domain.cards["home"].level("light.desk") == "list"  # the card's own is not set: it knows it, can ask
     client = await hass_ws_client(hass)
     await client.send_json_auto_id({"type": "aac/permissions"})
     got = (await client.receive_json())["result"]

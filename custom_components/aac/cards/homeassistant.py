@@ -9,7 +9,7 @@ from typing import Any
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.3.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 MAX_FOUND = 60
 SETTLE = 2.0  # seconds a switched entity gets to report its new state (a device answers after the service returns)
@@ -62,7 +62,7 @@ class HomeAssistantCard(Card):
             return out
         if function == "call_service":
             entity_id = str(args.get("entity_id") or "")
-            if not self.may(entity_id, "full"):
+            if not self.may(entity_id, "ask"):  # at ask the owner says yes or no to this one
                 return {"error": f"{entity_id} may not be switched (its access is {self.level(entity_id)})."}
             changed = asyncio.Event()
             unwatch = self.ha.watch([entity_id], lambda _event: changed.set())

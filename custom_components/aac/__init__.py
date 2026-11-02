@@ -85,6 +85,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool
     frontend.async_remove_panel(hass, "aac")
     await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     core = entry.runtime_data
+    core.asks.unload()  # a card waiting for a yes hears no
     if core.domain:
         await core.domain.stop()
         await core.domain.unload()
