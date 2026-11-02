@@ -1,5 +1,7 @@
 """The cards on their own."""
 
+import asyncio
+
 from homeassistant.core import HomeAssistant
 
 from custom_components.aac.context import Context
@@ -226,6 +228,23 @@ async def test_home_assistant_card_access(hass: HomeAssistant, mock_entry):
     assert (await home.call("get_state", {"entity_ids": ["lock.door"]}))["lock.door"] == "unknown or not allowed"
     refused = await home.call("call_service", {"domain": "switch", "service": "turn_on", "entity_id": "sensor.t"})
     assert "may not be switched" in refused["error"]
+
+
+async def test_home_assistant_card_reports_the_new_state(hass: HomeAssistant, mock_entry):
+    """A device reports its new state after the service returned: call_service waits for it (not the old one)."""
+    core = await setup_aac(hass, mock_entry)
+    home = await core.domain.add_card("homeassistant", "Home", {"levels": {"switch.lamp": "full"}})
+    hass.states.async_set("switch.lamp", "off")
+
+    async def report_later():
+        await asyncio.sleep(0.2)
+        hass.states.async_set("switch.lamp", "on")
+
+    async def turn_on(call):  # the service returns at once; the device reports a moment later
+        hass.async_create_task(report_later())
+    hass.services.async_register("switch", "turn_on", turn_on)
+    assert await home.call("call_service", {"domain": "switch", "service": "turn_on", "entity_id": "switch.lamp"}) == \
+        {"done": True, "state": "on"}
 
 
 async def test_relay_reads_values_and_when_aac_last_spoke(hass: HomeAssistant, mock_entry, aioclient_mock):

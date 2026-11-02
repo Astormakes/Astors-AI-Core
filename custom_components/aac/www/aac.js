@@ -320,8 +320,13 @@ class AacPanel extends HTMLElement {
     this._applyWidths();
     await this._load();
     this._hass.connection.subscribeMessage((ev) => this._event(ev), { type: "aac/subscribe" });
+    // what changed while it was hidden or offline (an app resumed, HA restarted) reaches no page: the sidebar reloads
+    this._hass.connection.addEventListener("ready", () => this._reloadNav());
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) this._reloadNav(); });
     this.go("card", null, null);
   }
+
+  async _reloadNav() { this.nav = (await this.ws("aac/nav")).nav; this._redrawNav(); }
 
   async _load() {
     [this.state, this.audio, this.look, this.nav] = await Promise.all([this.ws("aac/state"), this.ws("aac/audio").catch(() => null),
@@ -344,7 +349,7 @@ class AacPanel extends HTMLElement {
     for (const el of pages) { try { el?.event?.(ev); } catch (err) { console.error(err); } }
     if (["chat", "card"].includes(ev.what)) { // a card's sidebar entries may have changed
       clearTimeout(this._nt);
-      this._nt = setTimeout(async () => { this.nav = (await this.ws("aac/nav")).nav; const n = this.shadowRoot.querySelector("nav"); if (n) n.outerHTML = this._nav(); }, 200);
+      this._nt = setTimeout(() => this._reloadNav(), 200);
     } else if (ev.what === "setup") {
       clearTimeout(this._st);
       this._st = setTimeout(async () => { await this._load(); if (this.view.kind !== "cards" || !this._dragging) this.render(); }, 150);

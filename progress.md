@@ -23,6 +23,11 @@ The plan for v2 lives in `docs/v2/` (private): page 1 "What AAC is" (settled), p
   tag matching without capitals.
 - **3.0.1:** a text-to-speech request is given up after Text to speech's setting Gives up after (default 30 s), with a log warning (live 23:35: the whole
   context went to Piper as one text, it never finished, and every sentence after it waited behind it).
+- **3.0.2 (2026-11-02):** Home Assistant `call_service` waits up to 2 s for the entity's new state before it reports it
+  (live 05:25: the bed light went on, but it reported "off": the Matter switch answers after the service returns). The
+  panel's sidebar reloads when the page is shown again and when the connection comes back (the owner's app listed only
+  2 of 6 chats: changes while it was hidden reached no page). Owner, on the day chat's first morning: a silent answer
+  (the schedule's "Don't speak", a "nothing") sending nothing is expected, so is "Test" getting "nothing".
 
 - **2026-11-01 (3.0.0): the rules from the ground up** (owner: "lets scrap the old rules and build from the ground
   up"; docs/v2 page 5, the rules in `custom_components/aac/rules.py`: the Card editor's `rules`, the panel's Settings →

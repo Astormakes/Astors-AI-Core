@@ -4,17 +4,20 @@ integration cards."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
+from homeassistant.helpers.event import async_track_state_change_event
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.2.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.2.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 LEVELS = ["hidden", "read", "full"]
 MAX_FOUND = 60
+SETTLE = 2.0  # seconds a switched entity gets to report its new state (a device answers after the service returns)
 
 
 def _area(hass: HomeAssistant, entity_id: str) -> str | None:
@@ -95,8 +98,17 @@ class HomeAssistantCard(Card):
             entity_id = str(args.get("entity_id") or "")
             if self.level(entity_id) != "full":
                 return {"error": f"{entity_id} may not be switched (its access is {self.level(entity_id)})."}
-            await hass.services.async_call(args["domain"], args["service"], {"entity_id": entity_id, **(args.get("data") or {})},
-                                           blocking=True)
+            changed = asyncio.Event()
+            unsub = async_track_state_change_event(hass, [entity_id], callback(lambda _event: changed.set()))
+            try:
+                await hass.services.async_call(args["domain"], args["service"], {"entity_id": entity_id, **(args.get("data") or {})},
+                                               blocking=True)
+                try:  # the state it reports is the new one (no change within SETTLE: it already was so)
+                    await asyncio.wait_for(changed.wait(), SETTLE)
+                except TimeoutError:
+                    pass
+            finally:
+                unsub()
             state = hass.states.get(entity_id)
             return {"done": True, "state": state.state if state else None}
         return await super().call(function, args, context)
