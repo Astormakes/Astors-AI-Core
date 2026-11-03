@@ -9,6 +9,8 @@ folder), AAC_TZ (the home's time zone).
 
 from __future__ import annotations
 
+import contextlib
+import importlib
 import os
 import sys
 import types
@@ -17,6 +19,8 @@ from zoneinfo import ZoneInfo
 
 import wire  # next to main.py: the same module the channel uses
 
+LAZY = ("numpy.fft", "numpy.linalg", "numpy.random", "numpy.polynomial", "numpy.ma", "numpy.lib.stride_tricks",
+        "numpy.char", "numpy.strings", "numpy.rec", "numpy.dtypes", "numpy.exceptions")
 ROOT = os.environ["AAC_ROOT"]
 for _name, _where in (("custom_components", os.path.join(ROOT, "custom_components")),
                       ("custom_components.aac", os.path.join(ROOT, "custom_components", "aac")),
@@ -37,6 +41,10 @@ from custom_components.aac.layer import Clock, Layer  # noqa: E402
 
 wire.known(ModelError, ModelUnreachable)
 load_cards(os.environ["AAC_CARDS"])
+for _part in LAZY:  # parts a package loads only when first used: now, before the wall (a card's numpy.fft …)
+    if _part.split(".")[0] in sys.modules:
+        with contextlib.suppress(ImportError):
+            importlib.import_module(_part)
 
 LAYER: Layer | None = None
 

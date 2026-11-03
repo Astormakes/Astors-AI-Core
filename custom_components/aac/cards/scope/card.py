@@ -7,10 +7,11 @@ import time
 from typing import Any
 
 import numpy as np
+import numpy.fft  # noqa: F401 - numpy loads it only when first used; the walled worker cannot then
 
 from custom_components.aac.api import SAMPLE_RATE, Card, register
 
-VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 KEEP = 2048  # samples it looks at (0.13 s at 16 kHz)
 BANDS = 40  # spectrum bars, spread like hearing (log)

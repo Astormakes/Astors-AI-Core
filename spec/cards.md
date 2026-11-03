@@ -271,7 +271,9 @@ the core's services over the link (`home`, `services`, `models`, `audio`, `asks`
 the core to the domain's sheet, which only the core holds (with the requests). A card that holds the worker over 3 s
 without giving it back is stopped there (`wire.Hung`, logged as failed); a worker stuck in C (no beat for 5 s) is
 killed and started again, and the domain runs again. A card file is imported only in the worker (before the wall): a
-newer one starts the worker again. Tests run the same layer inside Home Assistant (`core.CARDS_IN_WORKER = False`).
+newer one starts the worker again: **a card imports everything it needs at the top of its file**, parts a package loads
+only when first used too (`import numpy.fft`); later the wall refuses to read them (PermissionError). Tests run the
+same layer inside Home Assistant (`core.CARDS_IN_WORKER = False`).
 
 **The card interface** (`api.py`; cards run walled in, so this is all a card uses): `handle`, `send(context,
 port)`, `read(port)`, `held(port)`, `call`, `stop`, `stop_all()`, `tools()`, `wired(port)`, `wired_into(port)`,
