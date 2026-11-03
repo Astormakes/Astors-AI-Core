@@ -1,6 +1,6 @@
 """The core (docs/v2 page 1): not a card, cannot be removed. It holds the model pool (shared by every domain) and
 the domains; one domain runs at a time. A domain is a complete setup: its cards (each owning its data), wires,
-positions, Undo history and three save slots, all kept on the server.
+positions, Undo history and four save slots (the owner's three and a model's draft), all kept on the server.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from homeassistant.helpers.storage import Store
 
 from .calendars import Calendars
 from .cards import CARD_TYPES, Card, renamed_refs
-from .const import LOGGER, SIGNAL
+from .const import DRAFT, LOGGER, SIGNAL
 from .flow import Flow
 from .log import DomainLog
 from .models import ModelPool
@@ -31,7 +31,9 @@ from .context import new_id
 from .permissions import LEVELS, kinds_of, rank
 
 UNDO_STEPS = 20
-SLOTS = ("1", "2", "3")
+SLOTS = ("1", "2", "3", DRAFT)  # the owner's three, and the draft
+KEEP_WAIT = 120  # seconds after a model's switch until the setup before comes back, unless keep came
+SWITCH_WAIT = 60  # seconds a switch waits at most for the domain to be idle (the model's answer done)
 STORM = 30  # contexts within a second that turn a wire red (AAC's settings change it: a fast model's snapshots must not)
 
 
@@ -101,6 +103,8 @@ class Domain:
         self.red: list[dict[str, Any]] = []  # blocked wires (a storm went through them): {from, to, since, count}
         self.permissions: dict[str, str] = {}  # its sheet: thing → level, the owner's alone (docs/v2 page 6); not set: hidden
         self.requests: list[dict[str, Any]] = []  # cards asking for more: {id, card, name, things {thing: level}, reason, since}
+        self.trial: dict[str, Any] | None = None  # a model's switch waiting for keep: {slot, by, back, until, context}
+        self._trial_timer: asyncio.TimerHandle | None = None
         self.flow = Flow(self)
         self.log = DomainLog(self)
         self._specs: dict[str, dict[str, Any]] = {}
@@ -121,6 +125,7 @@ class Domain:
         self.red = data.get("red", [])
         self.permissions = data.get("permissions", {})
         self.requests = data.get("requests", [])
+        self.trial = data.get("trial")
         self.cards = {}
         for card_id, spec in list(self._specs.items()):  # a card made here may add another
             await self._make(card_id, spec)
@@ -131,10 +136,14 @@ class Domain:
         self.running = True
         for card in list(self.cards.values()):
             await card.start()
+        if self.trial:
+            self._time_trial()
 
     async def unload(self) -> None:
         """Another domain runs (or AAC stops): every card ends its timers; Redo is not kept."""
         self.running = False
+        if self._trial_timer:
+            self._trial_timer.cancel()
         self._tidy(i for step in self.redo for i in step["cards"])
         self.redo = []
         for card in list(self.cards.values()):
@@ -170,7 +179,8 @@ class Domain:
     def _data(self) -> dict[str, Any]:
         return {"cards": self._specs, "wires": self.wires, "positions": self.positions,
                 "undo": packed(self.undo, {"cards": self._specs, "wires": self.wires}), "slots": self.slots, "user_tags": self.user_tags,
-                "red": self.red, "permissions": self.permissions, "requests": self.requests}
+                "red": self.red, "permissions": self.permissions, "requests": self.requests,
+                "trial": {k: v for k, v in self.trial.items() if k != "context"} if self.trial else None}
 
     # ------------------------------------------------------------------ permissions (docs/v2 page 6)
     def allows(self, thing: str) -> str:
@@ -394,16 +404,7 @@ class Domain:
     def set_wires(self, wires: list[dict[str, str]]) -> None:
         """The owner's wires (only output → input of the same kind: a read output only into a read input; an input may
         take several kinds, e.g. "audio|clip"; "any" takes every kind)."""
-        found = []
-        for w in wires:
-            a, _, ap = w["from"].partition(".")
-            b, _, bp = w["to"].partition(".")
-            src, dst = self.cards.get(a), self.cards.get(b)
-            if not src or not dst:
-                continue
-            kind, takes = src.ports()[1].get(ap), dst.ports()[0].get(bp)
-            if kind and (takes == "any" or kind in str(takes or "").split("|")) and {"from": w["from"], "to": w["to"]} not in found:
-                found.append({"from": w["from"], "to": w["to"]})
+        found = self._fit(wires, self._ports("now"))
         self._remember()
         if found != self.wires:
             self.log.write("info", f"Wires changed ({len(found)} now)", what="wires")
@@ -452,11 +453,185 @@ class Domain:
         self.save()
         self.core.notify("setup", domain=self.id)
 
-    def save_slot(self, slot: str) -> None:
-        """Keep the setup (cards, wires, positions) in one of three slots."""
+    def save_slot(self, slot: str, source: str = "now") -> None:
+        """Keep a setup (cards, wires, positions: the running one, or another slot's) in a slot."""
+        setup = self.place(source)
         self._tidy((self.slots.get(slot) or {}).get("cards") or {})
-        self.slots[slot] = {**self._snapshot(), "positions": deepcopy(self.positions)}
+        self.slots[slot] = setup
         self.save()
+        self.core.notify("setup", domain=self.id)
+
+    # ------------------------------------------------------------------ building in a slot, a model's switch
+    def place(self, where: str) -> dict[str, Any]:
+        """A setup to look at or build in: "now" (the running one) or a slot (none kept: empty)."""
+        if where == "now":
+            return {**self._snapshot(), "positions": deepcopy(self.positions)}
+        if where not in SLOTS:
+            raise ValueError(f"no setup {where!r}: now, or a slot {', '.join(SLOTS)}")
+        return deepcopy(self.slots.get(where) or {"cards": {}, "wires": [], "positions": {}})
+
+    def _ports(self, where: str, cards: dict[str, Any] | None = None) -> Callable[[str], tuple[dict, dict] | None]:
+        """A card's ports in a setup: a running card's own, else what its type has with its settings (None: no such card
+        or type)."""
+        def ports(card_id: str) -> tuple[dict, dict] | None:
+            if where == "now":
+                return made.ports() if (made := self.cards.get(card_id)) else None
+            spec = (cards or {}).get(card_id)
+            if spec is None or (kind := CARD_TYPES.get(spec.get("type", ""))) is None:
+                return None
+            if (made := self.cards.get(card_id)) is not None and self._specs.get(card_id) == spec:
+                return made.ports()
+            return kind.ports_for({k: f.get("default") for k, f in kind.settings_schema.items()} | dict(spec.get("settings") or {}))
+        return ports
+
+    @staticmethod
+    def _fit(wires: list[dict[str, str]], ports: Callable[[str], tuple[dict, dict] | None]) -> list[dict[str, str]]:
+        """The wires that fit: output → input of the same kind (a read output only into a read input; an input may take
+        several kinds, e.g. "audio|clip"; "any" takes every kind), each once."""
+        found = []
+        for w in wires:
+            a, _, ap = str(w.get("from", "")).partition(".")
+            b, _, bp = str(w.get("to", "")).partition(".")
+            src, dst = ports(a), ports(b)
+            if not src or not dst:
+                continue
+            kind, takes = src[1].get(ap), dst[0].get(bp)
+            if kind and (takes == "any" or kind in str(takes or "").split("|")) and {"from": w["from"], "to": w["to"]} not in found:
+                found.append({"from": w["from"], "to": w["to"]})
+        return found
+
+    def build(self, slot: str, change: Callable[[dict[str, Any]], Any]) -> Any:
+        """A change to a kept setup (it does not run: nothing is made); returns what the change returns."""
+        if slot == "now":
+            raise ValueError("build changes a slot; the running setup changes card by card")
+        setup = self.place(slot)
+        before = set(setup["cards"])
+        result = change(setup)
+        self.slots[slot] = setup
+        self._tidy(before - set(setup["cards"]))
+        self.save()
+        self.core.notify("setup", domain=self.id)
+        return result
+
+    def slot_add(self, slot: str, card_type: str, title: str = "", settings: dict[str, Any] | None = None) -> str:
+        """A new card in a slot; its id (its name, free in every setup)."""
+        if card_type not in CARD_TYPES:
+            raise ValueError(f"No card type {card_type}")
+        title = title or CARD_TYPES[card_type].title
+        def add(setup: dict[str, Any]) -> str:
+            new = self._free(slug(title), self._ids_taken() | set(setup["cards"]))
+            setup["cards"][new] = {"type": card_type, "title": title, "settings": dict(settings or {})}
+            return new
+        return self.build(slot, add)
+
+    def slot_update(self, slot: str, card_id: str, title: str | None = None, settings: dict[str, Any] | None = None) -> None:
+        """A card's name or settings in a slot (its id follows its name once the slot runs)."""
+        def change(setup: dict[str, Any]) -> None:
+            spec = setup["cards"][card_id]
+            if title is not None and title.strip():
+                spec["title"] = title.strip()
+            if settings is not None:
+                spec["settings"] = {**(spec.get("settings") or {}), **settings}
+        self.build(slot, change)
+
+    def slot_remove(self, slot: str, card_id: str) -> None:
+        """A card out of a slot, with its wires."""
+        def remove(setup: dict[str, Any]) -> None:
+            setup["cards"].pop(card_id, None)
+            (setup.get("positions") or {}).pop(card_id, None)
+            setup["wires"] = [w for w in setup["wires"] if card_id not in (w["from"].split(".")[0], w["to"].split(".")[0])]
+        self.build(slot, remove)
+
+    def slot_wires(self, slot: str, wires: list[dict[str, str]]) -> list[dict[str, str]]:
+        """A slot's wires, all of them (only fitting ones); returns them as they are now."""
+        def change(setup: dict[str, Any]) -> list[dict[str, str]]:
+            setup["wires"] = self._fit(wires, self._ports(slot, setup["cards"]))
+            return setup["wires"]
+        return self.build(slot, change)
+
+    def problems(self, where: str, keeper: str | None = None) -> list[str]:
+        """What is wrong with a setup before it runs: types that do not exist, wires that fit nothing, settings a type
+        does not have; keeper: the card that switches to it must be wired from a model and back there (else no keep)."""
+        setup = self.place(where)
+        cards, found = setup["cards"], []
+        for card_id, spec in cards.items():
+            if (kind := CARD_TYPES.get(spec.get("type", ""))) is None:
+                found.append(f"{card_id}: there is no card type {spec.get('type')!r} (see types)")
+            elif extra := [k for k in spec.get("settings") or {} if k not in kind.settings_schema]:
+                found.append(f"{card_id}: a {kind.title} card has no setting {', '.join(extra)} (see help {kind.type})")
+        fits = self._fit(setup["wires"], self._ports(where, cards))
+        found += [f"the wire {w['from']} -> {w['to']} fits nothing (no such card or port there, or another kind)"
+                  for w in setup["wires"] if {"from": w["from"], "to": w["to"]} not in fits]
+        if keeper and not (any(w["to"].startswith(f"{keeper}.") for w in fits) and any(w["from"].startswith(f"{keeper}.") for w in fits)):
+            found.append(f"{keeper} (the card that switches) is not wired in and out there: no keep could come, the setup "
+                         "before would come back")
+        return found
+
+    async def switch_after(self, slot: str, by: str, call_id: str | None) -> None:
+        """A model's switch to a slot, once the domain is idle (its answer written: no card busy for a second; at most
+        SWITCH_WAIT). The conversation that asked for it goes along (the newest context holding the call): the card
+        that switched hands it on in the new setup, and keep must come within KEEP_WAIT, else the setup before comes back."""
+        await asyncio.sleep(1)
+        quiet, waited = 0, 0.0
+        while quiet < 2 and waited < SWITCH_WAIT:
+            quiet = 0 if any(c.busy for c in self.cards.values()) else quiet + 1
+            await asyncio.sleep(0.5)
+            waited += 0.5
+        held = [c for c in self.flow.held.values() if call_id and any(call_id in [x.get("id") for x in e["data"].get("calls") or []] for e in c.entries)]
+        context = max(held, key=lambda c: len(c.entries)).to_dict() if held else None
+        try:
+            await self.switch_to(slot, by, context)
+        except ValueError as err:
+            self.log.write("warning", f"Not switched to slot {slot}: {err}", card=by, what="switch")
+
+    async def switch_to(self, slot: str, by: str, context: dict[str, Any] | None = None) -> None:
+        """Run a slot now, on trial: keep within KEEP_WAIT, else the setup before comes back (the slot stays as it is)."""
+        if self.trial:
+            raise ValueError("a switch waits for keep already")
+        setup = self.place(slot)
+        if not setup["cards"]:
+            raise ValueError(f"slot {slot} is empty")
+        self.trial = {"slot": slot, "by": by, "back": self.place("now"), "until": time.time() + KEEP_WAIT, "context": context}
+        self._remember()
+        self.log.write("info", f"Switched to slot {slot}: keep within {KEEP_WAIT} s, else the setup before comes back",
+                       card=by, what="switch")
+        await self._restore(setup)
+        self._time_trial()
+
+    def _time_trial(self) -> None:
+        if self._trial_timer:
+            self._trial_timer.cancel()
+        later = max(0.0, self.trial["until"] - time.time())
+        self._trial_timer = self.hass.loop.call_later(later, lambda: self.hass.async_create_task(self.go_back()))
+
+    def keep(self, by: str = "you") -> bool:
+        """The switch stays."""
+        if not self.trial:
+            return False
+        if self._trial_timer:
+            self._trial_timer.cancel()
+        self.log.write("info", f"Kept slot {self.trial['slot']} (by {by})", what="switch")
+        self.trial = None
+        self.save()
+        self.core.notify("setup", domain=self.id)
+        return True
+
+    async def go_back(self, by: str = "") -> bool:
+        """The setup before the switch comes back (no keep in time, or the owner said so); Undo goes to the switched one."""
+        if not (trial := self.trial):
+            return False
+        if self._trial_timer:
+            self._trial_timer.cancel()
+        self.trial = None
+        why = f"{by} took the switch back" if by else f"No keep within {KEEP_WAIT} s after the switch to slot {trial['slot']}"
+        self._remember()
+        self.log.write("warning", f"{why}: the setup before it runs again", card=trial["by"], what="switch")
+        await self._restore(trial["back"])
+        if not by:
+            with contextlib.suppress(Exception):
+                persistent_notification.async_create(self.hass, f"{why}: the setup before it runs again (slot {trial['slot']} "
+                                                     "stays as it was, Undo goes to it).", title=f"AAC ({self.name}): a switch went back")
+        return True
 
     async def load_slot(self, slot: str) -> bool:
         """Back to a kept setup (Undo brings the current one back)."""
@@ -581,7 +756,8 @@ class Domain:
         """For the panel."""
         return {"id": self.id, "name": self.name, "cards": [c.summary() for c in self.cards.values()],
                 "wires": self.wires, "positions": self.positions, "undo": len(self.undo), "redo": len(self.redo),
-                "slots": {s: bool(self.slots.get(s)) for s in SLOTS}, "tags": self.tag_pool(), "red": self.red}
+                "slots": {s: bool(self.slots.get(s)) for s in SLOTS}, "tags": self.tag_pool(), "red": self.red,
+                "trial": {"slot": self.trial["slot"], "by": self.trial["by"], "left": round(self.trial["until"] - time.time())} if self.trial else None}
 
 
 class Core:

@@ -14,15 +14,16 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import time
 import types
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from ..const import LOGGER
+from ..const import DRAFT, LOGGER
+from ..context import Context
 from ..permissions import Home, catalog, kinds_of, lower, rank
 
 if TYPE_CHECKING:
     from ..core import Domain
-    from ..context import Context
 
 CARD_TYPES: dict[str, type[Card]] = {}
 LOADED: dict[str, tuple[int, ...]] = {}  # card module → the VERSION it was loaded with
@@ -272,53 +273,134 @@ class Card:
         return {"done": f"{found['name']} uses {model}" if action == "use" else f"{action}ed {model}"}
 
     # ------------------------------------------------------------------ the setup (setup at read, to change it at full)
-    def read_setup(self) -> dict[str, Any]:
-        """The domain's setup: cards {id: {type, name, settings, inputs, outputs}} (also those not made yet, while a
-        setup is being made), wires, positions, red wires."""
+    # `where`: "now" (the running setup) or a slot: 1, 2, 3 (the owner's), 4 (the draft: a model builds there and
+    # switches to it). A change to what runs or to the owner's slots is an action (at ask: the owner's yes); the draft
+    # changes nothing that runs, so building there needs ask or full and asks nothing. Never a permission setting.
+    def read_setup(self, where: str = "now") -> dict[str, Any]:
+        """A setup: cards {id: {type, name, settings, inputs, outputs}} (also those not made yet, while a setup is being
+        made), wires, positions, red wires (only what runs has them)."""
         self.need("setup", "read")
         domain, cards = self.domain, {}
-        for card_id, spec in domain.export()["cards"].items():
-            made, kind = domain.cards.get(card_id), CARD_TYPES.get(spec.get("type", ""))
-            ins, outs = made.ports() if made else (dict(kind.inputs), dict(kind.outputs)) if kind else ({}, {})
+        setup = domain.place(where)
+        ports = domain._ports(where, setup["cards"])
+        for card_id, spec in setup["cards"].items():
+            made = domain.cards.get(card_id) if where == "now" else None
+            kind = CARD_TYPES.get(spec.get("type", ""))
+            ins, outs = ports(card_id) or ((dict(kind.inputs), dict(kind.outputs)) if kind else ({}, {}))
             cards[card_id] = {"type": spec.get("type"), "name": made.name if made else spec.get("title"),
                               "settings": dict(made.settings if made else spec.get("settings") or {}), "inputs": ins, "outputs": outs}
-        return {"cards": cards, "wires": [dict(w) for w in domain.wires], "positions": dict(domain.positions),
-                "red": [f"{r['from']} -> {r['to']}" for r in domain.red]}
+        return {"cards": cards, "wires": [dict(w) for w in setup["wires"]], "positions": dict(setup.get("positions") or {}),
+                "red": [f"{r['from']} -> {r['to']}" for r in domain.red] if where == "now" else []}
+
+    async def _building(self, where: str, what: str) -> None:
+        if where == DRAFT:
+            self.need("setup", "ask")
+        else:
+            await self.act("setup", what + ("" if where == "now" else f" (in slot {where})"))
 
     async def add_card(self, card_type: str, name: str = "", settings: dict[str, Any] | None = None,
-                       at: dict[str, float] | None = None) -> dict[str, Any]:
-        """Add a card (an action on the setup; never with a permission setting: those are the owner's)."""
+                       at: dict[str, float] | None = None, where: str = "now") -> dict[str, Any]:
+        """Add a card; returns it (in a slot: its id)."""
         if card_type not in CARD_TYPES:
             raise ValueError(f"no card type {card_type}")
         _owners(CARD_TYPES[card_type], settings or {})
-        await self.act("setup", f"add a {CARD_TYPES[card_type].title} card {name!r}")
+        await self._building(where, f"add a {CARD_TYPES[card_type].title} card {name!r}")
+        if where != "now":
+            return {"id": self.domain.slot_add(where, card_type, name, settings or {}), "slot": where}
         return (await self.domain.add_card(card_type, name, settings or {}, at=at)).summary()
 
-    async def change_card(self, card_id: str, name: str | None = None, settings: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Change a card's name or settings (an action on the setup; its own settings it may always change; never a
-        permission setting)."""
-        if (card := self.domain.cards.get(card_id)) is None:
+    async def change_card(self, card_id: str, name: str | None = None, settings: dict[str, Any] | None = None,
+                          where: str = "now") -> dict[str, Any]:
+        """Change a card's name or settings (its own, while it runs, it may always change)."""
+        spec = self.domain.place(where)["cards"].get(card_id)
+        if spec is None or (where == "now" and card_id not in self.domain.cards):
             raise ValueError("no such card")
-        _owners(type(card), settings or {}, card.settings)
-        if card_id != self.id:
-            await self.act("setup", f"change {card.name}: {', '.join([*(['name'] if name else []), *(settings or {})])}")
+        kind = CARD_TYPES.get(spec.get("type", ""))
+        if kind is not None:
+            _owners(kind, settings or {}, self.domain.cards[card_id].settings if where == "now" else spec.get("settings") or {})
+        if card_id != self.id or where != "now":
+            await self._building(where, f"change {spec.get('title') or card_id}: {', '.join([*(['name'] if name else []), *(settings or {})])}")
+        if where != "now":
+            self.domain.slot_update(where, card_id, name, settings)
+            return {"id": card_id, "slot": where, **self.read_setup(where)["cards"][card_id]}
         return (await self.domain.update_card(card_id, name, settings)).summary()
 
-    async def remove_card(self, card_id: str) -> None:
-        """Remove a card (an action on the setup)."""
-        if card_id not in self.domain.cards:
+    async def remove_card(self, card_id: str, where: str = "now") -> None:
+        """Remove a card (with its wires)."""
+        spec = self.domain.place(where)["cards"].get(card_id)
+        if spec is None:
             raise ValueError("no such card")
-        await self.act("setup", f"remove {self.domain.cards[card_id].name}")
+        await self._building(where, f"remove {spec.get('title') or card_id}")
+        if where != "now":
+            self.domain.slot_remove(where, card_id)
+            return
         await self.domain.remove_card(card_id)
 
-    async def set_wires(self, wires: list[dict[str, str]]) -> list[dict[str, str]]:
-        """The domain's wires, all of them (an action on the setup); returns them as they are now (only fitting ones)."""
-        now = [dict(w) for w in self.domain.wires]
+    async def set_wires(self, wires: list[dict[str, str]], where: str = "now") -> list[dict[str, str]]:
+        """A setup's wires, all of them; returns them as they are now (only fitting ones)."""
+        now = self.domain.place(where)["wires"]
         added = [f"{w['from']} -> {w['to']}" for w in wires if w not in now]
         gone = [f"{w['from']} -> {w['to']}" for w in now if w not in wires]
-        await self.act("setup", "; ".join([*(["wire " + ", ".join(added)] if added else []), *(["unwire " + ", ".join(gone)] if gone else [])]) or "wires")
+        await self._building(where, "; ".join([*(["wire " + ", ".join(added)] if added else []), *(["unwire " + ", ".join(gone)] if gone else [])]) or "wires")
+        if where != "now":
+            return self.domain.slot_wires(where, wires)
         self.domain.set_wires(wires)
         return [dict(w) for w in self.domain.wires]
+
+    async def copy_setup(self, source: str, slot: str) -> None:
+        """A setup (the running one or a slot) into a slot: what that slot held is gone."""
+        self.need("setup", "read")
+        if slot == "now":
+            raise ValueError("into a slot (switch runs one)")
+        self.domain.place(slot)
+        await self._building(slot, f"copy {'the running setup' if source == 'now' else f'slot {source}'} over slot {slot}")
+        self.domain.save_slot(slot, source)
+
+    def check_setup(self, where: str = "now") -> list[str]:
+        """What is wrong with a setup (empty: nothing found); a slot is checked as this card would switch to it."""
+        self.need("setup", "read")
+        return self.domain.problems(where, keeper=self.id if where != "now" else None)
+
+    async def switch_setup(self, slot: str, call_id: str | None = None) -> None:
+        """Run a slot instead of the running setup (an action), once the domain is idle (the answer that asked for it
+        written); then keep_setup must come within the core's keep time, else the setup before comes back. The
+        conversation that holds the call goes along: `switched` gives it to this card in the new setup."""
+        self.need("setup", "read")
+        if slot == "now":
+            raise ValueError("switch runs a slot")
+        if self.domain.trial:
+            raise ValueError("a switch waits for keep already")
+        if found := self.domain.problems(slot, keeper=self.id):
+            raise ValueError("not switched: " + "; ".join(found))
+        await self.act("setup", f"switch to slot {slot} (the setup now comes back unless keep follows)")
+        self.hass.async_create_background_task(self.domain.switch_after(slot, self.id, call_id), f"aac switch {slot}")
+
+    def keep_setup(self) -> bool:
+        """The switch stays (False: none waits)."""
+        self.need("setup", "read")
+        return self.domain.keep(by=self.name)
+
+    def switched(self) -> dict[str, Any] | None:
+        """The switch this card made, waiting for keep: {slot, seconds (left), context (once: the conversation that
+        asked for it, a Context)}; None: none."""
+        trial = self.domain.trial
+        if not trial or trial["by"] != self.id or not self.may("setup", "read"):
+            return None
+        context = trial.pop("context", None)
+        return {"slot": trial["slot"], "seconds": max(0, round(trial["until"] - time.time())),
+                "context": Context.from_dict(context) if context else None}
+
+    async def call_card(self, card_id: str, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
+        """Run another running card's function as a model would (only what it offers to models; that card's own
+        permissions apply): to try it."""
+        self.need("setup", "read")
+        card = self.domain.cards.get(card_id)
+        if card is None or card is self:
+            raise ValueError("no such card (another running one)")
+        if function not in card.offered():
+            raise ValueError(f"{card.name} offers no function {function} (it offers: {', '.join(card.offered()) or 'none'})")
+        self.log(f"Tries {card.name}: {function}", what="call")
+        return await card.run(function, args or {}, context)
 
     async def unblock(self, a: str, b: str) -> bool:
         """A red wire carries again (an action on the setup)."""
@@ -365,9 +447,15 @@ class Card:
             await self.save()
 
     # ------------------------------------------------------------------ ports and work
+    @classmethod
+    def ports_for(cls, settings: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+        """Inputs and outputs a card of this type has with these settings (a card may make them from its settings):
+        what a setup that does not run yet, a slot, is checked by."""
+        return dict(cls.inputs), dict(cls.outputs)
+
     def ports(self) -> tuple[dict[str, str], dict[str, str]]:
-        """Inputs and outputs (a card may make them from its settings)."""
-        return dict(self.inputs), dict(self.outputs)
+        """Its inputs and outputs now."""
+        return type(self).ports_for(self.settings)
 
     def tag(self, name: str) -> str:
         """One of its tags with the card in front."""

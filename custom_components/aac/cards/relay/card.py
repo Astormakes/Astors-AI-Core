@@ -17,7 +17,7 @@ from custom_components.aac.api import Card, Context, new_id, register
 sys.modules.pop(f"{__name__}.script", None)  # a newer card file brings a newer script.py
 from .script import DEFAULT, OWN, REFERENCE, TOTAL, Run, Script, check, joined, reference_text  # noqa: E402
 
-VERSION = "4.2.2"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
+VERSION = "4.2.3"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
 
 PRINTED = 200  # print entries it keeps
 PRINTED_FOR = 1800  # seconds they are kept
@@ -76,9 +76,16 @@ class Relay(Card):
                 self.log(f"Its script: {'; '.join(self._script.problems)}", "warning", what="script")
         return self._script
 
-    def ports(self) -> tuple[dict[str, str], dict[str, str]]:
-        script = self.script
+    @staticmethod
+    def _ports(script: Script) -> tuple[dict[str, str], dict[str, str]]:
         return dict(script.inputs or {"in": "text"}), {n: "text" for n in script.outputs or ["out"]}
+
+    @classmethod
+    def ports_for(cls, settings: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+        return cls._ports(check(settings.get("script") or ""))
+
+    def ports(self) -> tuple[dict[str, str], dict[str, str]]:
+        return self._ports(self.script)  # checked once per script
 
     # ------------------------------------------------------------------ a context arrives
     async def handle(self, context: Context, port: str) -> None:

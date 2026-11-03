@@ -232,7 +232,7 @@ async def ws_redo(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"redone": await _core(hass).domain.redo_last()})
 
 
-@command({vol.Required("type"): "aac/slot", vol.Required("slot"): vol.In(["1", "2", "3"]), vol.Required("action"): vol.In(["save", "load"])})
+@command({vol.Required("type"): "aac/slot", vol.Required("slot"): vol.In(["1", "2", "3", "4"]), vol.Required("action"): vol.In(["save", "load"])})
 async def ws_slot(hass, connection, msg) -> None:
     """Save the setup to a slot, or load it."""
     domain = _core(hass).domain
@@ -240,6 +240,14 @@ async def ws_slot(hass, connection, msg) -> None:
         domain.save_slot(msg["slot"])
         return connection.send_result(msg["id"], {"saved": True})
     connection.send_result(msg["id"], {"loaded": await domain.load_slot(msg["slot"])})
+
+
+@command({vol.Required("type"): "aac/trial", vol.Required("action"): vol.In(["keep", "back"])})
+async def ws_trial(hass, connection, msg) -> None:
+    """A model's switch that waits for keep: the owner keeps it, or takes it back now."""
+    domain = _core(hass).domain
+    done = domain.keep() if msg["action"] == "keep" else await domain.go_back(by="you")
+    connection.send_result(msg["id"], {"done": done})
 
 
 @command({vol.Required("type"): "aac/setup/export"})

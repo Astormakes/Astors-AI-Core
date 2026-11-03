@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
 
 from custom_components.aac.api import Card, Client, Context, register, run
 
-VERSION = "2.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 LOOK_BACK = 8  # entries the deciding model reads
 
@@ -28,9 +29,10 @@ class Decide(Card):
         "models": {"type": "modellist", "tag": "text", "title": "Models (in order)", "default": [], "help": "The list is run through from the top: a free model takes it; a busy one queues it if its Queue is ticked, then the next is tried. Empty: every model with the tag, queued."},
     }
 
-    def ports(self) -> tuple[dict[str, str], dict[str, str]]:
-        names = [o["name"] for o in self.settings.get("outputs") or [] if o.get("name")]
-        return dict(self.inputs), {n: "text" for n in names}
+    @classmethod
+    def ports_for(cls, settings: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+        names = [o["name"] for o in settings.get("outputs") or [] if o.get("name")]
+        return dict(cls.inputs), {n: "text" for n in names}
 
     async def handle(self, context: Context, port: str) -> None:
         outs = [o for o in self.settings.get("outputs") or [] if o.get("name")]

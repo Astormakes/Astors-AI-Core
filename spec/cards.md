@@ -136,10 +136,23 @@ its data naming no other target; `watch(ids, handler)`, `calendar_events(id, sta
 session), `self.notification(service, message, title)`, `self.read_file(name)`, `self.write_file(name, text, append)`
 (`<config>/aac/files`),
 `self.listen(handler)` (the satellites' microphones), `self.play(source, wav, text, queue)`, `self.stop_playing(source)`. The setup
-too goes only through the Card: `self.read_setup()` (setup at read: cards with type, name, settings, ports; wires;
-positions; red wires), `self.add_card`, `self.change_card` (a card may always change its own settings),
-`self.remove_card`, `self.set_wires`, `self.unblock` (setup at full); a permission setting is refused for every card
-(PermissionError). **Requests:** every card with needs has the function `request_access(things, level, reason)`,
+too goes only through the Card, each with `where`: `"now"` (what runs) or a slot, `"1"`–`"3"` (the owner's) or `"4"`
+(the draft, `const.DRAFT`): `self.read_setup(where)` (setup at read: cards with type, name, settings, ports; wires;
+positions; red wires), `self.add_card`, `self.change_card` (a card may always change its own settings while it runs),
+`self.remove_card`, `self.set_wires`, `self.copy_setup(source, slot)`, `self.unblock`; a change to what runs or to the
+owner's slots is an action on setup (at ask: the owner's yes), one in the draft needs setup at ask or full and asks
+nothing (nothing that runs changes); a permission setting is refused for every card (PermissionError).
+`self.check_setup(where)` lists what is wrong before it runs (no such type, a wire that fits nothing, a setting the
+type does not have; in a slot also this card not wired in and out there). `self.switch_setup(slot, call_id)` (an
+action) runs a slot once the domain is idle (no card `busy` for a second, at most 60 s) and puts it on trial
+(`Domain.trial`, kept over a restart): `self.keep_setup()` within `KEEP_WAIT` (120 s) keeps it, else the setup before
+comes back by itself (logged, a Home Assistant notification; the slot stays as it was); the owner keeps it or takes
+it back on the Cards page (`aac/trial {action: keep|back}`). In the new setup `self.switched()` gives the card that
+switched the slot, the seconds left and, once, the conversation that held the call (the newest context that left a
+card with it), so the Card editor hands it on with the news and the model's keep proves the way back works.
+`self.call_card(card, function, args)` runs another card's function as a model would (only what it offers; that
+card's permissions apply). Ports of a card that does not run (in a slot) come from the class method
+`ports_for(settings)` (default: `inputs`, `outputs`; a card that makes its ports from its settings overrides it). **Requests:** every card with needs has the function `request_access(things, level, reason)`,
 answered by the core (`Card.run`, so a card that may do nothing can still ask): only for things the domain lets it
 know exist; it waits in the domain (`Domain.requests`, a Home Assistant notification) until the owner allows all, some
 or none (`aac/request/decide {request, allowed}`): the card gets them, the domain's sheet raised to them. Model servers: `self.servers()` (servers at read), `self.server(action, aac_model, model)` (bench,
@@ -246,7 +259,7 @@ port)`, `read(port)`, `held(port)`, `call`, `stop`, `stop_all()`, `tools()`, `wi
 `held()`), `stream_out`, `clip_out`, `live(context, text, thinking)`, `show(data)`, its data and folder, the log, and
 the core's services above, outside AAC only as far as its permissions reach (the checked helpers above). Cards that
 build (the Card editor) use the setup through the same interface: `read_setup`, `add_card`, `change_card`,
-`remove_card`, `set_wires`, `unblock`.
+`remove_card`, `set_wires`, `copy_setup`, `check_setup`, `switch_setup`, `keep_setup`, `switched`, `call_card`, `unblock`.
 
 **A card's id is its name** (lowercase, other characters `_`: "Speech to text" is `speech_to_text`; a second card of
 that name `speech_to_text_2`), so a card is called the same everywhere. Renamed (by the owner, the Card editor, Undo,
