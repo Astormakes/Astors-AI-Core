@@ -130,12 +130,16 @@ exist, each with the domain's level as `cap`). It asks with `self.level(thing)`,
 `self.need(thing, level)` (raises PermissionError), `await self.act(thing, what)` before every action (at `ask`,
 between read and full, it waits for the owner's yes: every open panel shows Allow / Deny, and the phone when AAC's
 settings name a companion app's notify service, `aac/settings/set {ask_notify}`; the first answer counts, none in 2
-minutes is a no; `aac/asks`, `aac/ask/answer {ask, yes}`), and reaches out with `self.ha` (`entities()`, `state(id)`,
-`call(domain, service, id, data)`: a service of the entity's own domain or homeassistant.turn_on / turn_off / toggle,
-its data naming no other target; `watch(ids, handler)`, `calendar_events(id, start, end)`), `self.web()` (the HTTP
+minutes is a no; `aac/asks`, `aac/ask/answer {ask, yes}`), and reaches out with `self.ha` (all in plain data, all
+awaited but watch: `await entities()`, `await state(id)` → {entity_id, state, attributes, last_changed} or None,
+`await call(domain, service, id, data)`: a service of the entity's own domain or homeassistant.turn_on / turn_off /
+toggle, its data naming no other target; `watch(ids, handler)` → cancel, handler({entity_id, old, new});
+`await calendar_events(id, start, end)`; the core's side, `home.HomeService`, holds it to the domain's sheet), `self.web()` (the HTTP
 session), `self.notification(service, message, title)`, `self.read_file(name)`, `self.write_file(name, text, append)`
 (`<config>/aac/files`),
-`self.listen(handler)` (the satellites' microphones), `self.play(source, wav, text, queue)`, `self.stop_playing(source)`. The setup
+`self.listen(handler)` (the satellites' microphones), time and tasks only through the core (`self.task(coro,
+background)`, `self.later(seconds, job)` → cancel, `self.every_minute(job)` → cancel, `await self.blocking(fn, *args)`,
+`self.loop`; in the worker its own loop), `self.play(source, wav, text, queue)`, `self.stop_playing(source)`. The setup
 too goes only through the Card, each with `where`: `"now"` (what runs) or a slot, `"1"`–`"3"` (the owner's) or `"4"`
 (the draft, `const.DRAFT`): `self.read_setup(where)` (setup at read: cards with type, name, settings, ports; wires;
 positions; red wires), `self.add_card`, `self.change_card` (a card may always change its own settings while it runs),

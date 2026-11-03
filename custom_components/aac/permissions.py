@@ -9,13 +9,8 @@ the domain's sheet: hidden; not on a card's: list (it knows what the domain lets
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
-
-from homeassistant.core import HomeAssistant, State, callback, is_callback
-from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
-from homeassistant.helpers.event import async_track_state_change_event
 
 if TYPE_CHECKING:
     from .cards import Card
@@ -49,54 +44,31 @@ def is_entity(thing: str) -> bool:
     return "." in thing
 
 
-def area(hass: HomeAssistant, entity_id: str) -> str | None:
-    """The room of an entity (its own, else its device's)."""
-    ent = er.async_get(hass).async_get(entity_id)
-    area_id = ent.area_id if ent else None
-    if ent and not area_id and ent.device_id and (dev := dr.async_get(hass).async_get(ent.device_id)):
-        area_id = dev.area_id
-    found = ar.async_get(hass).async_get_area(area_id) if area_id else None
-    return found.name if found else None
-
-
-def catalog(hass: HomeAssistant, kinds: set[str] | None = None) -> list[dict[str, Any]]:
-    """Every thing (kinds: only these: "entities" and names of THINGS): {id, name, area, group, help}; the things first,
-    then the entities by room and kind."""
-    found = [{"id": t, "name": spec["title"], "area": "", "group": "AAC",
-              "help": f"read: {spec['read']} · full: {spec['full']}"}
-             for t, spec in THINGS.items() if kinds is None or t in kinds]
-    if kinds is None or "entities" in kinds:
-        found += sorted(({"id": st.entity_id, "name": st.attributes.get("friendly_name") or st.entity_id,
-                          "area": area(hass, st.entity_id) or "", "group": st.domain, "help": ""} for st in hass.states.async_all()),
-                        key=lambda x: (x["area"] or "~", x["group"], x["name"].lower()))
-    return found
-
-
 def kinds_of(thing: str) -> str:
     """Which kind of thing it is: "entities" or the thing itself."""
     return "entities" if is_entity(thing) else thing
 
 
 class Home:
-    """Home Assistant's entities as one card may reach them (Card.ha): what is hidden for it does not exist."""
+    """Home Assistant's entities as one card may reach them (Card.ha): what is hidden for it does not exist. Its own
+    May use is checked here, the domain's sheet by the core's side (home.HomeService), which does the work."""
 
     def __init__(self, card: Card) -> None:
-        self.card, self.hass = card, card.hass
+        self.card, self.service = card, card.core.home
 
-    def entities(self) -> list[dict[str, Any]]:
+    async def entities(self) -> list[dict[str, Any]]:
         """Every entity it may know: {entity_id, name, area, access}, with the state from read on."""
         found = []
-        for st in self.hass.states.async_all():
-            level = self.card.level(st.entity_id)
+        for e in await self.service.entities():
+            level = self.card.level(e["entity_id"])
             if level != "hidden":
-                found.append({"entity_id": st.entity_id, "name": st.attributes.get("friendly_name") or st.entity_id,
-                              "area": area(self.hass, st.entity_id), "access": level,
-                              **({"state": st.state} if rank(level) >= rank("read") else {})})
+                found.append({"entity_id": e["entity_id"], "name": e["name"], "area": e["area"], "access": level,
+                              **({"state": e["state"]} if rank(level) >= rank("read") and "state" in e else {})})
         return found
 
-    def state(self, entity_id: str) -> State | None:
-        """An entity's state (None: there is none, or it may not read it)."""
-        return self.hass.states.get(entity_id) if self.card.may(entity_id, "read") else None
+    async def state(self, entity_id: str) -> dict[str, Any] | None:
+        """An entity's state {entity_id, state, attributes, last_changed} (None: there is none, or it may not read it)."""
+        return await self.service.state(entity_id) if self.card.may(entity_id, "read") else None
 
     async def call(self, domain: str, service: str, entity_id: str, data: dict[str, Any] | None = None) -> None:
         """A service on one entity (an action on it): a service of the entity's own domain, or homeassistant.turn_on /
@@ -105,22 +77,17 @@ class Home:
             raise PermissionError(f"{domain}.{service} is not a service of {entity_id} (only {entity_id.split('.')[0]}.… "
                                   "or homeassistant.turn_on / turn_off / toggle)")
         extra = {k: v for k, v in (data or {}).items() if k not in TARGETS}
-        name = (state.attributes.get("friendly_name") if (state := self.hass.states.get(entity_id)) else None) or entity_id
+        state = await self.service.state(entity_id) if self.card.may(entity_id, "read") else None
+        name = ((state or {}).get("attributes") or {}).get("friendly_name") or entity_id
         await self.card.act(entity_id, f"{domain}.{service} on {name}{f' {extra}' if extra else ''}")
-        await self.hass.services.async_call(domain, service, {**extra, "entity_id": entity_id}, blocking=True)
+        await self.service.call(domain, service, entity_id, extra)
 
-    def watch(self, entity_ids: list[str], handler: Callable[[Any], Any]) -> Callable[[], None]:
-        """handler(event) on every change of those it may read (Home Assistant's state_changed event); returns the
-        unsubscribe."""
-        allowed = [e for e in entity_ids if self.card.may(e, "read")]
-        if not inspect.iscoroutinefunction(handler) and not is_callback(handler):  # on HA's loop (a plain function would
-            plain = handler                                                         # run in a worker thread)
-            handler = callback(lambda event: plain(event))
-        return async_track_state_change_event(self.hass, allowed, handler) if allowed else (lambda: None)
+    def watch(self, entity_ids: list[str], handler: Callable[[dict[str, Any]], Any]) -> Callable[[], None]:
+        """handler({entity_id, old, new}: states as state gives them, None when there is none) on every change of
+        those it may read; returns: cancel."""
+        return self.service.watch([e for e in entity_ids if self.card.may(e, "read")], handler)
 
     async def calendar_events(self, entity_id: str, start: str, end: str) -> list[dict[str, Any]]:
         """The events of a calendar entity between two times (needs it at read)."""
         self.card.need(entity_id, "read")
-        got = await self.hass.services.async_call("calendar", "get_events", {"entity_id": entity_id, "start_date_time": start,
-                                                  "end_date_time": end}, blocking=True, return_response=True)
-        return ((got or {}).get(entity_id) or {}).get("events") or []
+        return await self.service.calendar_events(entity_id, start, end)

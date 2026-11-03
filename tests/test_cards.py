@@ -298,7 +298,7 @@ async def test_ask_waits_for_the_owners_yes(hass: HomeAssistant, mock_entry, has
     phone = async_mock_service(hass, "notify", "mobile_app_phone")
     core.data.setdefault("settings", {})["ask_notify"] = "notify.mobile_app_phone"
     home = await allow(d, "home", {"switch.lamp": "ask"})
-    assert home.ha.state("switch.lamp").state == "off"  # reading: no yes needed
+    assert (await home.ha.state("switch.lamp"))["state"] == "off"  # reading: no yes needed
     turn_on = {"domain": "switch", "service": "turn_on", "entity_id": "switch.lamp"}
 
     task = hass.async_create_task(home.call("call_service", turn_on))
@@ -354,7 +354,7 @@ async def test_a_card_asks_for_more(hass: HomeAssistant, mock_entry, hass_ws_cli
     assert (await client.receive_json())["result"] == {"granted": {"light.desk": "full"}}
     assert not d.requests and d.cards["home"].level("light.desk") == "full" and d.cards["home"].level("light.hall") == "list"
     hall = await allow(d, "home", {"light.hall": "hidden"})  # on a card's own sheet, hidden is said out loud
-    assert "light.hall" not in {e["entity_id"] for e in hall.ha.entities()}
+    assert "light.hall" not in {e["entity_id"] for e in await hall.ha.entities()}
     assert d.allows("light.desk") == "full"
     assert "request_access" in d.cards["home"].offered()
 

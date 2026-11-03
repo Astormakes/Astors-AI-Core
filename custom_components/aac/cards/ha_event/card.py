@@ -7,7 +7,6 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 
-from homeassistant.core import Event, callback
 from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, register
@@ -97,19 +96,18 @@ class HaEvent(AutoCard):
         if entities:
             self._unsubs.append(self.ha.watch(entities, self._changed))
 
-    @callback
-    def _changed(self, event: Event) -> None:
-        new, old = event.data.get("new_state"), event.data.get("old_state")
-        if new is None or (old is not None and old.state == new.state):
+    def _changed(self, change: dict[str, Any]) -> None:
+        new, old = change["new"], change["old"]
+        if new is None or (old is not None and old["state"] == new["state"]):
             return
         now = dt_util.utcnow()
         for w in self.settings.get("watches") or []:
-            if w.get("entity_id") != new.entity_id or (w.get("to") and w["to"] != new.state):
+            if w.get("entity_id") != new["entity_id"] or (w.get("to") and w["to"] != new["state"]):
                 continue
-            key = f"{w['name']}:{new.entity_id}"
+            key = f"{w['name']}:{new['entity_id']}"
             if now - self._last.get(key, datetime.min.replace(tzinfo=now.tzinfo)) < timedelta(seconds=int(w.get("cooldown") or 300)):
                 continue
             self._last[key] = now
-            name = new.attributes.get("friendly_name", new.entity_id)
-            self.fire(w["name"], f"{name} changed from {old.state if old else '?'} to {new.state}: {w.get('text', '')}")
+            name = new["attributes"].get("friendly_name", new["entity_id"])
+            self.fire(w["name"], f"{name} changed from {old['state'] if old else '?'} to {new['state']}: {w.get('text', '')}")
 

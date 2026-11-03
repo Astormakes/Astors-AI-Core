@@ -16,7 +16,8 @@ from .cards import CARD_TYPES, CATEGORIES
 from .const import DOMAIN, SIGNAL
 from .core import UNDO_STEPS
 from .models import MODEL_TAGS, ModelError
-from .permissions import LEVELS, catalog
+from .home import catalog
+from .permissions import LEVELS
 
 COMMANDS: list = []
 

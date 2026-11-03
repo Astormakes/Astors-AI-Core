@@ -76,7 +76,7 @@ class Speaker(Card):
     async def stop(self) -> None:
         for where in list(self._played_at):
             if where.startswith("media_player."):
-                if (state := self.ha.state(where)) and state.state == "playing":
+                if (state := await self.ha.state(where)) and state["state"] == "playing":
                     await self.ha.call("media_player", "media_stop", where)
             elif self.may("audio", "ask"):
                 await self.stop_playing(where)

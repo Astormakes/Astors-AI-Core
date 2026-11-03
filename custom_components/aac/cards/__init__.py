@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from ..const import DRAFT, LOGGER
 from ..context import Context
-from ..permissions import Home, catalog, kinds_of, lower, rank
+from ..permissions import Home, kinds_of, lower, rank
 
 if TYPE_CHECKING:
     from ..core import Domain
@@ -607,8 +607,7 @@ class Card:
         with needs: "access_items", the things its May use can be about (what the domain lets exist), each with the
         domain's level as its cap."""
         if action == "access_items" and self.needs:
-            return [{**x, "cap": cap} for x in catalog(self.hass, set(self.needs))
-                    if (cap := self.domain.allows(x["id"])) != "hidden"]
+            return await self.core.home.catalog(sorted(self.needs))
         raise ValueError(f"{self.type} has no page action {action}")
 
     @property

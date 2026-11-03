@@ -11,7 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, parse_when, register
 
-VERSION = "2.1.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -114,7 +114,7 @@ class Calendar(Card):
             except Exception as err:  # noqa: BLE001 - a missing (or not allowed) calendar must not hide the others
                 found.append({"name": f"{entity}: {err}", "start": start.isoformat(), "all_day": True, "source": "error"})
                 continue
-            name = (state.attributes.get("friendly_name") if (state := self.ha.state(entity)) else None) or entity
+            name = ((await self.ha.state(entity) or {}).get("attributes") or {}).get("friendly_name") or entity
             for e in events:
                 found.append({"name": e.get("summary", ""), "start": e["start"], "end": e.get("end"), "all_day": len(e["start"]) == 10,
                               "source": "ha", "calendar": name, "notes": e.get("location") or e.get("description") or ""})

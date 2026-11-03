@@ -560,11 +560,15 @@ class Run:
         if self.arrived is not None and self.arrived.streaming:
             raise ScriptError(f"{card.id}.{name}(): a card call waits for the finished context (put it under if not context.streaming:)")
         context = self.calling.copy() if self.calling is not None else self.arrived if self.arrived is not None else Context()
+        return self.wait(self.relay.travel(card, name, args, context))
+
+    def wait(self, coro: Any) -> Any:
+        """The script waits for something of the card layer's (a card's answer, a state); that time is not its own."""
         began = time.monotonic()
         try:
-            return asyncio.run_coroutine_threadsafe(self.relay.travel(card, name, args, context), self.loop).result(CALL_WAIT)
+            return asyncio.run_coroutine_threadsafe(coro, self.loop).result(CALL_WAIT)
         finally:
-            self.waited += time.monotonic() - began  # not the script's own time
+            self.waited += time.monotonic() - began
 
     def _what(self, what: Any) -> Context:
         """What output() sends: a context as it is; anything else as this Relay's said in the context that arrived."""
@@ -590,12 +594,12 @@ class Run:
             return dt_util.now()
 
         def states(entity_id: str) -> str:  # as far as the Relay may read it (else as if it were not there)
-            state = relay.ha.state(str(entity_id))
-            return state.state if state else "unknown"
+            state = self.wait(relay.ha.state(str(entity_id)))
+            return state["state"] if state else "unknown"
 
         def state_attr(entity_id: str, name: str) -> Any:
-            state = relay.ha.state(str(entity_id))
-            return wrap(state.attributes.get(name)) if state else None
+            state = self.wait(relay.ha.state(str(entity_id)))
+            return wrap(state["attributes"].get(name)) if state else None
 
         def get_input(name: str | None = None, read: bool = False) -> ContextView | None:
             if read:

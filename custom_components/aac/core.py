@@ -800,6 +800,8 @@ class Core:
         self.calendar = Calendars(self)
         from .asks import Asks  # noqa: PLC0415
         self.asks = Asks(self)
+        from .home import HomeService  # noqa: PLC0415
+        self.home = HomeService(self)
 
     async def load(self) -> None:
         """Read the core; the first time, build the default domain."""

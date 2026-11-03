@@ -9,7 +9,7 @@ from typing import Any
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "1.3.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "1.3.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 MAX_FOUND = 60
 SETTLE = 2.0  # seconds a switched entity gets to report its new state (a device answers after the service returns)
@@ -43,7 +43,7 @@ class HomeAssistantCard(Card):
         if function == "find":
             word, domain = str(args.get("search") or "").lower(), str(args.get("domain") or "")
             found = []
-            for e in self.ha.entities():
+            for e in await self.ha.entities():
                 if domain and e["entity_id"].split(".")[0] != domain:
                     continue
                 if word and word not in f"{e['entity_id']} {e['name']} {e['area'] or ''}".lower():
@@ -55,9 +55,9 @@ class HomeAssistantCard(Card):
         if function == "get_state":
             out = {}
             for entity_id in args.get("entity_ids") or []:
-                state = self.ha.state(entity_id)
-                out[entity_id] = ({"state": state.state, "attributes": {k: v for k, v in state.attributes.items()
-                                                                         if isinstance(v, (str, int, float, bool))}}
+                state = await self.ha.state(entity_id)
+                out[entity_id] = ({"state": state["state"], "attributes": {k: v for k, v in state["attributes"].items()
+                                                                            if isinstance(v, (str, int, float, bool))}}
                                   if state is not None else "unknown or not allowed")
             return out
         if function == "call_service":
@@ -74,6 +74,6 @@ class HomeAssistantCard(Card):
                     pass
             finally:
                 unwatch()
-            state = self.ha.state(entity_id)
-            return {"done": True, "state": state.state if state else None}
+            state = await self.ha.state(entity_id)
+            return {"done": True, "state": state["state"] if state else None}
         return await super().call(function, args, context)
