@@ -100,6 +100,12 @@ class Core:
         """A stored record (the domain's setup, a card's data): async_load, async_save, async_delay_save, async_remove."""
         return Store(self.hass, 1, key)
 
+    def card_renamed(self, old: str, new: str) -> None:
+        """A card's id moved: what the core keeps under it (the sidebar's fold) moves along."""
+        if old in (folds := self.data.get("folds") or {}):
+            folds[new] = folds.pop(old)
+            self.save()
+
     def note(self, note_id: str, title: str, text: str) -> None:
         """A notification in Home Assistant for the owner (the same id again replaces it)."""
         try:

@@ -13,7 +13,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, matches, register, wav_to_pcm
 
-VERSION = "3.2.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.2.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
@@ -124,10 +124,10 @@ class TextToSpeech(Card):
             mine = self.settings.get("voices") or {}
             return {code: {"voices": [v["name"] for v in got["voices"]], "set": next((v["name"] for v in got["voices"]
                     if v["id"] == mine.get(code, {}).get("voice")), "the engine's default")}
-                    for code, got in self.core.audio.voices(self.settings.get("engine") or None).items()}
+                    for code, got in (await self.core.audio.voices(self.settings.get("engine") or None)).items()}
         if function == "set_voice":
             code, wanted = str(args.get("language") or "").lower()[:3], str(args.get("voice") or "").strip()
-            got = self.core.audio.voices(self.settings.get("engine") or None).get(code)
+            got = (await self.core.audio.voices(self.settings.get("engine") or None)).get(code)
             if got is None:
                 return {"error": f"{code} is not a home language"}
             voices = dict(self.settings.get("voices") or {})

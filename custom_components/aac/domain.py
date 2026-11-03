@@ -720,9 +720,7 @@ class Domain:
         self.flow.held = {(f"{new}{k[len(old):]}" if k.startswith(f"{old}.") else k): v for k, v in self.flow.held.items()}
         self.log.renamed(old, new)
         self.log.write("info", f"Renamed: {old} is now {new} (its name)", card=new, what="renamed")
-        if old in (folds := self.core.data.get("folds") or {}):
-            folds[new] = folds.pop(old)
-            self.core.save()
+        self.core.card_renamed(old, new)
         return card
 
     # ------------------------------------------------------------------ the rest

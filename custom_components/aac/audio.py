@@ -16,12 +16,14 @@ also an HA media player (`media_player.py`): anything in HA can play on it. Auth
 from __future__ import annotations
 
 from array import array
+import base64
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 import io
 import json
+import math
 from pathlib import Path
 import re
 import secrets
@@ -148,6 +150,31 @@ class AudioHub:
             return {"mic": data}
         both = array("h", data[: len(data) // 4 * 4])
         return {"mic": both[0::2].tobytes(), "reference": both[1::2].tobytes()}
+
+    async def waveforms(self, source: str | None, speaker: str, test: bool = False, seconds: float = 5) -> dict[str, Any]:
+        """A Microphone card's waveforms view: a satellite's last seconds (its microphone, and what the speaker's
+        satellite played); test: play a test sound there first (the seconds it takes). source any: the speaker's
+        satellite, else the first that sends what its speaker plays."""
+        if source in ("any", None, ""):
+            source = speaker or next((s.id for s in self.sources.values() if s.reference), None)
+        speaker = speaker or source
+        if source not in self.sources:
+            raise ValueError("the satellite it listens to is not connected")
+        if speaker not in self.sources or not self.sources[speaker].reference:
+            raise ValueError("that satellite does not send what its speaker plays (its reference option)")
+        if test:
+            sound = test_sound()
+            await self.play(speaker, pcm_to_wav(sound), "")
+            for _ in range(120):  # until it has played (at most 6 s)
+                await asyncio.sleep(0.05)
+                if not self.sources[speaker].playing:
+                    break
+            await asyncio.sleep(0.3)  # the tail of the sound reaches the microphone
+            seconds = len(sound) / 2 / SAMPLE_RATE + 1.5  # room for a long way back (Bluetooth: several hundred ms)
+        mic, ref = self.recent(source, seconds) or {}, self.recent(speaker, seconds) or {}
+        return {"source": source, "speaker": speaker, "names": [self.sources[source].name, self.sources[speaker].name],
+                "rate": SAMPLE_RATE, "mic": base64.b64encode(mic.get("mic", b"")).decode(),
+                "reference": base64.b64encode(ref.get("reference", b"")).decode()}
 
     def mark(self, source_id: str | None, stage: str) -> None:
         """A step of a spoken turn at a satellite, for the Audio page's timing table: "speech ended" starts a turn,
@@ -288,7 +315,7 @@ class AudioHub:
                 self.core.log("audio", "warning", f"Text to speech with {engine} failed: {err}")
         return None
 
-    def voices(self, engine: str | None = None) -> dict[str, dict[str, Any]]:
+    async def voices(self, engine: str | None = None) -> dict[str, dict[str, Any]]:
         """An engine's voices for each home language, from all its variants (en_GB, en_US …):
         {code: {locale, voices: [{id, name, locale}]}} (locale None: the engine has none)."""
         from homeassistant.components.tts.helper import get_engine_instance  # noqa: PLC0415
@@ -344,7 +371,7 @@ class AudioHub:
         await source.send(audio)
         return True
 
-    def clip_url(self, wav: bytes) -> str:
+    async def clip_url(self, wav: bytes) -> str:
         """A short-lived address where a WAV can be fetched (an HA media player plays a clip from it)."""
         from homeassistant.helpers.network import get_url  # noqa: PLC0415
 
@@ -373,6 +400,23 @@ class AudioHub:
                 "language_names": NAMES, "timing": self.timing(),
                 "stt_entities": sorted(self.hass.states.async_entity_ids("stt")),
                 "tts_entities": sorted(self.hass.states.async_entity_ids("tts"))}
+
+
+def test_sound() -> bytes:
+    """A test sound for lining up: three short 1 kHz beeps (sharp starts that live through Bluetooth's speech codec),
+    then a slow sweep from 100 to 500 Hz (its waves can be told apart when zoomed in; 1.4 s, 16 kHz PCM)."""
+    out = array("h")
+    beep = int(0.025 * SAMPLE_RATE)
+    for _ in range(3):
+        for i in range(beep):  # 25 ms at 1 kHz with soft ends (no clicks of its own), then silence up to 0.2 s
+            edge = min(1.0, i / 40, (beep - i) / 40)
+            out.append(int(16000 * edge * math.sin(2 * math.pi * 1000 * i / SAMPLE_RATE)))
+        out.extend([0] * (int(0.2 * SAMPLE_RATE) - beep))
+    phase, length = 0.0, int(0.8 * SAMPLE_RATE)
+    for i in range(length):
+        phase += 2 * math.pi * (100 + 400 * i / length) / SAMPLE_RATE
+        out.append(int(14000 * math.sin(phase)))
+    return out.tobytes()
 
 
 def scale_wav(audio: bytes, gain: float) -> bytes:

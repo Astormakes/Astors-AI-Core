@@ -69,7 +69,7 @@ class Speaker(Card):
                 await self.play(where, wav, text, queue=queue)  # clips one after another, a stream at once
                 return
             await self.ha.call("media_player", "play_media", where, {
-                "media_content_id": self.core.audio.clip_url(wav), "media_content_type": "music", "announce": True})
+                "media_content_id": await self.core.audio.clip_url(wav), "media_content_type": "music", "announce": True})
         except Exception as err:  # noqa: BLE001 - a speaker that fails (or may not play there) must not break the chain
             self.log(f"Playing on {where} failed: {err}", "warning", what="play")
 
