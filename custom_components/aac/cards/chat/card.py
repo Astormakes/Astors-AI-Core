@@ -18,9 +18,9 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.api import Card, Client, Context, matches, new_id, register
+from custom_components.aac.api import Card, Context, matches, new_id, register
 
-VERSION = "3.1.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.1.3"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WAIT = 600  # seconds what you write may take to be answered
 NOT_WIRED = "Nothing is wired to this chat's output 'said': what you write goes nowhere."
@@ -302,10 +302,10 @@ class Chat(Card):
         request = self._request(context)
         if not request:
             return {"raw": True, "text": bool(context.conversation) or None, "entries": context.entries}
-        model = self.core.pool.get(request["model"]) or {}
-        text = await Client(self.hass, model).template(request["body"]) if model else None
+        read = await self.core.models.template(request["model"], request["body"])
+        text = read["text"]
         answers = [m["content"] for m in request["body"].get("messages") or [] if m["role"] == "assistant" and m.get("content")]
-        return {"text": text or plain(request["body"]), "template": bool(text), "model": model.get("name") or request["model"],
+        return {"text": text or plain(request["body"]), "template": bool(text), "model": read["name"] or request["model"],
                 "reply": request.get("reply"), "answers": answers, "usage": request.get("usage")}
 
     # ------------------------------------------------------------------ its page and the sidebar

@@ -15,10 +15,9 @@ import json
 import re
 from typing import Any
 
-from custom_components.aac.api import (Card, Client, Context, ModelError, ModelUnreachable, new_id, register, run,
-                                      tool_spec)
+from custom_components.aac.api import Card, Context, new_id, register, tool_spec
 
-VERSION = "4.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "4.0.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
@@ -96,7 +95,6 @@ class Model(Card):
     def __init__(self, *args: Any) -> None:
         super().__init__(*args)
         self._writing: set[asyncio.Task] = set()  # its answers being written (a stop cuts them)
-        self._context_size: dict[str, int | None] = {}  # model → the tokens its context holds (the server tells)
 
     @property
     def busy(self) -> bool:
@@ -169,11 +167,6 @@ class Model(Card):
             context.add(self.tag("error"), f"Error: {most} rounds of tool calls without an answer.")
             await self.send(context, "out")
             return
-        entries = self.core.pool.entries(self.settings.get("models"), "text")
-        if not entries:
-            context.add(self.tag("error"), "Error: no model for text is set up (Models in the sidebar).")
-            await self.send(context, "out")
-            return
         tools = self._tools(context)
         specs = [tool_spec(t["name"], {"help": t["description"], "args": t["args"]}) for t in tools.values()]
         params = {"temperature": float(self.settings.get("temperature") or 0.7),
@@ -207,7 +200,7 @@ class Model(Card):
                 sent.append(asyncio.ensure_future(in_order()))
 
         try:
-            reply, failed = await self._ask(entries, payload, specs, params, live, said)
+            reply, failed = await self._ask(payload, specs, params, live, said)
         finally:
             if sent:
                 await sent[-1]
@@ -254,47 +247,31 @@ class Model(Card):
         else:  # only unknown tools: it hears so and tries again
             await self._answer(context)
 
-    async def _ask(self, entries: list[dict[str, Any]], payload: list[dict[str, Any]], specs: list[dict[str, Any]],
-                   params: dict[str, Any], live, said: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
-        """Down the list (a free model, else the queues); one that does not answer is skipped. (reply, why it failed)."""
-        pool, tried = self.core.pool, set()
-        while True:
-            left = [e for e in entries if e["model"] not in tried]
-            async with pool.slot(left) as model_id:
-                if model_id is None:
-                    if any(pool.usable(e["model"]) for e in left):
-                        self.log("Every model was busy and none queues: the context was dropped", "warning", what="dropped")
-                        return None, "Error: every model was busy and none queues, so this was dropped."
-                    return None, "Error: no model was available."
-                try:
-                    client = Client(self.hass, pool.get(model_id))
-                    reply = await client.chat(payload, specs or None, on_delta=live, **params)
-                    pool.mark_up(model_id)
-                    usage = await self._usage(client, model_id, reply)
-                    said["data"]["request"] = {"model": model_id, "body": {"messages": payload, **({"tools": specs} if specs else {}), **params},
-                                               "reply": {"content": reply["content"], "calls": [
-                                                   f"{c['function']['name']}({c['function']['arguments']})" for c in reply["tool_calls"]]},
-                                               **({"usage": usage} if usage else {})}
-                    if usage:
-                        said["data"]["usage"] = usage
-                    return reply, ""
-                except ModelUnreachable as err:
-                    pool.mark_down(model_id, str(err))
-                    tried.add(model_id)
-                except ModelError as err:
-                    self.log(f"Model {pool.name(model_id)} failed: {err}", "warning", what="model")
-                    pool.heard_from(model_id, str(err))
-                    too_long = "context" in str(err).lower() and any(w in str(err).lower() for w in ("exceed", "too long", "n_ctx"))
-                    return None, ("Error: this chat is too long for the model's context. Start a new chat." if too_long
-                                  else f"Error: the model failed ({err}).")
-
-    async def _usage(self, client: Client, model_id: str, reply: dict[str, Any]) -> dict[str, Any] | None:
-        """The tokens this request used, and how many the model's context holds (asked once per model)."""
-        if not (usage := reply.get("usage")):
-            return None
-        if model_id not in self._context_size:
-            self._context_size[model_id] = await client.context_size()
-        return {**usage, "context": self._context_size[model_id]}
+    async def _ask(self, payload: list[dict[str, Any]], specs: list[dict[str, Any]], params: dict[str, Any], live,
+                   said: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+        """Down its list (a free model, else the queues; one that does not answer is skipped). (reply, why it failed)."""
+        got = await self.core.models.chat(self.settings.get("models"), "text", payload, specs, live, params, give_up=True)
+        if (reply := got["reply"]) is not None:
+            usage = got.get("usage")
+            said["data"]["request"] = {"model": got["model"], "body": {"messages": payload, **({"tools": specs} if specs else {}), **params},
+                                       "reply": {"content": reply["content"], "calls": [
+                                           f"{c['function']['name']}({c['function']['arguments']})" for c in reply["tool_calls"]]},
+                                       **({"usage": usage} if usage else {})}
+            if usage:
+                said["data"]["usage"] = usage
+            return reply, ""
+        if got["error"] == "none":
+            return None, "Error: no model for text is set up (Models in the sidebar)."
+        if got["error"] == "busy":
+            self.log("Every model was busy and none queues: the context was dropped", "warning", what="dropped")
+            return None, "Error: every model was busy and none queues, so this was dropped."
+        if got["error"] == "unavailable":
+            return None, "Error: no model was available."
+        why = got.get("why", "")
+        self.log(f"Model {got.get('name')} failed: {why}", "warning", what="model")
+        too_long = "context" in why.lower() and any(w in why.lower() for w in ("exceed", "too long", "n_ctx"))
+        return None, ("Error: this chat is too long for the model's context. Start a new chat." if too_long
+                      else f"Error: the model failed ({why}).")
 
     async def stop(self) -> None:
         for task in list(self._writing):
@@ -310,7 +287,6 @@ class Model(Card):
             payload = ([{"role": "system", "content": system}] if system else []) + chat
             params = {"temperature": float(self.settings.get("temperature") or 0.7),
                       **({"max_tokens": n} if (n := int(self.settings.get("max_tokens") or 0)) > 0 else {})}
-            reply, _ = await run(self.core.pool, self.core.pool.entries(self.settings.get("models"), "text"),
-                                 lambda model: Client(self.hass, model).chat(payload, **params))
+            reply = (await self.core.models.chat(self.settings.get("models"), "text", payload, params=params))["reply"]
             return reply["content"].strip() if reply else {"error": "no model answered"}
         return await super().call(function, args, context)

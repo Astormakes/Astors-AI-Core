@@ -350,13 +350,15 @@ class AudioHub:
         self.core.notify("audio")
 
     # ------------------------------------------------------------------ speech to text
-    async def stt(self, pcm: bytes, language: str | None = None, entries: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
-        """Speech to text: a card's models first (free ones, else their queues), then HA's engines from the Audio page.
+    async def stt(self, pcm: bytes, language: str | None = None, models: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
+        """Speech to text: a card's list of models first (free ones, else their queues; None: every model with the tag),
+        then HA's engines from the Audio page.
         No language given: the home's (one: that one; several: detected, and heard again in the main language when the
         model heard one outside them, e.g. a short word taken for Welsh)."""
         home = self.core.languages()
         if not language and len(home) == 1:
             language = home[0]
+        entries = self.core.pool.entries(models, "speech to text")
         found = await self._stt(pcm, language or None, entries)
         if found and not language and code_of(found.get("language")) not in home and not found.get("engine", "").startswith("stt."):  # a model: ask again
             found = await self._stt(pcm, home[0], entries) or found
@@ -364,7 +366,7 @@ class AudioHub:
             found["language"] = code_of(found.get("language")) or found.get("language")
         return found
 
-    async def _stt(self, pcm: bytes, language: str | None, entries: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    async def _stt(self, pcm: bytes, language: str | None, entries: list[dict[str, Any]]) -> dict[str, Any] | None:
         async def transcribe(model):
             fd = aiohttp.FormData()
             fd.add_field("file", pcm_to_wav(pcm), filename="speech.wav", content_type="audio/wav")
@@ -384,8 +386,6 @@ class AudioHub:
             except (aiohttp.ClientError, ValueError) as err:
                 raise ModelError(str(err)) from err
             return {"text": str(data.get("text") or "").strip(), "language": data.get("language"), "engine": model["id"]}
-        if entries is None:
-            entries = self.core.pool.entries(None, "speech to text")
         found, _ = await run(self.core.pool, entries, transcribe)
         if found is not None:
             return found

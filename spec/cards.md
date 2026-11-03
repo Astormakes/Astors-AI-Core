@@ -134,8 +134,7 @@ minutes is a no; `aac/asks`, `aac/ask/answer {ask, yes}`), and reaches out with 
 awaited but watch: `await entities()`, `await state(id)` → {entity_id, state, attributes, last_changed} or None,
 `await call(domain, service, id, data)`: a service of the entity's own domain or homeassistant.turn_on / turn_off /
 toggle, its data naming no other target; `watch(ids, handler)` → cancel, handler({entity_id, old, new});
-`await calendar_events(id, start, end)`; the core's side, `home.HomeService`, holds it to the domain's sheet), `self.web()` (the HTTP
-session), `self.notification(service, message, title)`, `self.read_file(name)`, `self.write_file(name, text, append)`
+`await calendar_events(id, start, end)`; the core's side, `home.HomeService`, holds it to the domain's sheet), `self.notification(service, message, title)`, `self.read_file(name)`, `self.write_file(name, text, append)`
 (`<config>/aac/files`),
 `self.listen(handler)` (the satellites' microphones), time and tasks only through the core (`self.task(coro,
 background)`, `self.later(seconds, job)` → cancel, `self.every_minute(job)` → cancel, `await self.blocking(fn, *args)`,
@@ -160,7 +159,11 @@ card's permissions apply). Ports of a card that does not run (in a slot) come fr
 answered by the core (`Card.run`, so a card that may do nothing can still ask): only for things the domain lets it
 know exist; it waits in the domain (`Domain.requests`, a Home Assistant notification) until the owner allows all, some
 or none (`aac/request/decide {request, allowed}`): the card gets them, the domain's sheet raised to them. Model servers: `self.servers()` (servers at read), `self.server(action, aac_model, model)` (bench,
-use, load, unload; at full). `self.tell(what="card", **data)` lets open panels know something of the card changed.
+use, load, unload; at full). Models: `self.core.models` (the core's `models.ModelService`: `await chat(models, tag,
+messages, tools, on_delta, params, give_up)` → {reply, model, name, usage, error: none / unavailable / busy / failed},
+`await embed(models, text)`, `await template(model, body)`); the pool's queues and clients stay with the core. The web:
+`await self.fetch(url, method, params, body, headers, seconds)` → {status, text} (`services.Services`, which holds
+the web, the shared files and notifications to the domain's sheet). `self.tell(what="card", **data)` lets open panels know something of the card changed.
 A setting of type `element` (with `element`: a custom element's name, `file`: a .js in the card's folder) is edited
 by the card's own element: the panel imports the file and hands the element `.panel` (as a page's below, with
 `save(settings)` saving and redrawing, `type(t)`, `domain()`, `card()`), calls `setup({card, key, value, settings})`

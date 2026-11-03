@@ -259,28 +259,13 @@ class Card:
     async def servers(self) -> list[dict[str, Any]]:
         """The servers behind AAC's models and what they offer now (needs servers at read)."""
         self.need("servers", "read")
-        return await self.core.pool.offers()
+        return await self.core.models.servers()
 
     async def server(self, action: str, aac_model: str, model: str) -> dict[str, Any]:
         """On the server of one of AAC's models (an action on servers): bench, use (the AAC model asks for that model
         from now on, and loads it), load, unload."""
         await self.act("servers", f"{action} {model} ({aac_model})")
-        from ..models import Client  # noqa: PLC0415
-
-        pool, core = self.core.pool, self.core
-        if (found := pool.find(aac_model)) is None:
-            raise ValueError(f"AAC has no model {aac_model!r}")
-        if action == "bench":
-            result = await pool.bench(Client(self.hass, found), model)
-            core.save()
-            return {"reads": f"{result['read']} tokens/s", "writes": f"{result['write']} tokens/s"}
-        if action not in ("use", "load", "unload"):
-            raise ValueError(f"no server action {action}")
-        if action == "use":
-            core.save_model({"id": found["id"], "model": model})
-            core.save()
-        await Client(self.hass, found).router_do("unload" if action == "unload" else "load", model)
-        return {"done": f"{found['name']} uses {model}" if action == "use" else f"{action}ed {model}"}
+        return await self.core.models.server(action, aac_model, model)
 
     # ------------------------------------------------------------------ the setup (setup at read, to change it at full)
     # `where`: "now" (the running setup) or a slot: 1, 2, 3 (the owner's), 4 (the draft: a model builds there and

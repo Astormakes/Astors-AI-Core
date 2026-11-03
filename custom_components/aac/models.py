@@ -531,3 +531,103 @@ async def run(pool: ModelPool, entries: list[dict[str, Any]], job: Callable[[dic
                 return result, False
             tried.add(model_id)
 
+
+
+class ModelService:
+    """The model servers for the card layer: whole requests in plain data (the pool's queues, its servers and their
+    clients stay with the core, so they can answer over the worker's channel too)."""
+
+    def __init__(self, core: Any) -> None:
+        self.core, self.hass = core, core.hass
+        self._sizes: dict[str, int | None] = {}  # model → how many tokens its context holds (asked once)
+
+    @property
+    def pool(self) -> ModelPool:
+        return self.core.pool
+
+    async def chat(self, wanted: list[dict[str, Any]] | None, tag: str, messages: list[dict[str, Any]],
+                   tools: list[dict[str, Any]] | None = None, on_delta: Callable[[str, str], None] | None = None,
+                   params: dict[str, Any] | None = None, give_up: bool = False) -> dict[str, Any]:
+        """One answer from a card's list of models for a job (a free one, else the queues; one that does not answer
+        is skipped; give_up: a model that fails ends it, else the next is tried). {"reply" (Client.chat's, or None),
+        "model", "name", "usage" (with "context": what the model holds), "error": none (no model for the job) /
+        unavailable (none answers now) / busy (every one busy, none queues) / failed (with "why")}."""
+        pool, tried = self.pool, set()
+        entries = pool.entries(wanted, tag)
+        if not entries:
+            return {"reply": None, "error": "none"}
+        while True:
+            left = [e for e in entries if e["model"] not in tried]
+            async with pool.slot(left) as model_id:
+                if model_id is None:
+                    return {"reply": None, "error": "busy" if any(pool.usable(e["model"]) for e in left) else "unavailable"}
+                client = Client(self.hass, pool.get(model_id))
+                try:
+                    reply = await client.chat(messages, tools or None, on_delta=on_delta, **(params or {}))
+                except ModelUnreachable as err:
+                    pool.mark_down(model_id, str(err))
+                    tried.add(model_id)
+                    continue
+                except ModelError as err:
+                    pool.heard_from(model_id, str(err))
+                    if give_up:
+                        return {"reply": None, "model": model_id, "name": pool.name(model_id), "error": "failed", "why": str(err)}
+                    pool.log("warning", f"Model {pool.name(model_id)} failed: {err}")
+                    tried.add(model_id)
+                    continue
+                pool.mark_up(model_id)
+                out = {"reply": reply, "model": model_id, "name": pool.name(model_id)}
+                if usage := reply.get("usage"):
+                    if model_id not in self._sizes:
+                        self._sizes[model_id] = await client.context_size()
+                    out["usage"] = {**usage, "context": self._sizes[model_id]}
+                return out
+
+    async def embed(self, wanted: list[dict[str, Any]] | None, text: str) -> list[float] | None:
+        """The text's vector from a card's list of embedding models (None: none answered)."""
+        async def one(model: dict[str, Any]) -> list[float]:
+            headers = {"Authorization": f"Bearer {model['api_key']}"} if model.get("api_key") else {}
+            try:
+                async with async_get_clientsession(self.hass).post(
+                        f"{model['base_url'].rstrip('/')}/embeddings", json={"model": model["model"], "input": text}, headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=20, sock_connect=3)) as resp:
+                    resp.raise_for_status()
+                    return (await resp.json())["data"][0]["embedding"]
+            except (aiohttp.ClientConnectionError, TimeoutError) as err:
+                raise ModelUnreachable(str(err)) from err
+            except (aiohttp.ClientError, KeyError, IndexError) as err:
+                raise ModelError(str(err)) from err
+        vector, _ = await run(self.pool, self.pool.entries(wanted, "embeddings"), one)
+        return vector
+
+    async def template(self, model_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """A request as the model read it (its server writes it with the model's chat template): {text (None: the
+        server cannot), name}."""
+        model = self.pool.get(model_id)
+        return {"text": await Client(self.hass, model).template(body) if model else None, "name": (model or {}).get("name")}
+
+    def entries(self, wanted: list[dict[str, Any]] | None, tag: str) -> list[dict[str, Any]]:
+        """A card's list of models for a job, as the pool runs it (empty: every model with the tag)."""
+        return self.pool.entries(wanted, tag)
+
+    async def servers(self) -> list[dict[str, Any]]:
+        """The servers behind AAC's models and what they offer now (no keys)."""
+        return await self.pool.offers()
+
+    async def server(self, action: str, aac_model: str, model: str) -> dict[str, Any]:
+        """On the server of one of AAC's models: bench, use (the AAC model asks for that model from now on, and loads
+        it), load, unload."""
+        pool, core = self.pool, self.core
+        if (found := pool.find(aac_model)) is None:
+            raise ValueError(f"AAC has no model {aac_model!r}")
+        if action == "bench":
+            result = await pool.bench(Client(self.hass, found), model)
+            core.save()
+            return {"reads": f"{result['read']} tokens/s", "writes": f"{result['write']} tokens/s"}
+        if action not in ("use", "load", "unload"):
+            raise ValueError(f"no server action {action}")
+        if action == "use":
+            core.save_model({"id": found["id"], "model": model})
+            core.save()
+        await Client(self.hass, found).router_do("unload" if action == "unload" else "load", model)
+        return {"done": f"{found['name']} uses {model}" if action == "use" else f"{action}ed {model}"}

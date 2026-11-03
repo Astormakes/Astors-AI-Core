@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from custom_components.aac.api import Card, Client, Context, register, run
+from custom_components.aac.api import Card, Context, register
 
-VERSION = "2.0.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 LOOK_BACK = 8  # entries the deciding model reads
 
@@ -47,11 +47,10 @@ class Decide(Card):
         options = "\n".join(f"- {o['name']}: {o.get('description', '')}" for o in outs)
         prompt = (f"{self.settings.get('question') or ''}\n\nOptions:\n{options}\n\nAnswer with exactly one option name, "
                   "nothing else.")
-        async def ask(model):
-            return await Client(self.hass, model).chat(
-                [{"role": "system", "content": prompt}, {"role": "user", "content": "\n".join(lines) or "(empty)"}],
-                temperature=0, max_tokens=16, chat_template_kwargs={"enable_thinking": False})
-        reply, _ = await run(self.core.pool, self.core.pool.entries(self.settings.get("models"), "text"), ask)
+        reply = (await self.core.models.chat(
+            self.settings.get("models"), "text",
+            [{"role": "system", "content": prompt}, {"role": "user", "content": "\n".join(lines) or "(empty)"}],
+            params={"temperature": 0, "max_tokens": 16, "chat_template_kwargs": {"enable_thinking": False}}))["reply"]
         if reply is None:
             return outs[-1]["name"]  # no model: the last output (usually "anything else")
         said = reply["content"].strip().strip(".").lower()

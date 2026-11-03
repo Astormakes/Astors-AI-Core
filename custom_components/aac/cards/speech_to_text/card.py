@@ -7,7 +7,7 @@ from typing import Any
 
 from custom_components.aac.api import SAMPLE_RATE, Card, Context, register, resample
 
-VERSION = "3.0.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.0.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -35,9 +35,8 @@ class SpeechToText(Card):
     async def clip(self, port: str, clip: dict[str, Any]) -> None:
         if not clip.get("pcm"):  # a stop clip
             return
-        entries = self.core.pool.entries(self.settings.get("models"), "speech to text")
         pcm = resample(clip["pcm"], int(clip.get("rate") or SAMPLE_RATE))
-        heard = await self.core.audio.stt(pcm, self.settings.get("language") or None, entries)
+        heard = await self.core.audio.stt(pcm, self.settings.get("language") or None, self.settings.get("models") or [])
         text = ((heard or {}).get("text") or "").strip()
         if not text:
             return

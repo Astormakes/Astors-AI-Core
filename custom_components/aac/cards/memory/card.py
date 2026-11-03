@@ -7,14 +7,11 @@ import math
 import re
 from typing import Any
 
-import aiohttp
-
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
-from custom_components.aac.api import Card, Context, ModelError, ModelUnreachable, new_id, register, run
+from custom_components.aac.api import Card, Context, new_id, register
 
-VERSION = "2.0.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 WORD = re.compile(r"\w{3,}")
 
@@ -65,20 +62,7 @@ class Memory(Card):
 
     async def _embed(self, text: str) -> list[float] | None:
         """The text's vector from its list of embedding models (none answers: None, found by words)."""
-        async def embed(model):
-            headers = {"Authorization": f"Bearer {model['api_key']}"} if model.get("api_key") else {}
-            try:
-                async with async_get_clientsession(self.hass).post(
-                        f"{model['base_url'].rstrip('/')}/embeddings", json={"model": model["model"], "input": text}, headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=20, sock_connect=3)) as resp:
-                    resp.raise_for_status()
-                    return (await resp.json())["data"][0]["embedding"]
-            except (aiohttp.ClientConnectionError, TimeoutError) as err:
-                raise ModelUnreachable(str(err)) from err
-            except (aiohttp.ClientError, KeyError, IndexError) as err:
-                raise ModelError(str(err)) from err
-        vector, _ = await run(self.core.pool, self.core.pool.entries(self.settings.get("models"), "embeddings"), embed)
-        return vector
+        return await self.core.models.embed(self.settings.get("models"), text)
 
     async def find(self, query: str, limit: int) -> list[dict[str, Any]]:
         """The best matches."""
