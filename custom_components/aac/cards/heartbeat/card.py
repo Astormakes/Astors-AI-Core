@@ -7,13 +7,11 @@ import asyncio
 from datetime import datetime, time as dtime
 from typing import Any
 
-from homeassistant.core import callback
-from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "2.0.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 
@@ -45,7 +43,7 @@ class AutoCard(Card):
         context = Context()
         fired = context.add(self.tag("said"), text, name=name)
         self._log(name, text, None, fired["id"])
-        task = self.hass.async_create_background_task(self.send(context, "out"), f"aac {self.id}")
+        task = self.task(self.send(context, "out"), background=True)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return fired["id"]
@@ -53,7 +51,7 @@ class AutoCard(Card):
     def _log(self, name: str, text: str, answer: str | None, entry_id: str) -> None:
         self.data["log"] = [*self.data["log"], {"time": dt_util.utcnow().isoformat(), "name": name, "text": text,
                                                  "answer": answer, "id": entry_id}][-LOG_SIZE:]
-        self.hass.async_create_task(self.save())
+        self.task(self.save())
         self.tell()
 
     def answered(self, context: Context) -> dict[str, Any] | None:
@@ -95,7 +93,7 @@ class Heartbeat(AutoCard):
     }
 
     async def start(self) -> None:
-        self._unsubs.append(async_track_time_change(self.hass, self._tick, second=0))
+        self._unsubs.append(self.every_minute(self._tick))
 
     def _quiet(self, local: datetime) -> bool:
         try:
@@ -105,7 +103,6 @@ class Heartbeat(AutoCard):
         now = local.time()
         return (a <= now or now < b) if a > b else (a <= now < b) if a != b else False
 
-    @callback
     def _tick(self, now: datetime) -> None:
         local = dt_util.as_local(now)
         every = max(1, int(self.settings.get("every") or 30))

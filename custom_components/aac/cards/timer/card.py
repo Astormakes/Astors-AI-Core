@@ -8,7 +8,7 @@ from typing import Any
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "2.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 
 @register
@@ -27,7 +27,7 @@ class Timer(Card):
 
     async def handle(self, context: Context, port: str) -> None:
         """It holds the context on its own (what sent it goes on meanwhile), then sends it on."""
-        task = self.hass.async_create_background_task(self._later(context), f"aac {self.id} wait")
+        task = self.task(self._later(context), background=True)
         self._waits.add(task)
         task.add_done_callback(self._waits.discard)
 

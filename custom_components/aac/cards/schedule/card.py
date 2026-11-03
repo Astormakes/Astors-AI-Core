@@ -12,13 +12,11 @@ from datetime import date, datetime, time as dtime, timedelta
 import re
 from typing import Any
 
-from homeassistant.core import HassJob, callback
-from homeassistant.helpers.event import async_call_later, async_track_time_change
 from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, new_id, register
 
-VERSION = "2.0.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.0.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 MAX_PLANS = 20  # entries AAC may have at once
@@ -52,7 +50,7 @@ class AutoCard(Card):
         context = Context()
         fired = context.add(self.tag("said"), text, name=name)
         self._log(name, text, None, fired["id"])
-        task = self.hass.async_create_background_task(self.send(context, "out"), f"aac {self.id}")
+        task = self.task(self.send(context, "out"), background=True)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return fired["id"]
@@ -60,7 +58,7 @@ class AutoCard(Card):
     def _log(self, name: str, text: str, answer: str | None, entry_id: str) -> None:
         self.data["log"] = [*self.data["log"], {"time": dt_util.utcnow().isoformat(), "name": name, "text": text,
                                                  "answer": answer, "id": entry_id}][-LOG_SIZE:]
-        self.hass.async_create_task(self.save())
+        self.task(self.save())
         self.tell()
 
     def answered(self, context: Context) -> dict[str, Any] | None:
@@ -184,7 +182,7 @@ class Schedule(AutoCard):
         return self.data.setdefault("entries", [])
 
     async def start(self) -> None:
-        self._unsubs.append(async_track_time_change(self.hass, self._tick, second=0))
+        self._unsubs.append(self.every_minute(self._tick))
         self.core.calendar.offer(self, self._calendar)
         limit = float(self.settings.get("answer_within") or 0) * 60
         for item in self.data["log"]:  # fired before a restart and not answered yet: still watched
@@ -199,7 +197,6 @@ class Schedule(AutoCard):
         return {k: v for k, v in found.items() if k not in ("add", "change", "remove")} if self.settings.get("plans") == "off" else found
 
     # ------------------------------------------------------------------ firing
-    @callback
     def _tick(self, now: datetime) -> None:
         local = dt_util.as_local(now)
         hm, day, today = local.strftime("%H:%M"), local.weekday(), local.date().isoformat()
@@ -220,7 +217,7 @@ class Schedule(AutoCard):
             else:
                 self._ring(entry, hm)
         if changed:
-            self.hass.async_create_task(self._saved())
+            self.task(self._saved())
 
     def _ring(self, entry: dict[str, Any], hm: str | None = None) -> None:
         """An entry rings (hm: at its time; None: run now)."""
@@ -237,9 +234,8 @@ class Schedule(AutoCard):
             self.data["entries"] = [e for e in self.entries if e["id"] != entry["id"]]
 
     def _watch(self, message_id: str, seconds: float) -> None:
-        self._unsubs.append(async_call_later(self.hass, seconds, HassJob(callback(lambda _now: self._unanswered(message_id)), cancel_on_shutdown=True)))
+        self._unsubs.append(self.later(seconds, lambda: self._unanswered(message_id)))
 
-    @callback
     def _unanswered(self, message_id: str) -> None:
         """No answer came back in time, or the model failed: the entry goes out at 'unanswered'."""
         item = next((i for i in self.data["log"] if i.get("id") == message_id), None)
@@ -250,8 +246,8 @@ class Schedule(AutoCard):
         context = Context()
         context.add(self.tag("unanswered"), f"Not answered{failed}: {text}")
         self.log(f"{item['name']}: nobody answered{failed}", "warning", what="unanswered")
-        self.hass.async_create_task(self._saved())
-        task = self.hass.async_create_background_task(self.send(context, "unanswered"), f"aac {self.id} unanswered")
+        self.task(self._saved())
+        task = self.task(self.send(context, "unanswered"), background=True)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 

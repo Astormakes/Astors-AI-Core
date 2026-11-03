@@ -17,8 +17,9 @@ from traceback import format_exc
 from typing import Any
 
 from homeassistant.components import persistent_notification
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HassJob, HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.event import async_call_later, async_track_time_change
 from homeassistant.helpers.storage import Store
 
 from .calendars import Calendars
@@ -104,7 +105,7 @@ class Domain:
         self.permissions: dict[str, str] = {}  # its sheet: thing → level, the owner's alone (docs/v2 page 6); not set: hidden
         self.requests: list[dict[str, Any]] = []  # cards asking for more: {id, card, name, things {thing: level}, reason, since}
         self.trial: dict[str, Any] | None = None  # a model's switch waiting for keep: {slot, by, back, until, context}
-        self._trial_timer: asyncio.TimerHandle | None = None
+        self._trial_timer: Callable[[], None] | None = None  # cancel
         self.flow = Flow(self)
         self.log = DomainLog(self)
         self._specs: dict[str, dict[str, Any]] = {}
@@ -143,7 +144,7 @@ class Domain:
         """Another domain runs (or AAC stops): every card ends its timers; Redo is not kept."""
         self.running = False
         if self._trial_timer:
-            self._trial_timer.cancel()
+            self._trial_timer()
         self._tidy(i for step in self.redo for i in step["cards"])
         self.redo = []
         for card in list(self.cards.values()):
@@ -331,14 +332,14 @@ class Domain:
         """These cards may have left every setup (now, Undo, Redo, the slots): then their data and files go (soon,
         once the change that let them go is done)."""
         if found := set(card_ids):
-            self.hass.async_create_task(self._drop_data(found, only_unused=True), eager_start=False)
+            self.core.task(self._drop_data(found, only_unused=True), eager=False)
 
     async def _drop_data(self, card_ids: set[str], only_unused: bool = False) -> None:
         """Cards' stored data and files go (only_unused: of those no setup knows any more)."""
         for card_id in card_ids - (self._ids_taken() if only_unused else set()):
             await self._card_store(card_id).async_remove()
             self._card_stores.pop(card_id, None)
-            await self.hass.async_add_executor_job(shutil.rmtree, self.core.folder(self.id, card_id), True)
+            await self.core.blocking(shutil.rmtree, self.core.folder(self.id, card_id), True)
 
     async def add_card(self, card_type: str, title: str = "", settings: dict[str, Any] | None = None,
                        at: dict[str, float] | None = None) -> Card:
@@ -621,16 +622,16 @@ class Domain:
 
     def _time_trial(self) -> None:
         if self._trial_timer:
-            self._trial_timer.cancel()
+            self._trial_timer()
         later = max(0.0, self.trial["until"] - time.time())
-        self._trial_timer = self.hass.loop.call_later(later, lambda: self.hass.async_create_task(self.go_back()))
+        self._trial_timer = self.core.later(later, self.go_back)
 
     def keep(self, by: str = "you") -> bool:
         """The switch stays."""
         if not self.trial:
             return False
         if self._trial_timer:
-            self._trial_timer.cancel()
+            self._trial_timer()
         self.log.write("info", f"Kept slot {self.trial['slot']} (by {by})", what="switch")
         self.trial = None
         self.save()
@@ -642,7 +643,7 @@ class Domain:
         if not (trial := self.trial):
             return False
         if self._trial_timer:
-            self._trial_timer.cancel()
+            self._trial_timer()
         self.trial = None
         why = f"{by} took the switch back" if by else f"No keep within {KEEP_WAIT} s after the switch to slot {trial['slot']}"
         self._remember()
@@ -733,7 +734,7 @@ class Domain:
             await self._card_store(new).async_save(data)
             await store.async_remove()
         self._card_stores.pop(old, None)
-        await self.hass.async_add_executor_job(move_folder, self.core.folder(self.id, old), self.core.folder(self.id, new))
+        await self.core.blocking(move_folder, self.core.folder(self.id, old), self.core.folder(self.id, new))
         for card_id, other in list(self.cards.items()):  # the others whose settings name it: made again with them
             if any(other.settings.get(k) != v for k, v in (self._specs[card_id].get("settings") or {}).items()):
                 await self._make(card_id, self._specs[card_id])
@@ -829,6 +830,34 @@ class Core:
     def save(self) -> None:
         """Keep the core."""
         self._store.async_delay_save(lambda: self.data, 1)
+
+    # ------------------------------------------------------------------ time and tasks: the card layer's only way to them
+    # (in the worker: its own loop; here Home Assistant's, so its tests can move the time)
+    @property
+    def loop(self) -> asyncio.AbstractEventLoop:
+        return self.hass.loop
+
+    def task(self, coro: Any, name: str = "aac", background: bool = False, eager: bool = True) -> asyncio.Task:
+        """Run a coroutine on its own (background: nobody waits for it, e.g. a long watch; eager: it starts at once,
+        up to its first wait; not eager: once the caller waits)."""
+        if background:
+            return self.hass.async_create_background_task(coro, name, eager_start=eager)
+        return self.hass.async_create_task(coro, name, eager_start=eager)
+
+    def later(self, seconds: float, job: Callable[[], Any]) -> Callable[[], None]:
+        """Run job (a function, or one that returns a coroutine) once after some seconds; returns: cancel."""
+        def run(_now: Any) -> None:
+            if asyncio.iscoroutine(result := job()):
+                self.task(result)
+        return async_call_later(self.hass, seconds, HassJob(callback(run), cancel_on_shutdown=True))
+
+    def every_minute(self, job: Callable[[Any], Any]) -> Callable[[], None]:
+        """Run job(now) at the start of every minute; returns: cancel."""
+        return async_track_time_change(self.hass, callback(lambda now: job(now)), second=0)
+
+    async def blocking(self, job: Callable[..., Any], *args: Any) -> Any:
+        """Run a function that blocks (disk, CPU) in a thread of its own."""
+        return await self.hass.async_add_executor_job(job, *args)
 
     async def save_now(self) -> None:
         """Keep the core now."""

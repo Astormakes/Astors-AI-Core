@@ -143,6 +143,28 @@ class Card:
         self.settings = {k: f.get("default") for k, f in self.settings_schema.items()} | dict(settings or {})
         self.data: dict[str, Any] = {}
 
+    # ------------------------------------------------------------------ time and tasks (the core's: in the worker its own loop)
+    @property
+    def loop(self) -> Any:
+        """The event loop it runs in."""
+        return self.core.loop
+
+    def task(self, coro: Any, background: bool = False) -> Any:
+        """Run a coroutine on its own (background: nobody waits for it)."""
+        return self.core.task(coro, f"aac {self.id}", background)
+
+    def later(self, seconds: float, job: Any) -> Any:
+        """Run job (a function, or one returning a coroutine) once after some seconds; returns: cancel()."""
+        return self.core.later(seconds, job)
+
+    def every_minute(self, job: Any) -> Any:
+        """Run job(now) at the start of every minute; returns: cancel()."""
+        return self.core.every_minute(job)
+
+    async def blocking(self, job: Any, *args: Any) -> Any:
+        """Run a function that blocks (disk, CPU) in a thread of its own."""
+        return await self.core.blocking(job, *args)
+
     @property
     def folder(self) -> Path:
         """Where it keeps files (<config>/aac/data/<domain>/<card>): they move with a rename and go with the domain."""
@@ -378,7 +400,7 @@ class Card:
         if found := self.domain.problems(slot, keeper=self.id):
             raise ValueError("not switched: " + "; ".join(found))
         await self.act("setup", f"switch to slot {slot} (the setup now comes back unless keep follows)")
-        self.hass.async_create_background_task(self.domain.switch_after(slot, self.id, call_id), f"aac switch {slot}")
+        self.task(self.domain.switch_after(slot, self.id, call_id), background=True)
 
     def keep_setup(self) -> bool:
         """The switch stays (False: none waits)."""

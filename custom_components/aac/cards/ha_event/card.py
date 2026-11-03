@@ -12,7 +12,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import Card, Context, register
 
-VERSION = "2.1.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 LOG_SIZE = 60
 
@@ -44,7 +44,7 @@ class AutoCard(Card):
         context = Context()
         fired = context.add(self.tag("said"), text, name=name)
         self._log(name, text, None, fired["id"])
-        task = self.hass.async_create_background_task(self.send(context, "out"), f"aac {self.id}")
+        task = self.task(self.send(context, "out"), background=True)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return fired["id"]
@@ -52,7 +52,7 @@ class AutoCard(Card):
     def _log(self, name: str, text: str, answer: str | None, entry_id: str) -> None:
         self.data["log"] = [*self.data["log"], {"time": dt_util.utcnow().isoformat(), "name": name, "text": text,
                                                  "answer": answer, "id": entry_id}][-LOG_SIZE:]
-        self.hass.async_create_task(self.save())
+        self.task(self.save())
         self.tell()
 
     def answered(self, context: Context) -> dict[str, Any] | None:

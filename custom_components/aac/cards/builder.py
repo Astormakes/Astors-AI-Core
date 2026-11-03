@@ -10,7 +10,7 @@ from typing import Any
 
 from custom_components.aac.api import CARD_TYPES, RULES, Card, Context, register
 
-VERSION = "3.0.3"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.0.4"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 BUILDS = {"add_card", "change_card", "remove_card", "wire", "unwire", "copy", "switch"}  # after the guide
@@ -212,7 +212,7 @@ class Builder(Card):
     async def start(self) -> None:
         """Made again after its own switch: the conversation that asked for it goes on, here, with the news."""
         if (found := self.switched()) and found["context"] is not None:
-            self.hass.loop.call_later(1, lambda: self.hass.async_create_task(self._switched(found)))
+            self.later(1, lambda: self._switched(found))
 
     async def _switched(self, found: dict[str, Any]) -> None:
         context: Context = found["context"]

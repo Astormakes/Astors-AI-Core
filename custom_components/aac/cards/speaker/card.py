@@ -9,7 +9,7 @@ from typing import Any
 
 from custom_components.aac.api import SAMPLE_RATE, Card, pcm_to_wav, register
 
-VERSION = "3.1.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.1.2"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 STREAM_PIECE = 2  # seconds of a live stream the Speaker plays at a time
 
@@ -60,7 +60,7 @@ class Speaker(Card):
         buf.extend(chunk)
         if len(buf) >= SAMPLE_RATE * 2 * STREAM_PIECE:
             wav, buf[:] = pcm_to_wav(bytes(buf)), b""
-            self.hass.async_create_background_task(self._play(where, wav, ""), f"aac {self.id} stream")
+            self.task(self._play(where, wav, ""), background=True)
 
     async def _play(self, where: str, wav: bytes, text: str, queue: bool = False) -> None:
         self._played_at.add(where)

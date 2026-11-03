@@ -11,7 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.aac.api import SAMPLE_RATE, Card, Context, Segmenter, make_vad, new_id, register
 
-VERSION = "4.0.0"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "4.0.1"  # this card's file (a newer file replaces an older one in <config>/aac/cards)
 
 JOIN_WAIT = 1.5  # seconds it waits, once the sentence is done, for a phrase that may bring no text
 
@@ -66,7 +66,7 @@ class PauseCut(Card):
         """A cut goes out at 'cuts' as a small context: one entry without text tagged start / phrase / end."""
         context = Context()
         context.add(self.tag(what), "", cut=what, source=meta.get("source"), name=meta.get("name"), **data)
-        self.hass.async_create_background_task(self.send(context, "cuts"), f"aac {self.id} cut")
+        self.task(self.send(context, "cuts"), background=True)
 
     def stream(self, port: str, chunk: bytes, meta: dict[str, Any]) -> None:
         key = meta.get("source", "")
@@ -87,7 +87,7 @@ class PauseCut(Card):
                 done = self._utterance.pop(key, None)
                 self._cut("end", meta, utterance=done, parts=audio)
                 if done and audio:
-                    self.hass.async_create_task(self._ended(done, int(audio)))
+                    self.task(self._ended(done, int(audio)))
                 continue
             pcm = b"".join(audio) if kind == "piece" else audio
             clip = {**meta, "pcm": pcm, "seconds": round(len(pcm) / (SAMPLE_RATE * 2), 1), "end": dt_util.utcnow().isoformat(),
@@ -114,7 +114,7 @@ class PauseCut(Card):
         self._expected[utterance] = parts
         await self._check(utterance)
         if utterance in self._expected:  # a phrase without text never comes: send what came after a moment
-            self._waits[utterance] = self.hass.loop.call_later(JOIN_WAIT, lambda: self.hass.async_create_task(self._joined(utterance)))
+            self._waits[utterance] = self.later(JOIN_WAIT, lambda: self._joined(utterance))
 
     async def _check(self, utterance: str) -> None:
         if utterance in self._expected and len(self._heard.get(utterance, {})) >= self._expected[utterance]:
@@ -122,8 +122,8 @@ class PauseCut(Card):
 
     async def _joined(self, utterance: str) -> None:
         """The sentence, put together from its heard phrases in order, leaves at 'said'."""
-        if (wait := self._waits.pop(utterance, None)) is not None:
-            wait.cancel()
+        if (cancel := self._waits.pop(utterance, None)) is not None:
+            cancel()
         self._expected.pop(utterance, None)
         parts = [p for _, p in sorted(self._heard.pop(utterance, {}).items())]
         if not parts:
@@ -137,5 +137,5 @@ class PauseCut(Card):
         await self.send(context, "said")
 
     async def unload(self) -> None:
-        for wait in self._waits.values():
-            wait.cancel()
+        for cancel in self._waits.values():
+            cancel()

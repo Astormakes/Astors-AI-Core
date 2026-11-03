@@ -14,7 +14,7 @@ from typing import Any
 
 from custom_components.aac.api import SAMPLE_RATE, Card, Context, new_id, pcm_to_wav, register
 
-VERSION = "2.1.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 READ_EVERY = 2  # seconds between looks at what dotted wires provide
 QUIET = 1.5  # seconds without audio from a satellite: it stopped
@@ -62,7 +62,7 @@ class Log(Card):
         return settings
 
     async def start(self) -> None:
-        self._task = self.hass.async_create_background_task(self._watch(), f"aac {self.id} watch")
+        self._task = self.task(self._watch(), background=True)
 
     async def unload(self) -> None:
         if self._task:
@@ -91,7 +91,7 @@ class Log(Card):
         extra = {}
         if self.settings.get("audio", True) and clip.get("pcm"):  # kept to listen to
             extra["audio"] = f"{new_id()}.wav"
-            await self.hass.async_add_executor_job(self._keep_audio, extra["audio"], pcm_to_wav(clip["pcm"], int(clip.get("rate") or SAMPLE_RATE)))
+            await self.blocking(self._keep_audio, extra["audio"], pcm_to_wav(clip["pcm"], int(clip.get("rate") or SAMPLE_RATE)))
         self._write("clip", clip.get("name") or clip.get("source") or "", f"{clip.get('seconds')} s{part}{said}", **extra)
 
     def _keep_audio(self, name: str, wav: bytes) -> None:
@@ -187,5 +187,5 @@ class Log(Card):
             path = self.folder / name
             if not re.fullmatch(r"[0-9a-f]+\.wav", name) or not path.is_file():
                 raise ValueError("that clip is no longer kept")
-            return base64.b64encode(await self.hass.async_add_executor_job(path.read_bytes)).decode()
+            return base64.b64encode(await self.blocking(path.read_bytes)).decode()
         return await super().ui_call(action, args)
