@@ -111,8 +111,9 @@ More a card may define: `busy` (a property: True while it works on something; a 
 `default_data()` + `keeps_data = True` (its own stored data in `self.data`, `await
 self.save()`; `async upgrade_data(settings, made_with)`: made from a setup saved by another version of its file, after
 `upgrade()` and loading its data, it gets the settings as they were saved, e.g. to move entries from a setting into its
-data), `self.folder` (where it keeps files: `<config>/aac/data/<domain>/<card>`, moved with a rename, gone with
-its domain; a removed card's data and files stay while Undo, Redo or a slot can bring it back, then go; the owner
+data), its own files (`await self.save_file(name, bytes)`, `load_file(name)`, `own_files(suffix)` oldest first,
+`remove_file(name)`: plain names in `<config>/aac/data/<domain>/<card>`, kept by the core's `Services.data_*`, moved
+with a rename, gone with its domain; a removed card's data and files stay while Undo, Redo or a slot can bring it back, then go; the owner
 removing a card whose data differs from `default_data()` is asked: keep it, or let it go now), `start()` / `unload()` (timers, listeners, channel subscriptions), `stop()` (see Stop), `held(port)` (what a dotted wire from that read output
 reads), `current()` (its values), `ui = True` (a page of its own, see below). A setting of type `modellist` with a
 `tag` gives it a list of models with queues. A setting may say `min` (and `off`, the value that turns it off),

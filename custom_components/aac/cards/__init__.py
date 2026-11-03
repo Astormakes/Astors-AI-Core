@@ -137,7 +137,7 @@ class Card:
 
     def __init__(self, domain: Domain, card_id: str, title: str, settings: dict[str, Any] | None) -> None:
         """Initialize."""
-        self.domain, self.core, self.hass = domain, domain.core, domain.core.hass
+        self.domain, self.core = domain, domain.core
         self.id = card_id
         self.name = title or type(self).title
         self.settings = {k: f.get("default") for k, f in self.settings_schema.items()} | dict(settings or {})
@@ -165,10 +165,23 @@ class Card:
         """Run a function that blocks (disk, CPU) in a thread of its own."""
         return await self.core.blocking(job, *args)
 
-    @property
-    def folder(self) -> Path:
-        """Where it keeps files (<config>/aac/data/<domain>/<card>): they move with a rename and go with the domain."""
-        return self.core.folder(self.domain.id, self.id)
+    # ------------------------------------------------------------------ its own files (<config>/aac/data/<domain>/<card>:
+    # they move with a rename and go with the card and the domain; plain names, no folders)
+    async def save_file(self, name: str, data: bytes) -> None:
+        """Keep a file of its own."""
+        await self.core.services.data_write([self.domain.id, self.id, name], data)
+
+    async def load_file(self, name: str) -> bytes | None:
+        """One of its files (None: there is none)."""
+        return await self.core.services.data_read([self.domain.id, self.id, name])
+
+    async def own_files(self, suffix: str = "") -> list[str]:
+        """Its files (with that ending), oldest first."""
+        return await self.core.services.data_list([self.domain.id, self.id], suffix)
+
+    async def remove_file(self, name: str) -> None:
+        """One of its files goes."""
+        await self.core.services.data_remove([self.domain.id, self.id, name])
 
     def log(self, text: str, level: str = "info", what: str = "", context: Context | None = None, **extra: Any) -> dict[str, Any]:
         """A line in AAC's log from this card (level: error, warning, info); a context goes with it only when its Log

@@ -1,5 +1,6 @@
 """What the card layer reaches outside AAC besides Home Assistant's entities (docs/v2 page 6): the web, AAC's shared
-files, Home Assistant's notifications. The core's side of the Card's helpers (`fetch`, `read_file`, `write_file`,
+files, Home Assistant's notifications; and its own data folder (<config>/aac/data: each domain's log, each card's
+files), which is the card layer's own and needs no permission. The core's side of the Card's helpers (`fetch`, `read_file`, `write_file`,
 `notification`): plain data in and out, so they answer over the worker's channel too, and each holds the card layer
 to the domain's sheet (the owner's cap); the Card checks its own May use and asks the owner at ask.
 """
@@ -8,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import shutil
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -76,3 +78,64 @@ class Services:
         if not self.hass.services.has_service("notify", service):
             raise ValueError(f"Home Assistant has no notify service {service}")
         await self.hass.services.async_call("notify", service, {"message": message, "title": title}, blocking=True)
+
+    # ------------------------------------------------------------------ the card layer's own data (<config>/aac/data)
+    def _data(self, parts: list[str]) -> Path:
+        """A path under <config>/aac/data from plain names (no folders in a name, no way up)."""
+        if not parts or any(not re.fullmatch(r"[\w\-. ]+", p) or p.strip(".") == "" for p in parts):
+            raise ValueError(f"not a plain name: {parts}")
+        return Path(self.hass.config.path("aac", "data", *parts))
+
+    async def data_read(self, parts: list[str]) -> bytes | None:
+        """A file's bytes (None: there is none)."""
+        path = self._data(parts)
+        return await self.hass.async_add_executor_job(lambda: path.read_bytes() if path.is_file() else None)
+
+    async def data_write(self, parts: list[str], data: bytes, append: bool = False) -> None:
+        """Write a file (append: at its end; else whole, put in place at once)."""
+        path = self._data(parts)
+
+        def write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if append:
+                with path.open("ab") as f:
+                    f.write(data)
+                return
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_bytes(data)
+            tmp.replace(path)
+        await self.hass.async_add_executor_job(write)
+
+    async def data_list(self, parts: list[str], suffix: str = "") -> list[str]:
+        """The files in a folder (with that ending), oldest first."""
+        path = self._data(parts)
+
+        def names() -> list[str]:
+            if not path.is_dir():
+                return []
+            return [p.name for p in sorted((p for p in path.iterdir() if p.is_file() and p.name.endswith(suffix)),
+                                           key=lambda p: p.stat().st_mtime)]
+        return await self.hass.async_add_executor_job(names)
+
+    async def data_remove(self, parts: list[str]) -> None:
+        """A file or a folder goes."""
+        path = self._data(parts)
+
+        def remove() -> None:
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+        await self.hass.async_add_executor_job(remove)
+
+    async def data_move(self, parts: list[str], to: list[str]) -> None:
+        """A folder (or file) moves; what was at the new place is gone."""
+        src, dst = self._data(parts), self._data(to)
+
+        def move() -> None:
+            if src.exists():
+                if dst.is_dir():
+                    shutil.rmtree(dst, ignore_errors=True)
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                src.rename(dst)
+        await self.hass.async_add_executor_job(move)

@@ -92,8 +92,8 @@ class Domain:
 
     def __init__(self, core: Core, domain_id: str, name: str) -> None:
         """Initialize."""
-        self.core, self.hass, self.id, self.name = core, core.hass, domain_id, name
-        self._store: Store = Store(core.hass, 1, f"aac2.domain.{domain_id}")
+        self.core, self.id, self.name = core, domain_id, name
+        self._store = core.store(f"aac2.domain.{domain_id}")
         self._card_stores: dict[str, Store] = {}
         self.cards: dict[str, Card] = {}
         self.wires: list[dict[str, str]] = []
@@ -222,7 +222,7 @@ class Domain:
                "since": time.time()}
         self.requests.append(req)
         self.log.write("info", f"Asks for {', '.join(f'{t} {l}' for t, l in wanted.items())}: {req['reason']}"[:500], card=card.id, what="request")
-        request_note(self.hass, self, req)
+        request_note(self.core, self, req)
         self.save()
         self.core.notify("requests", domain=self.id)
         return {"asked": wanted, "unknown": refused, "note": "the owner decides; until then nothing changes"}
@@ -243,7 +243,7 @@ class Domain:
             spec["settings"] = {**spec.get("settings", {}), "access": {**(spec.get("settings") or {}).get("access", {}), **granted}}
             await self._make(card.id, spec)
         self.log.write("info", f"Request of {req['name']}: allowed {', '.join(granted) or 'nothing'}", card=req["card"], what="request")
-        request_done(self.hass, request_id)
+        request_done(self.core, request_id)
         self.save()
         self.core.notify("requests", domain=self.id)
         self.core.notify("setup", domain=self.id)
@@ -266,11 +266,7 @@ class Domain:
         self.log.write("error", f"Storm stop: {text}", card=a.split(".")[0], what="red")
         self.save()
         self.core.notify("setup", domain=self.id)
-        try:
-            persistent_notification.async_create(self.hass, text, title=f"AAC ({self.name}): a wire was blocked",
-                                                 notification_id=self._red_note(a, b))
-        except Exception as err:  # noqa: BLE001 - the block counts, the notification is extra
-            self.log.write("warning", f"No Home Assistant notification: {err!r}", what="red")
+        self.core.note(self._red_note(a, b), f"AAC ({self.name}): a wire was blocked", text)
 
     def unblock(self, a: str, b: str, by: str = "you") -> bool:
         """A red wire carries again."""
@@ -278,8 +274,7 @@ class Domain:
             return False
         self.red = [r for r in self.red if not (r["from"] == a and r["to"] == b)]
         self.log.write("info", f"The wire {a} → {b} was unblocked ({by})", card=a.split(".")[0], what="red")
-        with contextlib.suppress(Exception):
-            persistent_notification.async_dismiss(self.hass, self._red_note(a, b))
+        self.core.unnote(self._red_note(a, b))
         self.save()
         self.core.notify("setup", domain=self.id)
         return True
@@ -302,7 +297,7 @@ class Domain:
 
     def _card_store(self, card_id: str) -> Store:
         if card_id not in self._card_stores:
-            self._card_stores[card_id] = Store(self.hass, 1, f"aac2.card.{self.id}.{card_id}")
+            self._card_stores[card_id] = self.core.store(f"aac2.card.{self.id}.{card_id}")
         return self._card_stores[card_id]
 
     async def load_card_data(self, card_id: str) -> dict[str, Any] | None:
@@ -339,7 +334,7 @@ class Domain:
         for card_id in card_ids - (self._ids_taken() if only_unused else set()):
             await self._card_store(card_id).async_remove()
             self._card_stores.pop(card_id, None)
-            await self.core.blocking(shutil.rmtree, self.core.folder(self.id, card_id), True)
+            await self.core.services.data_remove([self.id, card_id])
 
     async def add_card(self, card_type: str, title: str = "", settings: dict[str, Any] | None = None,
                        at: dict[str, float] | None = None) -> Card:
@@ -650,9 +645,8 @@ class Domain:
         self.log.write("warning", f"{why}: the setup before it runs again", card=trial["by"], what="switch")
         await self._restore(trial["back"])
         if not by:
-            with contextlib.suppress(Exception):
-                persistent_notification.async_create(self.hass, f"{why}: the setup before it runs again (slot {trial['slot']} "
-                                                     "stays as it was, Undo goes to it).", title=f"AAC ({self.name}): a switch went back")
+            self.core.note(f"aac_switch_{self.id}", f"AAC ({self.name}): a switch went back",
+                           f"{why}: the setup before it runs again (slot {trial['slot']} stays as it was, Undo goes to it).")
         return True
 
     async def load_slot(self, slot: str) -> bool:
@@ -734,7 +728,7 @@ class Domain:
             await self._card_store(new).async_save(data)
             await store.async_remove()
         self._card_stores.pop(old, None)
-        await self.core.blocking(move_folder, self.core.folder(self.id, old), self.core.folder(self.id, new))
+        await self.core.services.data_move([self.id, old], [self.id, new])
         for card_id, other in list(self.cards.items()):  # the others whose settings name it: made again with them
             if any(other.settings.get(k) != v for k, v in (self._specs[card_id].get("settings") or {}).items()):
                 await self._make(card_id, self._specs[card_id])
@@ -836,6 +830,23 @@ class Core:
     def save(self) -> None:
         """Keep the core."""
         self._store.async_delay_save(lambda: self.data, 1)
+
+    # ------------------------------------------------------------------ what the card layer keeps, and tells the owner
+    def store(self, key: str) -> Store:
+        """A stored record (the domain's setup, a card's data): async_load, async_save, async_delay_save, async_remove."""
+        return Store(self.hass, 1, key)
+
+    def note(self, note_id: str, title: str, text: str) -> None:
+        """A notification in Home Assistant for the owner (the same id again replaces it)."""
+        try:
+            persistent_notification.async_create(self.hass, text, title=title, notification_id=note_id)
+        except Exception as err:  # noqa: BLE001 - what it tells about happened anyway
+            self.log("core", "warning", f"No Home Assistant notification: {err!r}")
+
+    def unnote(self, note_id: str) -> None:
+        """That notification goes."""
+        with contextlib.suppress(Exception):
+            persistent_notification.async_dismiss(self.hass, note_id)
 
     # ------------------------------------------------------------------ time and tasks: the card layer's only way to them
     # (in the worker: its own loop; here Home Assistant's, so its tests can move the time)
@@ -1050,7 +1061,7 @@ class Core:
                 await dst.save_card_data(card_id, data)
         if await self.hass.async_add_executor_job(self.folder(src.id).is_dir):
             await self.hass.async_add_executor_job(shutil.copytree, self.folder(src.id), self.folder(new_id))
-            await self.hass.async_add_executor_job(lambda: dst.log.path.unlink(missing_ok=True))  # a copy starts its own log
+            await self.services.data_remove(dst.log.parts)  # a copy starts its own log
         self.data["domains"].append({"id": new_id, "name": name})
         self.save()
         return new_id

@@ -503,7 +503,7 @@ async def test_domains_new_rename_delete(hass: HomeAssistant, mock_entry, hass_s
     assert work == "work" and core.domain.id == work and core.domain.cards == {}
     await core.domain.add_card("lists", "Lists")
     await core.domain.cards["lists"].call("create_list", {"list": "Tasks"})
-    await hass.async_add_executor_job(lambda: (core.domain.cards["lists"].folder.mkdir(parents=True), (core.domain.cards["lists"].folder / "kept").write_text("x")))
+    await core.domain.cards["lists"].save_file("kept", b"x")
     new = await core.rename(work, "Office")
     assert new == "office" and core.domain.id == new and core.domain.name == "Office" and core.data["active"] == new
     assert next(d for d in core.data["domains"] if d["id"] == new)["name"] == "Office"
@@ -748,7 +748,7 @@ async def test_aacs_own_log(hass: HomeAssistant, mock_entry, hass_ws_client):
     a = await d.update_card("a", settings={"log": "context"})
     await d.flow.send(d.cards["a"], first, "out")
     await d.log.flush()
-    on_disk = await hass.async_add_executor_job(d.log.path.read_text)
+    on_disk = await hass.async_add_executor_job((core.folder(d.id) / "log.jsonl").read_text)
     assert '"entries"' not in on_disk and "n7" in on_disk  # a whole context never reaches the disk
 
     await client.send_json({"id": 2, "type": "aac/log", "search": "n7"})
@@ -759,4 +759,4 @@ async def test_aacs_own_log(hass: HomeAssistant, mock_entry, hass_ws_client):
     assert not await hass.async_add_executor_job((core.folder(copy) / "log.jsonl").exists)
     await client.send_json({"id": 3, "type": "aac/log/clear"})
     await client.receive_json()
-    assert not core.domain.log.entries and not await hass.async_add_executor_job(core.domain.log.path.read_text)
+    assert not core.domain.log.entries and not await hass.async_add_executor_job((core.folder(core.domain.id) / "log.jsonl").read_text)

@@ -14,7 +14,7 @@ from typing import Any
 
 from custom_components.aac.api import SAMPLE_RATE, Card, Context, new_id, pcm_to_wav, register
 
-VERSION = "2.1.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "2.1.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 READ_EVERY = 2  # seconds between looks at what dotted wires provide
 QUIET = 1.5  # seconds without audio from a satellite: it stopped
@@ -91,17 +91,14 @@ class Log(Card):
         extra = {}
         if self.settings.get("audio", True) and clip.get("pcm"):  # kept to listen to
             extra["audio"] = f"{new_id()}.wav"
-            await self.blocking(self._keep_audio, extra["audio"], pcm_to_wav(clip["pcm"], int(clip.get("rate") or SAMPLE_RATE)))
+            await self._keep_audio(extra["audio"], pcm_to_wav(clip["pcm"], int(clip.get("rate") or SAMPLE_RATE)))
         self._write("clip", clip.get("name") or clip.get("source") or "", f"{clip.get('seconds')} s{part}{said}", **extra)
 
-    def _keep_audio(self, name: str, wav: bytes) -> None:
+    async def _keep_audio(self, name: str, wav: bytes) -> None:
         """Save a clip; only the newest ones stay (their log entries lose the file)."""
-        folder = self.folder
-        folder.mkdir(parents=True, exist_ok=True)
-        (folder / name).write_bytes(wav)
-        files = sorted(folder.glob("*.wav"), key=lambda p: p.stat().st_mtime)
-        for old in files[:-max(1, int(self.settings.get("audio_kept") or 50))]:
-            old.unlink(missing_ok=True)
+        await self.save_file(name, wav)
+        for old in (await self.own_files(".wav"))[:-max(1, int(self.settings.get("audio_kept") or 50))]:
+            await self.remove_file(old)
 
     def stream(self, port: str, chunk: bytes, meta: dict[str, Any]) -> None:
         source, now = meta.get("name") or meta.get("source") or "audio", time.monotonic()
@@ -184,8 +181,8 @@ class Log(Card):
             return {"entries": found, "all": allowed, "names": names}
         if action == "audio":  # one kept clip, to play
             name = str(args.get("file") or "")
-            path = self.folder / name
-            if not re.fullmatch(r"[0-9a-f]+\.wav", name) or not path.is_file():
+            wav = await self.load_file(name) if re.fullmatch(r"[0-9a-f]+\.wav", name) else None
+            if wav is None:
                 raise ValueError("that clip is no longer kept")
-            return base64.b64encode(await self.blocking(path.read_bytes)).decode()
+            return base64.b64encode(wav).decode()
         return await super().ui_call(action, args)

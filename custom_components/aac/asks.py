@@ -12,7 +12,6 @@ import asyncio
 import contextlib
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.components import persistent_notification
 from homeassistant.core import Event, callback
 
 from .context import new_id
@@ -102,18 +101,15 @@ class Asks:
                                                                     "data": {"tag": f"aac_ask_{ask_id}"}}, blocking=True)
 
 
-def request_note(hass: Any, domain: Any, request: dict[str, Any]) -> None:
+def request_note(core: Any, domain: Any, request: dict[str, Any]) -> None:
     """Home Assistant tells the owner a request waits."""
-    with contextlib.suppress(Exception):
-        persistent_notification.async_create(
-            hass, f"{request['name']} asks for {', '.join(f'{t} ({lvl})' for t, lvl in request['things'].items())}: "
-                  f"{request['reason']}\n\nAnswer on AAC's Permissions page (the domain menu).",
-            title=f"AAC ({domain.name}): a card asks for more", notification_id=f"aac_request_{request['id']}")
+    core.note(f"aac_request_{request['id']}", f"AAC ({domain.name}): a card asks for more",
+              f"{request['name']} asks for {', '.join(f'{t} ({lvl})' for t, lvl in request['things'].items())}: "
+              f"{request['reason']}\n\nAnswer on AAC's Permissions page (the domain menu).")
 
 
-def request_done(hass: Any, request_id: str) -> None:
-    with contextlib.suppress(Exception):
-        persistent_notification.async_dismiss(hass, f"aac_request_{request_id}")
+def request_done(core: Any, request_id: str) -> None:
+    core.unnote(f"aac_request_{request_id}")
 
 
 def asked_for(levels: dict[str, str]) -> dict[str, str]:

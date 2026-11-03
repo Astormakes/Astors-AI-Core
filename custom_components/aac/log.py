@@ -11,12 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
-
-from homeassistant.core import CALLBACK_TYPE, HassJob
-from homeassistant.helpers.event import async_call_later
 
 if TYPE_CHECKING:
     from .core import Domain
@@ -42,27 +38,25 @@ class DomainLog:
         self._last_id = 0
         self._flows = 0  # entries in the flow lane (the rest are the other lane)
         self._lock = asyncio.Lock()
-        self._timer: CALLBACK_TYPE | None = None
+        self._timer: Any = None  # cancel
         self.closed = False  # its domain stopped: nothing more is written (its folder may move)
 
     @property
-    def path(self) -> Path:
-        """<config>/aac/data/<domain>/log.jsonl."""
-        return self.domain.core.folder(self.domain.id) / "log.jsonl"
+    def parts(self) -> list[str]:
+        """Where it is kept: <config>/aac/data/<domain>/log.jsonl."""
+        return [self.domain.id, "log.jsonl"]
 
     async def load(self) -> None:
         """Read what the file holds (a repeat's line came again with a newer count: the last one counts)."""
-        self.entries, self._lines = await self.domain.hass.async_add_executor_job(self._read, self.path)
+        self.entries, self._lines = self._read((await self.domain.core.services.data_read(self.parts) or b"").decode("utf-8", "replace"))
         self._last_id = max((e["id"] for e in self.entries), default=0)
         self._flows = sum(e["level"] == "flow" for e in self.entries)
 
     @staticmethod
-    def _read(path: Path) -> tuple[list[dict[str, Any]], int]:
-        if not path.is_file():
-            return [], 0
+    def _read(text: str) -> tuple[list[dict[str, Any]], int]:
         found: dict[int, dict[str, Any]] = {}
         lines = 0
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in text.splitlines():
             lines += 1
             try:
                 entry = json.loads(line)
@@ -151,9 +145,9 @@ class DomainLog:
 
     def _soon(self) -> None:
         if self._timer is None:  # (HA stopping drops the wait: at most WRITE_AFTER seconds of entries)
-            self._timer = async_call_later(self.domain.hass, WRITE_AFTER, HassJob(self._flush_later, cancel_on_shutdown=True))
+            self._timer = self.domain.core.later(WRITE_AFTER, self._flush_later)
 
-    async def _flush_later(self, _now: Any) -> None:
+    async def _flush_later(self) -> None:
         self._timer = None
         await self.flush()
 
@@ -174,17 +168,6 @@ class DomainLog:
             self._new, self._rewrite = [], False
             if not whole and not lines:
                 return
-            await self.domain.hass.async_add_executor_job(self._write_file, self.path, lines, whole)
+            text = "".join(f"{line}\n" for line in lines)
+            await self.domain.core.services.data_write(self.parts, text.encode("utf-8"), append=not whole)
             self._lines = len(lines) if whole else self._lines + len(lines)
-
-    @staticmethod
-    def _write_file(path: Path, lines: list[str], whole: bool) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        text = "".join(f"{line}\n" for line in lines)
-        if whole:
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(text, encoding="utf-8")
-            tmp.replace(path)
-        else:
-            with path.open("a", encoding="utf-8") as file:
-                file.write(text)

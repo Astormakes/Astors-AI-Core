@@ -239,4 +239,4 @@ class Flow:
         self.domain.core.notify("flow", domain=self.domain.id, wire=f"{card_id}.{port}")
         for target, in_port in self.wired_from(card_id, port):
             if hasattr(target, "clip"):
-                self.domain.hass.async_create_background_task(target.clip(in_port, clip), f"aac {target.id} clip")
+                self.domain.core.task(target.clip(in_port, clip), f"aac {target.id} clip", background=True)
