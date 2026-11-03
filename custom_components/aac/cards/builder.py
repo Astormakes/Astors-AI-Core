@@ -10,7 +10,7 @@ from typing import Any
 
 from custom_components.aac.api import CARD_TYPES, RULES, Card, Context, register
 
-VERSION = "3.0.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.0.3"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 BUILDS = {"add_card", "change_card", "remove_card", "wire", "unwire", "copy", "switch"}  # after the guide
@@ -252,9 +252,11 @@ class Builder(Card):
             result = await self._call(function, args, context)
         except (PermissionError, ValueError, KeyError) as err:
             result = {"error": str(err)}
-        if isinstance(result, dict) and result.get("error") and (n := self._made(context, function, args)) > 1:
-            result["note"] = (f"This same call was made {n} times in this conversation: it fails the same way again. Read "
-                              "the error, look (cards, card, help), change something, or tell the owner.")
+        if (n := self._made(context, function, args)) > 1:  # a model that goes round in circles is told so
+            result = result if isinstance(result, dict) else {"result": result}
+            result["note"] = (f"You made this same call {n} times in this conversation, and the answer is the same: "
+                              + ("read the error, look (cards, card, help), change something, or tell the owner."
+                                 if result.get("error") else "you have it already above. Go on with the next step."))
         if self.may("setup", "read") and (red := self.read_setup()["red"]):
             return {**(result if isinstance(result, dict) else {"result": result}), "red_wires": red,
                     "note": "These wires are blocked (red): the storm stop found a loop there. Tell the owner; fix the "
