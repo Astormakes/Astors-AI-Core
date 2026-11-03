@@ -4,7 +4,7 @@ Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress), page 5
 "The rules" (AAC 3, settled; replaces pages 3 and 4).
 
-## Current state (2026-11-03 04:30) – 3.1.5 on `main` (not pushed), live on the owner's HA
+## Current state (2026-11-03 05:10) – 3.1.6 on `main` (not pushed), live on the owner's HA
 
 **Where to pick up (2026-11-03, the night of steps 4 and 5):**
 - **Step 4 done (3.1.4, live):** drafts. The Card editor (3.0.x) builds straight in what runs, in a slot, or in the
@@ -16,7 +16,10 @@ The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "
   charter + web + a File memory read into its system prompt, switched, kept; flaws it made (a Relay "memory tool" whose
   defs use `context`, the Web/File cards without May use, fixes made in slot 4 after the switch) went into the guide.
   Its last turn was cut by a deploy. Next there (owner): after step 5, the same with Gemma A4B in another domain.
-- **Step 5 under way (owner: "finish the move before continuing with qwen and Gemma"):** docs/v2 page 6.
+- **Step 5 done (3.1.6, live 04:59): the cards run in the walled worker.** How AAC works shows it ("In their own
+  process, walled in"). Next (owner): the model tests again: Qwen fixes its Build test setup, then the same build with
+  Gemma A4B in another domain.
+- **Step 5, how it went (owner: "finish the move before continuing with qwen and Gemma"):** docs/v2 page 6.
   Groundwork (`worker/`): the walled worker (seccomp; checked on the owner's HA), the channel, the 3 s watchdog.
   Move phase 1 done (3.1.5, live 04:05, checked: Home find/get_state and a Web search through the new services, a
   typed answer): the card layer (domain.py, flow, log, cards) reaches the world only through the core's services

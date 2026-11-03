@@ -261,7 +261,19 @@ starting). HA's own log only hears about AAC running on Home Assistant (card fil
 Logs (filters, Save as text, Clear); a wire's monitor shows the entries of its output (`aac/monitor`; `aac/log`,
 `aac/log/clear`).
 
-**The card interface** (`api.py`; cards may later run in a sandbox, so this is all a card uses): `handle`, `send(context,
+**Where cards run (3.1.6):** the whole card layer (the running Domain, its Flow, log, calendar and cards: `layer.py`,
+`domain.py`, `flow.py`, `log.py`, `panel.py`, `defaults.py`, `cards/`) runs in a process of its own, apart from Home
+Assistant (`worker/`): walled in by seccomp once its code is loaded (no file opened, no socket made, no program
+started, no other process signalled; its own filter on x86_64 and aarch64, libseccomp on other Linux machines),
+talking to the core over one channel (stdin/stdout, one JSON message per line, `worker/wire.py`: bytes travel, errors
+keep their kind). `self.core` of a card is the card layer's core (`layer.Layer`): time and tasks on its own loop, and
+the core's services over the link (`home`, `services`, `models`, `audio`, `asks`, stores, notes, notify), each held by
+the core to the domain's sheet, which only the core holds (with the requests). A card that holds the worker over 3 s
+without giving it back is stopped there (`wire.Hung`, logged as failed); a worker stuck in C (no beat for 5 s) is
+killed and started again, and the domain runs again. A card file is imported only in the worker (before the wall): a
+newer one starts the worker again. Tests run the same layer inside Home Assistant (`core.CARDS_IN_WORKER = False`).
+
+**The card interface** (`api.py`; cards run walled in, so this is all a card uses): `handle`, `send(context,
 port)`, `read(port)`, `held(port)`, `call`, `stop`, `stop_all()`, `tools()`, `wired(port)`, `wired_into(port)`,
 `reaches(card_id, ports=None)`, `all_cards()` (other cards, used only through what they offer: `call`, `current()`,
 `held()`), `stream_out`, `clip_out`, `live(context, text, thinking)`, `show(data)`, its data and folder, the log, and
