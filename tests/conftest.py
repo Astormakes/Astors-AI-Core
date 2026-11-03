@@ -24,6 +24,12 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 
 
 @pytest.fixture(autouse=True)
+def cards_here(monkeypatch):
+    """The card layer runs inside Home Assistant in tests (the same code; test_worker.py runs it in the worker too)."""
+    monkeypatch.setattr("custom_components.aac.core.CARDS_IN_WORKER", False)
+
+
+@pytest.fixture(autouse=True)
 def clean_aac_folder():
     """Each test starts without <config>/aac (the test config is shared and kept: card files from older layouts and
     files of other tests stayed there, and an old card file replaced the current one)."""
@@ -64,7 +70,7 @@ async def setup_aac(hass: HomeAssistant, entry: MockConfigEntry):
     core = entry.runtime_data
     for model_id, name in (("m_big", "big"), ("m_small", "small")):  # two models on the test server, a short charter
         core.save_model({"id": model_id, "name": name.title(), "base_url": BASE_URL, "model": name})
-    await core.domain.update_card("charter", settings={"script": new_text("charter", "Be kind.")})
+    await core.layer_ask("panel", {"type": "aac/card/update", "card": "charter", "settings": {"script": new_text("charter", "Be kind.")}})
     return core
 
 

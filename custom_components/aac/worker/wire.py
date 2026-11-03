@@ -9,6 +9,10 @@ import base64
 import json
 from typing import Any
 
+class Hung(BaseException):  # noqa: N818 - not an Exception: a card's `except Exception` does not swallow it
+    """Raised into what held the card worker too long (its watchdog)."""
+
+
 KINDS: dict[str, type[Exception]] = {e.__name__: e for e in (PermissionError, ValueError, KeyError, TypeError, ConnectionError,
                                                              TimeoutError, LookupError)}
 

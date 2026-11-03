@@ -36,6 +36,7 @@ def move_folder(src: Path, dst: Path) -> None:
         src.rename(dst)
 
 
+CARDS_IN_WORKER = True  # the card layer runs in the walled worker (tests switch it off: then it runs here)
 ANSWERS = {  # what the card layer may ask of each of the core's services (models.chat, home.watch, asks.ask: above)
     "home": ("entities", "state", "call", "calendar_events", "catalog"),
     "services": ("fetch", "read_file", "write_file", "notification", "data_read", "data_write", "data_list", "data_remove", "data_move"),
@@ -56,7 +57,9 @@ class Core:
         self.data: dict[str, Any] = {}
         self.pool = ModelPool(hass, [])
         from .layer import Layer  # noqa: PLC0415
-        self.layer = Layer(self, self)  # the card layer, here in Home Assistant (the link and the clock: the core itself)
+        self.layer: Layer | None = Layer(self, self)  # the card layer here in Home Assistant (link and clock: the core
+        # itself), or None while it runs in the worker
+        self.worker: Any = None  # worker.Worker: the card layer in a walled process of its own
         self.sheet: dict[str, str] = {}  # the running domain's permissions: the owner's, held here (docs/v2 page 6)
         self.requests: list[dict[str, Any]] = []  # cards asking for more, held here until the owner decides
         self.running: dict[str, str] = {}  # the running domain: {id, name}
@@ -86,6 +89,7 @@ class Core:
                               lambda level, text: self.log("models", level, text))
         for model in self.data["models"]:  # every model belongs to a server (its address and key come from it)
             self._give_server(model)
+        await self.start_layer()
         if first:
             from .permissions import THINGS  # noqa: PLC0415
             self.data["domains"], self.data["active"] = [{"id": "assistant", "name": "Assistant"}], "assistant"
@@ -128,18 +132,66 @@ class Core:
         return data
 
     # ------------------------------------------------------------------ the link to the card layer (layer.py)
+    async def start_layer(self) -> None:
+        """AAC's own card files into the cards folder; the card layer starts in the walled worker, which loads them (else,
+        or when the worker cannot start, here)."""
+        from .cards import copy_shipped, load_cards  # noqa: PLC0415
+
+        folder = self.hass.config.path("aac", "cards")
+        await self.blocking(copy_shipped, folder)
+        if CARDS_IN_WORKER:
+            from .worker import Worker  # noqa: PLC0415
+
+            env = {"AAC_ROOT": str(Path(__file__).parent.parent.parent), "AAC_CARDS": folder, "AAC_TZ": str(self.hass.config.time_zone)}
+            worker = Worker("layer_main", answer=self.answer, told=self._from_worker, env=env)
+            try:
+                await worker.start()
+            except Exception as err:  # noqa: BLE001 - AAC runs on: the cards here
+                LOGGER.warning("AAC: the card worker did not start (%r): the cards run inside Home Assistant", err)
+                await worker.stop()
+            else:
+                self.worker, self.layer = worker, None
+                return
+        await self.blocking(load_cards, folder)
+
+    def _from_worker(self, message: dict[str, Any]) -> None:
+        """What the worker says about itself, and what the card layer in it tells."""
+        if "ready" in message:
+            if not message["ready"].get("walled"):
+                LOGGER.warning("AAC: the card worker is not walled in: %s", message["ready"].get("why"))
+            if self.worker is not None and self.worker.started > 1 and self.running:  # started again: the domain runs again
+                self.hass.async_create_task(self._run_again())
+        elif "hung" in message:
+            self.log("core", "warning", f"{message['hung']} held the card worker over {self.worker.hang:g} s: stopped there", what="hung")
+        elif "restart" in message:
+            LOGGER.warning("AAC: the card worker %s: started again", message["restart"])
+        elif "stderr" in message:
+            LOGGER.warning("AAC card worker: %s", message["stderr"])
+        else:
+            self.told(message)
+
+    async def _run_again(self) -> None:
+        self.share()
+        await self.layer_ask("run", dict(self.running))
+        self.notify("setup", domain=self.running.get("id"))
+
     async def layer_ask(self, do: str, args: dict[str, Any]) -> Any:
         """Ask the card layer (in the worker, or here)."""
+        if self.worker is not None:
+            return await self.worker.ask(do, args)
         return await self.layer.handle(do, args)
 
     def layer_tell(self, message: dict[str, Any]) -> None:
         """Tell the card layer (no answer)."""
-        self.layer.told(message)
+        if self.worker is not None:
+            self.worker.tell(message)
+        else:
+            self.layer.told(message)
 
     @property
     def domain(self) -> Domain | None:
         """The running Domain object (only while the card layer runs here: tests, Home Assistant's own side)."""
-        return self.layer.domain
+        return self.layer.domain if self.layer is not None else None
 
     def ask(self, do: str, args: dict[str, Any]) -> Any:
         """The link's ask, as the card layer calls it."""
@@ -316,9 +368,17 @@ class Core:
         (with their settings and data) as soon as they are not busy; new card types show in the palette."""
         from .cards import reload_changed  # noqa: PLC0415
 
+        from .cards import versions  # noqa: PLC0415
+
         waiting: set[str] = set()  # card types made again once their cards are idle
+        seen = await self.blocking(versions, folder)
         while True:
             await asyncio.sleep(CARD_FILES_EVERY)
+            if self.worker is not None:  # the worker loads card files before its wall: a newer one, a new start
+                if (now := await self.blocking(versions, folder)) != seen:
+                    seen = now
+                    await self.worker.restart()
+                continue
             changed = await self.hass.async_add_executor_job(reload_changed, folder)
             waiting = set(await self.layer_ask("remake", {"types": sorted(waiting | {t for t in changed if t in CARD_TYPES})}))
             if changed:

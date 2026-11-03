@@ -647,10 +647,14 @@ def tool_spec(name: str, spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_all(folder: str) -> None:
-    """Load every card type from the cards folder (`<config>/aac/cards/`): a card is a file (`decide.py`) or, when it
-    has more files, a folder (`chat/card.py` with `page.js`, `view.js` …). AAC's own cards are copied there first unless
-    a newer version is there (a download); runs in the executor (it reads and writes files). One that fails is logged;
-    the others load."""
+    """Copy AAC's own cards into the cards folder, then load every card type from it (runs in the executor)."""
+    copy_shipped(folder)
+    load_cards(folder)
+
+
+def copy_shipped(folder: str) -> None:
+    """AAC's own cards into the cards folder (`<config>/aac/cards/`) unless a newer version is there (a download): a
+    card is a file (`decide.py`) or, when it has more files, a folder (`chat/card.py` with `page.js`, `view.js` …)."""
     cards = Path(folder)
     cards.mkdir(parents=True, exist_ok=True)
     here = Path(__file__).parent
@@ -667,10 +671,21 @@ def load_all(folder: str) -> None:
                 LOGGER.info("AAC: card folder %s %s", shipped.name, "updated" if there.exists() else "added")
                 shutil.rmtree(there, ignore_errors=True)
                 shutil.copytree(shipped, there, ignore=shutil.ignore_patterns("__pycache__"))
+
+
+def load_cards(folder: str) -> None:
+    """Load every card type from the cards folder (where the card layer runs: the worker, or here). One that fails is
+    logged; the others load."""
+    cards = Path(folder)
     package = sys.modules.setdefault("aac_cards", types.ModuleType("aac_cards"))  # card files can import each other
     package.__path__ = [str(cards)]
     for name, file in _card_files(cards):
         _load(name, file)
+
+
+def versions(folder: str) -> dict[str, tuple[int, ...]]:
+    """Every card file's VERSION, without running it (the core watches the folder while the worker runs the cards)."""
+    return {name: _version(file) for name, file in _card_files(Path(folder))}
 
 
 def reload_changed(folder: str) -> set[str]:

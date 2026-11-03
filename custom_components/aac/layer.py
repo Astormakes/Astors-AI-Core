@@ -93,6 +93,12 @@ class Layer:
     async def blocking(self, job: Callable[..., Any], *args: Any) -> Any:
         return await self.clock.blocking(job, *args)
 
+    def doing(self, what: str) -> Any:
+        """Names what runs while a block runs (in the worker its watchdog says it when it holds the worker too long)."""
+        import contextlib  # noqa: PLC0415
+
+        return self.link.doing(what) if hasattr(self.link, "doing") else contextlib.nullcontext()
+
     # ------------------------------------------------------------------ what it tells the core (no answer)
     def notify(self, what: str, **data: Any) -> None:
         """Open panels hear about it."""

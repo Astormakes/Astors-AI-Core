@@ -8,7 +8,7 @@ side), {"a": id, "result": …} or {"a": id, "error": "…", "kind": "…"} answ
 {"hung": what, "seconds": n} when something held it too long.
 
 A card may hold the worker HANG seconds without giving it back (awaiting is giving it back: a model's answer may take
-a minute). Longer, the watchdog (a thread of its own) raises Hung into what runs: a Python loop stops there, the
+a minute). Longer, the watchdog (a thread of its own) raises wire.Hung into what runs: a Python loop stops there, the
 worker goes on. Stuck where Python cannot stop it (inside C), the beats stop: the core kills the worker and starts it
 again.
 
@@ -40,10 +40,6 @@ PRELOAD = ("concurrent.futures.thread", "asyncio.base_events", "json.decoder", "
 
 
 wire: Any = None  # wire.py, imported in main() once the path is set
-
-
-class Hung(BaseException):  # noqa: N818 - not an Exception: a card's `except Exception` does not swallow it
-    """Raised into what held the worker too long."""
 
 
 class Host:
@@ -107,7 +103,7 @@ def _watch(host: Host, thread_id: int) -> None:
         if held > host.hang and fired != host.last:
             fired, host.held = host.last, host.doing or "the worker"
             host.send({"hung": host.held, "seconds": round(held, 1)})
-            ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread_id), ctypes.py_object(Hung))
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread_id), ctypes.py_object(wire.Hung))
 
 
 async def _serve(host: Host, handlers: Any) -> None:
@@ -123,7 +119,7 @@ async def _serve(host: Host, handlers: Any) -> None:
         try:
             result = await handlers.handle(message["do"], message.get("args") or {}, host)
             host.send({"a": message["q"], "result": result})
-        except Hung:
+        except wire.Hung:
             host.send({"a": message["q"], "error": f"{host.held} held the worker over {host.hang:g} s: stopped"})
         except Exception as err:  # noqa: BLE001 - told to the core, the worker goes on
             host.send({"a": message["q"], **wire.error(err)})

@@ -10,6 +10,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 import contextlib
 import itertools
+import os
 from pathlib import Path
 import sys
 import time
@@ -33,10 +34,11 @@ class Worker:
     """One worker process for cards."""
 
     def __init__(self, handlers: str, paths: list[str] | None = None, *, answer: Callable[[str, dict], Awaitable[Any]] | None = None,
-                 told: Callable[[dict], None] | None = None, hang: float = 3.0, wall: bool = True) -> None:
+                 told: Callable[[dict], None] | None = None, hang: float = 3.0, wall: bool = True,
+                 env: dict[str, str] | None = None) -> None:
         """handlers: the module the worker runs (on paths); answer(do, args): what it asks the core; told(message): what
         it tells (hung, ready, anything else it sends)."""
-        self.handlers, self.paths, self.hang, self.wall = handlers, list(paths or []), hang, wall
+        self.handlers, self.paths, self.hang, self.wall, self.env = handlers, list(paths or []), hang, wall, dict(env or {})
         self._answer, self._told = answer, told or (lambda m: None)
         self._proc: asyncio.subprocess.Process | None = None
         self._asked: dict[int, asyncio.Future] = {}
@@ -60,7 +62,8 @@ class Worker:
         args = [sys.executable, "-I", str(MAIN), "--handlers", self.handlers, "--hang", str(self.hang)]
         args += [x for p in self.paths for x in ("--path", p)] + ([] if self.wall else ["--no-wall"])
         self._proc = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                                                          stderr=asyncio.subprocess.PIPE, limit=64 * 1024 * 1024)
+                                                          stderr=asyncio.subprocess.PIPE, limit=64 * 1024 * 1024,
+                                                          env={**os.environ, **self.env})
         self.started += 1
         self.last_beat = time.monotonic()
         self._keep(self._read(self._proc))
@@ -73,6 +76,11 @@ class Worker:
         for task in list(self._tasks):
             task.cancel()
         await self._end("stopped")
+
+    async def restart(self) -> None:
+        """End it now: the watch starts it again (what waits gets WorkerGone)."""
+        self._told({"restart": "was told to"})
+        await self._end("restart")
 
     async def _end(self, why: str) -> None:
         proc, self._proc = self._proc, None

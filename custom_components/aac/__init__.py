@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
 
 from .audio import AudioView, ClipView, async_satellite_access
-from .cards import UI_URL, load_all
+from .cards import UI_URL
 from .const import DOMAIN, PANEL_URL
 from .core import Core
 from .skins import USER_URL, user_dir
@@ -27,8 +27,7 @@ PLATFORMS = ["calendar", "conversation", "media_player"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool:
     """Start the core, its running domain and the panel."""
-    await hass.async_add_executor_job(load_all, hass.config.path("aac", "cards"))  # AAC's cards, then yours
-    core = Core(hass)
+    core = Core(hass)  # it puts AAC's card files into <config>/aac/cards; the card layer loads them (yours too)
     await core.load()
     entry.runtime_data = core
     hass.data[DOMAIN] = core
@@ -86,9 +85,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: AACConfigEntry) -> bool
     await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     core = entry.runtime_data
     core.asks.unload()  # a card waiting for a yes hears no
-    if core.domain:
-        await core.domain.stop()
-        await core.domain.unload()
-        await core.domain.save_now()
+    await core.halt()
+    if core.worker is not None:
+        await core.worker.stop()
     hass.data.pop(DOMAIN, None)
     return True

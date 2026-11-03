@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from .context import Context
 from .sound import level
+from .worker.wire import Hung
 
 if TYPE_CHECKING:
     from .cards import Card
@@ -160,13 +161,14 @@ class Flow:
         if not context.streaming:
             self._log(card.id, "in", port, self.newest(context), context)
         call = context.next_call()
-        if call is not None and call[1]["card"] == card.id:  # a call that names it: answered, sent on
-            await self._answer(card, context, call[1])
-            return
-        try:
-            await card.handle(context, port)
-        except Exception as err:  # noqa: BLE001 - one broken card must not stop the domain
-            self.failed(card.id, "", err)
+        with self.domain.core.doing(card.name):
+            if call is not None and call[1]["card"] == card.id:  # a call that names it: answered, sent on
+                await self._answer(card, context, call[1])
+                return
+            try:
+                await card.handle(context, port)
+            except (Exception, Hung) as err:  # noqa: BLE001 - one broken card (or one that held the worker) must not stop the domain
+                self.failed(card.id, "", err)
 
     async def _answer(self, card: Card, context: Context, call: dict[str, Any]) -> None:
         """Run the called function, add its result, send the context on from the card's outputs."""

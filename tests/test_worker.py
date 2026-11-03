@@ -9,7 +9,7 @@ import pytest
 
 from custom_components.aac.worker import Worker, WorkerGone
 
-pytestmark = pytest.mark.fresh
+pytestmark = pytest.mark.fresh  # (the backup copy is about the stored data, not this)
 HERE = str(Path(__file__).parent)
 
 
@@ -91,3 +91,29 @@ async def test_another_machine_is_walled_by_libseccomp():
              "    except PermissionError: print('walled')\n")
     out = subprocess.run([sys.executable, "-I", "-c", probe], capture_output=True, text=True, timeout=20, check=True).stdout
     assert out.split() == ["walled", "walled"]
+
+
+async def test_aac_runs_its_cards_in_the_worker(hass, mock_entry, aioclient_mock, hass_ws_client, monkeypatch):
+    """The whole card layer in the walled worker: AAC starts it, the panel's state and commands come from it, a chat
+    turn goes to the model (the core asks the server) and back; Home Assistant itself holds no Domain."""
+    from .conftest import model_answers, reply, setup_aac
+
+    monkeypatch.setattr("custom_components.aac.core.CARDS_IN_WORKER", True)
+    asked = model_answers(aioclient_mock, reply("Hello from the worker."))
+    core = await setup_aac(hass, mock_entry)
+    try:
+        assert core.worker is not None and core.domain is None
+        if platform.machine() in ("x86_64", "aarch64"):
+            assert core.worker.ready["walled"] is True
+        client = await hass_ws_client(hass)
+        await client.send_json_auto_id({"type": "aac/state"})
+        state = (await client.receive_json())["result"]
+        assert {"chat", "model", "charter"} <= {c["id"] for c in state["domain"]["cards"]} and state["types"]
+        await client.send_json_auto_id({"type": "aac/card/ui", "card": "chat", "action": "send", "args": {"text": "hi"}})
+        got = (await client.receive_json())["result"]["result"]
+        assert got["answer"] == "Hello from the worker." and asked[0]["messages"][-1]["content"].startswith("hi")
+        await client.send_json_auto_id({"type": "aac/card/call", "card": "home", "function": "get_state",
+                                        "args": {"entity_ids": ["sun.sun"]}})
+        assert (await client.receive_json())["success"]
+    finally:
+        await hass.config_entries.async_unload(mock_entry.entry_id)
