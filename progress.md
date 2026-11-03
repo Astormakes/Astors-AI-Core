@@ -4,9 +4,35 @@ Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress), page 5
 "The rules" (AAC 3, settled; replaces pages 3 and 4).
 
-## Current state (2026-11-02) – 3.0.2 on `main` (v3 merged, not pushed), live on the owner's HA
+## Current state (2026-11-03 04:30) – 3.1.5 on `main` (not pushed), live on the owner's HA
 
-**Where to pick up** (owner, 2026-11-02: "v3 was a success"):
+**Where to pick up (2026-11-03, the night of steps 4 and 5):**
+- **Step 4 done (3.1.4, live):** drafts. The Card editor (3.0.x) builds straight in what runs, in a slot, or in the
+  draft (slot 4, greyed after 1–3 on the Cards page); `switch` waits for the model's answer, the new setup runs on
+  trial, the Card editor hands the conversation back with the news, `keep` within 120 s or the setup before comes
+  back (Keep / Back on the Cards page). Its `guide` (read first: building calls are refused until it is read; `help`
+  of a type before setting one up), `call` (try a card's function), wire errors that say why, unknown settings
+  refused, a repeated call told so. Live in the test domain "Build test" (kept, owner: "keep the domain"): Qwen built
+  charter + web + a File memory read into its system prompt, switched, kept; flaws it made (a Relay "memory tool" whose
+  defs use `context`, the Web/File cards without May use, fixes made in slot 4 after the switch) went into the guide.
+  Its last turn was cut by a deploy. Next there (owner): after step 5, the same with Gemma A4B in another domain.
+- **Step 5 under way (owner: "finish the move before continuing with qwen and Gemma"):** docs/v2 page 6.
+  Groundwork (`worker/`): the walled worker (seccomp; checked on the owner's HA), the channel, the 3 s watchdog.
+  Move phase 1 done (3.1.5, live 04:05, checked: Home find/get_state and a Web search through the new services, a
+  typed answer): the card layer (domain.py, flow, log, cards) reaches the world only through the core's services
+  (`home.HomeService`, `services.Services`: web, files, notifications, the data folder; `models.ModelService`; time
+  and tasks; stores; notes) and imports without Home Assistant (only its dt helper). Next: phase 2, the card layer
+  in the worker (the core's services answer over the channel; the panel's commands go to the worker; the core holds
+  the domain's sheet; tests keep the in-process run).
+- **Found live 04:20 (for the owner):** the Assistant's Model card has Thinking on; Gemma 4 26B then often plans its
+  tool calls in its thinking and stops (finish stop, no text, no call), so a tool question gets no answer at all
+  (an empty answer counts as none). Thinking off, or AAC asking again once when a model only thought: the owner's
+  call. Also from last night (23:54): Piper took over 30 s on every line, and the owner's Answer out Relay hands tool
+  results (JSON) to Text to speech too.
+- Branches: none any more (owner: "don't work in branches"); `v3` was merged, the local one is deleted (origin/v3 is
+  the owner's to delete).
+
+**Before (2026-11-02, owner: "v3 was a success"):**
 - **Safety (items 19, 20, 21, 47) is under way: docs/v2 page 6** (settled points, open points, build order). Done:
   1 (Relay: a script stops itself when its own time is up: 3 s since 3.1.2, waiting for called cards not counted),
   2 (3.1.0: permissions in two layers, the domain's sheet on top; 3.1.1: everything a card does goes through its
