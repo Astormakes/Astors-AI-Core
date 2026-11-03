@@ -17,7 +17,7 @@ from typing import Any
 
 from custom_components.aac.api import Card, Context, new_id, register, tool_spec
 
-VERSION = "4.0.3"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "4.0.4"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
@@ -50,6 +50,9 @@ def conversation(context: Context, me: str) -> tuple[str, list[dict[str, Any]]]:
             out += [{"role": "tool", "tool_call_id": c["id"], "content": "(no result: stopped)"}
                     for c in item["tool_calls"] if c["id"] not in answered]
     return context.system["text"].strip(), out
+
+
+TAKEN = {"call"}  # a tool of that name among many: Gemma 4 (its format writes call:<name>) stops before calling (2026-11-03)
 
 
 @register
@@ -135,12 +138,14 @@ class Model(Card):
 
     def _tools(self, context: Context) -> dict[str, dict[str, Any]]:
         """The tools this time (into context.tools): the functions of the cards wired to it and back, as For models
-        names them; a name two cards offer gets the card's name in front."""
+        names them; a name two cards offer, or one the models' own call format uses (TAKEN), gets the card's name in
+        front."""
         found = [(card, fn, spec) for card in self.tools() for fn, spec in card.offered().items()]
         names = [spec["name"] for _, _, spec in found]
         tools = {}
         for card, fn, spec in found:
-            name = spec["name"] if names.count(spec["name"]) == 1 else f"{re.sub(r'[^a-z0-9]+', '_', card.name.lower()).strip('_')}_{spec['name']}"
+            plain = names.count(spec["name"]) == 1 and spec["name"] not in TAKEN
+            name = spec["name"] if plain else f"{re.sub(r'[^a-z0-9]+', '_', card.name.lower()).strip('_')}_{spec['name']}"
             tools[name] = {"name": name, "card": card.id, "function": fn, "description": spec["help"], "args": spec["args"]}
         context.tools["data"]["tools"] = list(tools.values())
         return tools

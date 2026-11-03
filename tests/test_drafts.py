@@ -97,8 +97,8 @@ async def test_what_asks_and_what_not(hass: HomeAssistant, mock_entry, monkeypat
     assert any("not wired in and out" in p for p in (await editor.call("check", {"where": "4"}))["problems"])
 
     other = await d.add_card("lists", "Shopping")
-    assert await editor.call("call", {"card": other.id, "function": "lists"}) == []  # trying a card: it has no lists yet
-    assert "offers no function" in (await editor.call("call", {"card": other.id, "function": "nothing"}))["error"]
+    assert await editor.call("try_card", {"card": other.id, "function": "lists"}) == []  # trying a card: it has no lists yet
+    assert "offers no function" in (await editor.call("try_card", {"card": other.id, "function": "nothing"}))["error"]
 
 
 async def test_a_model_switches_and_keeps_in_the_new_setup(hass: HomeAssistant, mock_entry, aioclient_mock):

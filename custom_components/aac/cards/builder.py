@@ -13,6 +13,7 @@ from custom_components.aac.api import CARD_TYPES, RULES, Card, Context, register
 VERSION = "3.0.4"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
+# (no function named "call": with it among many tools, Gemma 4 stops before its first call, live 2026-11-03)
 BUILDS = {"add_card", "change_card", "remove_card", "wire", "unwire", "copy", "switch"}  # after the guide
 SHORT = 80  # longer settings are shortened in the list of cards (characters)
 WHERE = {"type": "string", "help": "Which setup: now (default: the one that runs), 1, 2, 3 (the owner's slots), 4 (your draft)."}
@@ -44,7 +45,7 @@ GUIDE = """How to build in AAC with the Card editor. Read it once per conversati
   - switch(where="4") is the last thing you call in that answer: say in one sentence what you switch to and end
     your answer. Once it is written the new setup runs (every card is made again).
   - Then a message from the Card editor comes into this conversation. Only a working way back reaches you, so
-    read it as the proof: look whether it does what it should (cards, call to try a card), then call keep. No keep
+    read it as the proof: look whether it does what it should (cards, try_card to try a card), then call keep. No keep
     within the time it names: the setup before comes back by itself, and the draft stays as it is to fix.
   - Once switched, the draft's cards are what runs: fix and change them with where="now" from then on (a change
     in slot 4 changes nothing that runs).
@@ -59,7 +60,7 @@ GUIDE = """How to build in AAC with the Card editor. Read it once per conversati
 - Settings: only those the type's help lists, with values of the kind it says. Permission settings (May use, For
   models, and those marked so) are the owner's: you cannot set them.
 - A new card that reaches outside AAC (Web: web, File: files, Home Assistant: entities, Notify: notify …) may do
-  nothing there until the owner allows it (its May use). Once it runs, ask with call(card, "request_access",
+  nothing there until the owner allows it (its May use). Once it runs, ask with try_card(card, "request_access",
   {things, level, reason}) and tell the owner what you asked for and why; until then it answers with an error.
 - After every change look at the answer: it shows what is there now (a wire that does not fit is left out).
 
@@ -101,7 +102,7 @@ GUIDE = """How to build in AAC with the Card editor. Read it once per conversati
   tool: it works at once.
 
 6. Trying it
-- call(card, function, args) runs another card's function as a model would (only what it offers to models; its
+- try_card(card, function, args) runs another card's function as a model would (only what it offers to models; its
   permissions apply): read a file you wired, search with a Web card, read a list.
 - Try every card you added before you say it works. Say exactly what works, what does not yet and why (a
   permission the owner must give, a function the owner must tick). For a whole path the owner's next message is the
@@ -198,7 +199,7 @@ class Builder(Card):
                            "conversation: call keep after it, else the setup before comes back by itself.",
                    "args": {"where": {"type": "string", "help": "1, 2, 3 or 4 (default: 4).", "required": False}}},
         "keep": {"help": "Keep the setup you switched to (after the Card editor's message that it runs)."},
-        "call": {"help": "Try another card: run one of its functions as a model would (only what it offers to models; "
+        "try_card": {"help": "Try another card: run one of its functions as a model would (only what it offers to models; "
                          "its permissions apply).",
                  "args": {"card": {"type": "string", "help": "Its id.", "required": True},
                           "function": {"type": "string", "help": "One of its functions (card shows them).", "required": True},
@@ -218,7 +219,7 @@ class Builder(Card):
         context: Context = found["context"]
         problems = self.check_setup("now")
         context.add(self.tag("said"), f"(Card editor) The switch to slot {found['slot']} is done: the new setup runs. "
-                    "You read this, so the way back to you works. Look whether it does what it should (cards; call to try "
+                    "You read this, so the way back to you works. Look whether it does what it should (cards; try_card to try "
                     f"a card), then call keep within {found['seconds']} seconds: without keep the setup before comes back "
                     "by itself." + (f" Found in what runs now: {'; '.join(problems)}." if problems else ""))
         await self.send(context, "out")
@@ -301,7 +302,7 @@ class Builder(Card):
             added = await self.add_card(str(args.get("type")), str(args.get("name") or ""), args.get("settings") or {}, where=where)
             if needs := CARD_TYPES[str(args.get("type"))].needs:
                 added = {**added, "note": f"It reaches outside AAC ({', '.join(sorted(needs))}): it may do nothing there "
-                                          "until the owner allows it. Once it runs, call(card, \"request_access\", …) and "
+                                          "until the owner allows it. Once it runs, try_card(card, \"request_access\", …) and "
                                           "tell the owner."}
             return added
         if function == "change_card":
@@ -328,6 +329,6 @@ class Builder(Card):
                                                "message comes into this conversation: call keep after it."}
         if function == "keep":
             return {"kept": True} if self.keep_setup() else {"error": "no switch waits for keep"}
-        if function == "call":
+        if function == "try_card":
             return await self.call_card(str(args.get("card")), str(args.get("function")), args.get("args") or {}, context)
         return await super().call(function, args, context)
