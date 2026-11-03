@@ -931,7 +931,9 @@ class AacPanel extends HTMLElement {
       <div class="card"><h3 style="margin-top:0">Storm limit ${tip("Rule 6: a wire that carries more contexts within a second than this turns red (blocked until you unblock it on the Cards page). A model writing sends its answer after every sentence: keep it well above that.")}</h3>
         <div class="row"><input type="number" id="storm" min="1" max="10000" value="${esc(st.storm ?? "")}" style="max-width:120px"><span class="hint">contexts per second through one wire</span></div></div>
       <div class="card"><h3 style="margin-top:0">Ask on the phone ${tip("A card at 'ask' waits for your yes before every action. Open panels always ask (top right); with a notify service of Home Assistant's companion app here, your phone asks too, with Allow and Deny. No answer in 2 minutes is a no.")}</h3>
-        <div class="row"><input id="asknotify" placeholder="notify.mobile_app_…" value="${esc(st.ask_notify || "")}" style="max-width:320px"><span class="hint">empty: only open panels ask</span></div></div></div>`;
+        <div class="row"><input id="asknotify" placeholder="notify.mobile_app_…" value="${esc(st.ask_notify || "")}" style="max-width:320px"><span class="hint">empty: only open panels ask</span></div></div>
+      <div class="card"><h3 style="margin-top:0">Where the cards run ${tip("The cards run in a process of their own, apart from Home Assistant, walled in by the kernel (seccomp): they open no file, no network connection and start no program on their own; everything outside goes through AAC's core, which holds them to the domain's permissions. A card that holds that process longer than 3 s is stopped there; one stuck where it cannot be stopped makes the process start again.")}</h3>
+        <p class="hint" style="margin:0">${(() => { const r = st.cards_run || {}; return r.in === "worker" ? `In their own process${r.walled ? ", walled in" : `, <b>not walled in</b> (${esc(r.why)})`}; started again ${r.restarts || 0} times since Home Assistant started.` : `Inside Home Assistant (${esc(r.why || "")}).`; })()}</p></div></div>`;
   }
 
   _appearanceView() {

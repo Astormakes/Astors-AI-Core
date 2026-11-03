@@ -290,7 +290,7 @@ async def ws_settings(hass, connection, msg) -> None:
 
     core = _core(hass)
     connection.send_result(msg["id"], {"storm": core.storm, "ask_notify": (core.data.get("settings") or {}).get("ask_notify") or "",
-                                       "rules": RULES})
+                                       "rules": RULES, "cards_run": core.cards_run()})
 
 
 @command({vol.Required("type"): "aac/settings/set", vol.Optional("storm"): vol.All(int, vol.Range(min=1, max=10000)),

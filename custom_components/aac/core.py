@@ -170,6 +170,13 @@ class Core:
         else:
             self.told(message)
 
+    def cards_run(self) -> dict[str, Any]:
+        """Where the cards run (for the How AAC works page): in the walled worker, or here (and why)."""
+        if self.worker is None:
+            return {"in": "here", "why": "the worker is off" if not CARDS_IN_WORKER else "the worker did not start"}
+        return {"in": "worker", "walled": bool(self.worker.ready.get("walled")), "why": self.worker.ready.get("why") or "",
+                "restarts": self.worker.started - 1}
+
     async def _run_again(self) -> None:
         self.share()
         await self.layer_ask("run", dict(self.running))
