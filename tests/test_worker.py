@@ -117,3 +117,28 @@ async def test_aac_runs_its_cards_in_the_worker(hass, mock_entry, aioclient_mock
         assert (await client.receive_json())["success"]
     finally:
         await hass.config_entries.async_unload(mock_entry.entry_id)
+
+
+async def test_the_workers_clock():
+    """The worker's own clock: later runs a job once (a coroutine too) unless cancelled; every_minute runs at the start
+    of each minute."""
+    from datetime import UTC, datetime
+    from unittest.mock import patch
+
+    from custom_components.aac.layer import Clock
+
+    clock, ran = Clock(), []
+
+    async def job():
+        ran.append("coro")
+    clock.later(0.05, job)
+    cancel = clock.later(0.05, lambda: ran.append("cancelled"))
+    cancel()
+    await asyncio.sleep(0.15)
+    assert ran == ["coro"]
+    with patch("homeassistant.util.dt.utcnow", return_value=datetime(2026, 11, 3, 5, 24, 59, 900000, tzinfo=UTC)):
+        stop = clock.every_minute(ran.append)  # 0.1 s before the minute
+        await asyncio.sleep(0.3)
+    stop()
+    assert ran[1:] == [datetime(2026, 11, 3, 5, 25, tzinfo=UTC)]  # once, for its minute
+    assert await clock.blocking(lambda a: a + 1, 1) == 2

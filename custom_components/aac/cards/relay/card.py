@@ -17,7 +17,7 @@ from custom_components.aac.api import Card, Context, new_id, register
 sys.modules.pop(f"{__name__}.script", None)  # a newer card file brings a newer script.py
 from .script import DEFAULT, OWN, REFERENCE, TOTAL, Run, Script, check, joined, reference_text  # noqa: E402
 
-VERSION = "4.2.4"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
+VERSION = "4.2.5"  # this folder's card (a newer one replaces an older one in <config>/aac/cards)
 
 PRINTED = 200  # print entries it keeps
 PRINTED_FOR = 1800  # seconds they are kept

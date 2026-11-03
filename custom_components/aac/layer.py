@@ -41,19 +41,21 @@ class Clock:
         return handle.cancel
 
     def every_minute(self, job: Callable[[Any], Any]) -> Callable[[], None]:
+        """job(the minute, as a UTC time at second 0) at the start of every minute; a timer that comes a hair early or
+        late still counts for its own minute, once."""
+        from datetime import timedelta  # noqa: PLC0415
+
         from homeassistant.util import dt as dt_util  # noqa: PLC0415 - pure, imported before the wall by the cards
 
         handle: list[asyncio.TimerHandle] = []
 
-        def tick() -> None:
-            now = dt_util.utcnow()
-            job(now.replace(microsecond=0))
-            nxt()
+        def plan(at: Any) -> None:
+            handle[:] = [self.loop.call_later(max(0.0, (at - dt_util.utcnow()).total_seconds()), tick, at)]
 
-        def nxt() -> None:
-            now = dt_util.utcnow()
-            handle[:] = [self.loop.call_later(60 - now.second - now.microsecond / 1e6, tick)]
-        nxt()
+        def tick(at: Any) -> None:
+            job(at)
+            plan(at + timedelta(minutes=1))
+        plan((dt_util.utcnow() + timedelta(minutes=1)).replace(second=0, microsecond=0))
         return lambda: handle and handle[0].cancel()
 
     async def blocking(self, job: Callable[..., Any], *args: Any) -> Any:
