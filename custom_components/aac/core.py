@@ -500,6 +500,27 @@ class Domain:
                 found.append({"from": w["from"], "to": w["to"]})
         return found
 
+    def wire_problem(self, where: str, wire: dict[str, str]) -> str:
+        """Why a wire does not fit in a setup ("" when it does)."""
+        cards = self.place(where)["cards"]
+        ports = self._ports(where, cards)
+        if self._fit([wire], ports):
+            return ""
+        a, _, ap = str(wire.get("from", "")).partition(".")
+        b, _, bp = str(wire.get("to", "")).partition(".")
+        here = "what runs" if where == "now" else f"slot {where}"
+        for card_id in (a, b):
+            if ports(card_id) is None:
+                runs = where != "now" and card_id in self._specs  # in what runs, not in this slot
+                return (f"there is no card {card_id!r} in {here} (it holds: {', '.join(cards) or 'nothing'})"
+                        + (f"; {card_id} is in what runs: copy from now to {where} first to build on what runs" if runs else ""))
+        (_, outs), (ins, _) = ports(a), ports(b)
+        if ap not in outs:
+            return f"{a} has no output {ap!r} (its outputs: {', '.join(outs) or 'none'})"
+        if bp not in ins:
+            return f"{b} has no input {bp!r} (its inputs: {', '.join(ins) or 'none'})"
+        return f"{a}.{ap} carries {outs[ap]}, {b}.{bp} takes {ins[bp]}"
+
     def build(self, slot: str, change: Callable[[dict[str, Any]], Any]) -> Any:
         """A change to a kept setup (it does not run: nothing is made); returns what the change returns."""
         if slot == "now":
@@ -560,7 +581,7 @@ class Domain:
             elif extra := [k for k in spec.get("settings") or {} if k not in kind.settings_schema]:
                 found.append(f"{card_id}: a {kind.title} card has no setting {', '.join(extra)} (see help {kind.type})")
         fits = self._fit(setup["wires"], self._ports(where, cards))
-        found += [f"the wire {w['from']} -> {w['to']} fits nothing (no such card or port there, or another kind)"
+        found += [f"the wire {w['from']} -> {w['to']} does not fit: {self.wire_problem(where, w)}"
                   for w in setup["wires"] if {"from": w["from"], "to": w["to"]} not in fits]
         if keeper and not (any(w["to"].startswith(f"{keeper}.") for w in fits) and any(w["from"].startswith(f"{keeper}.") for w in fits)):
             found.append(f"{keeper} (the card that switches) is not wired in and out there: no keep could come, the setup "

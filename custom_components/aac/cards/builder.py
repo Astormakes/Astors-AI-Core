@@ -10,9 +10,10 @@ from typing import Any
 
 from custom_components.aac.api import CARD_TYPES, RULES, Card, Context, register
 
-VERSION = "3.0.0"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.0.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
+BUILDS = {"add_card", "change_card", "remove_card", "wire", "unwire", "copy", "switch"}  # after the guide
 SHORT = 80  # longer settings are shortened in the list of cards (characters)
 WHERE = {"type": "string", "help": "Which setup: now (default: the one that runs), 1, 2, 3 (the owner's slots), 4 (your draft)."}
 
@@ -35,7 +36,8 @@ GUIDE = """How to build in AAC with the Card editor. Read it once per conversati
 - Big, or anything on your own way (the chat, the cards between the chat and you, you, this Card editor, their
   wires), or several changes that only work together: build in the draft. A half-done change to what runs can cut
   you off, and then nobody can fix it.
-  - copy(from="now", to="4") starts the draft from what runs (or build it from nothing; copy from 1, 2 or 3).
+  - copy(from="now", to="4") starts the draft from what runs: do this first. Without it the draft holds only what
+    you add (no chat, no model, not you), and wires to those fit nothing there.
   - Change it with where="4": add_card, change_card, remove_card, wire, unwire. Look with cards(where="4").
   - check(where="4") lists what is wrong (no such type, a wire that fits nothing, a setting a type does not have,
     this Card editor not wired in and out there). Fix all of it.
@@ -48,7 +50,8 @@ GUIDE = """How to build in AAC with the Card editor. Read it once per conversati
 
 3. The order that works
 - rules (once), cards (what runs: ids, ports, settings, wires), types (what can be added), help for every type you
-  add or set up. Ids are names: a card called "Web search" has the id web_search; its tag starts with it.
+  add or set up: its exact port names (a Chat's output is 'said', its input 'answers'; a Model's input is 'in', its
+  outputs 'out' and 'calls') and its settings (only those exist: a Relay has one, 'script'). Ids are names: a card called "Web search" has the id web_search; its tag starts with it.
 - Plan the whole path before the first change: where does a context start, which cards does it pass, where does
   the answer go. Then add the cards, then the wires, then try it.
 - Settings: only those the type's help lists, with values of the kind it says. Permission settings (May use, For
@@ -210,13 +213,26 @@ class Builder(Card):
                     "by itself." + (f" Found in what runs now: {'; '.join(problems)}." if problems else ""))
         await self.send(context, "out")
 
+    def _made(self, context: Context | None, function: str, args: dict[str, Any] | None = None) -> int:
+        """How often this conversation called one of its functions (with these arguments)."""
+        return sum(1 for e in (context.entries if context else []) for c in e["data"].get("calls") or []
+                   if c.get("card") == self.id and c.get("function") == function and (args is None or c.get("args") == args))
+
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         """Every answer says which wires are red right now (when it may look at the setup); what it may not do is told
-        as an error (the interface refuses it, not this card)."""
+        as an error (the interface refuses it, not this card). A model builds only after it read the guide in this
+        conversation; the same failing call again is told so."""
+        if context is not None and function in BUILDS and not self._made(context, "guide"):
+            return {"error": "Read the guide first: call guide (once per conversation). It says how to build here: when "
+                             "to change what runs and when to build a draft, how to look at the cards and their ports, "
+                             "the usual shapes. Then do this again."}
         try:
             result = await self._call(function, args, context)
         except (PermissionError, ValueError, KeyError) as err:
             result = {"error": str(err)}
+        if isinstance(result, dict) and result.get("error") and (n := self._made(context, function, args)) > 1:
+            result["note"] = (f"This same call was made {n} times in this conversation: it fails the same way again. Read "
+                              "the error, look (cards, card, help), change something, or tell the owner.")
         if self.may("setup", "read") and (red := self.read_setup()["red"]):
             return {**(result if isinstance(result, dict) else {"result": result}), "red_wires": red,
                     "note": "These wires are blocked (red): the storm stop found a loop there. Tell the owner; fix the "
@@ -266,9 +282,9 @@ class Builder(Card):
         if function in ("wire", "unwire"):
             wire = {"from": str(args.get("from")), "to": str(args.get("to"))}
             wires = [w for w in self.read_setup(where)["wires"] if w != wire] + ([wire] if function == "wire" else [])
+            if function == "wire" and (why := self.wire_problem(wire, where)):
+                return {"wired": False, "error": f"Not wired: {why}."}
             now = await self.set_wires(wires, where)
-            if function == "wire" and wire not in now:
-                return {"wired": False, "error": "that wire fits nothing (no such card or port, or another kind): see cards"}
             return {"wired": True} if function == "wire" else {"unwired": wire not in now}
         if function == "copy":
             await self.copy_setup(str(args.get("from") or "now"), str(args.get("to") or ""))

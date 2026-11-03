@@ -37,11 +37,15 @@ async def test_build_in_the_draft_switch_keep_and_go_back(hass: HomeAssistant, m
     assert added == {"id": "pause", "slot": "4"} and "pause" not in d.cards and set(d.cards) == running
     assert "pause" in [c["id"] for c in (await editor.call("cards", {"where": "4"}))["cards"]]
     assert (await editor.call("wire", {"from": "chat.said", "to": "pause.in", "where": "4"}))["wired"]
-    assert not (await editor.call("wire", {"from": "chat.said", "to": "nothing.in", "where": "4"}))["wired"]
+    assert "no card 'nothing' in slot 4" in (await editor.call("wire", {"from": "chat.said", "to": "nothing.in", "where": "4"}))["error"]
+    assert "chat has no output 'out' (its outputs: said, provides)" in (await editor.call("wire", {"from": "chat.out", "to": "pause.in", "where": "4"}))["error"]
+    assert "no setting prompt" in (await editor.call("add_card", {"type": "relay", "settings": {"prompt": "x"}, "where": "4"}))["error"]
     assert (await editor.call("change_card", {"card": "pause", "settings": {"seconds": 3}, "where": "4"}))["settings"]["seconds"] == 3
     assert (await editor.call("check", {"where": "4"}))["problems"] == []
     assert {"from": "chat.said", "to": "pause.in"} not in d.wires  # nothing that runs changed
 
+    d.slots["2"] = {"cards": {}, "wires": [], "positions": {}}
+    assert "model is in what runs: copy from now to 2" in (await editor.call("wire", {"from": "model.out", "to": "chat.answers", "where": "2"}))["error"]
     d.slots["4"]["cards"]["odd"] = {"type": "no_such_type", "title": "Odd", "settings": {}}
     d.slots["4"]["wires"].append({"from": "pause.out", "to": "pause.nowhere"})
     found = (await editor.call("check", {"where": "4"}))["problems"]
@@ -105,12 +109,14 @@ async def test_a_model_switches_and_keeps_in_the_new_setup(hass: HomeAssistant, 
     editor = await _editor(core)
     await editor.call("copy", {"from": "now", "to": "4"})
     await editor.call("add_card", {"type": "timer", "name": "Pause", "where": "4"})
-    asked = model_answers(aioclient_mock, reply("", [("switch", {"where": "4"})]), reply("Switching to the draft."),
+    asked = model_answers(aioclient_mock, reply("", [("switch", {"where": "4"})]), reply("", [("guide", {})]),
+                          reply("", [("switch", {"where": "4"})]), reply("Switching to the draft."),
                           reply("", [("keep", {})]), reply("Kept: it works."))
     chat = d.cards["chat"]
     chat_id, answer = await chat.write("switch to your draft")
     assert answer == "Switching to the draft."
-    await _until(lambda: d.trial is None and "pause" in d.cards and len(asked) >= 4)
+    assert "Read the guide first" in asked[1]["messages"][-1]["content"]  # building waits for the guide
+    await _until(lambda: d.trial is None and "pause" in d.cards and len(asked) >= 6)
     await _until(lambda: "Kept: it works." in str(d.cards["chat"].data))
-    note = asked[2]["messages"][-1]["content"]
+    note = asked[4]["messages"][-1]["content"]
     assert "The switch to slot 4 is done" in note and "keep" in note

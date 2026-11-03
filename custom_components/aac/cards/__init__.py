@@ -292,6 +292,11 @@ class Card:
         return {"cards": cards, "wires": [dict(w) for w in setup["wires"]], "positions": dict(setup.get("positions") or {}),
                 "red": [f"{r['from']} -> {r['to']}" for r in domain.red] if where == "now" else []}
 
+    def wire_problem(self, wire: dict[str, str], where: str = "now") -> str:
+        """Why a wire does not fit in a setup ("" when it does)."""
+        self.need("setup", "read")
+        return self.domain.wire_problem(where, wire)
+
     async def _building(self, where: str, what: str) -> None:
         if where == DRAFT:
             self.need("setup", "ask")
@@ -608,7 +613,11 @@ class Card:
 
 
 def _owners(kind: type[Card], settings: dict[str, Any], now: dict[str, Any] | None = None) -> None:
-    """Raises PermissionError when a change would set a permission setting (fields marked so: the owner's alone)."""
+    """Raises ValueError for a setting the type does not have, PermissionError when a change would set a permission
+    setting (fields marked so: the owner's alone)."""
+    if extra := [k for k in settings if k not in kind.settings_schema]:
+        raise ValueError(f"a {kind.title} card has no setting {', '.join(extra)} (its settings: "
+                         f"{', '.join(k for k, f in kind.settings_schema.items() if not f.get('permission'))}; see help {kind.type})")
     if found := [k for k, v in settings.items() if (kind.settings_schema.get(k) or {}).get("permission")
                  and (now is None or now.get(k) != v)]:
         raise PermissionError(f"{', '.join(found)}: permissions are the owner's to set (the Permissions page), not a card's")
