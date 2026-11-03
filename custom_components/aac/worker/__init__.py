@@ -10,11 +10,15 @@ import asyncio
 from collections.abc import Awaitable, Callable
 import contextlib
 import itertools
-import json
 from pathlib import Path
 import sys
 import time
 from typing import Any
+
+from . import wire
+from ..const import ModelError, ModelUnreachable
+
+wire.known(ModelError, ModelUnreachable)
 
 MAIN = Path(__file__).parent / "main.py"
 GRACE = 2.0  # seconds past the hold limit without a beat: the worker is stuck where Python cannot stop it (in C)
@@ -114,22 +118,28 @@ class Worker:
 
     def _send(self, message: dict[str, Any]) -> None:
         if self._proc is not None and self._proc.stdin is not None:
-            self._proc.stdin.write((json.dumps(message, ensure_ascii=False, default=str) + "\n").encode())
+            self._proc.stdin.write(wire.dumps(message))
+
+    def tell(self, message: dict[str, Any]) -> None:
+        """Tell the worker something (no answer)."""
+        self._send({"tell": message})
 
     async def _read(self, proc: asyncio.subprocess.Process) -> None:
         assert proc.stdout is not None
         while line := await proc.stdout.readline():
-            message = json.loads(line)
+            message = wire.loads(line)
             if "beat" in message:
                 self.last_beat = time.monotonic()
             elif "a" in message:
                 if (future := self._asked.get(message["a"])) is not None and not future.done():
                     if "error" in message:
-                        future.set_exception(RuntimeError(message["error"]))
+                        future.set_exception(wire.raised(message))
                     else:
                         future.set_result(message.get("result"))
             elif "q" in message:
                 self._keep(self._reply(message))
+            elif "tell" in message:
+                self._told(message["tell"])
             else:
                 if "ready" in message:
                     self.ready = message["ready"]
@@ -143,7 +153,7 @@ class Worker:
                 raise RuntimeError("the core answers nothing")
             self._send({"a": message["q"], "result": await self._answer(message["do"], message.get("args") or {})})
         except Exception as err:  # noqa: BLE001 - told to the worker
-            self._send({"a": message["q"], "error": f"{type(err).__name__}: {err}"})
+            self._send({"a": message["q"], **wire.error(err)})
 
     async def _errors(self, proc: asyncio.subprocess.Process) -> None:
         """What it writes to stderr (a crash's trace): told as {"stderr": text}."""

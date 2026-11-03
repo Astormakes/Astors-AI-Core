@@ -35,12 +35,13 @@ async def test_it_talks_both_ways_and_is_walled_in():
         assert await worker.ask("ask_core", {"x": 21}) == 42
         if platform.machine() in ("x86_64", "aarch64"):
             assert worker.ready["walled"] is True, worker.ready
-            with pytest.raises(RuntimeError, match="PermissionError"):
+            with pytest.raises(PermissionError):  # an error arrives as its kind
                 await worker.ask("open", {"path": __file__})
-            with pytest.raises(RuntimeError, match="PermissionError"):
+            with pytest.raises(PermissionError):
                 await worker.ask("import", {"name": "xml.dom.minidom"})
-        with pytest.raises(RuntimeError, match="no nothing"):
+        with pytest.raises(ValueError, match="no nothing"):
             await worker.ask("nothing")
+        assert await worker.ask("echo", {"wav": b"RIFF\x00\xff"}) == {"wav": b"RIFF\x00\xff"}  # bytes travel
     finally:
         await worker.stop()
 
