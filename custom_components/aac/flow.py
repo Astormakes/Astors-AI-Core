@@ -22,6 +22,7 @@ from traceback import format_exc
 from typing import TYPE_CHECKING, Any
 
 from .context import Context
+from .sound import level
 
 if TYPE_CHECKING:
     from .cards import Card
@@ -222,7 +223,6 @@ class Flow:
         key = f"{card_id}.{port}"
         if self.domain.core.cards_page_open and now - self._level_at.get(key, 0) >= LEVEL_EVERY:
             self._level_at[key] = now
-            from .audio import level  # noqa: PLC0415
             self.domain.core.notify("level", domain=self.domain.id, wire=key, level=level(chunk))
         for target, in_port in self.wired_from(card_id, port):
             if hasattr(target, "stream"):

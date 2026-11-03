@@ -26,7 +26,7 @@ What a card uses, and nothing else (so cards can run in a sandbox later):
 - open panels: `tell` (something of this card changed: its page, the sidebar)
 """
 
-from .audio import SAMPLE_RATE, Segmenter, level, make_vad, pcm_to_wav, resample, wav_to_pcm
+from .sound import SAMPLE_RATE, Segmenter, level, make_vad, pcm_to_wav, resample, wav_to_pcm
 from .calendars import parse as parse_when
 from .cards import CARD_TYPES, CATEGORIES, Card, register, tool_spec
 from .context import SYSTEM, TOOLS, Context, entry, matches, new_id

@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from homeassistant.core import HomeAssistant
 
-from custom_components.aac.audio import EnergyVad, Segmenter
+from custom_components.aac.sound import EnergyVad, Segmenter
 
-from custom_components.aac.audio import pcm_to_wav
+from custom_components.aac.sound import pcm_to_wav
 
 from .conftest import BASE_URL, allow, reply, setup_aac
 
@@ -130,7 +130,7 @@ async def test_a_satellite_is_a_media_player(hass: HomeAssistant, hass_client, m
     from custom_components.aac.context import Context
 
     core = await setup_aac(hass, mock_entry)
-    from custom_components.aac.audio import pcm_to_wav
+    from custom_components.aac.sound import pcm_to_wav
 
     core.audio.settings.update({"tts": "tts.test", "volume": 100})
     aioclient_mock.get("http://example.local/chime.wav", content=b"RIFFchime")

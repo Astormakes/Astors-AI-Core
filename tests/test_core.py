@@ -312,7 +312,7 @@ async def test_a_model_talks_while_it_works(hass: HomeAssistant, mock_entry, aio
     writes (snapshots): Text to speech speaks sentence by sentence, the Chat shows the turn, the others pass it on."""
     from unittest.mock import AsyncMock, patch
 
-    from custom_components.aac.audio import pcm_to_wav
+    from custom_components.aac.sound import pcm_to_wav
 
     core = await setup_aac(hass, mock_entry)
     d = core.domain
