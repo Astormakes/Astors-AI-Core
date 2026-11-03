@@ -102,7 +102,7 @@ async def test_undo_is_stored_as_changes(hass: HomeAssistant, mock_entry, hass_s
     after a restart every step comes back whole, and a step stored whole (as before) still loads."""
     import json
 
-    from custom_components.aac.core import UNDO_STEPS, unpacked
+    from custom_components.aac.domain import UNDO_STEPS, unpacked
 
     core = await setup_aac(hass, mock_entry)
     d = core.domain
@@ -127,7 +127,7 @@ async def test_undo_is_stored_as_changes(hass: HomeAssistant, mock_entry, hass_s
 async def test_removed_cards_data_stays_for_undo_or_goes(hass: HomeAssistant, mock_entry, hass_storage):
     """A removed card's data stays while Undo (or Redo, a slot) can bring the card back, then goes; the owner can let it
     go at once (Undo brings the card back empty)."""
-    from custom_components.aac.core import UNDO_STEPS
+    from custom_components.aac.domain import UNDO_STEPS
 
     core = await setup_aac(hass, mock_entry)
     d = core.domain
@@ -405,7 +405,7 @@ async def test_a_storm_turns_the_wire_red(hass: HomeAssistant, mock_entry, hass_
     from unittest.mock import patch
 
     from custom_components.aac.context import Context
-    from custom_components.aac.core import STORM
+    from custom_components.aac.domain import STORM
 
     core = await setup_aac(hass, mock_entry)
     d = core.domain

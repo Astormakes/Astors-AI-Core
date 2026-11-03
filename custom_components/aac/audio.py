@@ -44,7 +44,8 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .sound import SAMPLE_RATE, EnergyVad, Segmenter, pcm_to_wav
 from .languages import NAMES, code_of, describe, from_ha
-from .models import ModelError, ModelUnreachable, run
+from .const import ModelError, ModelUnreachable
+from .models import run
 
 if TYPE_CHECKING:
     from .core import Core

@@ -30,7 +30,7 @@ from .sound import SAMPLE_RATE, Segmenter, level, make_vad, pcm_to_wav, resample
 from .calendars import parse as parse_when
 from .cards import CARD_TYPES, CATEGORIES, Card, register, tool_spec
 from .context import SYSTEM, TOOLS, Context, entry, matches, new_id
-from .models import MODEL_TAGS, ModelError
+from .const import MODEL_TAGS, ModelError
 from .rules import RULES
 
 __all__ = ["CARD_TYPES", "CATEGORIES", "MODEL_TAGS", "SAMPLE_RATE", "SYSTEM", "TOOLS", "Card", "Context", "ModelError",

@@ -23,7 +23,7 @@ from ..context import Context
 from ..permissions import Home, kinds_of, lower, rank
 
 if TYPE_CHECKING:
-    from ..core import Domain
+    from ..domain import Domain
 
 CARD_TYPES: dict[str, type[Card]] = {}
 LOADED: dict[str, tuple[int, ...]] = {}  # card module → the VERSION it was loaded with

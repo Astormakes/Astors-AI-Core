@@ -63,7 +63,7 @@ async def test_build_in_the_draft_switch_keep_and_go_back(hass: HomeAssistant, m
     assert (await editor.call("keep", {}))["kept"] and d.trial is None
     assert (await editor.call("keep", {}))["error"]
 
-    monkeypatch.setattr("custom_components.aac.core.KEEP_WAIT", 0.3)
+    monkeypatch.setattr("custom_components.aac.domain.KEEP_WAIT", 0.3)
     await editor.call("remove_card", {"card": "pause", "where": "4"})
     d.slots["4"]["cards"].pop("pause")
     d.slots["4"]["wires"] = [w for w in d.slots["4"]["wires"] if "pause." not in w["from"] + w["to"]]

@@ -17,17 +17,9 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.util import dt as dt_util
 
-from .const import SIGNAL
+from .const import SIGNAL, ModelError, ModelUnreachable
 
 DOWN_FOR = 60  # seconds a model that did not answer is skipped
-
-
-class ModelError(Exception):
-    """A model server failed."""
-
-
-class ModelUnreachable(ModelError):
-    """The machine does not answer (it may simply be off)."""
 
 
 class Client:
@@ -287,10 +279,6 @@ def _percent(files: dict[str, Any]) -> int:
     """A download's progress over its files ({url: {done, total}})."""
     done, total = sum(f.get("done", 0) for f in files.values()), sum(f.get("total", 0) for f in files.values())
     return round(100 * done / total) if total else 0
-
-
-MODEL_TAGS = ["text", "tools", "images", "audio in", "audio out", "video", "embeddings", "speech to text", "sound tags",
-              "voice prints"]  # what a model can do; a card offers only the models with the tag it needs
 
 
 def guess_tags(model: dict[str, Any]) -> list[str]:

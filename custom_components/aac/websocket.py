@@ -14,8 +14,8 @@ from homeassistant.loader import async_get_integration
 
 from .cards import CARD_TYPES, CATEGORIES
 from .const import DOMAIN, SIGNAL
-from .core import UNDO_STEPS
-from .models import MODEL_TAGS, ModelError
+from .domain import UNDO_STEPS
+from .const import MODEL_TAGS, ModelError
 from .home import catalog
 from .permissions import LEVELS
 

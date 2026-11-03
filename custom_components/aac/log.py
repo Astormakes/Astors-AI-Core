@@ -15,7 +15,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .core import Domain
+    from .domain import Domain
 
 KEEP = 5000  # entries per lane (what passed the wires; everything else); the oldest go
 CONTEXT_FOR = 600  # seconds a whole context stays with its entry (only in memory)

@@ -34,7 +34,7 @@ def new_text(name: str, text: str, at: str = "system", reads: str | None = None)
 
 async def async_first_start(core: Core) -> None:
     """Build the default domain once."""
-    from .core import Domain  # noqa: PLC0415
+    from .domain import Domain  # noqa: PLC0415
 
     core.data["domains"] = [{"id": "assistant", "name": "Assistant"}]
     core.data["active"] = "assistant"

@@ -26,7 +26,7 @@ from .sound import level
 
 if TYPE_CHECKING:
     from .cards import Card
-    from .core import Domain
+    from .domain import Domain
 
 class Wave:
     """The contexts still to arrive, in the order they were sent."""
