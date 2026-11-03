@@ -802,6 +802,8 @@ class Core:
         self.asks = Asks(self)
         from .home import HomeService  # noqa: PLC0415
         self.home = HomeService(self)
+        from .services import Services  # noqa: PLC0415
+        self.services = Services(self)
 
     async def load(self) -> None:
         """Read the core; the first time, build the default domain."""

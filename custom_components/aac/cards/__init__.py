@@ -217,40 +217,28 @@ class Card:
         """Home Assistant's entities, as far as it may reach them."""
         return Home(self)
 
-    def web(self) -> Any:
-        """The web session (needs web at read)."""
+    async def fetch(self, url: str, method: str = "GET", params: dict[str, Any] | None = None, body: Any = None,
+                    headers: dict[str, str] | None = None, seconds: float = 20) -> dict[str, Any]:
+        """One request on the web (needs web at read): {status, text}; ConnectionError when it fails."""
         self.need("web", "read")
-        from homeassistant.helpers.aiohttp_client import async_get_clientsession  # noqa: PLC0415
-        return async_get_clientsession(self.hass)
+        return await self.core.services.fetch(url, method, params, body, headers, seconds)
 
     async def notification(self, service: str, message: str, title: str) -> None:
         """A notification through one of Home Assistant's notify services (an action on notify)."""
-        if not self.hass.services.has_service("notify", service):
-            raise ValueError(f"Home Assistant has no notify service {service}")
         await self.act("notify", f"send a notification: {message[:120]}")
-        await self.hass.services.async_call("notify", service, {"message": message, "title": title}, blocking=True)
-
-    def _file(self, name: str) -> Path:
-        plain = re.sub(r"[^\w\- .]", "", name).strip(" .") or "notes"  # a plain name in that folder, no folders
-        return Path(self.hass.config.path("aac", "files")) / plain
+        await self.core.services.notification(service, message, title)
 
     async def read_file(self, name: str) -> str:
         """A file in the shared folder <config>/aac/files ("" when there is none; needs files at read)."""
         self.need("files", "read")
-        path = self._file(name)
-        return await self.hass.async_add_executor_job(lambda: path.read_text(encoding="utf-8") if path.exists() else "")
+        return await self.core.services.read_file(name)
 
     async def write_file(self, name: str, text: str, append: bool = False) -> str:
         """Write (or append to) a file in the shared folder (an action on files); returns the whole file afterwards."""
-        await self.act("files", f"{'append to' if append else 'write'} {self._file(name).name}: {text.strip()[:120]}")
-        path = self._file(name)
+        from ..services import Services  # noqa: PLC0415
 
-        def write() -> str:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a" if append else "w", encoding="utf-8") as f:
-                f.write(text)
-            return path.read_text(encoding="utf-8")
-        return await self.hass.async_add_executor_job(write)
+        await self.act("files", f"{'append to' if append else 'write'} {Services.file_name(name)}: {text.strip()[:120]}")
+        return await self.core.services.write_file(name, text, append)
 
     def listen(self, handler: Any) -> None:
         """The satellites' microphones: handler(source_id, chunk, meta) gets their audio (needs audio at read)."""
