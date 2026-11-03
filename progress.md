@@ -6,6 +6,17 @@ The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "
 
 ## Current state (2026-11-03 06:45) – 3.1.8 on `main` (not pushed), live on the owner's HA
 
+**Paused (owner 2026-11-03 morning: "leave it for now … just use it")** — open, for when the owner picks it up:
+- The Schedule counts a silent answer as none: "Bed light at the alarm" ("Don't speak") switched the light at 06:38 and
+  still sent "nobody answered" at 07:12. Idea: a turn whose model used a tool counts as answered.
+- The owner saw "a context with Gemma doesn't work on Qwen and the other way around": Qwen → Gemma replayed fine
+  (18 messages, 18k tokens); the Assistant's log shows no failed turn after 07:00. Likely the dead Qwen process or
+  Qwen's 16k context; Gemma → Qwen not tried (the server is tight on memory). Ask what the owner saw.
+- Offered: AAC loads a model again when its router's process does not answer; Qwen's preset with less cache-ram;
+  shorter guide / `help relay`; the Relay check refusing defs that name `context`; the Card editor's building set
+  ticked off for the Assistant's everyday chat.
+- The owner reads the Card editor's help and guide (builder.py) and the cards' helps.
+
 **Where to pick up (2026-11-03, the night of steps 4 and 5):**
 - **Step 4 done (3.1.4, live):** drafts. The Card editor (3.0.x) builds straight in what runs, in a slot, or in the
   draft (slot 4, greyed after 1–3 on the Cards page); `switch` waits for the model's answer, the new setup runs on
