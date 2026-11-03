@@ -16,9 +16,15 @@ The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "
   charter + web + a File memory read into its system prompt, switched, kept; flaws it made (a Relay "memory tool" whose
   defs use `context`, the Web/File cards without May use, fixes made in slot 4 after the switch) went into the guide.
   Its last turn was cut by a deploy. Next there (owner): after step 5, the same with Gemma A4B in another domain.
-- **Step 5 done (3.1.6, live 04:59): the cards run in the walled worker.** How AAC works shows it ("In their own
-  process, walled in"). Next (owner): the model tests again: Qwen fixes its Build test setup, then the same build with
-  Gemma A4B in another domain.
+- **Step 5 done (3.1.6, live 04:59; 3.1.7): the cards run in the walled worker.** How AAC works shows it ("In their
+  own process, walled in"). The 05:25 schedule fired on the dot from the worker's clock. The wall caught one real case
+  at once: the Scope's spectrum (numpy loads numpy.fft only when first used): the worker now imports numpy's late parts
+  before its wall, the spec says a card imports everything at its top.
+- **Model tests (owner's next):** Qwen in "Build test", 05:30 (its first chat, "check and fix"): read the updated guide,
+  checked what runs, read each card, but wrote its Relay "memory tool" again with defs that use `context` (the guide
+  says a def gets no context), tried nothing, asked for no permission; stopped after 15 min (slow: about one tool round
+  a minute), Assistant back. Ideas: the Relay's check could refuse a def that names `context`; the guide's memory
+  shape as a ready example to copy. Then the same build with Gemma A4B in another domain.
 - **Step 5, how it went (owner: "finish the move before continuing with qwen and Gemma"):** docs/v2 page 6.
   Groundwork (`worker/`): the walled worker (seccomp; checked on the owner's HA), the channel, the 3 s watchdog.
   Move phase 1 done (3.1.5, live 04:05, checked: Home find/get_state and a Web search through the new services, a
