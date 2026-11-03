@@ -32,7 +32,15 @@ The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "
   With the domain's 24 tools `call` did not stop it (replayed 3 of 3 both ways). Its own mistakes: a Relay "memory
   tool" whose defs use `context` (the guide says a def gets no context), tried nothing, asked for no permission; slow
   with thinking (about one tool round a minute). Ideas: the Relay's check refuses a def that names `context`; the
-  guide's memory shape as a ready example to copy. Qwen: not tried yet (needs a model entry for the server).
+  guide's memory shape as a ready example to copy.
+- **Qwen3.8 27B on the server (2026-11-03 06:49, owner: "it's Gemma then"):** AAC entry `m_qwen3_8_27b_server`, domain
+  "Build test Qwen" (kept). Its server context is 16384: reading guide, rules and helps went over it (17907 tokens), no
+  change made. Its process then died without a log line (router still said loaded: "proxy error: Could not establish
+  connection"); reloaded by hand, fast and streaming (first token 0.6 s; it calls a tool even when none is needed). At
+  07:32 the host (11.7 GB) was down to 550 MiB, earlyoom's SIGTERM to Qwen's llama-server did not take; it recovered.
+  The Assistant is on Gemma again, Qwen unloaded (host 5.4 GB free). Offered, not built: AAC loads a model again once
+  when its router's process does not answer ("proxy error"); Qwen's preset with cache-ram 0/256. The new server (i7,
+  16+ GB, RTX 2070 next to the 7800 XT) is the real answer.
 - **Step 5, how it went (owner: "finish the move before continuing with qwen and Gemma"):** docs/v2 page 6.
   Groundwork (`worker/`): the walled worker (seccomp; checked on the owner's HA), the channel, the 3 s watchdog.
   Move phase 1 done (3.1.5, live 04:05, checked: Home find/get_state and a Web search through the new services, a
