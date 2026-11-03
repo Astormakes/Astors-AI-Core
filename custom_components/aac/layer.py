@@ -237,6 +237,10 @@ class Layer:
             return await takers[0][1](args["text"], args.get("conversation_id"), args.get("where") or "Home Assistant")
         if do == "calendar":  # Home Assistant's calendar entity: the entries the cards offer
             return await self._calendar(args)
+        if do == "panel":  # one of the panel's commands on the running domain
+            from . import panel  # noqa: PLC0415
+
+            return await panel.run(self, args)
         raise ValueError(f"the card layer does nothing called {do}")
 
     async def _calendar(self, args: dict[str, Any]) -> Any:

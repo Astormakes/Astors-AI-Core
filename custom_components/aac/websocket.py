@@ -12,9 +12,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.loader import async_get_integration
 
-from .cards import CARD_TYPES, CATEGORIES
 from .const import DOMAIN, SIGNAL
-from .domain import UNDO_STEPS
 from .const import MODEL_TAGS, ModelError
 from .home import catalog
 from .permissions import LEVELS
@@ -53,10 +51,10 @@ async def _fail(connection, msg, err: Exception) -> None:
 async def ws_state(hass, connection, msg) -> None:
     """Everything the panel shows."""
     core = _core(hass)
+    layer = await core.layer_ask("panel", {"type": "aac/state"})  # the running domain, the card types
     connection.send_result(msg["id"], {
-        "version": str((await async_get_integration(hass, DOMAIN)).version),
-        "domain": core.domain.summary(), "domains": core.data["domains"], "active": core.data["active"],
-        "types": [t.describe() for t in CARD_TYPES.values()], "categories": CATEGORIES, "models": core.pool.summary(), "model_tags": MODEL_TAGS})
+        "version": str((await async_get_integration(hass, DOMAIN)).version), **layer,
+        "domains": core.data["domains"], "active": core.data["active"], "models": core.pool.summary(), "model_tags": MODEL_TAGS})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "aac/subscribe"})
@@ -74,81 +72,11 @@ def ws_subscribe(hass, connection, msg) -> None:
 COMMANDS.append(ws_subscribe)
 
 
-@command({vol.Required("type"): "aac/card/add", vol.Required("card_type"): str, vol.Optional("title"): str,
-          vol.Optional("settings"): dict, vol.Optional("x"): vol.Coerce(float), vol.Optional("y"): vol.Coerce(float)})
-async def ws_card_add(hass, connection, msg) -> None:
-    """A new card."""
-    try:
-        card = await _core(hass).domain.add_card(msg["card_type"], msg.get("title", ""), msg.get("settings"),
-                                                 {"x": msg.get("x", 0), "y": msg.get("y", 0)})
-    except ValueError as err:
-        return await _fail(connection, msg, err)
-    connection.send_result(msg["id"], card.summary())
-
-
-@command({vol.Required("type"): "aac/card/remove", vol.Required("cards"): [str], vol.Optional("drop_data", default=False): bool})
-async def ws_card_remove(hass, connection, msg) -> None:
-    """Take cards out (several: one Undo step); drop_data: their data goes now, not when Undo forgets them."""
-    await _core(hass).domain.remove_card(*msg["cards"], drop_data=msg["drop_data"])
-    connection.send_result(msg["id"], {})
-
-
 @command({vol.Required("type"): "aac/view/watch", vol.Required("cards"): [str]})
 async def ws_view_watch(hass, connection, msg) -> None:
     """An open Cards page: which cards' views it shows (again every few seconds; live wires go only while it is open)."""
     _core(hass).watch(msg["cards"])
     connection.send_result(msg["id"], {})
-
-
-@command({vol.Required("type"): "aac/values"})
-async def ws_values(hass, connection, msg) -> None:
-    """The value pool: what templates can use now ({{ <card>.<value> }}, {{ audio.… }}), as plain JSON."""
-    import json  # noqa: PLC0415
-
-    connection.send_result(msg["id"], {"values": json.loads(json.dumps(await _core(hass).domain.template_values(), default=str))})
-
-
-@command({vol.Required("type"): "aac/card/update", vol.Required("card"): str, vol.Optional("title"): str,
-          vol.Optional("settings"): dict})
-async def ws_card_update(hass, connection, msg) -> None:
-    """A card's name or settings."""
-    card = await _core(hass).domain.update_card(msg["card"], msg.get("title"), msg.get("settings"))
-    connection.send_result(msg["id"], card.summary())
-
-
-@command({vol.Required("type"): "aac/card/call", vol.Required("card"): str, vol.Required("function"): str,
-          vol.Optional("args", default={}): dict})
-async def ws_card_call(hass, connection, msg) -> None:
-    """Call one of a card's functions (the panel uses them like a model does: lists, buffers …)."""
-    card = _core(hass).domain.cards.get(msg["card"])
-    if card is None:
-        return await _fail(connection, msg, ValueError("no such card"))
-    try:
-        connection.send_result(msg["id"], {"result": await card.run(msg["function"], msg["args"])})
-    except (ValueError, KeyError) as err:
-        await _fail(connection, msg, err)
-
-
-@command({vol.Required("type"): "aac/card/data", vol.Required("card"): str})
-async def ws_card_data(hass, connection, msg) -> None:
-    """A card's own data (for its page: a Lists card's lists)."""
-    card = _core(hass).domain.cards.get(msg["card"])
-    connection.send_result(msg["id"], {"data": card.data if card else None})
-
-
-@command({vol.Required("type"): "aac/wires", vol.Required("wires"): [dict]})
-async def ws_wires(hass, connection, msg) -> None:
-    """The owner's wires."""
-    domain = _core(hass).domain
-    domain.set_wires(msg["wires"])
-    connection.send_result(msg["id"], {"wires": domain.wires})
-
-
-@command({vol.Required("type"): "aac/wire/unblock", vol.Required("from"): str, vol.Required("to"): str})
-async def ws_wire_unblock(hass, connection, msg) -> None:
-    """A red wire (the storm stop blocked it) carries again."""
-    domain = _core(hass).domain
-    connection.send_result(msg["id"], {"unblocked": domain.unblock(msg["from"], msg["to"]), "red": domain.red})
 
 
 @command({vol.Required("type"): "aac/permissions"})
@@ -206,147 +134,54 @@ async def ws_request_decide(hass, connection, msg) -> None:
     connection.send_result(msg["id"], {"granted": granted})
 
 
-@command({vol.Required("type"): "aac/positions", vol.Required("positions"): dict, vol.Optional("undoable", default=False): bool})
-async def ws_positions(hass, connection, msg) -> None:
-    """Where the cards sit in the grid (Arrange: undoable)."""
-    domain = _core(hass).domain
-    if msg["undoable"]:
-        domain.undo = [*domain.undo, {**domain._snapshot(), "positions": deepcopy(domain.positions)}][-UNDO_STEPS:]
-    domain.positions = {k: {"x": float(v.get("x", 0)), "y": float(v.get("y", 0))} for k, v in msg["positions"].items()
-                        if k in domain.cards}
-    domain.save()
-    connection.send_result(msg["id"], {})
+
+# ---------------------------------------------------------------------- the running domain: the card layer answers (panel.py)
+FORWARDED = [  # handed on as they came; the answer is the card layer's
+    {vol.Required("type"): "aac/card/add", vol.Required("card_type"): str, vol.Optional("title"): str,
+          vol.Optional("settings"): dict, vol.Optional("x"): vol.Coerce(float), vol.Optional("y"): vol.Coerce(float)},
+    {vol.Required("type"): "aac/card/remove", vol.Required("cards"): [str], vol.Optional("drop_data", default=False): bool},
+    {vol.Required("type"): "aac/values"},
+    {vol.Required("type"): "aac/card/update", vol.Required("card"): str, vol.Optional("title"): str,
+          vol.Optional("settings"): dict},
+    {vol.Required("type"): "aac/card/call", vol.Required("card"): str, vol.Required("function"): str,
+          vol.Optional("args", default={}): dict},
+    {vol.Required("type"): "aac/card/data", vol.Required("card"): str},
+    {vol.Required("type"): "aac/wires", vol.Required("wires"): [dict]},
+    {vol.Required("type"): "aac/wire/unblock", vol.Required("from"): str, vol.Required("to"): str},
+    {vol.Required("type"): "aac/positions", vol.Required("positions"): dict, vol.Optional("undoable", default=False): bool},
+    {vol.Required("type"): "aac/undo"},
+    {vol.Required("type"): "aac/redo"},
+    {vol.Required("type"): "aac/slot", vol.Required("slot"): vol.In(["1", "2", "3", "4"]), vol.Required("action"): vol.In(["save", "load"])},
+    {vol.Required("type"): "aac/trial", vol.Required("action"): vol.In(["keep", "back"])},
+    {vol.Required("type"): "aac/setup/export"},
+    {vol.Required("type"): "aac/setup/import", vol.Required("setup"): dict},
+    {vol.Required("type"): "aac/stop"},
+    {vol.Required("type"): "aac/monitor", vol.Required("wire"): str},
+    {vol.Required("type"): "aac/log", vol.Optional("card"): str, vol.Optional("part"): str,
+          vol.Optional("levels"): [str], vol.Optional("search"): str, vol.Optional("before"): int, vol.Optional("last"): int},
+    {vol.Required("type"): "aac/log/clear"},
+    {vol.Required("type"): "aac/tags/add", vol.Required("tag"): str},
+    {vol.Required("type"): "aac/tags/remove", vol.Required("tag"): str},
+    {vol.Required("type"): "aac/nav"},
+    {vol.Required("type"): "aac/card/ui", vol.Required("card"): str, vol.Required("action"): str,
+          vol.Optional("args", default={}): dict},
+]
 
 
-@command({vol.Required("type"): "aac/undo"})
-async def ws_undo(hass, connection, msg) -> None:
-    """Back to the setup before the last change."""
-    connection.send_result(msg["id"], {"undone": await _core(hass).domain.undo_last()})
+def _forward(schema: dict) -> None:
+    @command(schema)
+    async def handler(hass, connection, msg) -> None:
+        try:
+            result = await _core(hass).layer_ask("panel", {k: v for k, v in msg.items() if k != "id"})
+        except (ValueError, KeyError, PermissionError) as err:
+            return await _fail(connection, msg, err)
+        connection.send_result(msg["id"], result)
 
 
-@command({vol.Required("type"): "aac/redo"})
-async def ws_redo(hass, connection, msg) -> None:
-    """Forward again to what the last Undo took back."""
-    connection.send_result(msg["id"], {"redone": await _core(hass).domain.redo_last()})
+for _schema in FORWARDED:
+    _forward(_schema)
 
-
-@command({vol.Required("type"): "aac/slot", vol.Required("slot"): vol.In(["1", "2", "3", "4"]), vol.Required("action"): vol.In(["save", "load"])})
-async def ws_slot(hass, connection, msg) -> None:
-    """Save the setup to a slot, or load it."""
-    domain = _core(hass).domain
-    if msg["action"] == "save":
-        domain.save_slot(msg["slot"])
-        return connection.send_result(msg["id"], {"saved": True})
-    connection.send_result(msg["id"], {"loaded": await domain.load_slot(msg["slot"])})
-
-
-@command({vol.Required("type"): "aac/trial", vol.Required("action"): vol.In(["keep", "back"])})
-async def ws_trial(hass, connection, msg) -> None:
-    """A model's switch that waits for keep: the owner keeps it, or takes it back now."""
-    domain = _core(hass).domain
-    done = domain.keep() if msg["action"] == "keep" else await domain.go_back(by="you")
-    connection.send_result(msg["id"], {"done": done})
-
-
-@command({vol.Required("type"): "aac/setup/export"})
-async def ws_setup_export(hass, connection, msg) -> None:
-    """The running domain's setup, to save as a file."""
-    connection.send_result(msg["id"], {"setup": _core(hass).domain.export()})
-
-
-@command({vol.Required("type"): "aac/setup/import", vol.Required("setup"): dict})
-async def ws_setup_import(hass, connection, msg) -> None:
-    """Load a setup file into the running domain (undoable)."""
-    try:
-        await _core(hass).domain.import_setup(msg["setup"])
-    except ValueError as err:
-        return await _fail(connection, msg, err)
-    connection.send_result(msg["id"], {})
-
-
-@command({vol.Required("type"): "aac/stop"})
-async def ws_stop(hass, connection, msg) -> None:
-    """Send stop: every card drops what it is doing."""
-    await _core(hass).domain.stop()
-    connection.send_result(msg["id"], {})
-
-
-@command({vol.Required("type"): "aac/monitor", vol.Required("wire"): str})
-async def ws_monitor(hass, connection, msg) -> None:
-    """The newest context that passed an output, and what passed it lately (from AAC's log; off: the card's Log setting
-    writes nothing going out)."""
-    domain = _core(hass).domain
-    card_id, _, port = msg["wire"].partition(".")
-    card = domain.cards.get(card_id)
-    off = card is None or card.settings.get("log") == "nothing" or card.settings.get("log_at") not in ("out", "both")
-    records = [{"time": e["time"], "text": e["text"]} for e in domain.log.read(card=card_id, port=port, what="out", last=20)]
-    connection.send_result(msg["id"], {"context": domain.flow.last.get(msg["wire"]), "records": records, "off": off})
-
-
-@command({vol.Required("type"): "aac/log", vol.Optional("card"): str, vol.Optional("part"): str,
-          vol.Optional("levels"): [str], vol.Optional("search"): str, vol.Optional("before"): int, vol.Optional("last"): int})
-async def ws_log(hass, connection, msg) -> None:
-    """AAC's log of the running domain (Settings → Logs): the newest entries that match."""
-    filters = {k: msg[k] for k in ("card", "part", "levels", "search", "before") if k in msg}
-    connection.send_result(msg["id"], {"entries": _core(hass).domain.log.read(**filters, last=max(1, min(msg.get("last", 300), 5000)))})
-
-
-@command({vol.Required("type"): "aac/log/clear"})
-async def ws_log_clear(hass, connection, msg) -> None:
-    """Every entry of the running domain's log goes."""
-    await _core(hass).domain.log.clear()
-    connection.send_result(msg["id"], {})
-
-
-@command({vol.Required("type"): "aac/tags/add", vol.Required("tag"): str})
-async def ws_tags_add(hass, connection, msg) -> None:
-    """One of the owner's own tags (user.…)."""
-    domain = _core(hass).domain
-    tag = msg["tag"].strip()
-    tag = tag if tag.startswith("user.") else f"user.{tag}"
-    if tag not in domain.user_tags:
-        domain.user_tags.append(tag)
-        domain.save()
-    connection.send_result(msg["id"], {"tags": domain.tag_pool()})
-
-
-@command({vol.Required("type"): "aac/tags/remove", vol.Required("tag"): str})
-async def ws_tags_remove(hass, connection, msg) -> None:
-    """Take one of the owner's own tags away."""
-    domain = _core(hass).domain
-    domain.user_tags = [t for t in domain.user_tags if t != msg["tag"]]
-    domain.save()
-    connection.send_result(msg["id"], {"tags": domain.tag_pool()})
-
-
-# ---------------------------------------------------------------------- card pages (a card's own .js)
-@command({vol.Required("type"): "aac/nav"})
-async def ws_nav(hass, connection, msg) -> None:
-    """The sidebar: every card with a page, with its entries (chats, lists …)."""
-    found = []
-    for card in _core(hass).domain.cards.values():
-        if card.ui_url:
-            try:
-                nav = card.nav()
-            except Exception as err:  # noqa: BLE001 - one card must not break the sidebar
-                nav = {"entries": [], "error": str(err)}
-            found.append({"card": card.id, "title": card.name, "ui": card.ui_url, "element": f"aac-card-{card.type.replace('_', '-')}", "nav": nav})
-    connection.send_result(msg["id"], {"nav": found})
-
-
-@command({vol.Required("type"): "aac/card/ui", vol.Required("card"): str, vol.Required("action"): str,
-          vol.Optional("args", default={}): dict})
-async def ws_card_ui(hass, connection, msg) -> None:
-    """A request from a card's own page."""
-    card = _core(hass).domain.cards.get(msg["card"])
-    if card is None:
-        return await _fail(connection, msg, ValueError("no such card"))
-    try:
-        connection.send_result(msg["id"], {"result": await card.ui_call(msg["action"], msg["args"])})
-    except (ValueError, KeyError) as err:
-        await _fail(connection, msg, err)
-
-
+# ---------------------------------------------------------------------- (card pages: forwarded above)
 # ---------------------------------------------------------------------- models (core) and domains
 @command({vol.Required("type"): "aac/models/save", vol.Required("model"): {
     vol.Optional("id"): str, vol.Required("name"): str, vol.Optional("server"): str, vol.Optional("base_url"): str,
@@ -438,14 +273,13 @@ async def ws_domain_delete(hass, connection, msg) -> None:
         await _core(hass).delete(msg["domain_id"])
     except (ValueError, StopIteration) as err:
         return await _fail(connection, msg, err)
-    connection.send_result(msg["id"], {"id": _core(hass).domain.id})
+    connection.send_result(msg["id"], {"id": _core(hass).running.get("id")})
 
 
 @command({vol.Required("type"): "aac/domain/switch", vol.Required("domain_id"): str})
 async def ws_domain_switch(hass, connection, msg) -> None:
     """Run another domain."""
-    domain = await _core(hass).switch(msg["domain_id"])
-    connection.send_result(msg["id"], {"id": domain.id})
+    connection.send_result(msg["id"], {"id": await _core(hass).switch(msg["domain_id"])})
 
 
 # ---------------------------------------------------------------------- AAC's settings (core)
