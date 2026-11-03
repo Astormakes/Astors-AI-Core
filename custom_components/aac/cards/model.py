@@ -17,7 +17,7 @@ from typing import Any
 
 from custom_components.aac.api import Card, Context, new_id, register, tool_spec
 
-VERSION = "4.0.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "4.0.3"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 SENTENCE = re.compile(r"[.!?…:](?=\s)|\n")  # where a finished sentence ends in text still being written
 
