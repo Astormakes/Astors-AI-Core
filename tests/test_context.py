@@ -177,7 +177,8 @@ async def test_a_chat_without_a_model(hass: HomeAssistant, mock_entry):
     chat with the posted line; Plain text shows the entries themselves."""
     core = await setup_aac(hass, mock_entry)
     await core.create("Play")
-    d = await core.switch(next(x["id"] for x in core.data["domains"] if x["name"] == "Play"))
+    await core.switch(next(x["id"] for x in core.data["domains"] if x["name"] == "Play"))
+    d = core.domain
     chat = await d.add_card("chat", "Chat")
     relay = await d.add_card("relay", "Relay", {"script": 'context = input("in")\nchat.post("pong")\noutput("out", context)\n'})
     _, answer = await chat.write("ping")

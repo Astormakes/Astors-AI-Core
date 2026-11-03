@@ -48,15 +48,15 @@ class AACAgent(conversation.ConversationEntity, conversation.AbstractConversatio
     async def _async_handle_message(self, user_input: conversation.ConversationInput,
                                     chat_log: conversation.ChatLog) -> conversation.ConversationResult:
         """Hand the turn to the card on the core's "ha_conversation" channel (a Chat with its tick, or any card)."""
-        takers = self.hass.data[DOMAIN].subscribers("ha_conversation")
         response = intent.IntentResponse(language=user_input.language)
-        if not takers:
+        device = dr.async_get(self.hass).async_get(user_input.device_id) if user_input.device_id else None
+        where = (device.name_by_user or device.name) if device else "Home Assistant"
+        answer = await self.hass.data[DOMAIN].layer_ask("converse", {"text": user_input.text, "where": where,
+                                                                     "conversation_id": chat_log.conversation_id})
+        if answer is None:
             response.async_set_error(intent.IntentResponseErrorCode.UNKNOWN,
                                      "No card in AAC takes Home Assistant's conversations (tick it on a Chat card).")
         else:
-            device = dr.async_get(self.hass).async_get(user_input.device_id) if user_input.device_id else None
-            where = (device.name_by_user or device.name) if device else "Home Assistant"
-            answer = await takers[0][1](user_input.text, chat_log.conversation_id, where)
             chat_log.async_add_assistant_content_without_tools(
                 conversation.AssistantContent(agent_id=self.entity_id, content=answer))
             response.async_set_speech(answer)

@@ -74,7 +74,7 @@ async def test_schedule_like_v1(hass: HomeAssistant, mock_entry, aioclient_mock,
 
     from datetime import datetime as dt_
     start = dt_util.start_of_local_day(dt_.fromisoformat("2099-01-05"))
-    on_cal = [e for e in core.calendar.entries(start, start + timedelta(days=1)) if e["source"] == "schedule"]
+    on_cal = [e for e in core.layer.calendar.entries(start, start + timedelta(days=1)) if e["source"] == "schedule"]
     assert {e["summary"] for e in on_cal} >= {"Alarm", "Tea", "Plants"} and all(not e["can"] for e in on_cal)
 
     tea_at = (dt_util.now() + timedelta(days=7 - dt_util.now().weekday())).replace(hour=23, minute=15, second=0, microsecond=0)  # a Monday
@@ -336,7 +336,7 @@ async def test_home_access_list(hass: HomeAssistant, mock_entry, hass_ws_client)
     hass.states.async_set("light.hall", "on")
     home = core.domain.cards["home"]
     assert not [x for x in await home.ui_call("access_items", {}) if x["id"].startswith("light.")]  # the domain hides them
-    await core.domain.set_permissions({"light.desk": "read"})
+    await core.set_permissions({"light.desk": "read"})
     items = await core.domain.cards["home"].ui_call("access_items", {})
     assert [x for x in items if x["id"].startswith("light.")] == [{"id": "light.desk", "name": "Desk", "area": "", "group": "light",
                                                                     "help": "", "cap": "read"}]

@@ -32,18 +32,17 @@ async def test_the_backup_is_of_this_major_version(hass: HomeAssistant, mock_ent
     if not os.environ.get("AAC_SAVE_BACKUP"):
         pytest.fail(f"{VERSION} starts a new Z.Y: AAC_SAVE_BACKUP=1 pytest tests/test_backups.py replaces the backup "
                     f"of {SAVED.name if SAVED else 'none'}")
-    from custom_components.aac.defaults import async_voice_chain
 
     core = await setup_aac(hass, mock_entry)
     core.audio.settings["known"] = [{"id": "pc", "name": "PC"}]
     core.data["voice_chain"] = False
-    await async_voice_chain(core)
+    await core.voice_chain()
     d = core.domain
     model_answers(aioclient_mock, reply("It is noon."))
     await d.cards["chat"].write("what time is it?")
     await d.cards["lists"].call("add_items", {"list": "Shopping", "items": ["Oat milk", "Coffee"]})
     await d.cards["calendar"].call("add", {"summary": "Dentist", "start": "2026-11-02T10:00"})
-    await d.set_permissions({"light.kitchen": "full"})  # the domain's sheet and a card's May use (docs/v2 page 6)
+    await d.core.link.set_permissions({"light.kitchen": "full"})  # the domain's sheet and a card's May use (docs/v2 page 6)
     await d.update_card("home", settings={"access": {"light.kitchen": "full"}})
     chat = d.cards["chat"]  # an old install: its chats were quiet for long
     for c in chat.data["chats"].values():

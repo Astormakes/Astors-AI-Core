@@ -18,7 +18,6 @@ from .context import new_id
 from .permissions import LEVELS, rank
 
 if TYPE_CHECKING:
-    from .cards import Card
     from .core import Core
 
 ASK_WAIT = 120  # seconds an ask waits for the owner (then it is a no)
@@ -40,14 +39,13 @@ class Asks:
             if not future.done():
                 future.set_result(False)
 
-    async def ask(self, card: Card, thing: str, what: str) -> bool:
-        """Wait for the owner's yes to one action; True: allowed."""
+    async def ask(self, who: dict[str, str], thing: str, what: str) -> bool:
+        """Wait for the owner's yes to one action of a card ({domain, card, name}); True: allowed."""
         ask_id = new_id()
-        item = {"id": ask_id, "domain": card.domain.id, "card": card.id, "name": card.name, "thing": thing, "action": what,
+        item = {"id": ask_id, "domain": who["domain"], "card": who["card"], "name": who["name"], "thing": thing, "action": what,
                 "since": self.hass.loop.time()}
         self.waiting[ask_id] = item
         self._answers[ask_id] = future = self.hass.loop.create_future()
-        card.log(f"Asks the owner: {what}", "info", what="ask")
         self.core.notify("ask", **item)
         await self._to_phone(item)
         try:
@@ -59,7 +57,6 @@ class Asks:
             self._answers.pop(ask_id, None)
             self.core.notify("asked", id=ask_id)
             await self._clear_phone(ask_id)
-        card.log(f"The owner {'allowed' if yes else 'did not allow'}: {what}", "info" if yes else "warning", what="ask")
         return yes
 
     def answer(self, ask_id: str, yes: bool) -> bool:
@@ -101,9 +98,9 @@ class Asks:
                                                                     "data": {"tag": f"aac_ask_{ask_id}"}}, blocking=True)
 
 
-def request_note(core: Any, domain: Any, request: dict[str, Any]) -> None:
+def request_note(core: Any, domain_name: str, request: dict[str, Any]) -> None:
     """Home Assistant tells the owner a request waits."""
-    core.note(f"aac_request_{request['id']}", f"AAC ({domain.name}): a card asks for more",
+    core.note(f"aac_request_{request['id']}", f"AAC ({domain_name}): a card asks for more",
               f"{request['name']} asks for {', '.join(f'{t} ({lvl})' for t, lvl in request['things'].items())}: "
               f"{request['reason']}\n\nAnswer on AAC's Permissions page (the domain menu).")
 

@@ -259,7 +259,7 @@ async def test_home_assistant_card_access(hass: HomeAssistant, mock_entry):
     d = core.domain
     for entity_id, state in (("switch.lamp", "off"), ("sensor.t", "21"), ("lock.door", "locked"), ("light.desk", "on")):
         hass.states.async_set(entity_id, state)
-    await d.set_permissions({"switch.lamp": "full", "sensor.t": "full", "light.desk": "list", "lock.door": "hidden"})
+    await d.core.link.set_permissions({"switch.lamp": "full", "sensor.t": "full", "light.desk": "list", "lock.door": "hidden"})
     home = await d.add_card("homeassistant", "Home", {"access": {"switch.lamp": "full", "sensor.t": "read",
                                                                  "light.desk": "full", "lock.door": "full"}})
     found = {e["entity_id"]: e for e in (await home.call("find", {}))["entities"]}
@@ -281,7 +281,7 @@ async def test_home_assistant_card_access(hass: HomeAssistant, mock_entry):
     except PermissionError as err:
         assert "is not a service of switch.lamp" in str(err)
     assert called == [{"entity_id": "switch.lamp"}]
-    await d.set_permissions({"switch.lamp": "read"})  # the domain lowers it: the card's full is read now
+    await d.core.link.set_permissions({"switch.lamp": "read"})  # the domain lowers it: the card's full is read now
     assert "may not be switched" in (await d.cards["home"].call("call_service", {"domain": "switch", "service": "turn_on",
                                                                                 "entity_id": "switch.lamp"}))["error"]
 
@@ -343,7 +343,7 @@ async def test_a_card_asks_for_more(hass: HomeAssistant, mock_entry, hass_ws_cli
     d = core.domain
     for entity_id in ("light.desk", "light.hall", "lock.door"):
         hass.states.async_set(entity_id, "on")
-    await d.set_permissions({"light.desk": "list", "light.hall": "list"})
+    await d.core.link.set_permissions({"light.desk": "list", "light.hall": "list"})
     home = d.cards["home"]
     got = await home.run("request_access", {"things": ["light.desk", "light.hall", "lock.door"], "level": "full",
                                             "reason": "To switch the lights when asked."})
@@ -362,7 +362,7 @@ async def test_a_card_asks_for_more(hass: HomeAssistant, mock_entry, hass_ws_cli
 async def test_home_assistant_card_reports_the_new_state(hass: HomeAssistant, mock_entry):
     """A device reports its new state after the service returned: call_service waits for it (not the old one)."""
     core = await setup_aac(hass, mock_entry)
-    await core.domain.set_permissions({"switch.lamp": "full"})
+    await core.set_permissions({"switch.lamp": "full"})
     home = await core.domain.add_card("homeassistant", "Home", {"access": {"switch.lamp": "full"}})
     hass.states.async_set("switch.lamp", "off")
 

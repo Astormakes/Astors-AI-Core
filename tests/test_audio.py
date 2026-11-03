@@ -32,11 +32,11 @@ def test_pause_cut_cuts_speech():
 async def test_a_spoken_round_trip(hass: HomeAssistant, hass_client, mock_entry, aioclient_mock):
     """The default voice chain: "computer, …" is answered aloud and lands in a new chat; a line right after AAC spoke
     goes to the model as a possible follow-up, and "nothing" stays silent and is not kept."""
-    from custom_components.aac.defaults import FOLLOW_UP, async_voice_chain
+    from custom_components.aac.defaults import FOLLOW_UP
     core = await setup_aac(hass, mock_entry)
     core.audio.settings.update({"tts": "tts.test", "volume": 100, "known": [{"id": "pc", "name": "PC"}]})
     core.data["voice_chain"] = False
-    await async_voice_chain(core)
+    await core.voice_chain()
     d = core.domain
     from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMockResponse
     asked, answers, in_chat = [], [reply("It is five."), reply("nothing")], []
@@ -86,12 +86,11 @@ async def test_the_voice_chain_runs_side_by_side(hass: HomeAssistant, mock_entry
 
     from unittest.mock import AsyncMock
 
-    from custom_components.aac.defaults import async_voice_chain
     from custom_components.aac.context import Context
     core = await setup_aac(hass, mock_entry)
     core.audio.settings["known"] = [{"id": "pc", "name": "PC"}]
     core.data["voice_chain"] = False
-    await async_voice_chain(core)
+    await core.voice_chain()
     d = core.domain
     assert {"microphone", "audio_clipper", "speech_to_text", "stop_word", "wake_word", "follow_up", "spoken_turn", "follow_up_turn", "speaker"} <= set(d.cards)
     assert "answer" not in d.cards  # the answer goes to every card wired from the Model's out: no Relay in between
@@ -185,7 +184,7 @@ async def test_home_languages(hass, mock_entry, hass_ws_client):
     await client.send_json_auto_id({"type": "aac/languages/set", "languages": ["English", "de", "xx"]})
     result = (await client.receive_json())["result"]
     assert [x["code"] for x in result["languages"]] == ["en", "de"] and result["languages_own"]
-    assert core.domain.template_values()["languages"] == ["en", "de"]
+    assert (await core.domain.template_values())["languages"] == ["en", "de"]
     await client.send_json_auto_id({"type": "aac/languages/set", "languages": None})
     assert [x["code"] for x in (await client.receive_json())["result"]["languages"]] == ["de"]
 
@@ -272,12 +271,11 @@ async def test_the_audio_clipper_puts_its_phrases_together(hass, mock_entry):
     said leaves there (the Stop word hears Speech to text at once); a whole line goes straight on, phrases wait for the
     sentence's end and leave as one line, in order."""
     from custom_components.aac.context import Context
-    from custom_components.aac.defaults import async_voice_chain
 
     core = await setup_aac(hass, mock_entry)
     core.audio.settings["known"] = [{"id": "pc", "name": "PC"}]
     core.data["voice_chain"] = False
-    await async_voice_chain(core)
+    await core.voice_chain()
     d = core.domain
     for wire in (("speech_to_text.out", "audio_clipper.lines"), ("audio_clipper.said", "wake_word.in"),
                  ("audio_clipper.said", "follow_up.in"), ("speech_to_text.out", "stop_word.in")):

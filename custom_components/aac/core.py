@@ -21,10 +21,10 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_time_change
 from homeassistant.helpers.storage import Store
 
-from .calendars import Calendars
 from .cards import CARD_TYPES, Card
 from .const import LOGGER, SIGNAL
 from .domain import STORM, Domain, fits, slug, unpacked
+from .permissions import rank
 from .models import ModelPool
 
 
@@ -36,6 +36,12 @@ def move_folder(src: Path, dst: Path) -> None:
         src.rename(dst)
 
 
+ANSWERS = {  # what the card layer may ask of each of the core's services (models.chat, home.watch, asks.ask: above)
+    "home": ("entities", "state", "call", "calendar_events", "catalog"),
+    "services": ("fetch", "read_file", "write_file", "notification", "data_read", "data_write", "data_list", "data_remove", "data_move"),
+    "models": ("embed", "template", "servers", "server"),
+    "audio": ("tts", "stt", "play", "stop", "voices", "clip_url", "waveforms"),
+}
 WATCH_SECONDS = 15  # an open Cards page says every few seconds which views it shows
 CARD_FILES_EVERY = 10  # seconds between looks at the cards folder (a card file whose VERSION went up)
 
@@ -47,15 +53,17 @@ class Core:
         """Initialize."""
         self.hass = hass
         self._store: Store = Store(hass, 1, "aac2.core")
-        self._watching: dict[str, float] = {}  # card → until when a Cards page shows its view
-        self._page_until = 0.0  # until when a Cards page is open
         self.data: dict[str, Any] = {}
-        self._channels: dict[str, list[tuple[Card, Callable[..., Any]]]] = {}
         self.pool = ModelPool(hass, [])
-        self.domain: Domain | None = None
+        from .layer import Layer  # noqa: PLC0415
+        self.layer = Layer(self, self)  # the card layer, here in Home Assistant (the link and the clock: the core itself)
+        self.sheet: dict[str, str] = {}  # the running domain's permissions: the owner's, held here (docs/v2 page 6)
+        self.requests: list[dict[str, Any]] = []  # cards asking for more, held here until the owner decides
+        self.running: dict[str, str] = {}  # the running domain: {id, name}
+        self.wants_audio = False  # a card of the running domain listens to the satellites
+        self._watches: dict[int, Callable[[], None]] = {}  # the layer's state watches by id: their cancel
         from .audio import AudioHub  # noqa: PLC0415
         self.audio = AudioHub(self)
-        self.calendar = Calendars(self)
         from .asks import Asks  # noqa: PLC0415
         self.asks = Asks(self)
         from .home import HomeService  # noqa: PLC0415
@@ -79,8 +87,12 @@ class Core:
         for model in self.data["models"]:  # every model belongs to a server (its address and key come from it)
             self._give_server(model)
         if first:
-            from .defaults import async_first_start  # noqa: PLC0415
-            await async_first_start(self)
+            from .permissions import THINGS  # noqa: PLC0415
+            self.data["domains"], self.data["active"] = [{"id": "assistant", "name": "Assistant"}], "assistant"
+            self.running = {"id": "assistant", "name": "Assistant"}
+            self.sheet, self.requests = {thing: "full" for thing in THINGS}, []  # AAC's own setup; entities are the owner's pick
+            await self.layer_ask("first_start", {"id": "assistant", "name": "Assistant", "sheet": self.sheet})
+            self.save()
         if not self.data["domains"]:
             self.data["domains"] = [{"id": "assistant", "name": "Assistant"}]
         self.data.setdefault("active", self.data["domains"][0]["id"])
@@ -88,8 +100,16 @@ class Core:
             if not fits(info["id"], info["name"]):
                 await self._move(info["id"], self._free_id(info["name"]))
         await self.switch(self.data["active"])
-        from .defaults import async_voice_chain  # noqa: PLC0415
-        await async_voice_chain(self)
+        await self.voice_chain()
+
+    async def voice_chain(self) -> None:
+        """Once satellites are known, the default domain gets the voice chain (once)."""
+        if self.data.get("voice_chain"):
+            return
+        self.data["voice_chain"] = True
+        self.save()
+        if self.audio.settings.get("known"):
+            await self.layer_ask("voice_chain", {})
 
     def save(self) -> None:
         """Keep the core."""
@@ -97,8 +117,149 @@ class Core:
 
     # ------------------------------------------------------------------ what the card layer keeps, and tells the owner
     def store(self, key: str) -> Store:
-        """A stored record (the domain's setup, a card's data): async_load, async_save, async_delay_save, async_remove."""
+        """A stored record (a domain's setup, a card's data)."""
         return Store(self.hass, 1, key)
+
+    def _held(self, key: str, data: Any) -> Any:
+        """The running domain's record always carries the sheet and the requests as the core holds them: the card
+        layer can neither raise its own permissions nor make up the owner's yes."""
+        if self.running and key == f"aac2.domain.{self.running['id']}" and isinstance(data, dict):
+            return {**data, "permissions": dict(self.sheet), "requests": list(self.requests)}
+        return data
+
+    # ------------------------------------------------------------------ the link to the card layer (layer.py)
+    async def layer_ask(self, do: str, args: dict[str, Any]) -> Any:
+        """Ask the card layer (in the worker, or here)."""
+        return await self.layer.handle(do, args)
+
+    def layer_tell(self, message: dict[str, Any]) -> None:
+        """Tell the card layer (no answer)."""
+        self.layer.told(message)
+
+    @property
+    def domain(self) -> Domain | None:
+        """The running Domain object (only while the card layer runs here: tests, Home Assistant's own side)."""
+        return self.layer.domain
+
+    def ask(self, do: str, args: dict[str, Any]) -> Any:
+        """The link's ask, as the card layer calls it."""
+        return self.answer(do, args)
+
+    def tell(self, message: dict[str, Any]) -> None:
+        """The link's tell, as the card layer calls it."""
+        self.told(message)
+
+    def allows(self, thing: str) -> str:
+        """How far the running domain lets its cards reach a thing (the sheet; not on it: hidden)."""
+        return self.sheet.get(thing) or "hidden"
+
+    async def answer(self, do: str, args: dict[str, Any]) -> Any:
+        """What the card layer asks the core: only these, in plain data; each service holds it to the sheet."""
+        a, kw = list(args.get("args") or []), dict(args.get("kwargs") or {})
+        if do == "models.chat":
+            wanted, tag, messages, tools, call_id, params, give_up = a
+            on_delta = (lambda text, thinking: self.layer_tell({"call": call_id, "args": [text, thinking]})) if call_id else None
+            return await self.models.chat(wanted, tag, messages, tools, on_delta, params, give_up)
+        if do == "home.watch":
+            ids, call_id = a
+            self._watches[call_id] = self.home.watch(ids, lambda change: self.layer_tell({"call": call_id, "args": [change]}))
+            return None
+        if do == "asks.ask":
+            who, thing, what = a
+            if rank(self.allows(thing)) < rank("ask"):
+                raise PermissionError(f"the domain does not allow {thing} at ask")
+            return await self.asks.ask({**who, "domain": self.running.get("id")}, thing, what)
+        if do == "requests.add":
+            return self.request(*a)
+        if do == "audio.spoken":
+            return self.audio.spoken()
+        if do == "store.load":
+            return self._held(a[0], await self.store(a[0]).async_load())
+        if do == "store.save":
+            return await self.store(a[0]).async_save(self._held(a[0], a[1]))
+        if do == "store.remove":
+            return await self.store(a[0]).async_remove()
+        service, _, method = do.partition(".")
+        if method not in ANSWERS.get(service, ()):
+            raise PermissionError(f"the core answers no {do}")
+        return await getattr(getattr(self, service), method)(*a, **kw)
+
+    def told(self, message: dict[str, Any]) -> None:
+        """What the card layer tells the core."""
+        if "notify" in message:
+            self.notify(message.pop("notify"), **message)
+        elif "note" in message:
+            self.note(message["note"], message["title"], message["text"])
+        elif "unnote" in message:
+            self.unnote(message["unnote"])
+        elif "renamed" in message:
+            self.card_renamed(message["renamed"], message["new"])
+        elif "wants_audio" in message:
+            self.wants_audio = bool(message["wants_audio"])
+        elif "unwatch" in message:
+            if (cancel := self._watches.pop(message["unwatch"], None)) is not None:
+                cancel()
+        elif "mark" in message:
+            self.audio.mark(message["mark"], message["stage"])
+
+    def hear(self, chunk: bytes, meta: dict[str, Any]) -> None:
+        """A satellite's audio: to the card layer when a card there listens."""
+        if self.wants_audio:
+            self.layer_tell({"audio": chunk, "meta": meta})
+
+    def share(self) -> None:
+        """The values the card layer keeps a copy of: AAC's settings, the home's languages."""
+        self.layer_tell({"data": {"settings": dict(self.data.get("settings") or {}), "languages": self.languages()}})
+
+    # ------------------------------------------------------------------ the sheet and the requests (the owner's)
+    async def set_permissions(self, levels: dict[str, str]) -> dict[str, str]:
+        """The owner changes the sheet (hidden takes a thing off it); the cards follow it."""
+        from .permissions import LEVELS  # noqa: PLC0415
+
+        for thing, level in levels.items():
+            if level not in LEVELS:
+                raise ValueError(f"no level {level}")
+            if level == "hidden":
+                self.sheet.pop(thing, None)
+            else:
+                self.sheet[thing] = level
+        await self.layer_ask("sheet", {"sheet": self.sheet, "changed": levels})
+        return dict(self.sheet)
+
+    def request(self, card: dict[str, str], wanted: dict[str, str], reason: str) -> dict[str, Any]:
+        """A card asks for more (the layer worked out what it does not have yet): only what the sheet lets exist."""
+        from .asks import request_note  # noqa: PLC0415
+        from .context import new_id  # noqa: PLC0415
+
+        wanted = {t: lvl for t, lvl in wanted.items() if self.allows(t) != "hidden"}
+        if not wanted:
+            return {"asked": {}, "note": "nothing to ask for (it has that already, or there is no such thing)"}
+        req = {"id": new_id(), "card": card["card"], "name": card["name"], "things": wanted,
+               "reason": str(reason).strip()[:500] or "(no reason given)", "since": time.time()}
+        self.requests.append(req)
+        request_note(self, self.running.get("name", ""), req)
+        self.layer_tell({"requested": req})
+        self.notify("requests", domain=self.running.get("id"))
+        return {"asked": wanted, "note": "the owner decides; until then nothing changes"}
+
+    async def decide(self, request_id: str, allowed: list[str]) -> dict[str, str]:
+        """The owner's answer to a request: the things allowed are the card's at the level asked (the sheet raised
+        where it was lower: it is the owner who says so). Returns what was granted."""
+        from .asks import request_done  # noqa: PLC0415
+
+        req = next((r for r in self.requests if r["id"] == request_id), None)
+        if req is None:
+            raise ValueError("no such request (decided already?)")
+        self.requests.remove(req)
+        granted = {t: lvl for t, lvl in req["things"].items() if t in allowed}
+        for thing, level in granted.items():
+            if rank(self.allows(thing)) < rank(level):
+                self.sheet[thing] = level
+        await self.layer_ask("granted", {"request": req, "granted": granted, "sheet": self.sheet})
+        request_done(self, request_id)
+        self.notify("requests", domain=self.running.get("id"))
+        self.notify("setup", domain=self.running.get("id"))
+        return granted
 
     def card_renamed(self, old: str, new: str) -> None:
         """A card's id moved: what the core keeps under it (the sidebar's fold) moves along."""
@@ -159,53 +320,18 @@ class Core:
         while True:
             await asyncio.sleep(CARD_FILES_EVERY)
             changed = await self.hass.async_add_executor_job(reload_changed, folder)
-            waiting |= {t for t in changed if t in CARD_TYPES}  # a deleted type's cards stay as they are
-            if self.domain is None or not waiting:
-                continue
-            for card in [c for c in self.domain.cards.values() if c.type in waiting]:
-                if not card.busy:
-                    await self.domain.remake(card.id)
-            waiting = {t for t in waiting if any(c.type == t and type(c) is not CARD_TYPES.get(t) for c in self.domain.cards.values())}
+            waiting = set(await self.layer_ask("remake", {"types": sorted(waiting | {t for t in changed if t in CARD_TYPES})}))
             if changed:
-                self.notify("setup", domain=self.domain.id)
+                self.notify("setup", domain=self.running.get("id"))
 
     def watch(self, cards: list[str]) -> None:
         """An open Cards page shows these cards' views (it says so again every few seconds)."""
-        until = time.monotonic() + WATCH_SECONDS
-        self._page_until = until
-        self._watching = {**{k: v for k, v in self._watching.items() if v > time.monotonic()}, **dict.fromkeys(cards, until)}
-
-    def watched(self, card_id: str) -> bool:
-        """A Cards page shows this card's view now."""
-        return self._watching.get(card_id, 0) > time.monotonic()
+        self.layer_tell({"watch": cards, "seconds": WATCH_SECONDS})
 
     @property
     def storm(self) -> int:
         """The storm limit (AAC's settings): contexts within a second that turn a wire red."""
         return int((self.data.get("settings") or {}).get("storm") or STORM)
-
-    @property
-    def cards_page_open(self) -> bool:
-        """A Cards page is open (live wires are only sent then)."""
-        return self._page_until > time.monotonic()
-
-    # ------------------------------------------------------------------ channels (design rule: the core never asks for a card type)
-    @callback
-    def subscribe(self, channel: str, card: Card, handler: Callable[..., Any]) -> None:
-        """A card takes what comes in on a core channel ("audio": satellite audio, "ha_conversation": HA's Assist).
-        Any card may: a card of your own can replace a built-in one."""
-        self._channels.setdefault(channel, []).append((card, handler))
-
-    @callback
-    def unsubscribe(self, card: Card) -> None:
-        """A card stops taking anything (called when it unloads)."""
-        for channel, subs in self._channels.items():
-            self._channels[channel] = [(c, h) for c, h in subs if c is not card]
-        self.calendar.forget(card)
-
-    def subscribers(self, channel: str) -> list[tuple[Card, Callable[..., Any]]]:
-        """Who takes a channel (cards of the running domain), in the order they subscribed."""
-        return list(self._channels.get(channel, []))
 
     @callback
     def languages(self) -> list[str]:
@@ -216,8 +342,8 @@ class Core:
 
     def log(self, part: str, level: str, text: str, **extra: Any) -> None:
         """A part of AAC itself ("audio", "models" …) writes in the running domain's log (HA's log while none runs)."""
-        if self.domain is not None and not self.domain.log.closed:
-            self.domain.log.write(level, text, part=part, **extra)
+        if self.running:
+            self.layer_tell({"log": text, "level": level, "part": part, **extra})
         else:
             LOGGER.log(30 if level in ("error", "warning") else 20, "AAC %s: %s", part, text)
 
@@ -225,21 +351,25 @@ class Core:
         """Tell open panels."""
         async_dispatcher_send(self.hass, SIGNAL, {"what": what, **data})
 
-    async def switch(self, domain_id: str) -> Domain:
-        """Run another domain (one at a time)."""
+    async def switch(self, domain_id: str) -> str:
+        """Run another domain (one at a time); its id."""
         info = next((d for d in self.data["domains"] if d["id"] == domain_id), self.data["domains"][0])
-        if self.domain is not None:
-            await self.domain.stop()
-            await self.domain.unload()
-            await self.domain.save_now()
-        self.domain = Domain(self, info["id"], info["name"])
-        await self.domain.load()
-        await self.domain.start()
-        self.domain.log.write("info", f"Domain {info['name']} started ({len(self.domain.cards)} cards)", what="started")
+        await self.halt()
+        data = await self.store(f"aac2.domain.{info['id']}").async_load() or {}
+        self.sheet, self.requests = dict(data.get("permissions") or {}), list(data.get("requests") or [])
+        self.running = {"id": info["id"], "name": info["name"]}
+        self.share()
+        await self.layer_ask("run", {"id": info["id"], "name": info["name"]})
         self.data["active"] = info["id"]
         self.save()
         self.notify("setup", domain=info["id"])
-        return self.domain
+        return info["id"]
+
+    async def halt(self) -> None:
+        """The running domain stops (its setup and log written)."""
+        if self.running:
+            await self.layer_ask("halt", {})
+            self.running = {}
 
     def folder(self, *ids: str) -> Path:
         """Where a domain's cards keep files: <config>/aac/data/<domain>[/<card>]."""
@@ -257,12 +387,9 @@ class Core:
     async def _move(self, old: str, new: str) -> None:
         """A domain's id moves (its name did): its store, its cards' stores and files, the running mark; a running domain
         stops and starts again under the new one."""
-        running = self.domain is not None and self.domain.id == old
+        running = self.running.get("id") == old
         if running:
-            await self.domain.stop()
-            await self.domain.unload()
-            await self.domain.save_now()
-            self.domain = None
+            await self.halt()
         store = Store(self.hass, 1, f"aac2.domain.{old}")
         data = await store.async_load() or {}
         for card_id in self._stored_cards(data):
@@ -279,7 +406,7 @@ class Core:
         self.save()
         if running:
             await self.switch(new)
-            self.domain.log.write("info", f"Renamed: {old} is now {new} (its name)", what="renamed")
+            self.log("core", "info", f"Renamed: {old} is now {new} (its name)", what="renamed")
 
     async def create(self, name: str) -> str:
         """A new, empty domain (no cards yet)."""
@@ -292,8 +419,9 @@ class Core:
         """A domain's new name; its id follows (returns it)."""
         info = next(d for d in self.data["domains"] if d["id"] == domain_id)
         info["name"] = name
-        if self.domain is not None and self.domain.id == domain_id:
-            self.domain.name = name
+        if self.running.get("id") == domain_id:
+            self.running["name"] = name
+            await self.layer_ask("renamed", {"name": name})
         if not fits(domain_id, name):
             await self._move(domain_id, self._free_id(name))
         self.save()
@@ -305,7 +433,7 @@ class Core:
         rest = [d for d in self.data["domains"] if d["id"] != domain_id]
         if not rest or len(rest) == len(self.data["domains"]):
             raise ValueError("the last domain cannot go")
-        if self.domain is not None and self.domain.id == domain_id:
+        if self.running.get("id") == domain_id:
             await self.switch(rest[0]["id"])
         store = Store(self.hass, 1, f"aac2.domain.{domain_id}")
         for card_id in self._stored_cards((await store.async_load()) or {}):
@@ -314,24 +442,21 @@ class Core:
         await self.hass.async_add_executor_job(shutil.rmtree, self.folder(domain_id), True)
         self.data["domains"] = rest
         self.save()
-        self.notify("setup", domain=self.domain.id)
+        self.notify("setup", domain=self.running.get("id"))
 
     async def clone(self, name: str) -> str:
-        """A copy of the running domain (cards, wires, their data) to try things out."""
-        src = self.domain
-        new_id = self._free_id(name)
-        await src.save_now()
-        await src.log.flush()
-        dst = Domain(self, new_id, name)
-        dst._specs, dst.wires, dst.positions = deepcopy(src._specs), deepcopy(src.wires), deepcopy(src.positions)  # noqa: SLF001
-        dst.permissions = deepcopy(src.permissions)  # your own copy: it may reach what the original may
-        await dst.save_now()
-        for card_id in src._specs:  # noqa: SLF001
-            if (data := await src.load_card_data(card_id)) is not None:
-                await dst.save_card_data(card_id, data)
-        if await self.hass.async_add_executor_job(self.folder(src.id).is_dir):
-            await self.hass.async_add_executor_job(shutil.copytree, self.folder(src.id), self.folder(new_id))
-            await self.services.data_remove(dst.log.parts)  # a copy starts its own log
+        """A copy of the running domain (cards, wires, their data, its sheet) to try things out."""
+        src, new_id = self.running["id"], self._free_id(name)
+        await self.layer_ask("flush", {})
+        data = await self.store(f"aac2.domain.{src}").async_load() or {}
+        await self.store(f"aac2.domain.{new_id}").async_save({k: deepcopy(data.get(k)) for k in ("cards", "wires", "positions")
+                                                             if k in data} | {"permissions": dict(self.sheet)})
+        for card_id in data.get("cards") or {}:
+            if (kept := await self.store(f"aac2.card.{src}.{card_id}").async_load()) is not None:
+                await self.store(f"aac2.card.{new_id}.{card_id}").async_save(kept)
+        if await self.hass.async_add_executor_job(self.folder(src).is_dir):
+            await self.hass.async_add_executor_job(shutil.copytree, self.folder(src), self.folder(new_id))
+            await self.services.data_remove([new_id, "log.jsonl"])  # a copy starts its own log
         self.data["domains"].append({"id": new_id, "name": name})
         self.save()
         return new_id

@@ -18,7 +18,7 @@ import time
 import types
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from ..const import DRAFT, LOGGER
+from ..const import DRAFT, LOGGER, plain_name
 from ..context import Context
 from ..permissions import Home, kinds_of, lower, rank
 
@@ -220,7 +220,10 @@ class Card:
         """Before every action on a thing (switch, send, write, change …): at full it goes on; at ask it waits for the
         owner's yes (a popup in AAC, a phone notification; no answer in time is a no); else PermissionError."""
         if self.level(thing) == "ask":
-            if not await self.core.asks.ask(self, thing, what):
+            self.log(f"Asks the owner: {what}", "info", what="ask")
+            yes = await self.core.asks.ask(self, thing, what)
+            self.log(f"The owner {'allowed' if yes else 'did not allow'}: {what}", "info" if yes else "warning", what="ask")
+            if not yes:
                 raise PermissionError(f"The owner did not allow it: {what}")
             return
         self.need(thing, "full")
@@ -248,9 +251,7 @@ class Card:
 
     async def write_file(self, name: str, text: str, append: bool = False) -> str:
         """Write (or append to) a file in the shared folder (an action on files); returns the whole file afterwards."""
-        from ..services import Services  # noqa: PLC0415
-
-        await self.act("files", f"{'append to' if append else 'write'} {Services.file_name(name)}: {text.strip()[:120]}")
+        await self.act("files", f"{'append to' if append else 'write'} {plain_name(name)}: {text.strip()[:120]}")
         return await self.core.services.write_file(name, text, append)
 
     def listen(self, handler: Any) -> None:
@@ -534,8 +535,8 @@ class Card:
         may do nothing can still ask; the rest is the card's own `call`."""
         if function == "request_access" and self.needs:
             things = args.get("things") or []
-            return self.domain.request(self, dict.fromkeys(things if isinstance(things, list) else [things],
-                                                           str(args.get("level") or "read")), str(args.get("reason") or ""))
+            return await self.domain.request(self, dict.fromkeys(things if isinstance(things, list) else [things],
+                                                                 str(args.get("level") or "read")), str(args.get("reason") or ""))
         return await self.call(function, args, context)
 
     def offered(self) -> dict[str, dict[str, Any]]:

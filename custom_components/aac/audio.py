@@ -136,8 +136,7 @@ class AudioHub:
             both = array("h", chunk[: len(chunk) // 4 * 4])
             chunk, meta["reference"] = both[0::2].tobytes(), both[1::2].tobytes()
         source.meter.feed(chunk)
-        for _, handler in self.core.subscribers("audio"):
-            handler(chunk, meta)
+        self.core.hear(chunk, meta)
 
     def recent(self, source_id: str, seconds: float = RECENT_SECONDS) -> dict[str, bytes] | None:
         """A satellite's last seconds: {"mic"} and, if it sends it, {"reference"} (what its speaker played), 16 kHz PCM."""

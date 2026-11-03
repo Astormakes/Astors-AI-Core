@@ -105,7 +105,7 @@ class Relay(Card):
         if script.problems or not script.code or script.inputs.get(port) == "read":
             return
         reads = {name: self._read(name) for name, kind in script.inputs.items() if kind == "read"}
-        audio = self.core.audio.spoken() if "audio" in script.names else None
+        audio = await self.core.audio.spoken() if "audio" in script.names else None
         run = Run(self, context, port, reads, self.loop, audio)
         try:
             await asyncio.wait_for(self.blocking(run.go, script), TOTAL)
@@ -168,7 +168,7 @@ class Relay(Card):
             return await super().call(function, args, context)
         if script.problems:
             raise ValueError(f"its script has problems: {'; '.join(script.problems)}")
-        run = Run(self, None, None, {}, self.loop, self.core.audio.spoken() if "audio" in script.names else None,
+        run = Run(self, None, None, {}, self.loop, await self.core.audio.spoken() if "audio" in script.names else None,
                   calling=context or Context())
         try:
             result = await asyncio.wait_for(self.blocking(run.answer, script, function, args), TOTAL)

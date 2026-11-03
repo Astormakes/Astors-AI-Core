@@ -16,6 +16,7 @@ import aiohttp
 
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .const import plain_name
 from .permissions import rank
 
 if TYPE_CHECKING:
@@ -29,7 +30,7 @@ class Services:
         self.core, self.hass = core, core.hass
 
     def _need(self, thing: str, level: str) -> None:
-        if self.core.domain is None or rank(self.core.domain.allows(thing)) < rank(level):
+        if rank(self.core.allows(thing)) < rank(level):
             raise PermissionError(f"the domain does not allow {thing} at {level}")
 
     # ------------------------------------------------------------------ the web
@@ -66,10 +67,7 @@ class Services:
             return path.read_text(encoding="utf-8")
         return await self.hass.async_add_executor_job(write)
 
-    @staticmethod
-    def file_name(name: str) -> str:
-        """A plain name in that folder (no folders)."""
-        return re.sub(r"[^\w\- .]", "", name).strip(" .") or "notes"
+    file_name = staticmethod(plain_name)
 
     # ------------------------------------------------------------------ Home Assistant's notifications
     async def notification(self, service: str, message: str, title: str) -> None:

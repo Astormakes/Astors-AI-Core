@@ -424,7 +424,7 @@ async def test_a_storm_turns_the_wire_red(hass: HomeAssistant, mock_entry, hass_
     red = d.red[0]
     assert d._data()["red"] == d.red and d.summary()["red"] == d.red  # kept, and the panel shows it
 
-    await d.set_permissions({"setup": "full"})
+    await d.core.link.set_permissions({"setup": "full"})
     editor = await d.add_card("builder", "Card editor", {"access": {"setup": "full"}})
     told = await editor.call("types", {})
     assert told["red_wires"] == [f"{red['from']} -> {red['to']}"] and isinstance(told["result"], list)
@@ -523,10 +523,7 @@ async def test_domains_new_rename_delete(hass: HomeAssistant, mock_entry, hass_s
 
     next(d for d in core.data["domains"] if d["id"] == first)["name"] = "Home"  # as an older AAC left it
     await core.save_now()
-    await core.domain.save_now()
-    await core.domain.stop()
-    await core.domain.unload()
-    core.domain = None
+    await core.halt()
     await core.load()
     assert core.domain.id == "home" and core.data["active"] == "home" and "chat" in core.domain.cards
     assert "aac2.domain.home" in hass_storage and f"aac2.domain.{first}" not in hass_storage
@@ -565,7 +562,7 @@ async def test_for_models_and_short_card_lists(hass: HomeAssistant, mock_entry, 
     tools = {t["function"]["name"]: t["function"]["description"] for t in asked[0]["tools"]}
     assert tools["read_list"] == "Look here before saying you do not know." and "add_to_list" in tools
     assert "add_items" not in tools and "delete_list" not in tools and asked[0]["messages"][0]["content"] == "Be kind."
-    await d.set_permissions({"setup": "read"})
+    await d.core.link.set_permissions({"setup": "read"})
     editor = await d.add_card("builder", "Card editor", {"access": {"setup": "full"}})
     listed = await editor.call("cards", {})
     home = next(c for c in listed["cards"] if c["id"] == "home")

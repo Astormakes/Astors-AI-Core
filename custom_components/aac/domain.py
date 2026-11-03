@@ -19,7 +19,7 @@ from .const import DRAFT
 from .context import new_id
 from .flow import Flow
 from .log import DomainLog
-from .permissions import LEVELS, kinds_of, rank
+from .permissions import kinds_of, rank
 
 if TYPE_CHECKING:
     from .core import Core
@@ -170,27 +170,23 @@ class Domain:
         """How far this domain lets its cards reach a thing (its sheet; not on it: hidden)."""
         return self.permissions.get(thing) or "hidden"
 
-    async def set_permissions(self, levels: dict[str, str]) -> None:
-        """The owner changes the sheet (hidden takes a thing off it). Not part of the setup: Undo, the slots and a file
-        loaded into the domain leave it as it is. Every card is made again with it."""
-        for thing, level in levels.items():
-            if level not in LEVELS:
-                raise ValueError(f"no level {level}")
-            if level == "hidden":
-                self.permissions.pop(thing, None)
-            else:
-                self.permissions[thing] = level
-        self.log.write("info", f"Permissions changed: {', '.join(f'{t} {l}' for t, l in levels.items())}"[:500], what="permissions")
+    async def apply_sheet(self, sheet: dict[str, str], changed: dict[str, str]) -> None:
+        """The owner changed the sheet (the core holds it; this is its copy for the cards' levels). Not part of the
+        setup: Undo, the slots and a file loaded into the domain leave it as it is. Every card that reaches outside is
+        made again with it (what it set up at its start, its listeners, follows the sheet)."""
+        self.permissions = dict(sheet)
+        if changed:
+            self.log.write("info", f"Permissions changed: {', '.join(f'{t} {l}' for t, l in changed.items())}"[:500], what="permissions")
         self.save()
-        for card_id, spec in list(self._specs.items()):  # what a card set up at its start (listeners) follows the sheet
+        for card_id, spec in list(self._specs.items()):
             if self.cards.get(card_id) is not None and self.cards[card_id].needs:
                 await self._make(card_id, spec)
         self.core.notify("setup", domain=self.id)
 
-    def request(self, card: Card, levels: dict[str, str], reason: str) -> dict[str, Any]:
+    async def request(self, card: Card, levels: dict[str, str], reason: str) -> dict[str, Any]:
         """A card asks the owner for more (its kinds of things only; only what the domain lets it know exists; not what
-        it has already). Waits here until the owner decides (decide)."""
-        from .asks import asked_for, request_note  # noqa: PLC0415
+        it has already). The core holds it until the owner decides."""
+        from .asks import asked_for  # noqa: PLC0415
 
         wanted, refused = {}, []
         for thing, level in asked_for(levels).items():
@@ -200,36 +196,22 @@ class Domain:
                 wanted[thing] = level
         if not wanted:
             return {"asked": {}, "unknown": refused, "note": "nothing to ask for (it has that already, or there is no such thing)"}
-        req = {"id": new_id(), "card": card.id, "name": card.name, "things": wanted, "reason": reason.strip()[:500] or "(no reason given)",
-               "since": time.time()}
-        self.requests.append(req)
-        self.log.write("info", f"Asks for {', '.join(f'{t} {l}' for t, l in wanted.items())}: {req['reason']}"[:500], card=card.id, what="request")
-        request_note(self.core, self, req)
-        self.save()
-        self.core.notify("requests", domain=self.id)
-        return {"asked": wanted, "unknown": refused, "note": "the owner decides; until then nothing changes"}
+        self.log.write("info", f"Asks for {', '.join(f'{t} {l}' for t, l in wanted.items())}: {reason.strip()[:300]}"[:500],
+                       card=card.id, what="request")
+        got = await self.core.link.ask("requests.add", {"args": [{"card": card.id, "name": card.name}, wanted, reason], "kwargs": {}})
+        return {**got, "unknown": refused}
 
-    async def decide(self, request_id: str, allowed: list[str]) -> dict[str, str]:
-        """The owner's answer to a request: the things allowed (all, some, none) are the card's at the level asked
-        (the domain's sheet raised where it was lower: it is the owner who says so). Returns what was granted."""
-        from .asks import request_done  # noqa: PLC0415
-
-        req = next((r for r in self.requests if r["id"] == request_id), None)
-        if req is None:
-            raise ValueError("no such request (decided already?)")
-        self.requests.remove(req)
-        granted = {t: lvl for t, lvl in req["things"].items() if t in allowed}
-        if granted and (card := self.cards.get(req["card"])) is not None:
-            await self.set_permissions({t: lvl for t, lvl in granted.items() if rank(self.allows(t)) < rank(lvl)})
+    async def granted(self, request: dict[str, Any], granted: dict[str, str], sheet: dict[str, str]) -> None:
+        """The owner allowed some of a request: those things are the card's at the level asked (the sheet came with it)."""
+        self.requests = [r for r in self.requests if r.get("id") != request["id"]]
+        self.permissions = dict(sheet)
+        if granted and (card := self.cards.get(request["card"])) is not None:
             spec = self._specs[card.id]
             spec["settings"] = {**spec.get("settings", {}), "access": {**(spec.get("settings") or {}).get("access", {}), **granted}}
             await self._make(card.id, spec)
-        self.log.write("info", f"Request of {req['name']}: allowed {', '.join(granted) or 'nothing'}", card=req["card"], what="request")
-        request_done(self.core, request_id)
+        self.log.write("info", f"Request of {request['name']}: allowed {', '.join(granted) or 'nothing'}", card=request["card"], what="request")
         self.save()
-        self.core.notify("requests", domain=self.id)
-        self.core.notify("setup", domain=self.id)
-        return granted
+        await self.apply_sheet(sheet, {})
 
     # ------------------------------------------------------------------ red wires (a storm stop)
     def is_red(self, a: str, b: str) -> bool:
@@ -724,7 +706,7 @@ class Domain:
         return card
 
     # ------------------------------------------------------------------ the rest
-    def template_values(self) -> dict[str, Any]:
+    async def template_values(self) -> dict[str, Any]:
         """Every card's values for templates: {{ <card>.<value> }} (and {{ cards['<card>'].<value> }} for any id)."""
         found: dict[str, Any] = {}
         for card in self.cards.values():
@@ -735,7 +717,7 @@ class Domain:
                     self.log.write("error", f"Its values failed: {err!r}", card=card.id, what="failed", trace=format_exc()[-3000:])
         own = {"states", "now", "utcnow", "is_state", "state_attr", "cards", "audio", "languages"}  # HA's and the core's names win
         return {**{k: v for k, v in found.items() if k.isidentifier() and k not in own}, "cards": found,
-                "audio": self.core.audio.spoken(), "languages": self.core.languages()}
+                "audio": await self.core.audio.spoken(), "languages": self.core.languages()}
 
     def tag_pool(self) -> list[dict[str, str]]:
         """Every tag the cards of this domain write, plus the owner's own (`user.…`)."""

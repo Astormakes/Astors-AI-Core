@@ -73,7 +73,7 @@ async def allow(domain, card_id: str, levels: dict[str, str]):
     May use set; returns the card (made again)."""
     from custom_components.aac.permissions import rank
 
-    await domain.set_permissions({t: lvl for t, lvl in levels.items() if rank(domain.allows(t)) < rank(lvl)})
+    await domain.core.link.set_permissions({t: lvl for t, lvl in levels.items() if rank(domain.allows(t)) < rank(lvl)})
     return await domain.update_card(card_id, settings={"access": {**(domain.cards[card_id].settings.get("access") or {}), **levels}})
 
 

@@ -105,7 +105,7 @@ async def ws_values(hass, connection, msg) -> None:
     """The value pool: what templates can use now ({{ <card>.<value> }}, {{ audio.… }}), as plain JSON."""
     import json  # noqa: PLC0415
 
-    connection.send_result(msg["id"], {"values": json.loads(json.dumps(_core(hass).domain.template_values(), default=str))})
+    connection.send_result(msg["id"], {"values": json.loads(json.dumps(await _core(hass).domain.template_values(), default=str))})
 
 
 @command({vol.Required("type"): "aac/card/update", vol.Required("card"): str, vol.Optional("title"): str,
@@ -155,23 +155,21 @@ async def ws_wire_unblock(hass, connection, msg) -> None:
 async def ws_permissions(hass, connection, msg) -> None:
     """The running domain's sheet, every thing it can be about, and whether the copy slot holds one."""
     core = _core(hass)
-    connection.send_result(msg["id"], {"levels": core.domain.permissions, "things": catalog(hass), "levels_all": list(LEVELS),
+    connection.send_result(msg["id"], {"levels": core.sheet, "things": catalog(hass), "levels_all": list(LEVELS),
                                        "copied": core.data.get("permissions_copied") is not None})
 
 
 @command({vol.Required("type"): "aac/permissions/set", vol.Required("levels"): {str: vol.In(LEVELS)}})
 async def ws_permissions_set(hass, connection, msg) -> None:
     """The owner changes the running domain's sheet (hidden takes a thing off it)."""
-    domain = _core(hass).domain
-    await domain.set_permissions(msg["levels"])
-    connection.send_result(msg["id"], {"levels": domain.permissions})
+    connection.send_result(msg["id"], {"levels": await _core(hass).set_permissions(msg["levels"])})
 
 
 @command({vol.Required("type"): "aac/permissions/copy"})
 async def ws_permissions_copy(hass, connection, msg) -> None:
     """The running domain's sheet into the copy slot (one slot, AAC-wide)."""
     core = _core(hass)
-    core.data["permissions_copied"] = deepcopy(core.domain.permissions)
+    core.data["permissions_copied"] = deepcopy(core.sheet)
     core.save()
     connection.send_result(msg["id"], {"copied": True})
 
@@ -182,15 +180,14 @@ async def ws_permissions_paste(hass, connection, msg) -> None:
     core = _core(hass)
     if (copied := core.data.get("permissions_copied")) is None:
         return await _fail(connection, msg, ValueError("nothing copied yet"))
-    await core.domain.set_permissions({**{t: "hidden" for t in core.domain.permissions}, **copied})
-    connection.send_result(msg["id"], {"levels": core.domain.permissions})
+    connection.send_result(msg["id"], {"levels": await core.set_permissions({**{t: "hidden" for t in core.sheet}, **copied})})
 
 
 @command({vol.Required("type"): "aac/asks"})
 async def ws_asks(hass, connection, msg) -> None:
     """What waits for the owner: the asks (a yes for one action, every domain) and the running domain's requests."""
     core = _core(hass)
-    connection.send_result(msg["id"], {"asks": list(core.asks.waiting.values()), "requests": core.domain.requests})
+    connection.send_result(msg["id"], {"asks": list(core.asks.waiting.values()), "requests": core.requests})
 
 
 @command({vol.Required("type"): "aac/ask/answer", vol.Required("ask"): str, vol.Required("yes"): bool})
@@ -203,7 +200,7 @@ async def ws_ask_answer(hass, connection, msg) -> None:
 async def ws_request_decide(hass, connection, msg) -> None:
     """The owner's answer to a card's request: the things allowed (all, some, none)."""
     try:
-        granted = await _core(hass).domain.decide(msg["request"], msg["allowed"])
+        granted = await _core(hass).decide(msg["request"], msg["allowed"])
     except ValueError as err:
         return await _fail(connection, msg, err)
     connection.send_result(msg["id"], {"granted": granted})
@@ -471,6 +468,7 @@ async def ws_settings_set(hass, connection, msg) -> None:
         if key in msg:
             core.data.setdefault("settings", {})[key] = msg[key]
     core.save()
+    core.share()
     connection.send_result(msg["id"], {"storm": core.storm, "ask_notify": core.data["settings"].get("ask_notify") or ""})
 
 
@@ -526,6 +524,7 @@ async def ws_languages_set(hass, connection, msg) -> None:
     else:
         core.data.pop("languages", None)
     core.save()
+    core.share()
     core.notify("audio")
     connection.send_result(msg["id"], core.audio.summary())
 

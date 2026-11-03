@@ -1,15 +1,12 @@
 """The default setup: a domain built from ordinary cards (docs/v2: defaults come from presets); the voice chain is
-added once satellites are known."""
+added once satellites are known. Part of the card layer (it builds on a Domain)."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Any
 
 from .const import LOGGER
 from .permissions import THINGS
-
-if TYPE_CHECKING:
-    from .core import Core
 
 CHARTER = """Charter (the owner's values; you follow it and never change it):
 - Honesty over comfort: never hide or soften facts to be liked, never fake progress, say when you made a mistake.
@@ -32,20 +29,17 @@ def new_text(name: str, text: str, at: str = "system", reads: str | None = None)
 
 
 
-async def async_first_start(core: Core) -> None:
-    """Build the default domain once."""
+async def first_start(layer: Any, domain_id: str, name: str) -> None:
+    """Build the default domain once (in the card layer; the core set its sheet: AAC's own things at full)."""
     from .domain import Domain  # noqa: PLC0415
 
-    core.data["domains"] = [{"id": "assistant", "name": "Assistant"}]
-    core.data["active"] = "assistant"
-    domain = Domain(core, "assistant", "Assistant")
+    domain = Domain(layer, domain_id, name)
     await domain.load()
-    domain.permissions = {thing: "full" for thing in THINGS}  # AAC's own setup: its things; entities are the owner's pick
     await build_default(domain)
     await grant_things(domain)
     domain.undo = []
     await domain.save_now()
-    core.save()
+    await domain.log.close()
     LOGGER.info("AAC: default domain built")
 
 
@@ -107,14 +101,9 @@ output("out", context)
 """
 
 
-async def async_voice_chain(core: Core) -> None:
-    """Once satellites are known, the default domain gets the voice chain as ordinary cards."""
-    if core.data.get("voice_chain"):
-        return
-    core.data["voice_chain"] = True
-    core.save()
-    domain = core.domain
-    if not core.audio.settings.get("known") or any(c.type == "microphone" for c in domain.cards.values()):
+async def voice_chain(domain: Any) -> None:
+    """Once satellites are known (the core says when), the default domain gets the voice chain as ordinary cards."""
+    if any(c.type == "microphone" for c in domain.cards.values()):
         return
     add = domain.add_card
     mic = (await add("microphone", "Microphone", {"source": "any"}, at={"x": -720, "y": 420})).id

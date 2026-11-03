@@ -59,7 +59,7 @@ class HomeService:
         self.core, self.hass = core, core.hass
 
     def _allows(self, thing: str, level: str) -> bool:
-        return self.core.domain is not None and rank(self.core.domain.allows(thing)) >= rank(level)
+        return rank(self.core.allows(thing)) >= rank(level)
 
     async def entities(self) -> list[dict[str, Any]]:
         """Every entity the domain lets exist: {entity_id, name, area, state (when it may be read)}."""
@@ -97,5 +97,4 @@ class HomeService:
 
     async def catalog(self, kinds: list[str]) -> list[dict[str, Any]]:
         """What a card's May use can be about (kinds: "entities" and names of THINGS), each with the domain's level."""
-        return [{**x, "cap": cap} for x in catalog(self.hass, set(kinds))
-                if self.core.domain is not None and (cap := self.core.domain.allows(x["id"])) != "hidden"]
+        return [{**x, "cap": cap} for x in catalog(self.hass, set(kinds)) if (cap := self.core.allows(x["id"])) != "hidden"]
