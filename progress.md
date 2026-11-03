@@ -4,7 +4,7 @@ Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress), page 5
 "The rules" (AAC 3, settled; replaces pages 3 and 4).
 
-## Current state (2026-11-03 05:10) – 3.1.6 on `main` (not pushed), live on the owner's HA
+## Current state (2026-11-03 06:45) – 3.1.8 on `main` (not pushed), live on the owner's HA
 
 **Where to pick up (2026-11-03, the night of steps 4 and 5):**
 - **Step 4 done (3.1.4, live):** drafts. The Card editor (3.0.x) builds straight in what runs, in a slot, or in the
@@ -20,11 +20,19 @@ The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "
   own process, walled in"). The 05:25 schedule fired on the dot from the worker's clock. The wall caught one real case
   at once: the Scope's spectrum (numpy loads numpy.fft only when first used): the worker now imports numpy's late parts
   before its wall, the spec says a card imports everything at its top.
-- **Model tests (owner's next):** Qwen in "Build test", 05:30 (its first chat, "check and fix"): read the updated guide,
-  checked what runs, read each card, but wrote its Relay "memory tool" again with defs that use `context` (the guide
-  says a def gets no context), tried nothing, asked for no permission; stopped after 15 min (slow: about one tool round
-  a minute), Assistant back. Ideas: the Relay's check could refuse a def that names `context`; the guide's memory
-  shape as a ready example to copy. Then the same build with Gemma A4B in another domain.
+- **3.1.8 (live 06:38): no tool named `call`.** With the Card editor's new `call` among the Assistant's 52 tools,
+  Gemma 4 planned its call in its thinking and stopped (finish stop, no call): every tool turn since 3.1.4 was silent,
+  so was the 05:25 alarm (the Schedule's "nobody answered" at 05:55 reached the phone). Found by replaying the captured
+  request on the PC: leaving out only `call` fixed it; renamed `try_card` 4 of 4. The Model card never offers a plain
+  `call` (TAKEN: the card's name goes in front). Live: "Bed light at the alarm" run at 06:38, the bed light went on.
+  Yesterday's request had the same 46 tools minus the editor's six new ones. Thinking stays on (owner: it helps Gemma a
+  lot, only slower). The Schedule entry says "the control tool" (none has that name; Home's is call_service).
+- **Model tests (owner's next) — correction: every build in "Build test" was Gemma 4 26B-A4B on the PC** (AAC's one
+  text model entry m_355fb306 points there; the server's Qwen is in no AAC model entry), not Qwen as written before.
+  With the domain's 24 tools `call` did not stop it (replayed 3 of 3 both ways). Its own mistakes: a Relay "memory
+  tool" whose defs use `context` (the guide says a def gets no context), tried nothing, asked for no permission; slow
+  with thinking (about one tool round a minute). Ideas: the Relay's check refuses a def that names `context`; the
+  guide's memory shape as a ready example to copy. Qwen: not tried yet (needs a model entry for the server).
 - **Step 5, how it went (owner: "finish the move before continuing with qwen and Gemma"):** docs/v2 page 6.
   Groundwork (`worker/`): the walled worker (seccomp; checked on the owner's HA), the channel, the 3 s watchdog.
   Move phase 1 done (3.1.5, live 04:05, checked: Home find/get_state and a Web search through the new services, a
