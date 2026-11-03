@@ -10,7 +10,7 @@ from typing import Any
 
 from custom_components.aac.api import CARD_TYPES, RULES, Card, Context, register
 
-VERSION = "3.0.1"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
+VERSION = "3.0.2"  # this file's cards (a newer file replaces an older one in <config>/aac/cards)
 
 
 BUILDS = {"add_card", "change_card", "remove_card", "wire", "unwire", "copy", "switch"}  # after the guide
@@ -46,6 +46,8 @@ GUIDE = """How to build in AAC with the Card editor. Read it once per conversati
   - Then a message from the Card editor comes into this conversation. Only a working way back reaches you, so
     read it as the proof: look whether it does what it should (cards, call to try a card), then call keep. No keep
     within the time it names: the setup before comes back by itself, and the draft stays as it is to fix.
+  - Once switched, the draft's cards are what runs: fix and change them with where="now" from then on (a change
+    in slot 4 changes nothing that runs).
 - Never change slots 1, 2, 3 unless the owner asks: they are the owner's saved setups.
 
 3. The order that works
@@ -55,8 +57,10 @@ GUIDE = """How to build in AAC with the Card editor. Read it once per conversati
 - Plan the whole path before the first change: where does a context start, which cards does it pass, where does
   the answer go. Then add the cards, then the wires, then try it.
 - Settings: only those the type's help lists, with values of the kind it says. Permission settings (May use, For
-  models, and those marked so) are the owner's: you cannot set them. A card that reaches outside AAC (web, files,
-  Home Assistant, notify …) may do nothing until the owner allows it: say so, or call its request_access.
+  models, and those marked so) are the owner's: you cannot set them.
+- A new card that reaches outside AAC (Web: web, File: files, Home Assistant: entities, Notify: notify …) may do
+  nothing there until the owner allows it (its May use). Once it runs, ask with call(card, "request_access",
+  {things, level, reason}) and tell the owner what you asked for and why; until then it answers with an error.
 - After every change look at the answer: it shows what is there now (a wire that does not fit is left out).
 
 4. The usual shapes
@@ -91,12 +95,18 @@ GUIDE = """How to build in AAC with the Card editor. Read it once per conversati
   output(...) sends; a script that forgets output stops the chain there.
 - A model's answer arrives again after every finished sentence (context.streaming is True until the last): pass it
   on each time; call another card only under if not context.streaming:.
-- A def in a script is a function models can use once the owner ticks it under For models.
+- A def in a script is a function models can use only once the owner ticks it under For models, and it gets its
+  arguments, not the context (there is no context inside a def; it calls other cards or returns a value). For a
+  tool, prefer a card that already has the functions (File: read, append, write; Lists; Memory; Web) wired as a
+  tool: it works at once.
 
 6. Trying it
 - call(card, function, args) runs another card's function as a model would (only what it offers to models; its
   permissions apply): read a file you wired, search with a Web card, read a list.
-- For a whole path the owner's next message is the test; say what to try.
+- Try every card you added before you say it works. Say exactly what works, what does not yet and why (a
+  permission the owner must give, a function the owner must tick). For a whole path the owner's next message is the
+  test; say what to try.
+- Clean up after yourself: a card you added twice or no longer use, remove it (or ask the owner to).
 
 7. What not to do
 - Do not remove or rewire the chat, the cards on your way or this Card editor in what runs: use the draft.
@@ -218,6 +228,15 @@ class Builder(Card):
         return sum(1 for e in (context.entries if context else []) for c in e["data"].get("calls") or []
                    if c.get("card") == self.id and c.get("function") == function and (args is None or c.get("args") == args))
 
+    def _kind(self, function: str, args: dict[str, Any]) -> str | None:
+        """The card type a call sets up (adding one, changing settings): its help comes first."""
+        if function == "add_card":
+            return str(args.get("type") or "") or None
+        if function == "change_card" and args.get("settings"):
+            spec = self.read_setup(str(args.get("where") or "now"))["cards"].get(str(args.get("card") or ""))
+            return spec["type"] if spec else None
+        return None
+
     async def call(self, function: str, args: dict[str, Any], context: Context | None = None) -> Any:
         """Every answer says which wires are red right now (when it may look at the setup); what it may not do is told
         as an error (the interface refuses it, not this card). A model builds only after it read the guide in this
@@ -225,7 +244,10 @@ class Builder(Card):
         if context is not None and function in BUILDS and not self._made(context, "guide"):
             return {"error": "Read the guide first: call guide (once per conversation). It says how to build here: when "
                              "to change what runs and when to build a draft, how to look at the cards and their ports, "
-                             "the usual shapes. Then do this again."}
+                             f"the usual shapes. Then call {function} again, the same way."}
+        if context is not None and (kind := self._kind(function, args)) and not self._made(context, "help", {"type": kind}):
+            return {"error": f"Read help with type {kind} first (its ports, settings and functions, exactly). Then call "
+                             f"{function} again."}
         try:
             result = await self._call(function, args, context)
         except (PermissionError, ValueError, KeyError) as err:
@@ -274,7 +296,12 @@ class Builder(Card):
             await self.remove_card(str(args.get("card")), where)
             return {"removed": args.get("card"), "setup": where}
         if function == "add_card":
-            return await self.add_card(str(args.get("type")), str(args.get("name") or ""), args.get("settings") or {}, where=where)
+            added = await self.add_card(str(args.get("type")), str(args.get("name") or ""), args.get("settings") or {}, where=where)
+            if needs := CARD_TYPES[str(args.get("type"))].needs:
+                added = {**added, "note": f"It reaches outside AAC ({', '.join(sorted(needs))}): it may do nothing there "
+                                          "until the owner allows it. Once it runs, call(card, \"request_access\", …) and "
+                                          "tell the owner."}
+            return added
         if function == "change_card":
             return await self.change_card(str(args.get("card")), args.get("name"), args.get("settings"), where)
         if function == "unblock":
