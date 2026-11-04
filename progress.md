@@ -16,6 +16,14 @@ The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "
   shorter guide / `help relay`; the Relay check refusing defs that name `context`; the Card editor's building set
   ticked off for the Assistant's everyday chat.
 - The owner reads the Card editor's help and guide (builder.py) and the cards' helps.
+- **A Relay trap found live (2026-11-04):** the owner's own AnswerOut Relay spoke every first sentence twice: a script runs
+  again for every streamed sentence, and `output("speech", text)` made a new `answerout.said` each time. Fixed in the
+  owner's board (the script now cleans `model.said` in place and sends that context; Text to speech Speaks `model.said`).
+  To talk through: `output(port, text)` keeps writing the same entry while an answer streams (then the obvious script
+  works), or the Relay shows the re-runs plainly (owner: the designer himself read it the obvious way).
+- **Voice played ~7x too fast (2026-11-04 18:3x):** not AAC (its WAV checked: 22050 Hz, right length); PulseAudio played
+  each clip in a seventh of its time after the BT300C dropped off USB and came back. A Proxmox restart fixed it. The
+  UGREEN (hci0, only for the battery's Bluetooth) times out every 2 s since at least 2026-11-02 23:42.
 
 **Where to pick up (2026-11-03, the night of steps 4 and 5):**
 - **Step 4 done (3.1.4, live):** drafts. The Card editor (3.0.x) builds straight in what runs, in a slot, or in the
