@@ -4,7 +4,25 @@ Read this first. v1 (1.0.0-dev.75) is history: git tag `v1-final`.
 The plan lives in `docs/v2/` (private): page 1 "What AAC is" (settled), page 2 "The cards" (in progress), page 5
 "The rules" (AAC 3, settled; replaces pages 3 and 4).
 
-## Current state (2026-11-03 06:45) – 3.1.8 on `main` (not pushed), live on the owner's HA
+## The move to the new server (2026-11-08) – 3.1.8 live on the new HA
+
+The owner's new server (i7-8700, RX 7800 XT + RTX 2070) runs a fresh HA at **192.168.1.11** (static); AAC was set up
+again "as it was, without the deadweight". Hosts, add-ons and what was carried or left out: `docs/dev-environment.md`
+and `~/cluade/proxmox/docs/host-inventory.md`. Addresses are static and counted (.9 old host, .10 host, .11 HA, .12 CT 101
+llm-amd, .13 CT 102 llm-nvidia); the PC stays on DHCP and is reached as `cachyos-x8664.local`.
+- AAC: the Assistant domain, its card stores (chats, lists, memory, schedule), `/config/aac/{cards,data/assistant,skins}`
+  carried; test domains (test123, Build test, Build test Qwen) and `bak-*` left out. The Model card: `m_server_model`
+  (Gemma 4 26B on the 7800 XT) first, the PC's Gemma second. Pipeline "AAC" is HA's only one. Satellite 0.3.6 runs
+  (BT600 off-hook, connected as ha_app). Checked in a real browser: a typed message got its answer (time via `localtime`).
+- **Open, the owner's part:** the PC's ufw (allow .11 → 8080, 8082, 8083: Whisper/Senses/PC model are blocked until then;
+  speech to text has no other model now), the phone app (pair again: `notify.mobile_app_cph2581` for asks/Notify), Google
+  calendar (reauth: token refresh 400), the UGREEN stick hangs (`Opcode 0x0c03 failed: -110`, batmon sees no device; was
+  timing out since 11-02 already): replug it. Whisper on the 2070 needs the owner's OK to build whisper.cpp from GitHub.
+- The Home card's access list still names some old entities (the old VM's `homeassistent_*` buttons, `notify.cph2581`,
+  `tts.piper_2`, `stt.faster_whisper_2`, the PICO and the old voice satellite's media player): to tidy with the owner.
+- Gemma answered "no rooms" although `find` returns the areas (Bedroom: bed light, aquarium): model behaviour, not the move.
+
+## Before the move (2026-11-03 06:45) – 3.1.8 on `main` (not pushed), live on the owner's HA
 
 **Paused (owner 2026-11-03 morning: "leave it for now … just use it")** — open, for when the owner picks it up:
 - The Schedule counts a silent answer as none: "Bed light at the alarm" ("Don't speak") switched the light at 06:38 and
